@@ -17,7 +17,6 @@ package io.delta.kernel.defaults.benchmarks;
 
 import io.delta.kernel.defaults.benchmarks.models.TableInfo;
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

@@ -2,34 +2,19 @@ package io.delta.kernel.defaults.benchmarks;
 
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
-import org.apache.hadoop.conf.Configuration;
 import org.openjdk.jmh.annotations.*;
 
 /**
  * Base state class for all benchmarkstate. This class is responsible for setting up the workload
  * runner based on the workload specification and engine parameters provided by JMH.
- * <p>
- * To add support for a new engine, extend this class and implement the {@link #getEngine(String)}
- * method to return an instance of the desired engine based on the provided engine name.
+ *
+ * <p>To add support for a new engine, extend this class and implement the {@link
+ * #getEngine(String)} method to return an instance of the desired engine based on the provided
+ * engine name.
  */
 @State(Scope.Thread)
-public abstract class BenchmarkState {
-
-  /**
-   * Default implementation of BenchmarkState that supports only the "default" engine.
-   */
-  public static class DefaultBenchmarkState extends BenchmarkState {
-    @Override
-    protected Engine getEngine(String engineName) {
-      if (engineName.equals("default")) {
-        return DefaultEngine.create(new Configuration());
-      } else {
-        throw new IllegalArgumentException("Unsupported engine: " + engineName);
-      }
-    }
-  }
+public abstract class AbstractBenchmarkState {
 
   /**
    * The json representation of the workload specification. Note: This parameter will be set
@@ -64,6 +49,7 @@ public abstract class BenchmarkState {
 
   /**
    * Returns an instance of the desired engine based on the provided engine name.
+   *
    * @param engineName The name of the engine to instantiate.
    * @return An instance of the specified engine.
    */
