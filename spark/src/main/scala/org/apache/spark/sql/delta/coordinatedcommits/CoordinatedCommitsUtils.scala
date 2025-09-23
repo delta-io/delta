@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, OptimisticTransaction, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -46,6 +46,39 @@ import org.apache.spark.util.Utils
 object CatalogOwnedTableUtils extends DeltaLogging {
   /** The default catalog name only used for testing. */
   val DEFAULT_CATALOG_NAME_FOR_TESTING: String = "spark_catalog"
+
+  /**
+   * Sets or removes CatalogOwnedTableFeature from a transaction's protocol.
+   *
+   * This helper method is used to control whether a transaction should use CC.
+   *
+   * @param txn The OptimisticTransaction to modify protocol and metadata on
+   * @param withCatalogOwnedTableFeature If true, adds CatalogOwnedTableFeature to the protocol
+   *                                      and ensures ICT enablement. If false, removes it.
+   *
+   * @note When adding CatalogOwnedTableFeature, this method also forces a metadata update
+   *       to ensure ICT (In-Commit Timestamp) is properly enabled. See the below comment
+   *       for details.
+   */
+  def setTxnProtocol(txn: OptimisticTransaction, withCatalogOwnedTableFeature: Boolean): Unit = {
+    if (withCatalogOwnedTableFeature) {
+      val p = txn.protocol.withFeature(feature = CatalogOwnedTableFeature)
+      txn.updateProtocol(protocol = p)
+      // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.
+      // CatalogOwnedTableFeature requires ICT to be enabled in the metadata, but
+      // updateMetadataAndProtocolWithRequiredFeatures in prepareCommit only runs
+      // when there's an explicit metadata change (metadataChanges.headOption is non-empty).
+      // Since we're only updating the protocol here without changing metadata content,
+      // we need to explicitly call updateMetadata to ensure metadataChanges is non-empty
+      // during prepareCommit, which will then enable ICT in the metadata.
+      // Without this, generateInCommitTimestampForFirstCommitAttempt would return None,
+      // causing UCCommitCoordinatorClient to fail with DELTA_MISSING_COMMIT_TIMESTAMP.
+      txn.updateMetadata(proposedNewMetadata = txn.metadata)
+    } else {
+      val p = txn.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+      txn.updateProtocol(protocol = p)
+    }
+  }
 
   // Populate table commit coordinator using table identifier inside CatalogTable.
   def populateTableCommitCoordinatorFromCatalog(
@@ -240,24 +273,6 @@ object CatalogOwnedTableUtils extends DeltaLogging {
           "Please use CREATE TABLE command to create a Catalog-Owned table.")
       }
     }
-  }
-
-  /**
-   * Filters out [[CatalogOwnedTableFeature]] from the provided protocol.
-   * This is used to ensure that the CatalogOwnedTableFeature is not included in the protocol
-   * for specific DDL commands, e.g., `CREATE CLONE`, `REPLACE CLONE`, `CREATE LIKE`.
-   *
-   * @param protocol The protocol to filter.
-   */
-  def filterOutCatalogOwnedTableFeature(protocol: Protocol): Protocol = {
-    /** Helper function to filter out CatalogOwnedTableFeature from the provided table features. */
-    def filterImpl(tableFeatures: Option[Set[String]]): Option[Set[String]] = {
-      tableFeatures.map(_.filter(_ != CatalogOwnedTableFeature.name))
-    }
-    protocol.copy(
-      readerFeatures = filterImpl(tableFeatures = protocol.readerFeatures),
-      writerFeatures = filterImpl(tableFeatures = protocol.writerFeatures)
-    )
   }
 
   /**

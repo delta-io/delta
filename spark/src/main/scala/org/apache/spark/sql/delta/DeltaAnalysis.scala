@@ -241,7 +241,7 @@ class DeltaAnalysis(session: SparkSession)
           //   )
           //   - Do not filter CatalogOwned table feature out if target table is enabling
           //     CatalogOwned.
-          Some(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol = p))
+          Some(p.removeFeature(targetFeature = CatalogOwnedTableFeature))
         case _ =>
           protocol
       }
