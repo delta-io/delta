@@ -131,14 +131,23 @@ public class InExpressionEvaluator {
 
   private static void validateTypeCompatibility(
       In in, DataType valueDataType, List<DataType> inListDataTypes) {
+    // Check for nested types which are not supported
+    if (isNestedType(valueDataType)) {
+      throw unsupportedExpressionException(
+          in,
+          String.format(
+              "IN expression does not support nested types.",
+              valueDataType));
+    }
+
     for (int i = 0; i < inListDataTypes.size(); i++) {
       DataType listElementType = inListDataTypes.get(i);
       if (!valueDataType.equivalent(listElementType)) {
         throw unsupportedExpressionException(
             in,
             String.format(
-                "IN expression requires all elements to have the same type as the value. "
-                    + "Value type: %s, incompatible element type at position %d: %s. "
+                "IN expression requires all list elements to match the value type. "
+                    + "Value type: %s, but found incompatible element type at position %d: %s. "
                     + "Consider casting the incompatible element to the value type.",
                 valueDataType, i + 1, listElementType));
       }
@@ -194,6 +203,12 @@ public class InExpressionEvaluator {
     }
   }
 
+  private static boolean isNestedType(DataType dataType) {
+    return dataType instanceof ArrayType
+        || dataType instanceof MapType
+        || dataType instanceof StructType;
+  }
+
   private static boolean compareValues(Object value1, Object value2, DataType valueType) {
     Preconditions.checkArgument(value1 != null || value2 != null);
     if (value1 == null || value2 == null) {
@@ -219,6 +234,17 @@ public class InExpressionEvaluator {
     InColumnVector(List<ColumnVector> childrenVectors) {
       this.valueVector = childrenVectors.get(0);
       this.inListVectors = childrenVectors.subList(1, childrenVectors.size());
+
+      // Validate type compatibility once during construction rather than for each row
+      DataType valueType = valueVector.getDataType();
+      for (ColumnVector inListVector : inListVectors) {
+        Preconditions.checkArgument(
+            valueType.equivalent(inListVector.getDataType()),
+            String.format(
+                "Type mismatch in IN expression: value type %s is not equivalent to "
+                    + "list element type %s",
+                valueType, inListVector.getDataType()));
+      }
     }
 
     @Override
@@ -259,8 +285,12 @@ public class InExpressionEvaluator {
           VectorUtils.getValueAsObject(valueVector, valueVector.getDataType(), rowId);
 
       // Track if we encounter any null values in the IN list
-      // SQL semantics: if value is null OR any comparison is null, result is null
-      // Only return false if value is not null and no matches found and no nulls encountered
+      // SQL semantics:
+      // - If value matches any element, return true (e.g., 5 IN {0, 4, null, 5} = true)
+      // - If value is null OR (no matches found AND any null in list), return null
+      //   (e.g., null IN {1, 2} = null, 3 IN {1, null, 2} = null)
+      // - If value is not null AND no matches found AND no nulls in list, return false
+      //   (e.g., 3 IN {1, 2} = false)
       boolean foundNull = false;
 
       for (ColumnVector inListVector : inListVectors) {
@@ -269,8 +299,6 @@ public class InExpressionEvaluator {
         } else {
           Object inListValue =
               VectorUtils.getValueAsObject(inListVector, inListVector.getDataType(), rowId);
-          Preconditions.checkArgument(
-              valueVector.getDataType().equivalent(inListVector.getDataType()));
           if (compareValues(valueToFind, inListValue, valueVector.getDataType())) {
             return Optional.of(true);
           }

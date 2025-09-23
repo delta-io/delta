@@ -1095,7 +1095,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           incompatibleInExpr,
           BooleanType.BOOLEAN).eval(valueInput)
       }
-      assert(e.getMessage.contains("IN expression requires all elements to have the same type"))
+      assert(
+        e.getMessage.contains("IN expression requires all list elements to match the value type"))
     }
 
     // Test incompatible type combinations
