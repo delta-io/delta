@@ -25,12 +25,12 @@ import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.checksum.ChecksumUtils
 import io.delta.kernel.internal.util.ManualClock
+import io.delta.kernel.test.DeltaKernelTestUtils.OptimisticTxnKernelHelper
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.CommitInfo
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite

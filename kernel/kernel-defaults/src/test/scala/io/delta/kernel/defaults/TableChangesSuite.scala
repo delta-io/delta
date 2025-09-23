@@ -34,10 +34,10 @@ import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
+import io.delta.kernel.test.DeltaKernelTestUtils.OptimisticTxnKernelHelper
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile, SetTransaction => SparkSetTransaction}
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.{Path => HadoopPath}
 import org.apache.spark.sql.functions.col

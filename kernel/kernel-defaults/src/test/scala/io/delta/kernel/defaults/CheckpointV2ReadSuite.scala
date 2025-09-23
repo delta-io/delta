@@ -24,12 +24,12 @@ import io.delta.kernel.defaults.utils.{AbstractTestUtils, ExpressionTestUtils, T
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
+import io.delta.kernel.test.DeltaKernelTestUtils.OptimisticTxnKernelHelper
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.hadoop.conf.Configuration
