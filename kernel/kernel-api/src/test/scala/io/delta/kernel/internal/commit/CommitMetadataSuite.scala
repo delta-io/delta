@@ -18,11 +18,12 @@ package io.delta.kernel.internal.commit
 
 import java.util.Optional
 
-import io.delta.kernel.commit.CommitMetadata
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.commit.CommitMetadata.CommitType
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
-import io.delta.kernel.test.{ActionUtils, TestFixtures, VectorTestUtils}
+import io.delta.kernel.test.{TestFixtures, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -56,6 +57,13 @@ class CommitMetadataSuite extends AnyFunSuite
         version = updateVersionNonZero,
         commitInfo = null,
         readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)))
+    }
+
+    intercept[NullPointerException] {
+      createCommitMetadata(
+        version = updateVersionNonZero,
+        readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+        committerProperties = null)
     }
   }
 
@@ -98,6 +106,17 @@ class CommitMetadataSuite extends AnyFunSuite
     }.getMessage
 
     assert(exMsg.contains("InCommitTimestamp must be present for commits to catalogManaged tables"))
+  }
+
+  test("getCommitterProperties returns provided supplier") {
+    val props = Map("key1" -> "value1", "key2" -> "value2").asJava
+
+    val commitMetadata = createCommitMetadata(
+      version = updateVersionNonZero,
+      readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+      committerProperties = () => props)
+
+    assert(commitMetadata.getCommitterProperties.get() == props)
   }
 
   test("getEffectiveProtocol returns new protocol when present") {

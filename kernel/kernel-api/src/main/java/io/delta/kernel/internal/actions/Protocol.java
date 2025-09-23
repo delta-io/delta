@@ -131,6 +131,21 @@ public class Protocol {
     return writerFeatures;
   }
 
+  public Set<String> getReaderAndWriterFeatures() {
+    final Set<String> allFeatureNames = new HashSet<>();
+    allFeatureNames.addAll(readerFeatures);
+    allFeatureNames.addAll(writerFeatures);
+    return allFeatureNames;
+  }
+
+  public boolean supportsReaderFeatures() {
+    return supportsReaderFeatures;
+  }
+
+  public boolean supportsWriterFeatures() {
+    return supportsWriterFeatures;
+  }
+
   @Override
   public String toString() {
     final StringBuilder sb = new StringBuilder("Protocol{");

@@ -59,28 +59,28 @@ public class CommitMetadata {
   private final long version;
   private final String logPath;
   private final CommitInfo commitInfo;
+  private final Supplier<Map<String, String>> committerProperties;
+
   private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
-  private final Optional<Supplier<Map<String, String>>> committerPropertiesOpt;
 
   public CommitMetadata(
       long version,
       String logPath,
       CommitInfo commitInfo,
+      Supplier<Map<String, String>> committerProperties,
       Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
       Optional<Protocol> newProtocolOpt,
-      Optional<Metadata> newMetadataOpt,
-      Optional<Supplier<Map<String, String>>> committerPropertiesOpt) {
+      Optional<Metadata> newMetadataOpt) {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
     this.commitInfo = requireNonNull(commitInfo, "commitInfo is null");
+    this.committerProperties = requireNonNull(committerProperties, "committerProperties is null");
     this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
-    this.committerPropertiesOpt =
-        requireNonNull(committerPropertiesOpt, "committerPropertiesSupplierOpt is null");
 
     checkArgument(
         readPandMOpt.isPresent() || newProtocolOpt.isPresent(),
@@ -106,6 +106,14 @@ public class CommitMetadata {
   /** The {@link CommitInfo} that is being written as part of this commit. */
   public CommitInfo getCommitInfo() {
     return commitInfo;
+  }
+
+  /**
+   * Returns custom properties provided by the connector to be passed through to the committer.
+   * These properties are not inspected by Kernel and are used for catalog-specific functionality.
+   */
+  public Supplier<Map<String, String>> getCommitterProperties() {
+    return committerProperties;
   }
 
   /**
@@ -138,14 +146,6 @@ public class CommitMetadata {
    */
   public Optional<Metadata> getNewMetadataOpt() {
     return newMetadataOpt;
-  }
-
-  /**
-   * Returns custom properties provided by the connector to be passed through to the committer.
-   * These properties are not inspected by Kernel and are used for catalog-specific functionality.
-   */
-  public Optional<Supplier<Map<String, String>>> getCommitterPropertiesOpt() {
-    return committerPropertiesOpt;
   }
 
   /**

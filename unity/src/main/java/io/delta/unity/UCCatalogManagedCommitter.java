@@ -38,8 +38,6 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.unity.adapters.MetadataAdapter;
 import io.delta.unity.adapters.ProtocolAdapter;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -50,9 +48,6 @@ import org.slf4j.LoggerFactory;
  * Catalog. That is, these Delta tables must have the catalogManaged table feature supported.
  */
 public class UCCatalogManagedCommitter implements Committer {
-  public static final String UC_METASTORE_LAST_UPDATE_VERSION = "delta.lastUpdateVersion";
-  public static final String UC_METASTORE_LAST_COMMIT_TIMESTAMP = "delta.lastCommitTimestamp";
-
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
   protected final UCClient ucClient;
@@ -143,22 +138,7 @@ public class UCCatalogManagedCommitter implements Committer {
    * Catalog.
    */
   protected Optional<Metadata> generateMetadataPayloadOpt(CommitMetadata commitMetadata) {
-    final Map<String, String> additionalUcProperties = new HashMap<>();
-
-    additionalUcProperties.put(
-        UC_METASTORE_LAST_UPDATE_VERSION, String.valueOf(commitMetadata.getVersion()));
-
-    additionalUcProperties.put(
-        UC_METASTORE_LAST_COMMIT_TIMESTAMP,
-        String.valueOf(commitMetadata.getCommitInfo().getInCommitTimestamp().get()));
-
-    commitMetadata
-        .getCommitterPropertiesOpt()
-        .ifPresent(props -> additionalUcProperties.putAll(props.get()));
-
-    return commitMetadata
-        .getNewMetadataOpt()
-        .map(metadata -> metadata.withMergedConfiguration(additionalUcProperties));
+    return commitMetadata.getNewMetadataOpt();
   }
 
   ////////////////////

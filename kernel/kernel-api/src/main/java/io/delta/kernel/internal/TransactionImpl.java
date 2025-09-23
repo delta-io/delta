@@ -124,7 +124,7 @@ public class TransactionImpl implements Transaction {
   private Optional<CRCInfo> currentCrcInfo;
   private Optional<Long> providedRowIdHighWatermark = Optional.empty();
   private boolean closed; // To avoid trying to commit the same transaction again.
-  private Optional<Supplier<Map<String, String>>> committerPropertiesOpt = Optional.empty();
+  private Supplier<Map<String, String>> committerProperties = Collections::emptyMap;
 
   public TransactionImpl(
       boolean isCreateOrReplace,
@@ -201,8 +201,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public void withCommitterProperties(Supplier<Map<String, String>> committerProperties) {
-    this.committerPropertiesOpt =
-        Optional.of(requireNonNull(committerProperties, "committerProperties is null"));
+    this.committerProperties = requireNonNull(committerProperties, "committerProperties is null");
   }
 
   @Override
@@ -542,10 +541,10 @@ public class TransactionImpl implements Transaction {
               commitAsVersion,
               logPath.toString(),
               attemptCommitInfo,
+              committerProperties,
               readSnapshotOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
               shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
-              shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty(),
-              committerPropertiesOpt);
+              shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());
 
       DirectoryCreationUtils.createAllDeltaDirectoriesAsNeeded(
           engine, logPath, commitAsVersion, commitMetadata.getReadProtocolOpt(), protocol);

@@ -256,17 +256,11 @@ class UCCatalogManagedCommitterSuite
       ucClient.createTableIfNotExistsOrThrow("ucTableId", new TableData(-1, ArrayBuffer[Commit]()))
       val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
 
-      val userInputProperties = Map("foo" -> "bar")
-      val additionalCommitterProperties = Map("zip" -> "zap")
-      val autoAddedUcProperties = Map(
-        "delta.lastUpdateVersion" -> "1",
-        "delta.lastCommitTimestamp" -> "1")
-
       // ===== WHEN =====
       val protocolUpgrade = protocolWithCatalogManagedSupport
         .withFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
       val metadataUpgrade = basicPartitionedMetadata
-        .withReplacedConfiguration(userInputProperties.asJava)
+        .withMergedConfiguration(Map("foo" -> "bar").asJava)
 
       val commitMetadata = createCommitMetadata(
         version = 1,
@@ -276,8 +270,7 @@ class UCCatalogManagedCommitterSuite
             protocolWithCatalogManagedSupport,
             basicPartitionedMetadata)),
         newProtocolOpt = Optional.of(protocolUpgrade),
-        newMetadataOpt = Optional.of(metadataUpgrade),
-        committerPropertiesOpt = Optional.of(() => additionalCommitterProperties.asJava))
+        newMetadataOpt = Optional.of(metadataUpgrade))
       committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
 
       // ===== THEN =====
@@ -286,11 +279,7 @@ class UCCatalogManagedCommitterSuite
       val latestMetadata = updatedTableData.getCurrentMetadataOpt.get
       assert(latestProtocol.getReaderFeatures === protocolUpgrade.getReaderFeatures)
       assert(latestProtocol.getWriterFeatures === protocolUpgrade.getWriterFeatures)
-
-      val totalExpectedUcProperties = userInputProperties ++
-        additionalCommitterProperties ++
-        autoAddedUcProperties
-      assert(latestMetadata.getConfiguration === totalExpectedUcProperties.asJava)
+      assert(latestMetadata.getConfiguration === metadataUpgrade.getConfiguration)
     }
   }
 
