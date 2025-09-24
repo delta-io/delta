@@ -27,6 +27,7 @@ import com.google.common.math.DoubleMath
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Encoder, QueryTest}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -137,6 +138,14 @@ trait TypeWideningDropFeatureTestMixin
     FAIL_FEATURE_NOT_PRESENT = Value
   }
 
+  def getCatalogTableOpt: Option[CatalogTable] = {
+    if (DeltaTableIdentifier.isDeltaPath(spark, tableIdentifier)) {
+      None
+    } else {
+      Some(spark.sessionState.catalog.getTableMetadata(tableIdentifier))
+    }
+  }
+
   /**
    * Helper method to drop the type widening table feature and check for an expected outcome.
    * Validates in particular that the right number of files were rewritten and that the rewritten
@@ -147,7 +156,8 @@ trait TypeWideningDropFeatureTestMixin
       expectedOutcome: ExpectedOutcome.Value,
       expectedNumFilesRewritten: Long,
       expectedColumnTypes: Map[String, DataType]): Unit = {
-    val snapshot = deltaLog.update()
+    val catalogTableOpt = getCatalogTableOpt
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
     // Need to directly call ALTER TABLE command to pass our deltaLog with manual clock.
     val dropFeature =
       AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), feature.name)
@@ -190,7 +200,8 @@ trait TypeWideningDropFeatureTestMixin
     }
 
     if (expectedOutcome != ExpectedOutcome.FAIL_FEATURE_NOT_PRESENT) {
-      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+      assert(!TypeWideningMetadata.containsTypeWideningMetadata(
+        deltaLog.update(catalogTableOpt = catalogTableOpt).schema))
     }
 
     // Check the number of files rewritten.
@@ -201,7 +212,8 @@ trait TypeWideningDropFeatureTestMixin
     // Check that all files now contain the expected data types.
     expectedColumnTypes.foreach { case (colName, expectedType) =>
       withSQLConf("spark.databricks.delta.formatCheck.enabled" -> "false") {
-        deltaLog.update().filesForScan(Seq.empty, keepNumRecords = false).files.foreach { file =>
+        deltaLog.update(catalogTableOpt = catalogTableOpt).filesForScan(
+            Seq.empty, keepNumRecords = false).files.foreach { file =>
           val filePath = DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, file.path)
           val data = spark.read.parquet(filePath.toString)
           val physicalColName = DeltaColumnMapping.getPhysicalName(snapshot.schema(colName))
@@ -215,7 +227,7 @@ trait TypeWideningDropFeatureTestMixin
   /** Get the number of remove actions committed since the given table version (included). */
   def getNumRemoveFilesSinceVersion(version: Long): Long =
     deltaLog
-      .getChanges(startVersion = version)
+      .getChanges(startVersion = version, catalogTableOpt = getCatalogTableOpt)
       .flatMap { case (_, actions) => actions }
       .collect { case r: RemoveFile => r }
       .size

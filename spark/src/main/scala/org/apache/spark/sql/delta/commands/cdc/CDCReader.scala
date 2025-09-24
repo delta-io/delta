@@ -651,7 +651,8 @@ trait CDCReaderImpl extends CDCReaderBase {
       useCoarseGrainedCDC: Boolean = false,
       startVersionSnapshot: Option[SnapshotDescriptor] = None): DataFrame = {
 
-    val changesWithinRange = deltaLog.getChanges(start, end, failOnDataLoss = false)
+    val changesWithinRange = deltaLog.getChanges(
+      start, end, catalogTableOpt = None, failOnDataLoss = false)
     changesToDF(
       readSchemaSnapshot.getOrElse(deltaLog.unsafeVolatileSnapshot),
       start,

@@ -1497,7 +1497,8 @@ abstract class CommitCoordinatorSuiteBase
     val usageRecords = Log4jUsageLogger.track {
       val iter = endVersionOpt match {
         case Some(endVersion) =>
-          deltaLog.getChangeLogFiles(startVersion, endVersion, failOnDataLoss = false)
+          deltaLog.getChangeLogFiles(
+            startVersion, endVersion, catalogTableOpt = None, failOnDataLoss = false)
         case None =>
           deltaLog.getChangeLogFiles(startVersion)
       }
