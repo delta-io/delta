@@ -28,8 +28,6 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
-import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -792,9 +790,7 @@ public class SchemaUtils {
       // supported types
       return;
     } else if (dataType instanceof StructType) {
-      ((StructType) dataType)
-          .fields()
-          .forEach(field -> validateSupportedType(field.getDataType()));
+      ((StructType) dataType).fields().forEach(field -> validateSupportedType(field.getDataType()));
     } else if (dataType instanceof ArrayType) {
       validateSupportedType(((ArrayType) dataType).getElementType());
     } else if (dataType instanceof MapType) {

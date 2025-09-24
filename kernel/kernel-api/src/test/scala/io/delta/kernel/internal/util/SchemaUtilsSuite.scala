@@ -264,35 +264,23 @@ class SchemaUtilsSuite extends AnyFunSuite {
     validateSchema(schema, false /* isColumnMappingEnabled */ )
   }
 
-  test("variant and feature enabled") {
+  test("variant") {
     val schema = new StructType()
       .add(
         "variant",
         VariantType.VARIANT)
 
-    validateSchema(schema, Set(TableFeatures.VARIANT_RW_FEATURE).asJava)
+    validateSchema(schema, false /* isColumnMappingEnabled */ )
   }
 
-  test("variant and feature enabled - nested") {
+  test("variant - nested") {
     val schema = new StructType()
       .add(
         "first",
         new StructType()
           .add("variant", VariantType.VARIANT))
 
-    validateSchema(schema, Set(TableFeatures.VARIANT_RW_FEATURE).asJava)
-  }
-
-  test("variant and feature disabled") {
-    val schema = new StructType()
-      .add(
-        "first",
-        new StructType()
-          .add("variant", VariantType.VARIANT))
-
-    expectFailure("kernel doesn't support writing data of type: variant") {
-      validateSchema(schema, emptySet[TableFeature]())
-    }
+    validateSchema(schema, false /* isColumnMappingEnabled */ )
   }
 
   test("duplicate column with back ticks - nested") {
@@ -526,8 +514,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(current, properties = tblProperties),
         metadata(updated, properties = tblProperties),
         emptySet(),
-        false, // allowNewRequiredFields
-        emptySet())
+        false // allowNewRequiredFields
+      )
     }
 
     assert(e.getMessage == "Cannot validate updated schema when column mapping is disabled")
@@ -723,8 +711,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           metadata(schemaBefore),
           metadata(schemaAfter),
           emptySet(),
-          false, /* allowNewRequiredFields */
-          emptySet())
+          false /* allowNewRequiredFields */ )
       }
 
       assert(e.getMessage.matches("Field duplicate_id with id .* already exists"))
@@ -777,8 +764,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false, /* allowNewRequiredFields */
-        emptySet())
+        false /* allowNewRequiredFields */ )
     }
   }
 
@@ -838,8 +824,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        true, /* allowNewRequiredFields */
-        emptySet())
+        true /* allowNewRequiredFields */ )
     }
   }
 
@@ -1076,8 +1061,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false, /* allowNewRequiredFields */
-        emptySet())
+        false /* allowNewRequiredFields */ )
     }
   }
 
@@ -1115,8 +1099,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false, /* allowNewRequiredFields */
-        emptySet())
+        false /* allowNewRequiredFields */ )
     }
   }
 
@@ -1220,8 +1203,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           metadata(schemaBefore, tableProperties),
           metadata(schemaAfter, tableProperties),
           emptySet(),
-          allowNewRequiredFields,
-          emptySet())
+          allowNewRequiredFields)
       }
 
       assert(e.getMessage.matches(expectedMessage), s"${e.getMessage} ~= $expectedMessage")
@@ -1481,8 +1463,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
             metadata(schemaBefore, tblProperties),
             metadata(schemaAfter, tblProperties),
             emptySet(),
-            false, /* allowNewRequiredFields */
-            emptySet())
+            false /* allowNewRequiredFields */
+          )
         } else {
           // Should throw an exception
           val e = intercept[KernelException] {
@@ -1490,8 +1472,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
               metadata(schemaBefore, tblProperties),
               metadata(schemaAfter, tblProperties),
               emptySet(),
-              false, /* allowNewRequiredFields */
-              emptySet())
+              false /* allowNewRequiredFields */
+            )
           }
           assert(e.getMessage.contains("Cannot change the type of existing field"))
         }
@@ -1570,7 +1552,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       tableProperties = tblProperties)
   }
 
-  test("Validate succeeds when adding variant column and variant feature is enabled") {
+  test("Validate succeeds when adding variant column") {
     val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
     val before = new StructType().add(
       "id",
@@ -1588,33 +1570,6 @@ class SchemaUtilsSuite extends AnyFunSuite {
       metadata(before, tableProperties),
       metadata(schemaWithVariant, tableProperties),
       emptySet(),
-      false,
-      Set(TableFeatures.VARIANT_RW_FEATURE).asJava)
-  }
-
-  test("Validate fails adding variant column when variant feature is not enabled") {
-    val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
-    val before = new StructType().add(
-      "id",
-      IntegerType.INTEGER,
-      false,
-      fieldMetadata(id = 1, physicalName = "id"))
-
-    val schemaWithVariant = before.add(
-      "variant",
-      VariantType.VARIANT,
-      true,
-      fieldMetadata(id = 2, physicalName = "variant"))
-
-    val e = intercept[KernelException] {
-      validateUpdatedSchemaAndGetUpdatedSchema(
-        metadata(before, tableProperties),
-        metadata(schemaWithVariant, tableProperties),
-        emptySet(),
-        false,
-        emptySet())
-    }
-
-    assert(e.getMessage.contains("Kernel doesn't support writing data of type: variant"))
+      false)
   }
 }
