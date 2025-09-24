@@ -176,7 +176,7 @@ class DefaultCommitterSuite extends AnyFunSuite
     val commitParsedLogData = commitResult.getCommitLogData
 
     assert(commitParsedLogData.isFile)
-    assert(commitParsedLogData.version == basicFileSystemCommitMetadataNoPMChange.getVersion)
+    assert(commitParsedLogData.getVersion == basicFileSystemCommitMetadataNoPMChange.getVersion)
   }
 
 }

@@ -514,8 +514,7 @@ trait IcebergWriterCompatV1SuiteBase
       .add("c1", IntegerType.INTEGER)
       .add("c2", VariantType.VARIANT),
     testOnExistingTable = false, // we don't currently support schema updates
-    expectedErrorMessage = "requires writer table feature \"[variantType]\"" +
-      " which is unsupported by this version of Delta Kernel")
+    expectedErrorMessage = "icebergCompatV2 does not support the data types: [variant]")
 
   testIncompatibleTableFeature(
     "rowTracking",
@@ -536,7 +535,9 @@ trait IcebergWriterCompatV1SuiteBase
 
   testIncompatibleUnsupportedTableFeature(
     "variantType inactive",
-    tablePropertiesToEnable = Map("delta.feature.variantType" -> "supported"))
+    tablePropertiesToEnable = Map("delta.feature.variantType" -> "supported"),
+    expectedErrorMessage = "Table features [variantType] are " +
+      "incompatible with icebergWriterCompatV1")
 
   // deletionVectors is blocked by both icebergCompatV2 and icebergWriterCompatV1; since the
   // icebergCompatV2 checks are executed first as part of ICEBERG_COMPAT_V2_ENABLED.postProcess we

@@ -135,7 +135,7 @@ public final class VectorUtils {
    * on the data type of the column vector. For complex types array and map, returns the value as
    * Java list or Java map. For struct type, returns an {@link Row}.
    */
-  private static Object getValueAsObject(ColumnVector columnVector, DataType dataType, int rowId) {
+  public static Object getValueAsObject(ColumnVector columnVector, DataType dataType, int rowId) {
     if (columnVector.isNullAt(rowId)) {
       return null;
     } else if (dataType instanceof BooleanType) {

@@ -346,6 +346,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
+    @Override
+    ExpressionTransformResult visitIn(In in) {
+      ExpressionTransformResult visitedValue = visit(in.getValueExpression());
+      List<ExpressionTransformResult> visitedInList =
+          in.getInListElements().stream().map(this::visit).collect(toList());
+      In transformedExpression =
+          InExpressionEvaluator.validateAndTransform(
+              in,
+              visitedValue.expression,
+              visitedValue.outputType,
+              visitedInList.stream().map(e -> e.expression).collect(toList()),
+              visitedInList.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
     private Predicate validateIsPredicate(
         Expression baseExpression, ExpressionTransformResult result) {
       checkArgument(
@@ -724,6 +739,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ColumnVector visitStartsWith(Predicate startsWith) {
       return StartsWithExpressionEvaluator.eval(
           startsWith.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitIn(In in) {
+      return InExpressionEvaluator.eval(
+          in.getChildren().stream().map(this::visit).collect(toList()));
     }
 
     /**

@@ -40,14 +40,17 @@ import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.VariantType;
 import io.delta.kernel.utils.*;
 import java.net.URI;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Represents a transaction to mutate a Delta table.
@@ -107,6 +110,13 @@ public interface Transaction {
    */
   TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException;
+
+  /**
+   * Adds custom properties that will be passed through to the committer. These properties allow
+   * connectors to inject catalog-specific metadata without Kernel inspection. Repeated calls to
+   * this method will overwrite any previously set properties.
+   */
+  void withCommitterProperties(Supplier<Map<String, String>> committerProperties);
 
   /**
    * Commit the provided domain metadata as part of this transaction. If this is called more than
@@ -175,6 +185,7 @@ public interface Transaction {
     boolean isIcebergCompatEnabled =
         isIcebergCompatV2Enabled(transactionState) || isIcebergCompatV3Enabled(transactionState);
     blockIfColumnMappingEnabled(transactionState);
+    blockIfVariantDataTypeIsDefined(tableSchema);
 
     // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
@@ -198,6 +209,20 @@ public interface Transaction {
           }
           return new FilteredColumnarBatch(data, filteredBatch.getSelectionVector());
         });
+  }
+
+  /**
+   * Currently Kernel supports only metadata updates for variants (including shredded values). Block
+   * any physical data writes if variant exists in the schema
+   */
+  static void blockIfVariantDataTypeIsDefined(StructType tableSchema) {
+    boolean variantFieldExists =
+        new SchemaIterable(tableSchema)
+            .stream().anyMatch(field -> field.getField().getDataType() instanceof VariantType);
+    if (variantFieldExists) {
+      throw new UnsupportedOperationException(
+          "Transforming logical data with variant data is currently unsupported");
+    }
   }
 
   /**

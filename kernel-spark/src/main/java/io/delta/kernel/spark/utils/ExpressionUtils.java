@@ -54,10 +54,10 @@ public final class ExpressionUtils {
    * </ul>
    *
    * @param filter the Spark SQL filter to convert
-   * @return Optional containing the converted Kernel predicate, or empty if conversion is not
-   *     supported
+   * @return ConvertedPredicate containing the converted Kernel predicate, or empty if conversion is
+   *     not supported, along with a boolean indicating whether the conversion was partial
    */
-  public static Optional<Predicate> convertSparkFilterToKernelPredicate(Filter filter) {
+  public static ConvertedPredicate convertSparkFilterToKernelPredicate(Filter filter) {
     return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/);
   }
 
@@ -66,78 +66,90 @@ public final class ExpressionUtils {
    * canPartialPushDown is true, AND filters can be partially converted if at least one operand can
    * be converted. OR filters always require both operands to be convertible. NOT filters disable
    * partial pushdown for their child to preserve semantic correctness.
+   *
+   * <p>Return a ConvertedPredicate object, which contains: - Optional<Predicate>: the converted
+   * Kernel predicate, or empty if conversion is not supported - boolean isPartial: indicates
+   * whether the conversion was partial
    */
   @VisibleForTesting
-  static Optional<Predicate> convertSparkFilterToKernelPredicate(
+  static ConvertedPredicate convertSparkFilterToKernelPredicate(
       Filter filter, boolean canPartialPushDown) {
     if (filter instanceof EqualTo) {
       EqualTo f = (EqualTo) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("=", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate("=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof EqualNullSafe) {
       EqualNullSafe f = (EqualNullSafe) filter;
       // EqualNullSafe with null value should be translated to IS_NULL
       // For non-null values, we use "=" operator.
-      return f.value() == null
-          ? Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())))
-          : convertValueToKernelLiteral(f.value())
-              .map(l -> new Predicate("=", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          f.value() == null
+              ? Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())))
+              : convertValueToKernelLiteral(f.value())
+                  .map(l -> new Predicate("=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof GreaterThan) {
       GreaterThan f = (GreaterThan) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate(">", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate(">", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof GreaterThanOrEqual) {
       GreaterThanOrEqual f = (GreaterThanOrEqual) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate(">=", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate(">=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof LessThan) {
       LessThan f = (LessThan) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("<", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate("<", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof LessThanOrEqual) {
       LessThanOrEqual f = (LessThanOrEqual) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("<=", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate("<=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof IsNull) {
       IsNull f = (IsNull) filter;
-      return Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())));
+      return new ConvertedPredicate(
+          Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute()))));
     }
     if (filter instanceof IsNotNull) {
       IsNotNull f = (IsNotNull) filter;
-      return Optional.of(new Predicate("IS_NOT_NULL", kernelColumn(f.attribute())));
+      return new ConvertedPredicate(
+          Optional.of(new Predicate("IS_NOT_NULL", kernelColumn(f.attribute()))));
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
-      Optional<Predicate> left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
-      Optional<Predicate> right =
-          convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
+      ConvertedPredicate left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
+      ConvertedPredicate right = convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
+      boolean isPartial = left.isPartial() || right.isPartial();
       if (left.isPresent() && right.isPresent()) {
-        return Optional.of(new And(left.get(), right.get()));
+        return new ConvertedPredicate(Optional.of(new And(left.get(), right.get())), isPartial);
       }
       if (canPartialPushDown && left.isPresent()) {
-        return left;
+        return new ConvertedPredicate(left.getConvertedPredicate(), true);
       }
       if (canPartialPushDown && right.isPresent()) {
-        return right;
+        return new ConvertedPredicate(right.getConvertedPredicate(), true);
       }
-      return Optional.empty();
+      return new ConvertedPredicate(Optional.empty(), isPartial);
     }
     if (filter instanceof org.apache.spark.sql.sources.Or) {
       org.apache.spark.sql.sources.Or f = (org.apache.spark.sql.sources.Or) filter;
-      Optional<Predicate> left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
-      Optional<Predicate> right =
-          convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
+      ConvertedPredicate left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
+      ConvertedPredicate right = convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
       // OR requires both operands to be convertible for correctness
+      boolean isPartial = left.isPartial() || right.isPartial();
       if (!left.isPresent() || !right.isPresent()) {
-        return Optional.empty();
+        return new ConvertedPredicate(Optional.empty(), isPartial);
       }
-      return Optional.of(new Or(left.get(), right.get()));
+      return new ConvertedPredicate(Optional.of(new Or(left.get(), right.get())), isPartial);
     }
     if (filter instanceof Not) {
       Not f = (Not) filter;
@@ -159,12 +171,13 @@ public final class ExpressionUtils {
       //
       // NOT(age < 30) = NOT(true) = false → system excludes both row
       // We will return incorrect result, then.
-      Optional<Predicate> child =
+      ConvertedPredicate child =
           convertSparkFilterToKernelPredicate(f.child(), false /*canPartialPushDown*/);
-      return child.map(c -> new Predicate("NOT", c));
+      return new ConvertedPredicate(
+          child.getConvertedPredicate().map(c -> new Predicate("NOT", c)), child.isPartial());
     }
 
-    return Optional.empty();
+    return new ConvertedPredicate(Optional.empty());
   }
 
   /**
@@ -278,6 +291,101 @@ public final class ExpressionUtils {
 
     // Unsupported type - return empty Optional to skip the conversion.
     return Optional.empty();
+  }
+
+  /*
+   * Wrapper class to hold the result of converting a Spark Filter to a Kernel Predicate,
+   * including a boolean indicator for whether the conversion was partial.
+   */
+  public static final class ConvertedPredicate {
+    private final Optional<Predicate> convertedPredicate;
+    private final boolean isPartial;
+
+    public ConvertedPredicate(Optional<Predicate> convertedPredicate) {
+      this.convertedPredicate = convertedPredicate;
+      this.isPartial = false;
+    }
+
+    public ConvertedPredicate(Optional<Predicate> convertedPredicate, boolean isPartial) {
+      this.convertedPredicate = convertedPredicate;
+      this.isPartial = isPartial;
+    }
+
+    public Optional<Predicate> getConvertedPredicate() {
+      return convertedPredicate;
+    }
+
+    public boolean isPartial() {
+      return isPartial;
+    }
+
+    public boolean isPresent() {
+      return convertedPredicate.isPresent();
+    }
+
+    public Predicate get() {
+      assert convertedPredicate.isPresent();
+      return convertedPredicate.get();
+    }
+  }
+
+  /*
+   * Helper class to hold the classification result of a Filter
+   */
+  public static class FilterClassificationResult {
+    public final Boolean isKernelSupported;
+    public final Boolean isPartialConversion;
+    public final Boolean isDataFilter;
+    public final Optional<Predicate> kernelPredicate;
+
+    public FilterClassificationResult(
+        Boolean isKernelSupported,
+        Boolean isPartialConversion,
+        Boolean isDataFilter,
+        Optional<Predicate> kernelPredicate) {
+      this.isKernelSupported = isKernelSupported;
+      this.isPartialConversion = isPartialConversion;
+      this.isDataFilter = isDataFilter;
+      this.kernelPredicate = kernelPredicate;
+    }
+  }
+
+  /**
+   * Classifies a Spark Filter based on its convertibility to a Kernel Predicate and whether it is a
+   * data filter (i.e., references non-partition columns).
+   *
+   * @param filter the Spark Filter to classify
+   * @param partitionColumnSet a set of partition column names (in lower case) for identifying data
+   *     filters
+   * @return FilterClassificationResult containing:
+   *     <ul>
+   *       <li>isKernelSupported: true if the filter can be converted to a Kernel Predicate
+   *       <li>isPartialConversion: true if the conversion was partial (for AND filters)
+   *       <li>isDataFilter: true if the filter references at least one non-partition column
+   *       <li>kernelPredicate: Optional containing the converted Kernel Predicate, if any
+   *     </ul>
+   */
+  public static FilterClassificationResult classifyFilter(
+      Filter filter, Set<String> partitionColumnSet) {
+    // try to convert Spark filter to Kernel Predicate
+    ExpressionUtils.ConvertedPredicate convertedPredicate =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    boolean isKernelSupported = convertedPredicate.isPresent();
+    boolean isPartialConversion = convertedPredicate.isPartial();
+    Optional<Predicate> kernelPredicate = convertedPredicate.getConvertedPredicate();
+
+    // check if the filter is a data filter
+    // A data filter is a filter that references at least one non-partition column.
+    String[] refs = filter.references();
+    boolean isDataFilter =
+        refs != null
+            && refs.length > 0
+            && Arrays.stream(refs)
+                .anyMatch((col -> !partitionColumnSet.contains(col.toLowerCase(Locale.ROOT))));
+
+    return new FilterClassificationResult(
+        isKernelSupported, isPartialConversion, isDataFilter, kernelPredicate);
   }
 
   private ExpressionUtils() {}
