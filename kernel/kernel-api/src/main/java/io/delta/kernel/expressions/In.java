@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
  *   <li>Result is true if the value matches any element in the list, false if no matches and no
  *       nulls, null if the value is null or any comparison results in null.
  *   <li>Supports collation for string comparisons.
+ *   <li>Only supports primitive types . Nested types are not supported.
  * </ul>
  *
  * @since 4.0.0

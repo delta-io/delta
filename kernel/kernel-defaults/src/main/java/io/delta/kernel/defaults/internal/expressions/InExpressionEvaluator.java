@@ -132,7 +132,7 @@ public class InExpressionEvaluator {
   private static void validateTypeCompatibility(
       In in, DataType valueDataType, List<DataType> inListDataTypes) {
     // Check for nested types which are not supported
-    if (isNestedType(valueDataType)) {
+    if (valueDataType.isNested()) {
       throw unsupportedExpressionException(
           in, String.format("IN expression does not support nested types.", valueDataType));
     }
@@ -198,12 +198,6 @@ public class InExpressionEvaluator {
     if (!(dataType instanceof StringType)) {
       throw unsupportedExpressionException(in, message);
     }
-  }
-
-  private static boolean isNestedType(DataType dataType) {
-    return dataType instanceof ArrayType
-        || dataType instanceof MapType
-        || dataType instanceof StructType;
   }
 
   private static boolean compareValues(Object value1, Object value2, DataType valueType) {
