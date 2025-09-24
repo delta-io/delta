@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBi
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path

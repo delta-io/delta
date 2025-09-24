@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.Utils.try_element_at
 
 import org.apache.spark.sql.{DataFrameWriter, QueryTest, Row}

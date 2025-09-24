@@ -39,7 +39,8 @@ class DefaultRowCommitVersionSuite extends QueryTest
 
   def expectedCommitVersionsForAllFiles(deltaLog: DeltaLog): Map[String, Long] = {
     val commitVersionForFiles = mutable.Map.empty[String, Long]
-    deltaLog.getChanges(startVersion = 0).foreach { case (commitVersion, actions) =>
+    deltaLog.getChanges(
+        startVersion = 0, catalogTableOpt = None).foreach { case (commitVersion, actions) =>
       actions.foreach {
         case a: AddFile if !commitVersionForFiles.contains(a.path) =>
           commitVersionForFiles += a.path -> commitVersion
