@@ -222,6 +222,54 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  ddlTest("SET TBLPROPERTIES - delta.randomizeFilePrefixes") {
+    withDeltaTable("v1 int, v2 string") { tableName =>
+      // Initially, randomizeFilePrefixes should be false (default)
+      val (deltaLog, initialSnapshot) = getDeltaLogWithSnapshot(tableName)
+      assert(!DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(initialSnapshot.metadata),
+        "randomizeFilePrefixes should be false by default")
+
+      // Set delta.randomizeFilePrefixes and delta.randomPrefixLength
+      sql(s"""
+         |ALTER TABLE $tableName
+         |SET TBLPROPERTIES (
+         |  'delta.randomizeFilePrefixes' = 'true',
+         |  'delta.randomPrefixLength' = '5'
+         |)""".stripMargin)
+
+      val snapshot1 = deltaLog.update()
+      assertEqual(snapshot1.metadata.configuration, Map(
+        "delta.randomizeFilePrefixes" -> "true",
+        "delta.randomPrefixLength" -> "5"
+      ))
+
+      // Verify the configuration is properly parsed
+      assert(DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(snapshot1.metadata),
+        "randomizeFilePrefixes should be enabled")
+      assert(DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot1.metadata) == 5,
+        "randomPrefixLength should be 5")
+
+      // Insert data to create files with random prefixes
+      sql(s"INSERT INTO $tableName VALUES (1, 'test1'), (2, 'test2'), (3, 'test3')")
+
+      val snapshot2 = deltaLog.update()
+      val allFiles = snapshot2.allFiles.collect()
+
+      // Verify that files exist and have random prefixes
+      assert(allFiles.nonEmpty, "Table should have data files")
+
+      // Check that file paths contain 5-character random prefix pattern
+      val prefixLength = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot2.metadata)
+      assert(prefixLength == 5, s"Expected prefix length of 5, but got $prefixLength")
+
+      val pattern = s"[A-Za-z0-9]{$prefixLength}/.*part-.*parquet"
+      allFiles.foreach { file =>
+        assert(file.path.matches(pattern),
+          s"File path '${file.path}' does not match expected random prefix pattern '$pattern'")
+      }
+    }
+  }
+
   test("SET/UNSET comment by TBLPROPERTIES") {
     withDeltaTable("v1 int, v2 string") { tableName =>
       def assertCommentEmpty(): Unit = {
