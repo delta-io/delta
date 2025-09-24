@@ -29,7 +29,9 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Contains all information (excluding the iterator of finalized actions) required to commit changes
@@ -61,6 +63,7 @@ public class CommitMetadata {
   private final String logPath;
   private final CommitInfo commitInfo;
   private final List<DomainMetadata> commitDomainMetadatas;
+  private final Supplier<Map<String, String>> committerProperties;
   private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
@@ -70,6 +73,7 @@ public class CommitMetadata {
       String logPath,
       CommitInfo commitInfo,
       List<DomainMetadata> commitDomainMetadatas,
+      Supplier<Map<String, String>> committerProperties,
       Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
       Optional<Protocol> newProtocolOpt,
       Optional<Metadata> newMetadataOpt) {
@@ -80,6 +84,7 @@ public class CommitMetadata {
     this.commitDomainMetadatas =
         Collections.unmodifiableList(
             requireNonNull(commitDomainMetadatas, "txnDomainMetadatas is null"));
+    this.committerProperties = requireNonNull(committerProperties, "committerProperties is null");
     this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
@@ -119,6 +124,14 @@ public class CommitMetadata {
    */
   public List<DomainMetadata> getCommitDomainMetadatas() {
     return commitDomainMetadatas;
+  }
+
+  /**
+   * Returns custom properties provided by the connector to be passed through to the committer.
+   * These properties are not inspected by Kernel and are used for catalog-specific functionality.
+   */
+  public Supplier<Map<String, String>> getCommitterProperties() {
+    return committerProperties;
   }
 
   /**

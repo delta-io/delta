@@ -75,7 +75,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
 
   test("ParsedDeltaData: can construct inline data") {
     val parsed = ParsedDeltaData.forInlineData(10, emptyInlineData)
-    assert(parsed.version == 10)
+    assert(parsed.getVersion == 10)
     assert(parsed.isInline)
     assert(!parsed.isFile)
     assert(parsed.getInlineData == emptyInlineData)
@@ -86,7 +86,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.isInstanceOf[ParsedDeltaData])
-    assert(parsed.version == 5)
+    assert(parsed.getVersion == 5)
     assert(parsed.isFile)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
@@ -97,7 +97,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.isInstanceOf[ParsedDeltaData])
-    assert(parsed.version == 5)
+    assert(parsed.getVersion == 5)
     assert(parsed.isFile)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
@@ -117,6 +117,24 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(delta1 != delta3)
   }
 
+  test("ParsedDeltaData: isRatifiedCommit with published delta file") {
+    val parsed = ParsedDeltaData.forFileStatus(deltaFileStatus(5))
+    // Published delta files should not be ratified commits
+    assert(!parsed.isRatifiedCommit())
+  }
+
+  test("ParsedDeltaData: isRatifiedCommit with staged delta file") {
+    val parsed = ParsedDeltaData.forFileStatus(stagedCommitFile(5))
+    // Staged delta files should be ratified commits
+    assert(parsed.isRatifiedCommit())
+  }
+
+  test("ParsedDeltaData: isRatifiedCommit with inline data") {
+    val parsed = ParsedDeltaData.forInlineData(10, emptyInlineData)
+    // Inline data should be ratified commits
+    assert(parsed.isRatifiedCommit())
+  }
+
   //////////////////////////
   // ParsedCheckpointData //
   //////////////////////////
@@ -131,7 +149,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
 
   test("ParsedClassicCheckpointData: can construct inline data") {
     val parsed = ParsedClassicCheckpointData.forInlineData(10, emptyInlineData)
-    assert(parsed.version == 10)
+    assert(parsed.getVersion == 10)
     assert(parsed.isInline)
     assert(!parsed.isFile)
     assert(parsed.getInlineData == emptyInlineData)
@@ -142,7 +160,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.isInstanceOf[ParsedClassicCheckpointData])
-    assert(parsed.version == 10)
+    assert(parsed.getVersion == 10)
     assert(parsed.getParentCategoryClass == classOf[ParsedCheckpointData])
     assert(parsed.isFile)
     assert(!parsed.isInline)
@@ -169,7 +187,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
 
   test("ParsedV2CheckpointData: can construct inline data") {
     val parsed = ParsedV2CheckpointData.forInlineData(20, emptyInlineData)
-    assert(parsed.version == 20)
+    assert(parsed.getVersion == 20)
     assert(parsed.isInline)
     assert(!parsed.isFile)
     assert(parsed.getInlineData == emptyInlineData)
@@ -180,7 +198,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.isInstanceOf[ParsedCheckpointData])
-    assert(parsed.version == 20)
+    assert(parsed.getVersion == 20)
     assert(parsed.getParentCategoryClass == classOf[ParsedCheckpointData])
     assert(parsed.isFile)
     assert(!parsed.isInline)
@@ -211,7 +229,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
 
   test("ParsedMultiPartCheckpointData: can construct inline data") {
     val parsed = ParsedMultiPartCheckpointData.forInlineData(15, 1, 3, emptyInlineData)
-    assert(parsed.version == 15)
+    assert(parsed.getVersion == 15)
     assert(parsed.part == 1)
     assert(parsed.numParts == 3)
     assert(parsed.isInline)
@@ -224,7 +242,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(chkpt_15_1_3)
 
     assert(parsed.isInstanceOf[ParsedMultiPartCheckpointData])
-    assert(parsed.version == 15)
+    assert(parsed.getVersion == 15)
     assert(parsed.getParentCategoryClass == classOf[ParsedCheckpointData])
     assert(parsed.isFile)
     assert(!parsed.isInline)
@@ -338,7 +356,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
 
   test("ParsedLogCompactionData: can construct inline data") {
     val parsed = ParsedLogCompactionData.forInlineData(10, 20, emptyInlineData)
-    assert(parsed.version == 20)
+    assert(parsed.getVersion == 20)
     assert(parsed.startVersion == 10)
     assert(parsed.endVersion == 20)
     assert(parsed.isInline)
@@ -351,7 +369,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.isInstanceOf[ParsedLogCompactionData])
-    assert(parsed.version == 30)
+    assert(parsed.getVersion == 30)
     assert(parsed.getParentCategoryClass == classOf[ParsedLogCompactionData])
     assert(parsed.isFile)
     assert(!parsed.isInline)
@@ -412,7 +430,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   test("ParsedChecksumData: can construct inline data") {
     val parsed = ParsedChecksumData.forInlineData(5, emptyInlineData)
     assert(parsed.isInstanceOf[ParsedChecksumData])
-    assert(parsed.version == 5)
+    assert(parsed.getVersion == 5)
     assert(parsed.isInline)
     assert(!parsed.isFile)
     assert(parsed.getInlineData == emptyInlineData)
@@ -423,7 +441,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.isInstanceOf[ParsedChecksumData])
-    assert(parsed.version == 5)
+    assert(parsed.getVersion == 5)
     assert(parsed.getParentCategoryClass == classOf[ParsedChecksumData])
     assert(parsed.getFileStatus == fileStatus)
   }

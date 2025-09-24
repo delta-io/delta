@@ -16,7 +16,8 @@
 
 package io.delta.kernel.test
 
-import java.util.Optional
+import java.util.{Collections, Map => JMap, Optional}
+import java.util.function.Supplier
 
 import scala.collection.JavaConverters._
 
@@ -60,6 +61,7 @@ trait TestFixtures extends ActionUtils {
       logPath: String = "/fake/_delta_log",
       commitInfo: CommitInfo = testCommitInfo(),
       commitDomainMetadatas: List[DomainMetadata] = List.empty,
+      committerProperties: Supplier[JMap[String, String]] = () => Collections.emptyMap(),
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
       newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = {
@@ -68,6 +70,7 @@ trait TestFixtures extends ActionUtils {
       logPath,
       commitInfo,
       commitDomainMetadatas.asJava,
+      committerProperties,
       readPandMOpt,
       newProtocolOpt,
       newMetadataOpt)
