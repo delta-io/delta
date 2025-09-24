@@ -1061,7 +1061,6 @@ trait DeltaTableCreationTests
 
       val pattern = s"[A-Za-z0-9]{$prefixLength}/.*part-.*parquet"
       allFiles.foreach { file =>
-        logInfo("yingyi - " + file.path)
         assert(file.path.matches(pattern),
           s"File path '${file.path}' does not match expected random prefix pattern '$pattern'")
       }
