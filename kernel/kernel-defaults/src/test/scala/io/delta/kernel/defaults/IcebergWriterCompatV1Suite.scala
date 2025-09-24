@@ -515,7 +515,7 @@ trait IcebergWriterCompatV1SuiteBase
       .add("c2", VariantType.VARIANT),
     testOnExistingTable = false, // we don't currently support schema updates
     // We throw an error earlier for variant for some reason
-    expectedErrorMessage = "Kernel doesn't support writing data of type: variant")
+    expectedErrorMessage = "icebergCompatV2 does not support the data types: [variant]")
 
   testIncompatibleTableFeature(
     "rowTracking",
