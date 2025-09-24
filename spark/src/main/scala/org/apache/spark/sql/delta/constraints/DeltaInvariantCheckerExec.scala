@@ -90,7 +90,6 @@ case class DeltaInvariantCheckerExec(
     val newInvariantsPlan = optimizer.ComputeCurrentTime(invariantsFakePlan)
     val constraintsWithFixedTime = newInvariantsPlan.expressions.toArray
 
-    // ES-1589327: don't capture `child` in lambda for Spark task.
     val childOutput = child.output
     child.execute().mapPartitionsInternal { rows =>
       val assertions = UnsafeProjection.create(constraintsWithFixedTime, childOutput)
