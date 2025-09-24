@@ -15,11 +15,13 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import java.lang.{Boolean => BooleanJ}
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Integer => IntegerJ, Long => LongJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
+
+import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
@@ -972,6 +974,251 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           inputSurrogatePair,
           collationIdentifier.get)
     }
+  }
+
+  test("evaluate expression: basic case for in expression") {
+    // Test with string values
+    val col1 = stringVector(Seq[String]("one", "two", "three", "four", null, "five"))
+    val schema = new StructType().add("col1", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    // Basic case for string: col1 IN ("one", "three", "five")
+    val inExpressionBasic = in(
+      new Column("col1"),
+      Literal.ofString("one"),
+      Literal.ofString("three"),
+      Literal.ofString("five"))
+    val expOutputBasic = booleanVector(Seq[BooleanJ](true, false, true, false, null, true))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        inExpressionBasic,
+        BooleanType.BOOLEAN).eval(input),
+      expOutputBasic)
+
+    // IN test with no matches: col1 IN ("six", "seven")
+    val inExpressionNoMatch = in(
+      new Column("col1"),
+      Literal.ofString("six"),
+      Literal.ofString("seven"))
+    val expOutputNoMatch = booleanVector(Seq[BooleanJ](false, false, false, false, null, false))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        inExpressionNoMatch,
+        BooleanType.BOOLEAN).eval(input),
+      expOutputNoMatch)
+
+    // IN test with NULL in list: col1 IN ("one", NULL, "three"), returns null if no matches.
+    val inExpressionWithNull = in(
+      new Column("col1"),
+      Literal.ofString("one"),
+      Literal.ofString(null),
+      Literal.ofString("three"))
+    val expOutputWithNull = booleanVector(Seq[BooleanJ](true, null, true, null, null, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        inExpressionWithNull,
+        BooleanType.BOOLEAN).eval(input),
+      expOutputWithNull)
+
+    // Test with float values: col IN (1.5f, 2.5f, 3.5f)
+    val floatCol = floatVector(Seq[FloatJ](1.5f, 2.5f, 3.5f, 4.5f, null))
+    val floatSchema = new StructType().add("floatCol", FloatType.FLOAT)
+    val floatInput = new DefaultColumnarBatch(floatCol.getSize, floatSchema, Array(floatCol))
+
+    val inExpressionFloat = in(
+      new Column("floatCol"),
+      Literal.ofFloat(1.5f),
+      Literal.ofFloat(2.5f),
+      Literal.ofFloat(3.5f))
+    val expOutputFloat = booleanVector(Seq[BooleanJ](true, true, true, false, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        floatSchema,
+        inExpressionFloat,
+        BooleanType.BOOLEAN).eval(floatInput),
+      expOutputFloat)
+
+    // Test with double values: col IN (1.1, 2.2, null)
+    val doubleCol = doubleVector(Seq[DoubleJ](1.1, 2.2, 3.3, 4.4, null))
+    val doubleSchema = new StructType().add("doubleCol", DoubleType.DOUBLE)
+    val doubleInput = new DefaultColumnarBatch(doubleCol.getSize, doubleSchema, Array(doubleCol))
+
+    val inExpressionDouble = in(
+      new Column("doubleCol"),
+      Literal.ofDouble(1.1),
+      Literal.ofDouble(2.2),
+      Literal.ofNull(DoubleType.DOUBLE))
+    val expOutputDouble = booleanVector(Seq[BooleanJ](true, true, null, null, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        doubleSchema,
+        inExpressionDouble,
+        BooleanType.BOOLEAN).eval(doubleInput),
+      expOutputDouble)
+
+    // Test with byte values: col IN (0, 1)
+    val byteCol = byteVector(Seq[java.lang.Byte](null, 0.toByte, 0.toByte, 1.toByte, 2.toByte))
+    val byteSchema = new StructType().add("byteCol", ByteType.BYTE)
+    val byteInput = new DefaultColumnarBatch(byteCol.getSize, byteSchema, Array(byteCol))
+
+    val inExpressionByte = in(
+      new Column("byteCol"),
+      Literal.ofByte(0.toByte),
+      Literal.ofByte(1.toByte))
+    // Expected: [null, true, true, true, false] for values [null, 0, 0, 1, 2]
+    val expOutputByte = booleanVector(Seq[BooleanJ](null, true, true, true, false))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        byteSchema,
+        inExpressionByte,
+        BooleanType.BOOLEAN).eval(byteInput),
+      expOutputByte)
+  }
+
+  test("evaluate expression: in with incompatible types") {
+    // Test error cases - incompatible types
+    def checkIncompatibleTypes(valueType: DataType, listElementType: DataType): Unit = {
+      val valueSchema = new StructType().add("col", valueType)
+      val valueVector = testColumnVector(3, valueType)
+      val valueInput = new DefaultColumnarBatch(3, valueSchema, Array(valueVector))
+
+      val incompatibleInExpr = in(
+        new Column("col"),
+        Literal.ofNull(listElementType))
+
+      val e = intercept[UnsupportedOperationException] {
+        new DefaultExpressionEvaluator(
+          valueSchema,
+          incompatibleInExpr,
+          BooleanType.BOOLEAN).eval(valueInput)
+      }
+      assert(
+        e.getMessage.contains("IN expression requires all list elements to match the value type"))
+    }
+
+    // Test incompatible type combinations
+    checkIncompatibleTypes(StringType.STRING, IntegerType.INTEGER)
+    checkIncompatibleTypes(IntegerType.INTEGER, StringType.STRING)
+    checkIncompatibleTypes(BooleanType.BOOLEAN, StringType.STRING)
+  }
+
+  test("evaluate expression: in with collation") {
+    Seq(
+      None, // no collation
+      Some(SPARK_UTF8_BINARY) // UTF8_BINARY collation
+    ).foreach { collationIdentifier =>
+      val col1 = stringVector(Seq[String]("Test", "test", "TEST", null))
+      val schema = new StructType().add("col1", StringType.STRING)
+      val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+      // Test with basic case
+      val inExpressionBasic = in(
+        new Column("col1"),
+        collationIdentifier,
+        Literal.ofString("test"),
+        Literal.ofString("other"))
+      val expectedOutput = booleanVector(Seq[BooleanJ](false, true, false, null))
+      checkBooleanVectors(
+        new DefaultExpressionEvaluator(
+          schema,
+          inExpressionBasic,
+          BooleanType.BOOLEAN).eval(input),
+        expectedOutput)
+
+      // Test with NULL in list
+      val inExpressionWithNull = in(
+        new Column("col1"),
+        collationIdentifier,
+        Literal.ofString("Test"),
+        Literal.ofString(null))
+      val expOutputWithNull = booleanVector(Seq[BooleanJ](true, null, null, null))
+      checkBooleanVectors(
+        new DefaultExpressionEvaluator(
+          schema,
+          inExpressionWithNull,
+          BooleanType.BOOLEAN).eval(input),
+        expOutputWithNull)
+    }
+  }
+
+  test("evaluate expression: in with unsupported collations") {
+    val col1 = stringVector(Seq[String]("Test", "test"))
+    val schema = new StructType().add("col1", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    val inExpressionUnsupported = in(
+      new Column("col1"),
+      Some(SPARK_UTF8_LCASE),
+      Literal.ofString("test"))
+
+    checkUnsupportedCollation(
+      schema,
+      inExpressionUnsupported,
+      input,
+      SPARK_UTF8_LCASE)
+  }
+
+  test("evaluate expression: in with non-literal list elements") {
+    val schema = new StructType().add("col1", IntegerType.INTEGER).add("col2", IntegerType.INTEGER)
+    val input = new DefaultColumnarBatch(
+      2,
+      schema,
+      Array(
+        testColumnVector(2, IntegerType.INTEGER),
+        testColumnVector(2, IntegerType.INTEGER)))
+
+    // Try to create IN with non-literal (Column) in the list
+    val nonLiteralInExpr = new Predicate(
+      "IN",
+      List[Expression](
+        new Column("col1"),
+        new Column("col2"), // This should cause an error
+        Literal.ofInt(1)).asJava)
+
+    val e = intercept[UnsupportedOperationException] {
+      new DefaultExpressionEvaluator(schema, nonLiteralInExpr, BooleanType.BOOLEAN).eval(input)
+    }
+    assert(e.getMessage.contains("IN expression requires all list elements to be literals"))
+  }
+
+  test("evaluate expression: in expression handling null") {
+    val col1 = testColumnVector(6, StringType.STRING) // [null, "1", null, "3", null, "5"]
+    val schema = new StructType().add("col1", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    // Test all null semantics scenarios:
+    // 1. NULL value with non-null list -> NULL
+    // 2. Non-null value matches -> TRUE
+    // 3. Non-null value no match, no nulls in list -> FALSE
+    // 4. Non-null value no match, but nulls in list -> NULL
+
+    // Case: value IN (match, null) -> [null, true, null, null, null, null]
+    val inExprMatchWithNull = in(new Column("col1"), Literal.ofString("1"), Literal.ofString(null))
+    val expectedMatchWithNull = booleanVector(Seq[BooleanJ](null, true, null, null, null, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(schema, inExprMatchWithNull, BooleanType.BOOLEAN).eval(input),
+      expectedMatchWithNull)
+
+    // Case: value IN (no_match1, no_match2) -> [null, false, null, false, null, false]
+    val inExprNoMatch = in(new Column("col1"), Literal.ofString("x"), Literal.ofString("y"))
+    val expectedNoMatch = booleanVector(Seq[BooleanJ](null, false, null, false, null, false))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(schema, inExprNoMatch, BooleanType.BOOLEAN).eval(input),
+      expectedNoMatch)
+
+    // Case: value IN (no_match, null) -> [null, null, null, null, null, null]
+    val inExprNoMatchWithNull =
+      in(new Column("col1"), Literal.ofString("x"), Literal.ofString(null))
+    val expectedNoMatchWithNull = booleanVector(Seq[BooleanJ](null, null, null, null, null, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        inExprNoMatchWithNull,
+        BooleanType.BOOLEAN).eval(input),
+      expectedNoMatchWithNull)
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=, 'IS NOT DISTINCT FROM')") {
