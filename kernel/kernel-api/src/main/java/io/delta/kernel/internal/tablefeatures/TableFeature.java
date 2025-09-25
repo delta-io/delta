@@ -156,6 +156,16 @@ public abstract class TableFeature {
     return true;
   }
 
+    /**
+     * Gets the table property key to enable the respective table feature. This is a signal to
+     * the kernel to add this table feature to the kernel's protocol. This property won't
+     * be written to the delta metadata. Uses the prefix from TableFeatures.
+     * @return the table property key for the respective feature.
+     */
+    public String getTablePropertyElementKey() {
+        return TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + featureName;
+    }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Define the {@link TableFeature}s traits that define behavior/attributes.  ///
   /////////////////////////////////////////////////////////////////////////////////

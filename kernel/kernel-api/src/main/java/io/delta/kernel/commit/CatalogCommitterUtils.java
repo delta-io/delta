@@ -25,15 +25,6 @@ import java.util.Map;
 public class CatalogCommitterUtils {
   private CatalogCommitterUtils() {}
 
-  /**
-   * Table property key to enable the catalogManaged table feature. This is a signal to Kernel to
-   * add this table feature to Kernel's protocol. This property won't be written to the delta
-   * metadata.
-   */
-  public static final String CATALOG_MANAGED_ENABLEMENT_KEY =
-      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
-          + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName();
-
   /** Property key that specifies which version last updated the catalog entry. */
   public static final String METASTORE_LAST_UPDATE_VERSION = "delta.lastUpdateVersion";
 
@@ -70,7 +61,7 @@ public class CatalogCommitterUtils {
     if (protocol.supportsReaderFeatures() || protocol.supportsWriterFeatures()) {
       for (String featureName : protocol.getReaderAndWriterFeatures()) {
         properties.put(
-            TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + featureName,
+            TableFeatures.getTableFeature(featureName).getTablePropertyElementKey(),
             TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
       }
     }
