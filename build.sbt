@@ -683,7 +683,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
-  // Note: No longer depends on deltaSparkTestFeatures - using direct JSON manipulation
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
@@ -1467,8 +1466,6 @@ lazy val compatibility = (project in file("connectors/oss-compatibility-tests"))
     )
   )
  */
-
-// Note: deltaSparkTestFeatures module removed - using direct JSON file manipulation for tests
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
