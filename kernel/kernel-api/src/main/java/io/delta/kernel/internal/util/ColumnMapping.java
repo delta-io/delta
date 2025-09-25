@@ -30,6 +30,7 @@ import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndU
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /** Utilities related to the column mapping feature. */
@@ -206,26 +207,13 @@ public class ColumnMapping {
   /** Returns the physical column and data type for a given logical column based on the schema. */
   public static Tuple2<Column, DataType> getPhysicalColumnNameAndDataType(
       StructType schema, Column logicalColumn) {
-    List<String> physicalNameParts = new ArrayList<>();
-    DataType currentType = schema;
+    return convertColumnNameAndDataType(schema, logicalColumn, true /* logicalToPhysical */);
+  }
 
-    // Traverse through each level of the logical name to resolve its corresponding physical name.
-    for (String namePart : logicalColumn.getNames()) {
-      if (!(currentType instanceof StructType)) {
-        throw columnNotFoundInSchema(logicalColumn, schema);
-      }
-
-      StructType structType = (StructType) currentType;
-      // Find the field in the current structure that matches the given name
-      StructField field =
-          structType.fields().stream()
-              .filter(f -> f.getName().equalsIgnoreCase(namePart))
-              .findFirst()
-              .orElseThrow(() -> columnNotFoundInSchema(logicalColumn, schema));
-      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
-      currentType = field.getDataType();
-    }
-    return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
+  /** Returns the logical column and data type for a given physical column based on the schema. */
+  public static Tuple2<Column, DataType> getLogicalColumnNameAndDataType(
+      StructType schema, Column physicalColumn) {
+    return convertColumnNameAndDataType(schema, physicalColumn, false /* logicalToPhysical */);
   }
 
   /**
@@ -245,6 +233,53 @@ public class ColumnMapping {
   ////////////////////////////
   // Private Helper Methods //
   ////////////////////////////
+
+  /**
+   * Common helper method for column name conversion between logical and physical representations.
+   *
+   * @param schema The schema to traverse
+   * @param inputColumn The column to convert
+   * @param logicalToPhysical If true, converts logical to physical; if false, converts physical to
+   *     logical
+   * @return Tuple of the converted column and its data type
+   */
+  private static Tuple2<Column, DataType> convertColumnNameAndDataType(
+      StructType schema, Column inputColumn, boolean logicalToPhysical) {
+    Function<StructField, String> matchFunction;
+    Function<StructField, String> outputFunction;
+
+    if (logicalToPhysical) {
+      matchFunction = StructField::getName;
+      outputFunction = ColumnMapping::getPhysicalName;
+    } else {
+      matchFunction = ColumnMapping::getPhysicalName;
+      outputFunction = StructField::getName;
+    }
+
+    final List<String> outputNameParts = new ArrayList<>();
+    DataType currentType = schema;
+
+    // Traverse through each level to resolve the corresponding name mapping
+    for (String inputNamePart : inputColumn.getNames()) {
+      if (!(currentType instanceof StructType)) {
+        throw columnNotFoundInSchema(inputColumn, schema);
+      }
+
+      final StructType structType = (StructType) currentType;
+
+      // Find the field that matches the input name using the appropriate matching function
+      final StructField field =
+          structType.fields().stream()
+              .filter(f -> matchFunction.apply(f).equalsIgnoreCase(inputNamePart))
+              .findFirst()
+              .orElseThrow(() -> columnNotFoundInSchema(inputColumn, schema));
+
+      outputNameParts.add(outputFunction.apply(field));
+      currentType = field.getDataType();
+    }
+
+    return new Tuple2<>(new Column(outputNameParts.toArray(new String[0])), currentType);
+  }
 
   /** Visible for testing */
   static int findMaxColumnId(StructType schema) {
