@@ -22,6 +22,7 @@ import io.delta.kernel._
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV1Builders, WriteUtilsWithV2Builders}
+import io.delta.kernel.defaults.utils.DeltaSparkTestUtils.OptimisticTxnTestHelper
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
@@ -35,7 +36,6 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.RowId.{RowTrackingMetadataDomain => SparkRowTrackingMetadataDomain}
 import org.apache.spark.sql.delta.actions.{DomainMetadata => SparkDomainMetadata}
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
@@ -439,11 +439,10 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
         val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
         deltaLog
           .startTransaction()
-          .commitManually(
-            List(
-              SparkDomainMetadata("testDomain1", "{\"key1\":\"1\"}", removed = false),
-              SparkDomainMetadata("testDomain2", "", removed = false),
-              SparkDomainMetadata("testDomain3", "", removed = false)): _*)
+          .commitManuallyForTest(
+            SparkDomainMetadata("testDomain1", "{\"key1\":\"1\"}", removed = false),
+            SparkDomainMetadata("testDomain2", "", removed = false),
+            SparkDomainMetadata("testDomain3", "", removed = false))
 
         // This will create 03.json and 03.checkpoint
         spark.range(0, 2).write.format("delta").mode("append").save(tablePath)
@@ -451,10 +450,9 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
         // Manually commit domain metadata actions. This will create 04.json
         deltaLog
           .startTransaction()
-          .commitManually(
-            List(
-              SparkDomainMetadata("testDomain1", "{\"key1\":\"10\"}", removed = false),
-              SparkDomainMetadata("testDomain2", "", removed = true)): _*)
+          .commitManuallyForTest(
+            SparkDomainMetadata("testDomain1", "{\"key1\":\"10\"}", removed = false),
+            SparkDomainMetadata("testDomain2", "", removed = true))
 
         // Use Delta Kernel to read the table's domain metadata and verify the result.
         // We will need to read 1 checkpoint file and 1 log file to replay the table.
