@@ -93,7 +93,9 @@ public abstract class TableFeature {
     validate();
   }
 
-  /** @return the name of the table feature. */
+  /**
+   * @return the name of the table feature.
+   */
   public String featureName() {
     return featureName;
   }
@@ -106,17 +108,23 @@ public abstract class TableFeature {
     return this instanceof ReaderWriterFeatureType;
   }
 
-  /** @return the minimum reader version this feature requires */
+  /**
+   * @return the minimum reader version this feature requires
+   */
   public int minReaderVersion() {
     return minReaderVersion;
   }
 
-  /** @return the minimum writer version that this feature requires. */
+  /**
+   * @return the minimum writer version that this feature requires.
+   */
   public int minWriterVersion() {
     return minWriterVersion;
   }
 
-  /** @return if this feature is a legacy feature? */
+  /**
+   * @return if this feature is a legacy feature?
+   */
   public boolean isLegacyFeature() {
     return this instanceof LegacyFeatureType;
   }
@@ -156,15 +164,16 @@ public abstract class TableFeature {
     return true;
   }
 
-    /**
-     * Gets the table property key to enable the respective table feature. This is a signal to
-     * the kernel to add this table feature to the kernel's protocol. This property won't
-     * be written to the delta metadata. Uses the prefix from TableFeatures.
-     * @return the table property key for the respective feature.
-     */
-    public String getTablePropertyElementKey() {
-        return TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + featureName;
-    }
+  /**
+   * Gets the table property key to enable the respective table feature. This is a signal to the
+   * kernel to add this table feature to the kernel's protocol. This property won't be written to
+   * the delta metadata. Uses the prefix from TableFeatures.
+   *
+   * @return the table property key for the respective feature.
+   */
+  public String getTablePropertyElementKey() {
+    return TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + featureName;
+  }
 
   /////////////////////////////////////////////////////////////////////////////////
   /// Define the {@link TableFeature}s traits that define behavior/attributes.  ///
@@ -185,7 +194,7 @@ public abstract class TableFeature {
   public abstract static class LegacyWriterFeature extends TableFeature
       implements LegacyFeatureType {
     public LegacyWriterFeature(String featureName, int minWriterVersion) {
-      super(featureName, /* minReaderVersion = */ 0, minWriterVersion);
+      super(featureName, /* minReaderVersion= */ 0, minWriterVersion);
     }
 
     @Override
@@ -206,7 +215,7 @@ public abstract class TableFeature {
   /** A base class for all non-legacy table writer features. */
   public abstract static class WriterFeature extends TableFeature {
     public WriterFeature(String featureName, int minWriterVersion) {
-      super(featureName, /* minReaderVersion = */ 0, minWriterVersion);
+      super(featureName, /* minReaderVersion= */ 0, minWriterVersion);
     }
 
     @Override
