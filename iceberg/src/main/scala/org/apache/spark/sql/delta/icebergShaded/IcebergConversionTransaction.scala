@@ -327,7 +327,7 @@ class IcebergConversionTransaction(
         log"Setting new Iceberg schema:\n " +
         log"${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}"
       )
-      metadataUpdates.add(new AddSchema(icebergSchema, convert.maxFieldId))
+      txn.setSchema(icebergSchema).commit()
 
       recordDeltaEvent(
         postCommitSnapshot.deltaLog,
