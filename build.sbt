@@ -710,6 +710,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
+      "io.delta" %% "delta-spark" % "3.3.2" % "test",
 
       "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
