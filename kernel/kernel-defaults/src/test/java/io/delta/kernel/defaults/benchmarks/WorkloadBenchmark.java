@@ -21,7 +21,7 @@ import static io.delta.kernel.defaults.benchmarks.BenchmarkUtils.*;
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
 import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.*;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -39,7 +39,7 @@ import org.openjdk.jmh.runner.options.TimeValue;
  * Generic JMH benchmark for all workload types. Automatically loads and runs benchmarks based on
  * JSON workload specifications.
  */
-@BenchmarkMode(Mode.AverageTime)
+@BenchmarkMode(Mode.SampleTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Fork(value = 1, warmups = 1)
 @Warmup(iterations = 3, time = 1)
@@ -72,6 +72,10 @@ public class WorkloadBenchmark<T> {
     runner.executeAsBenchmark(blackhole);
   }
 
+  /**
+   * TODO: In the future, this can be extracted so that new benchmarks with custom BenchmarkStates
+   * can be easily constructed.
+   */
   public static void main(String[] args) throws RunnerException, IOException {
     // Get workload specs from the workloads directory
     List<WorkloadSpec> workloadSpecs = BenchmarkUtils.loadAllWorkloads(WORKLOAD_SPECS_DIR);
@@ -99,11 +103,13 @@ public class WorkloadBenchmark<T> {
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
             .forks(1)
-            .warmupIterations(3)
-            .measurementIterations(5)
+            .warmupIterations(0) // FIXME: set to 0 for faster debugging; change to >0 for real runs
+            .measurementIterations(
+                1) // FIXME: set to 1 for faster debugging; change to >1 for real runs
             .warmupTime(TimeValue.seconds(1))
             .measurementTime(TimeValue.seconds(1))
             .resultFormat(ResultFormatType.JSON)
+            .addProfiler(KernelMetricsProfiler.class)
             .build();
 
     new Runner(opt).run();

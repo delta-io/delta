@@ -2,7 +2,7 @@ package io.delta.kernel.defaults.benchmarks;
 
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
-import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.*;
 import org.openjdk.jmh.annotations.*;
 
 /**
@@ -34,16 +34,26 @@ public abstract class AbstractBenchmarkState {
   private WorkloadRunner runner;
 
   /**
-   * Setup method that runs before each benchmark invocation. Reads the workload specification from
-   * the given path and initializes the corresponding workload runner.
+   * Parses the workload specification from JSON and initializes the benchmarking engine. This also
+   * sets up the workload runner.
+   *
+   * @throws Exception If any error occurs during setup.
+   */
+  @Setup(Level.Trial)
+  public void setupTrial() throws Exception {
+    WorkloadSpec spec = WorkloadSpec.fromJsonString(workloadSpecJson);
+    Engine engine = KernelMetricsProfiler.BenchmarkingEngine.wrapEngine(getEngine(engineName));
+    runner = spec.getRunner(engine);
+  }
+
+  /**
+   * Setup method that runs before each benchmark invocation. This calls the {@link
+   * WorkloadRunner#setup()} to set up the workload runner.
    *
    * @throws Exception If any error occurs during setup.
    */
   @Setup(Level.Invocation)
-  public void setup() throws Exception {
-    WorkloadSpec spec = WorkloadSpec.fromJsonString(workloadSpecJson);
-    Engine engine = getEngine(engineName);
-    runner = spec.getRunner(engine);
+  public void setupInvocation() throws Exception {
     runner.setup();
   }
 
