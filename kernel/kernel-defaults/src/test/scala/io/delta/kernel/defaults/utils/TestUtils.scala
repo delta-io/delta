@@ -927,6 +927,9 @@ trait AbstractTestUtils
  */
 object DeltaSparkTestUtils {
 
+  lazy val configuration = new Configuration()
+  lazy val defaultEngine = DefaultEngine.create(configuration)
+
   /**
    * Enhanced OptimisticTransaction with additional test utilities.
    * Note: This will only work when full Delta Spark development environment is available.
@@ -973,6 +976,7 @@ object DeltaSparkTestUtils {
         Files.createDirectories(deltaLogDir)
       }
       Files.write(Paths.get(commitFile.toString), commitContent)
+      Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
     }
 
     object TestImplicits {
