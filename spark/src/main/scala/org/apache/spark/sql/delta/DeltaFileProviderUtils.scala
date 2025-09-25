@@ -25,6 +25,7 @@ import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.JsonToStructs
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
@@ -58,12 +59,13 @@ object DeltaFileProviderUtils extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       startVersion: Long,
-      endVersion: Long): Seq[FileStatus] = {
+      endVersion: Long,
+      catalogTableOpt: Option[CatalogTable]): Seq[FileStatus] = {
     // Pass `failOnDataLoss = false` as we are doing an explicit validation on the result ourselves
     // to identify that there are no gaps.
     val result =
       deltaLog
-        .getChangeLogFiles(startVersion, endVersion, failOnDataLoss = false)
+        .getChangeLogFiles(startVersion, endVersion, catalogTableOpt, failOnDataLoss = false)
         .map(_._2)
         .collect { case DeltaFile(fs, v) => (fs, v) }
         .toSeq

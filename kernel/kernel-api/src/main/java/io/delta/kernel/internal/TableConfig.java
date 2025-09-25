@@ -31,6 +31,10 @@ import java.util.function.Predicate;
  */
 public class TableConfig<T> {
 
+  public static final String MIN_PROTOCOL_READER_VERSION_KEY = "delta.minReaderVersion";
+
+  public static final String MIN_PROTOCOL_WRITER_VERSION_KEY = "delta.minWriterVersion";
+
   //////////////////
   // TableConfigs //
   //////////////////
