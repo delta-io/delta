@@ -785,7 +785,8 @@ public class SchemaUtils {
         || dataType instanceof BinaryType
         || dataType instanceof DateType
         || dataType instanceof TimestampType
-        || dataType instanceof TimestampNTZType) {
+        || dataType instanceof TimestampNTZType
+        || dataType instanceof VariantType) {
       // supported types
       return;
     } else if (dataType instanceof StructType) {

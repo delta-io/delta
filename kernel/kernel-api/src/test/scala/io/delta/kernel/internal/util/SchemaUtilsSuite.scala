@@ -26,11 +26,12 @@ import scala.reflect.ClassTag
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
 import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, validateSchema, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange}
+import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
@@ -260,6 +261,25 @@ class SchemaUtilsSuite extends AnyFunSuite {
               .add("a", INTEGER)
               .add("b", INTEGER))
           .add("top.a", INTEGER))
+    validateSchema(schema, false /* isColumnMappingEnabled */ )
+  }
+
+  test("variant") {
+    val schema = new StructType()
+      .add(
+        "variant",
+        VariantType.VARIANT)
+
+    validateSchema(schema, false /* isColumnMappingEnabled */ )
+  }
+
+  test("variant - nested") {
+    val schema = new StructType()
+      .add(
+        "first",
+        new StructType()
+          .add("variant", VariantType.VARIANT))
+
     validateSchema(schema, false /* isColumnMappingEnabled */ )
   }
 
@@ -1530,5 +1550,26 @@ class SchemaUtilsSuite extends AnyFunSuite {
       updatedSchemasWithChangedMaps,
       "Cannot change the type key of Map field map from .*",
       tableProperties = tblProperties)
+  }
+
+  test("Validate succeeds when adding variant column") {
+    val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+    val before = new StructType().add(
+      "id",
+      IntegerType.INTEGER,
+      false,
+      fieldMetadata(id = 1, physicalName = "id"))
+
+    val schemaWithVariant = before.add(
+      "variant",
+      VariantType.VARIANT,
+      true,
+      fieldMetadata(id = 2, physicalName = "variant"))
+
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(before, tableProperties),
+      metadata(schemaWithVariant, tableProperties),
+      emptySet(),
+      false)
   }
 }
