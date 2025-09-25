@@ -966,8 +966,8 @@ object DeltaSparkTestUtils {
       val logPath = new Path(tablePath, "_delta_log")
       val commitFile = FileNames.unsafeDeltaFile(logPath, version)
 
-      // Use Delta's standard format: actions with newlines + UTF-8
-      val commitContent = actions.map(_ + "\n").mkString.getBytes(UTF_8)
+      // Use Delta's standard format: properly serialize actions to JSON with newlines + UTF-8
+      val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
 
       // Write using Java NIO (simpler than Hadoop FS for local testing)
       import java.nio.file.{Files, Paths}
