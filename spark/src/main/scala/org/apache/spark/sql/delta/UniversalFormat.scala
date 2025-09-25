@@ -276,6 +276,9 @@ object UniversalFormat extends DeltaLogging {
     }
 
     (icebergEnabled(metadata), icebergInCatalog) match {
+      case (true, false) =>
+        Some(table.copy(properties = table.properties
+          + (ICEBERG_TABLE_TYPE_KEY -> ICEBERG_FORMAT)))
       case (false, true) =>
         Some(table.copy(properties =
           table.properties - ICEBERG_TABLE_TYPE_KEY))
