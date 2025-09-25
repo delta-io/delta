@@ -521,8 +521,7 @@ object DeltaTableV2 {
       catalogTable = None,
       tableIdentifier = None,
       timeTravelOpt = None,
-      options = Map.empty,
-      pathInfoBuilder = RegularPathInfoBuilder(path, catalogTableOpt = None, options = Map.empty)
+      options = Map.empty
     ) {
       override lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, path, clock)
     }
