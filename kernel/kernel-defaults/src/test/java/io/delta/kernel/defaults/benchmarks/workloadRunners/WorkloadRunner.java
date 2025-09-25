@@ -25,12 +25,14 @@ import org.openjdk.jmh.infra.Blackhole;
  * workload as a benchmark using {@link WorkloadRunner#setup()}, as well as executing the workload
  * itself using {@link WorkloadRunner#executeAsBenchmark(Blackhole)}.
  */
-public interface WorkloadRunner {
+public abstract class WorkloadRunner {
+  public WorkloadRunner() {}
+
   /** @return the name of this workload derived from the contents of the workload specification. */
-  String getName();
+  public abstract String getName();
 
   /** @return The workload specification used to create this runner. */
-  WorkloadSpec getWorkloadSpec();
+  public abstract WorkloadSpec getWorkloadSpec();
 
   /**
    * Sets up any state necessary to execute this workload as a benchmark. This method must be called
@@ -38,7 +40,7 @@ public interface WorkloadRunner {
    *
    * @throws Exception if any error occurs during setup.
    */
-  void setup() throws Exception;
+  public abstract void setup() throws Exception;
 
   /**
    * Executes the workload as a benchmark, consuming any output via the provided Blackhole to
@@ -48,5 +50,5 @@ public interface WorkloadRunner {
    * @param blackhole the Blackhole provided by JMH to consume output.
    * @throws Exception if any error occurs during execution.
    */
-  void executeAsBenchmark(Blackhole blackhole) throws Exception;
+  public abstract void executeAsBenchmark(Blackhole blackhole) throws Exception;
 }

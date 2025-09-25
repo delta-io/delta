@@ -33,7 +33,7 @@ import org.openjdk.jmh.infra.Blackhole;
  * perform the metadata scan and consume all results. It does not include the time to load the
  * snapshot or set up the scan, which is done in {@link #setup()}.
  */
-public class ReadMetadataRunner implements WorkloadRunner {
+public class ReadMetadataRunner extends WorkloadRunner {
   private Scan scan;
   private final Engine engine;
   private final ReadSpec workloadSpec;
