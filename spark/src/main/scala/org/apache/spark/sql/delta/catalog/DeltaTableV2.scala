@@ -462,18 +462,22 @@ object DeltaTableV2 {
       val deltaLog = deltaTable.deltaLog
       val rootDeltaLogPath = DeltaLog.logPathFor(deltaTable.rootPath.toString)
       val finalDeltaLogPath = DeltaLog.formalizeDeltaPath(spark, options, rootDeltaLogPath)
-      val catalogTableOpt = if (finalDeltaLogPath == deltaLog.logPath) {
-        // If there is no redirection, use existing catalogTable.
-        catalogTable
+      if (finalDeltaLogPath == deltaLog.logPath) {
+        // If there is no redirection, use existing delta table.
+        deltaTable
       } else {
         // If there is redirection, use the catalogTable of deltaLog.
-        deltaLog.getInitialCatalogTable
+        val catalogTable = deltaLog.getInitialCatalogTable
+        val newPath = new Path(deltaLog.dataPath.toUri)
+        new DeltaTableV2(
+          spark,
+          path = newPath,
+          catalogTable = catalogTable,
+          tableIdentifier = catalogTable.map(_.identifier.identifier),
+          timeTravelOpt = timeTravelOpt,
+          options = options
+        )
       }
-      val tableIdentifier = catalogTableOpt.map(_.identifier.identifier)
-      val newPath = new Path(deltaLog.dataPath.toUri)
-      deltaTable.copy(
-        path = newPath, catalogTable = catalogTableOpt, tableIdentifier = tableIdentifier
-      )
     }
   }
 
