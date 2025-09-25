@@ -215,6 +215,7 @@ object DeltaTestImplicits {
 
     def apply(spark: SparkSession, tableDir: File, clock: Clock): DeltaTableV2 = {
       val tablePath = new Path(tableDir.getAbsolutePath)
+      DeltaTableV2.testOnlyApplyWithCustomDeltaLog(spark, tablePath, clock)
     }
   }
 
