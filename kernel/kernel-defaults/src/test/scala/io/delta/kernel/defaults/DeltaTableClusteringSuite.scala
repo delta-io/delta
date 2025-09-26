@@ -477,4 +477,36 @@ trait DeltaTableClusteringSuiteBase extends AnyFunSuite with AbstractWriteUtils 
       }
     }
   }
+
+  test("can convert physical clustering columns to logical on column-mapping-enabled table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+      val clusteringColumns = List(new Column("part1"), new Column("part2"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        tableProperties = tableProperties,
+        clusteringColsOpt = Some(clusteringColumns))
+
+      // ===== WHEN =====
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val physicalClusteringColumns = snapshot.getPhysicalClusteringColumns.get().asScala
+
+      // ===== THEN =====
+      assert(physicalClusteringColumns.size == 2)
+      physicalClusteringColumns.foreach { c => assert(c.getNames()(0).startsWith("col-")) }
+
+      val schema = snapshot.getSchema
+      physicalClusteringColumns.zipWithIndex.foreach { case (physicalColumn, idx) =>
+        val logicalColumn = ColumnMapping.getLogicalColumnNameAndDataType(schema, physicalColumn)._1
+        val expectedLogicalName = if (idx == 0) "part1" else "part2"
+
+        assert(logicalColumn.getNames.length == 1)
+        assert(logicalColumn.getNames()(0) == expectedLogicalName)
+      }
+    }
+  }
 }
