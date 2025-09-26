@@ -299,7 +299,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 
       val snapshot1WithData = deltaLog.update()
       val filesWithPrefixes = snapshot1WithData.allFiles.collect()
-      
+
       // Verify files have random prefixes
       assert(filesWithPrefixes.nonEmpty, "Table should have data files")
       val pattern8 = s"[A-Za-z0-9]{8}/.*part-.*parquet"
@@ -342,7 +342,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 
 
   ddlTest("SET/UNSET TBLPROPERTIES - delta.randomizeFilePrefixes - partitioned table") {
-    withDeltaTable(Seq((1, "x", 100), (2, "y", 200)).toDF("id", "part", "value"), 
+    withDeltaTable(Seq((1, "x", 100), (2, "y", 200)).toDF("id", "part", "value"),
                    Seq("part")) { tableName =>
       // First, set the randomizeFilePrefixes properties
       sql(s"""
@@ -363,16 +363,17 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       // Get initial files (created during table setup - should have partition structure)
       val initialFiles = deltaLog.update().allFiles.collect()
 
-      // Insert data to create files with random prefixes 
+      // Insert data to create files with random prefixes
       sql(s"INSERT INTO $tableName VALUES (3, 'x', 300), (4, 'z', 400)")
-      
+
       val snapshot1WithData = deltaLog.update()
       val filesInSnapshot1 = snapshot1WithData.allFiles.collect()
-      
+
       // Separate initial files from new files with prefixes
       val filesWithPrefixes = filesInSnapshot1.filterNot(f => initialFiles.exists(_.path == f.path))
-      
-      // Verify INITIAL files have partition directory structure (created before random prefixes enabled)
+
+      // Verify INITIAL files have partition directory structure
+      // (created before random prefixes enabled)
       val initialPartitionPattern = s"part=[xyz]/.*part-.*parquet"
       initialFiles.foreach { file =>
         assert(file.path.matches(initialPartitionPattern),

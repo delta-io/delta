@@ -1099,7 +1099,8 @@ trait DeltaTableCreationTests
         "Table should be partitioned by 'part' column")
 
       // Insert data to create files with random prefixes across multiple partitions
-      sql("INSERT INTO delta_test VALUES (1, 'A', 100), (2, 'B', 200), (3, 'A', 300), (4, 'C', 400)")
+      sql("""INSERT INTO delta_test VALUES
+            |(1, 'A', 100), (2, 'B', 200), (3, 'A', 300), (4, 'C', 400)""".stripMargin)
 
       val updatedSnapshot = deltaLog.update()
       val allFiles = updatedSnapshot.allFiles.collect()
@@ -1116,13 +1117,15 @@ trait DeltaTableCreationTests
       val pattern = s"[A-Za-z0-9]{$prefixLength}/.*part-.*parquet"
       allFiles.foreach { file =>
         assert(file.path.matches(pattern),
-          s"Partitioned file path '${file.path}' does not match expected random prefix pattern '$pattern'")
+          s"Partitioned file path '${file.path}' does not match expected random prefix pattern " +
+          s"'$pattern'")
       }
 
       // Verify we have files for multiple partitions (by checking partition values in metadata)
       val partitionValues = allFiles.map(_.partitionValues("part")).distinct
       assert(partitionValues.length >= 2,
-        s"Expected files in multiple partitions, but only found partitions: ${partitionValues.mkString(", ")}")
+        s"Expected files in multiple partitions, but only found partitions: " +
+        s"${partitionValues.mkString(", ")}")
 
       // Verify we have the expected partition values
       val expectedPartitions = Set("A", "B", "C")
