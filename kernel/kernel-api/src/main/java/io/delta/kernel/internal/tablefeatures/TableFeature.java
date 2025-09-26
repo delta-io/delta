@@ -164,7 +164,7 @@ public abstract class TableFeature {
    * @return the table property key for the respective feature.
    */
   public String getTablePropertyElementKey() {
-    return TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + featureName;
+    return TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + featureName();
   }
 
   /////////////////////////////////////////////////////////////////////////////////
