@@ -20,18 +20,21 @@ import java.util.{Collections, List => JList, Optional}
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.internal.files.ParsedDeltaData
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
+class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with VectorTestUtils {
   private val checkpointFs10List = singularCheckpointFileStatuses(Seq(10)).toList.asJava
   private val checksumAtVersion10 = checksumFileStatus(10)
   private val deltaFs11List = deltaFileStatuses(Seq(11)).toList.asJava
   private val deltaFs12List = deltaFileStatuses(Seq(12)).toList.asJava
   private val deltasFs11To12List = deltaFileStatuses(Seq(11, 12)).toList.asJava
+  private val parsedRatifiedCommits11To12List =
+    Seq(11, 12).map(v => ParsedDeltaData.forFileStatus(stagedCommitFile(v))).asJava
   private val compactionFs11To12List = compactedFileStatuses(Seq((11, 12))).toList.asJava
   private val badJsonsList = Collections.singletonList(
     FileStatus.of(s"${logPath.toString}/gibberish.json", 1, 1))
@@ -440,6 +443,114 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
     assert(ex.getMessage.contains("File (s3://bucket/invalidLogPath/deltafile2) " +
       s"doesn't belong in the transaction log at $tablePath"))
+  }
+
+  ////////////////////////////////////
+  // copyWithAdditionalDeltas tests //
+  ////////////////////////////////
+
+  test("copyWithAdditionalDeltas: single additional delta") {
+    val baseSegment = createLogSegmentForTest(
+      version = 10,
+      checkpoints = checkpointFs10List)
+
+    val additionalDeltas = List(ParsedDeltaData.forFileStatus(stagedCommitFile(11))).asJava
+    val updated = baseSegment.copyWithAdditionalDeltas(additionalDeltas)
+
+    assert(updated.getVersion === 11)
+    assert(updated.getDeltas.size() === 1)
+  }
+
+  test("copyWithAdditionalDeltas: multiple additional deltas") {
+    val baseSegment = createLogSegmentForTest(
+      version = 10,
+      checkpoints = checkpointFs10List)
+
+    val updated = baseSegment.copyWithAdditionalDeltas(parsedRatifiedCommits11To12List)
+
+    assert(updated.getVersion === 12)
+    assert(updated.getDeltas.size() === 2)
+  }
+
+  test("copyWithAdditionalDeltas: empty list returns same segment") {
+    val baseSegment = createLogSegmentForTest(
+      version = 10,
+      checkpoints = checkpointFs10List)
+
+    val updated = baseSegment.copyWithAdditionalDeltas(Collections.emptyList())
+    assert(updated eq baseSegment)
+  }
+
+  test("copyWithAdditionalDeltas: first delta must be version + 1") {
+    val baseSegment = createLogSegmentForTest(
+      version = 10,
+      checkpoints = checkpointFs10List)
+
+    val wrongVersionDeltas = List(ParsedDeltaData.forFileStatus(stagedCommitFile(12))).asJava
+    val exMsg = intercept[IllegalArgumentException] {
+      baseSegment.copyWithAdditionalDeltas(wrongVersionDeltas)
+    }.getMessage
+    assert(exMsg.contains("First additional delta version 12 must equal current version + 1 (11)"))
+  }
+
+  test("copyWithAdditionalDeltas: deltas must be contiguous") {
+    val baseSegment = createLogSegmentForTest(
+      version = 10,
+      checkpoints = checkpointFs10List)
+
+    val nonContiguousDeltas = List(
+      ParsedDeltaData.forFileStatus(stagedCommitFile(11)),
+      ParsedDeltaData.forFileStatus(stagedCommitFile(13))).asJava
+    val exMsg = intercept[IllegalArgumentException] {
+      baseSegment.copyWithAdditionalDeltas(nonContiguousDeltas)
+    }.getMessage
+    assert(exMsg.contains("Delta versions must be contiguous. Expected 12 but got 13"))
+  }
+
+  test("copyWithAdditionalDeltas: inline delta fails") {
+    val baseSegment = createLogSegmentForTest(
+      version = 10,
+      checkpoints = checkpointFs10List)
+
+    // Create inline ParsedDeltaData (not file-based)
+    val inlineDelta = ParsedDeltaData.forInlineData(11, emptyColumnarBatch)
+    val inlineDeltas = List(inlineDelta).asJava
+
+    val exMsg = intercept[IllegalArgumentException] {
+      baseSegment.copyWithAdditionalDeltas(inlineDeltas)
+    }.getMessage
+    assert(exMsg.contains("Currently, only file-based deltas are supported"))
+  }
+
+  ///////////////////////////
+  // fromSingleDelta tests //
+  ///////////////////////////
+
+  test("fromSingleDelta -- creates valid LogSegment") {
+    val deltaData = ParsedDeltaData.forFileStatus(deltaFileStatus(0))
+    val logSegment = LogSegment.fromSingleDelta(logPath, deltaData)
+
+    assert(logSegment.getVersion === 0)
+    assert(logSegment.getDeltas.size() === 1)
+    assert(logSegment.getCheckpoints.isEmpty)
+    assert(logSegment.getCompactions.isEmpty)
+    assert(logSegment.getLastSeenChecksum === Optional.empty())
+  }
+
+  test("fromSingleDelta -- non-zero version fails") {
+    val deltaData = ParsedDeltaData.forFileStatus(deltaFileStatus(1))
+    val exMsg = intercept[IllegalArgumentException] {
+      LogSegment.fromSingleDelta(logPath, deltaData)
+    }.getMessage
+    assert(exMsg.contains("Version must be 0 for a LogSegment with only a single delta"))
+  }
+
+  test("fromSingleDelta -- inline delta fails") {
+    val inlineDelta = ParsedDeltaData.forInlineData(0, emptyColumnarBatch)
+    val exMsg = intercept[IllegalArgumentException] {
+      LogSegment.fromSingleDelta(logPath, inlineDelta)
+    }.getMessage
+    assert(exMsg.contains("Currently, only file-based deltas are supported"))
   }
 
 }
