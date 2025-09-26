@@ -17,13 +17,14 @@ package io.delta.kernel.spark.read;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
-import java.util.Arrays;
-import java.util.Locale;
-import java.util.Set;
+import io.delta.kernel.spark.utils.ExpressionUtils;
+import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
@@ -34,16 +35,23 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * A Spark ScanBuilder implementation that wraps Delta Kernel's ScanBuilder. This allows Spark to
  * use Delta Kernel for reading Delta tables.
  */
-public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredColumns {
+public class SparkScanBuilder
+    implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
-  private final io.delta.kernel.ScanBuilder kernelScanBuilder;
+  private io.delta.kernel.ScanBuilder kernelScanBuilder;
   private final String tablePath;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final CaseInsensitiveStringMap options;
   private final Set<String> partitionColumnSet;
   private StructType requiredDataSchema;
-  private Predicate[] pushedPredicates;
+  // pushedKernelPredicates: Predicates that have been pushed down to the Delta Kernel for
+  // evaluation.
+  // pushedSparkFilters: The same pushed predicates, but represented using Spark’s {@link Filter}
+  // API (needed because Spark operates on Filter objects while the Kernel uses Predicate)
+  private Predicate[] pushedKernelPredicates;
+  private Filter[] pushedSparkFilters;
+  private Filter[] dataFilters;
 
   public SparkScanBuilder(
       String tableName,
@@ -62,7 +70,8 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
         Arrays.stream(this.partitionSchema.fields())
             .map(f -> f.name().toLowerCase(Locale.ROOT))
             .collect(Collectors.toSet());
-    this.pushedPredicates = new Predicate[0];
+    this.pushedKernelPredicates = new Predicate[0];
+    this.dataFilters = new Filter[0];
   }
 
   @Override
@@ -76,15 +85,73 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
   }
 
   @Override
+  public Filter[] pushFilters(Filter[] filters) {
+    List<Filter> kernelSupportedFilters = new ArrayList<>();
+    List<Predicate> convertedKernelPredicates = new ArrayList<>();
+    List<Filter> dataFilterList = new ArrayList<>();
+    List<Filter> postScanFilters = new ArrayList<>();
+
+    for (Filter filter : filters) {
+      ExpressionUtils.FilterClassificationResult classification =
+          ExpressionUtils.classifyFilter(filter, partitionColumnSet);
+      // Collect kernel predicates if supported
+      if (classification.isKernelSupported) {
+        convertedKernelPredicates.add(classification.kernelPredicate.get());
+        if (!classification.isPartialConversion) {
+          // Add filter to kernelSupportedFilters if it is fully converted
+          // TODO: add partially converted Spark filter as well
+          // right now we only have the partially converted kernel predicate
+          kernelSupportedFilters.add(filter);
+        }
+      }
+
+      // Collect data filters
+      if (classification.isDataFilter) {
+        dataFilterList.add(filter);
+      }
+
+      // Collect post-scan filters
+      // Filters with the following characteristics need to be evaluated after delta kernel scan:
+      // 1. filters that are not supported by delta kernel, thus kernel cannot apply them during
+      // scan
+      // 2. filters that are not fully converted to kernel predicates, thus the unconverted part
+      // needs to be evaluated after scan
+      // 3. filters that are data filters, as kernel only evaluate data filter based on min/max
+      // stats, thus need to be evaluated with actual data after scan
+      //
+      // Fully converted partition filters are used to prune partitions during scan. Only the
+      // partitions that satisfy the filters will be scanned, so no need for post-scan evaluation.
+      if (!classification.isKernelSupported
+          || classification.isPartialConversion
+          || classification.isDataFilter) {
+        postScanFilters.add(filter);
+      }
+    }
+
+    this.pushedSparkFilters = kernelSupportedFilters.toArray(new Filter[0]);
+    this.pushedKernelPredicates = convertedKernelPredicates.toArray(new Predicate[0]);
+    if (this.pushedKernelPredicates.length > 0) {
+      Optional<Predicate> kernelAnd = Arrays.stream(this.pushedKernelPredicates).reduce(And::new);
+      this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
+    }
+    this.dataFilters = dataFilterList.toArray(new Filter[0]);
+    return postScanFilters.toArray(new Filter[0]);
+  }
+
+  @Override
+  public Filter[] pushedFilters() {
+    return this.pushedSparkFilters;
+  }
+
+  @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    // TODO: Implement predicate pushdown by translating Spark Filters to Delta Kernel Predicates.
     return new SparkScan(
         tablePath,
         dataSchema,
         partitionSchema,
         requiredDataSchema,
-        pushedPredicates,
-        new Filter[0],
+        pushedKernelPredicates,
+        dataFilters,
         kernelScanBuilder.build(),
         options);
   }

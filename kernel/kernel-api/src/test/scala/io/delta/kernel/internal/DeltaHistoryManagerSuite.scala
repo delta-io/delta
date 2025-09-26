@@ -23,9 +23,13 @@ import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
 import io.delta.kernel.TransactionSuite.testSchema
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
+import io.delta.kernel.internal.files.ParsedDeltaData
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.lang.Lazy
 import io.delta.kernel.internal.metrics.SnapshotQueryContext
@@ -33,14 +37,36 @@ import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.internal.util.InCommitTimestampUtils
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
-import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromFileSystemClient, MockReadICTFileJsonHandler}
 import io.delta.kernel.test.MockSnapshotUtils.getMockSnapshot
 import io.delta.kernel.types.StringType
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
+
+  // Helper function for non-catalog-managed tables (no staged commits)
+  private def getActiveCommitAtTimestamp(
+      engine: Engine,
+      latestSnapshot: SnapshotImpl,
+      logPath: Path,
+      timestamp: Long,
+      mustBeRecreatable: Boolean = true,
+      canReturnLastCommit: Boolean = false,
+      canReturnEarliestCommit: Boolean = false): DeltaHistoryManager.Commit = {
+    DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      latestSnapshot,
+      logPath,
+      timestamp,
+      mustBeRecreatable,
+      canReturnLastCommit,
+      canReturnEarliestCommit,
+      Seq.empty.asJava /* parsedLogDelta */
+    )
+  }
 
   def checkGetActiveCommitAtTimestamp(
       fileList: Seq[FileStatus],
@@ -51,7 +77,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       canReturnEarliestCommit: Boolean = false): Unit = {
     val lastDelta = fileList.map(_.getPath).filter(FileNames.isCommitFile).last
     val latestVersion = FileNames.getFileVersion(new Path(lastDelta))
-    val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit = getActiveCommitAtTimestamp(
       createMockFSListFromEngine(fileList),
       getMockSnapshot(dataPath, latestVersion = latestVersion),
       logPath,
@@ -66,7 +92,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     if (mustBeRecreatable) {
       // When mustBeRecreatable=true, we should have the same answer as mustBeRecreatable=false
       // for valid queries that do not throw an error
-      val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      val activeCommit = getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
         getMockSnapshot(dataPath, latestVersion),
         logPath,
@@ -89,7 +115,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       canReturnLastCommit: Boolean = false,
       canReturnEarliestCommit: Boolean = false)(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
         getMockSnapshot(dataPath, latestVersion = latestVersion),
         logPath,
@@ -216,26 +242,18 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
   test("getActiveCommitAtTimestamp: throws table not found exception") {
     // Non-existent path
     intercept[TableNotFoundException](
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0,
-        true, // mustBeRecreatable
-        false, // canReturnLastCommit
-        false // canReturnEarliestCommit
-      ))
+        timestamp = 0))
     // Empty _delta_log directory
     intercept[TableNotFoundException](
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0,
-        true, // mustBeRecreatable
-        false, // canReturnLastCommit
-        false // canReturnEarliestCommit
-      ))
+        timestamp = 0))
   }
 
   // TODO: corrects commit timestamps for increasing commits (monotonizeCommitTimestamps)?
@@ -319,26 +337,19 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     /* ---------- TABLE NOT FOUND --------- */
     // Non-existent path
     intercept[TableNotFoundException](
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0,
-        false, // mustBeRecreatable
-        false, // canReturnLastCommit
-        false // canReturnEarliestCommit
-      ))
+        timestamp = 0,
+        mustBeRecreatable = false))
     // Empty _delta_log directory
     intercept[TableNotFoundException](
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0,
-        true, // mustBeRecreatable
-        false, // canReturnLastCommit
-        false // canReturnEarliestCommit
-      ))
+        timestamp = 0))
     /* ---------- CORRUPT LISTINGS --------- */
     // No commit files at all (only checkpoint files)
     checkGetActiveCommitAtTimestampError[RuntimeException](
@@ -384,7 +395,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     flagCombinations.foreach {
       case (mustBeRecreatable, canReturnLastCommit, canReturnEarliestCommit) =>
         if (shouldSucceed) {
-          val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          val activeCommit = getActiveCommitAtTimestamp(
             createMockFSListFromEngine(fileList),
             getMockSnapshot(dataPath, latestVersion = latestVersion, ictEnablementInfoOpt),
             logPath,
@@ -401,7 +412,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
               s"canReturnEarliestCommit=$canReturnEarliestCommit")
         } else {
           val e = intercept[Exception] {
-            DeltaHistoryManager.getActiveCommitAtTimestamp(
+            getActiveCommitAtTimestamp(
               createMockFSListFromEngine(fileList),
               getMockSnapshot(dataPath, latestVersion = latestVersion, ictEnablementInfoOpt),
               logPath,
@@ -445,15 +456,11 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((ictEnablementVersion, deltaToICTMap(ictEnablementVersion))))
 
     testCases.foreach { case (timestamp, expectedVersion, description) =>
-      val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      val activeCommit = getActiveCommitAtTimestamp(
         engine,
         mockSnapshot,
         logPath,
-        timestamp,
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */
-      )
+        timestamp)
       assert(
         activeCommit.getVersion == expectedVersion,
         s"$description: Expected version $expectedVersion " +
@@ -540,50 +547,40 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((0L, deltaToICTMap(0L))))
 
     // Test timestamp exactly at ICT enablement
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      10L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 10L)
     assert(activeCommit1.getVersion == 0L)
     assert(activeCommit1.getTimestamp == 10L)
 
     // Test timestamp just before first ICT
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      9L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      true /* canReturnEarliestCommit */ )
+      timestamp = 9L,
+      canReturnEarliestCommit = true)
     assert(activeCommit2.getVersion == 0L) // Should return earliest commit
     assert(activeCommit2.getTimestamp == 10L)
 
     // Test timestamp just after last ICT
     intercept[io.delta.kernel.exceptions.KernelException] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         engine,
         mockSnapshot,
         logPath,
-        51L, /* timestamp */
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */ )
+        timestamp = 51L)
     }
 
     // Test with canReturnLastCommit=true
-    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit3 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      51L, /* timestamp */
-      true, /* mustBeRecreatable */
-      true, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 51L,
+      canReturnLastCommit = true)
     assert(activeCommit3.getVersion == 4L)
     assert(activeCommit3.getTimestamp == 50L)
   }
@@ -604,38 +601,30 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((0L, deltaToICTMap(0L))))
 
     // Test timestamp equal to latest snapshot timestamp
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      30L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 30L)
     assert(activeCommit1.getVersion == 2L)
     assert(activeCommit1.getTimestamp == 30L)
 
     // Test timestamp greater than latest snapshot timestamp
     intercept[io.delta.kernel.exceptions.KernelException] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         engine,
         mockSnapshot,
         logPath,
-        35L, /* timestamp */
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */ )
+        timestamp = 35L)
     }
 
     // Test with canReturnLastCommit=true
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      35L, /* timestamp */
-      true, /* mustBeRecreatable */
-      true, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 35L,
+      canReturnLastCommit = true)
     assert(activeCommit2.getVersion == 2L)
     assert(activeCommit2.getTimestamp == 30L)
   }
@@ -665,38 +654,29 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     ) // ICT enabled at version 2
 
     // Test timestamp before ICT enablement (should use modification time)
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      150L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 150L)
     assert(activeCommit1.getVersion == 1L)
     assert(activeCommit1.getTimestamp == 150L) // modification time
 
     // Test timestamp after ICT enablement (should use ICT)
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      300L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 300L)
     assert(activeCommit2.getVersion == 2L)
     assert(activeCommit2.getTimestamp == 300L) // ICT
 
     // Test timestamp between ICT commits
-    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit3 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      350L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 350L)
     assert(activeCommit3.getVersion == 2L)
     assert(activeCommit3.getTimestamp == 300L) // Should return previous ICT commit
   }
@@ -727,27 +707,22 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
 
     // Test timestamp before ICT enablement but non-ICT commits are missing
     // Should return earliest available commit with its ICT
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      50L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      true /* canReturnEarliestCommit */ )
+      timestamp = 50L,
+      canReturnEarliestCommit = true)
     assert(activeCommit1.getVersion == 2L)
     assert(activeCommit1.getTimestamp == 300L) // ICT of earliest available commit
 
     // Test error case when canReturnEarliestCommit=false
     intercept[io.delta.kernel.exceptions.KernelException] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         engine,
         mockSnapshot,
         logPath,
-        50L, /* timestamp */
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */ )
+        timestamp = 50L)
     }
   }
 
@@ -766,36 +741,30 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((0L, deltaToICTMap(0L))))
 
     // Test searchTimestamp is the exact match with the middle commit
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      31L, /* timestamp */ // Exact match with version 3
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 31L // Exact match with version 3
+    )
     assert(activeCommit1.getVersion == 3L)
 
     // Test searchTimestamp = start case
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      1L, /* timestamp */ // First ICT
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 1L // First ICT
+    )
     assert(activeCommit2.getVersion == 0L)
 
     // Test searchTimestamp = end case
-    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit3 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      70L, /* timestamp */ // Last ICT
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 70L // Last ICT
+    )
     assert(activeCommit3.getVersion == 6L)
 
     // Test with even number of commits
@@ -811,14 +780,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       latestVersion = ictsEven.size - 1,
       Some((0L, deltaToICTMapEven(0L))))
 
-    val activeCommit4 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit4 = getActiveCommitAtTimestamp(
       engineEven,
       mockSnapshotEven,
       logPath,
-      25L, /* timestamp */ // Between version 2 and 3
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 25L // Between version 2 and 3
+    )
     assert(activeCommit4.getVersion == 2L)
     assert(activeCommit4.getTimestamp == 21L)
   }
@@ -839,38 +806,31 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((0L, deltaToICTMap(0L))))
 
     // Test exact match
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      100L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 100L)
     assert(activeCommit1.getVersion == 0L)
     assert(activeCommit1.getTimestamp == 100L)
 
     // Test timestamp before single commit
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      50L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      true /* canReturnEarliestCommit */ )
+      timestamp = 50L,
+      canReturnEarliestCommit = true)
     assert(activeCommit2.getVersion == 0L)
     assert(activeCommit2.getTimestamp == 100L)
 
     // Test timestamp after single commit
-    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit3 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      150L, /* timestamp */
-      true, /* mustBeRecreatable */
-      true, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 150L,
+      canReturnLastCommit = true)
     assert(activeCommit3.getVersion == 0L)
     assert(activeCommit3.getTimestamp == 100L)
   }
@@ -914,11 +874,11 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
 
     flagCombinations.foreach {
       case (mustBeRecreatable, canReturnLastCommit, canReturnEarliestCommit) =>
-        val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+        val activeCommit = getActiveCommitAtTimestamp(
           engine,
           mockSnapshot,
           logPath,
-          20L, /* timestamp */
+          timestamp = 20L,
           mustBeRecreatable,
           canReturnLastCommit,
           canReturnEarliestCommit)
@@ -931,22 +891,22 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     flagCombinations.foreach {
       case (mustBeRecreatable, canReturnLastCommit, canReturnEarliestCommit) =>
         if (canReturnEarliestCommit) {
-          val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          val activeCommit = getActiveCommitAtTimestamp(
             engine,
             mockSnapshot,
             logPath,
-            5L, /* timestamp */
+            timestamp = 5L,
             mustBeRecreatable,
             canReturnLastCommit,
             canReturnEarliestCommit)
           assert(activeCommit.getVersion == 0L)
         } else {
           intercept[io.delta.kernel.exceptions.KernelException] {
-            DeltaHistoryManager.getActiveCommitAtTimestamp(
+            getActiveCommitAtTimestamp(
               engine,
               mockSnapshot,
               logPath,
-              5L, /* timestamp */
+              timestamp = 5L,
               mustBeRecreatable,
               canReturnLastCommit,
               canReturnEarliestCommit)
@@ -958,22 +918,22 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     flagCombinations.foreach {
       case (mustBeRecreatable, canReturnLastCommit, canReturnEarliestCommit) =>
         if (canReturnLastCommit) {
-          val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          val activeCommit = getActiveCommitAtTimestamp(
             engine,
             mockSnapshot,
             logPath,
-            35L, /* timestamp */
+            timestamp = 35L,
             mustBeRecreatable,
             canReturnLastCommit,
             canReturnEarliestCommit)
           assert(activeCommit.getVersion == 2L)
         } else {
           intercept[io.delta.kernel.exceptions.KernelException] {
-            DeltaHistoryManager.getActiveCommitAtTimestamp(
+            getActiveCommitAtTimestamp(
               engine,
               mockSnapshot,
               logPath,
-              35L, /* timestamp */
+              timestamp = 35L,
               mustBeRecreatable,
               canReturnLastCommit,
               canReturnEarliestCommit)
@@ -994,14 +954,11 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
 
     // Test with ICT not enabled
     val nonICTSnapshot = getMockSnapshot(dataPath, latestVersion = 2L, None)
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       createMockFSListFromEngine(deltasWithModTimes),
       nonICTSnapshot,
       logPath,
-      15L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 15L)
     assert(activeCommit1.getVersion == 1L)
     assert(activeCommit1.getTimestamp == 15L) // Should use modification time
 
@@ -1041,14 +998,11 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       SnapshotQueryContext.forLatestSnapshot(dataPath.toString))
 
     intercept[IllegalStateException] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         engine,
         malformedSnapshot,
         logPath,
-        15L, /* timestamp */
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */ )
+        timestamp = 15L)
     }
   }
 
@@ -1144,5 +1098,503 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     assert(resultHigh.isPresent)
     assert(resultHigh.get._1 == 49L)
     assert(resultHigh.get._2 == 98L)
+  }
+
+  // ============== Tests for Staged Commits Support ===============
+
+  private def checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList: Seq[FileStatus],
+      catalogCommits: Seq[ParsedDeltaData],
+      versionToICT: Map[Long, Long],
+      timestampToQuery: Long,
+      expectedVersion: Long,
+      canReturnLastCommit: Boolean = false,
+      canReturnEarliestCommit: Boolean = false,
+      add10ToICTForStagedFiles: Boolean = false,
+      ictEnablementInfo: (Long, Long) = (0, 0)): Unit = {
+    // Create mock engine with ICT reading support
+    val mockJsonHandler = new MockReadICTFileJsonHandler(versionToICT, add10ToICTForStagedFiles)
+    val mockedEngine = mockEngine(
+      fileSystemClient = new MockListFromFileSystemClient(listFromProvider(fileList)),
+      jsonHandler = mockJsonHandler)
+
+    def getVersionFromFS(fs: FileStatus): Long = FileNames.getFileVersion(new Path(fs.getPath))
+    val latestVersion = fileList.map(getVersionFromFS(_)).max
+    // If we have a ratified commit file at the end version, we want to use this in the log segment
+    // for our mockLatestSnapshot, so we get the ICT from that file
+    val deltaFileAtEndVersion = fileList
+      .filter(fs => FileNames.isStagedDeltaFile(fs.getPath))
+      .find(getVersionFromFS(_) == latestVersion)
+
+    val mockLatestSnapshot =
+      getMockSnapshot(
+        dataPath,
+        latestVersion = latestVersion,
+        ictEnablementInfoOpt = Some(ictEnablementInfo),
+        deltaFileAtEndVersion = deltaFileAtEndVersion)
+
+    val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      mockedEngine,
+      mockLatestSnapshot,
+      logPath,
+      timestampToQuery,
+      false,
+      canReturnLastCommit,
+      canReturnEarliestCommit,
+      catalogCommits.asJava)
+    assert(
+      activeCommit.getVersion == expectedVersion,
+      s"Expected version $expectedVersion but got ${activeCommit.getVersion} " +
+        s"for timestamp=$timestampToQuery")
+  }
+
+  test("getActiveCommitAtTimestamp with catalog commits: empty log, 1 ratified commit") {
+    // Published commits: _
+    // Ratified commits: V0
+    val catalogCommitFiles = Seq(stagedCommitFile(0L))
+    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val versionToICT = Map(0L -> 180L)
+
+    // Query the exact timestamp
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      catalogCommitFiles,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = versionToICT(0),
+      expectedVersion = 0)
+
+    // Querying before without canReturnEarliestCommit results in error
+    intercept[KernelException] {
+      checkGetActiveCommitAtTimestampWithParsedLogData(
+        catalogCommitFiles,
+        parsedLogData,
+        versionToICT,
+        timestampToQuery = versionToICT(0) - 10,
+        expectedVersion = 0)
+    }
+
+    // Querying before with canReturnEarliestCommit passes
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      catalogCommitFiles,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = versionToICT(0) - 10,
+      expectedVersion = 0,
+      canReturnEarliestCommit = true)
+
+    // Querying after without canReturnLatestCommit results in error
+    intercept[KernelException] {
+      checkGetActiveCommitAtTimestampWithParsedLogData(
+        catalogCommitFiles,
+        parsedLogData,
+        versionToICT,
+        timestampToQuery = versionToICT(0) + 10,
+        expectedVersion = 0)
+    }
+
+    // Querying after with canReturnLatestCommit passes
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      catalogCommitFiles,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = versionToICT(0) + 10,
+      expectedVersion = 0,
+      canReturnLastCommit = true)
+  }
+
+  test("getActiveCommitAtTimestamp with catalog commits: empty log, 2 ratified commit") {
+    // Published commits: _
+    // Ratified commits: V0, V1
+    val catalogCommits = Seq(stagedCommitFile(0L), stagedCommitFile(1L))
+    val parsedLogData = catalogCommits.map(ParsedDeltaData.forFileStatus(_))
+    val versionToICT = Map(0L -> 180L, 1L -> 280L)
+
+    // Query the exact timestamp of V0
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      catalogCommits,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 180L,
+      expectedVersion = 0)
+
+    // Query in between V0 and V1
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      catalogCommits,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 200L,
+      expectedVersion = 0)
+
+    // Query the exact timestamp of V1
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      catalogCommits,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 280L,
+      expectedVersion = 1)
+  }
+
+  test("getActiveCommitAtTimestamp with catalog commits: no overlap") {
+    // Published commits: V0, V1
+    // Ratified commits: V2, V3
+    val catalogCommitFiles = Seq(stagedCommitFile(2L), stagedCommitFile(3L))
+    val fileList = Seq(
+      deltaFileStatus(0),
+      deltaFileStatus(1)) ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 180L, 1L -> 280L, 2L -> 380L, 3L -> 480L)
+    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+
+    // Query the exact timestamp of V1
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 280L,
+      expectedVersion = 1)
+
+    // Query in between V1 and V2
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 300L,
+      expectedVersion = 1)
+
+    // Query the exact timestamp of V2
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 380L,
+      expectedVersion = 2)
+
+    // Query in between V2 and V3
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 400L,
+      expectedVersion = 2)
+
+    // Query the exact timestamp of V3
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 480L,
+      expectedVersion = 3)
+  }
+
+  test("getActiveCommitAtTimestamp with catalog commits: " +
+    "v0 published and ratified => prefer ratified") {
+    // Published commits: V0
+    // Ratified commits: V0
+    val catalogCommitFiles = Seq(stagedCommitFile(0L))
+    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val fileList = Seq(deltaFileStatus(0)) ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 200L)
+    // If we read from the published file, we should get ICT=200
+    // If we read from the ratified file, we should get ICT=210 (correct behavior!)
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 210L,
+      expectedVersion = 0,
+      add10ToICTForStagedFiles = true)
+
+    intercept[KernelException] {
+      checkGetActiveCommitAtTimestampWithParsedLogData(
+        fileList,
+        parsedLogData,
+        versionToICT,
+        timestampToQuery = 200L,
+        expectedVersion = 0,
+        add10ToICTForStagedFiles = true)
+    }
+  }
+
+  test("getActiveCommitAtTimestamp with catalog commits: overlap => prefer ratified") {
+    // Published commits: V10, V11
+    // Ratified commits: V11, V12
+    val catalogCommitFiles = Seq(stagedCommitFile(11), stagedCommitFile(12))
+    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val fileList = Seq(
+      classicCheckpointFileStatus(10),
+      deltaFileStatus(10),
+      deltaFileStatus(11)) ++ catalogCommitFiles
+    val versionToICT = Map(10L -> 1000L, 11L -> 1100L, 12L -> 1200L)
+    // We have v10=1000, v11=1110 (if we use the ratified commit), v12=1210
+
+    // Read at v10
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 1000L,
+      expectedVersion = 10,
+      add10ToICTForStagedFiles = true)
+
+    // Read between v10 and v11 (if we incorrectly use the published file this will fail!)
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 1101L,
+      expectedVersion = 10,
+      add10ToICTForStagedFiles = true)
+
+    // Read at v11
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 1110L,
+      expectedVersion = 11,
+      add10ToICTForStagedFiles = true)
+
+    // Read between v11 and v12
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 1150,
+      expectedVersion = 11,
+      add10ToICTForStagedFiles = true)
+
+    // Read at v12
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 1210,
+      expectedVersion = 12,
+      add10ToICTForStagedFiles = true)
+  }
+
+  test("getActiveCommitAtTimestamp with catalog commits: " +
+    "discontinuous catalog commits => prefer ratified") {
+    // Published commits: V0, V1, V2
+    // Ratified commits: V0, V2
+    val catalogCommitFiles = Seq(stagedCommitFile(0), stagedCommitFile(2))
+    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val fileList = Seq(
+      deltaFileStatus(0),
+      deltaFileStatus(1),
+      deltaFileStatus(2)) ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 1000L, 1L -> 2000L, 2L -> 3000L)
+    // We have v0=1010, v1=2000, v2=3010 assuming we use the ratified commits > published commits
+
+    // Read at published file ICT for v0 should fail
+    intercept[KernelException] {
+      checkGetActiveCommitAtTimestampWithParsedLogData(
+        fileList,
+        parsedLogData,
+        versionToICT,
+        timestampToQuery = 1000L,
+        expectedVersion = 0,
+        add10ToICTForStagedFiles = true)
+    }
+
+    // Read at correct version for v0 if using staged commit
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 1010L,
+      expectedVersion = 0L,
+      add10ToICTForStagedFiles = true)
+
+    // Read between v0 and v1
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 1500L,
+      expectedVersion = 0,
+      add10ToICTForStagedFiles = true)
+
+    // Read at v1
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 2000L,
+      expectedVersion = 1,
+      add10ToICTForStagedFiles = true)
+
+    // Read between v1 and v2 (this will fail if we don't use the ratified commit)
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 3000L,
+      expectedVersion = 1,
+      add10ToICTForStagedFiles = true)
+
+    // Read at v2
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 3010L,
+      expectedVersion = 2,
+      add10ToICTForStagedFiles = true)
+  }
+
+  test("getActiveCommitAtTimestamp with catalog commits: ICT enabled after v0") {
+    // Published commits: V0 (non-ICT), V1 (enables ICT)
+    // Ratified commits: V2
+    val catalogCommitFiles = Seq(stagedCommitFile(2))
+    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val fileList = Seq(
+      deltaFileStatus(0),
+      deltaFileStatus(1)) ++ catalogCommitFiles
+    val versionToICT = Map(1L -> 2000L, 2L -> 3000L)
+    val ictEnablementInfo = (1L, 2000L) // (version, timestamp)
+
+    // Query exact timestamp of v0 (no ICT)
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 0L,
+      expectedVersion = 0,
+      ictEnablementInfo = ictEnablementInfo)
+
+    // Query between v0 and v1
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 8L,
+      expectedVersion = 0,
+      ictEnablementInfo = ictEnablementInfo)
+
+    // TODO: this fails due to an existing bug when querying a timestamp between
+    //  (ictEnablementVersionFsTs, ictEnablementTs) -- re-enable this once it's fixed
+    // Query between v0 and v1 - ICT based
+    /*
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      500L,
+      0,
+      ictEnablementInfo = ictEnablementInfo)
+     */
+
+    // Query exact timestamp of v1 (ICT)
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 2000L,
+      expectedVersion = 1,
+      ictEnablementInfo = ictEnablementInfo)
+
+    // Query between v1 and v2
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 2500L,
+      expectedVersion = 1,
+      ictEnablementInfo = ictEnablementInfo)
+
+    // Query exact v2
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 3000L,
+      expectedVersion = 2,
+      ictEnablementInfo = ictEnablementInfo)
+  }
+
+  test("getActiveCommitAtTimestamp with catalog commits: ICT enabled after v0 and " +
+    "only ICT commits available") {
+    // This tests the scenario where we are searching for a pre-ICT time but all the non-ICT commits
+    // are missing. This throws an error based on `canReturnEarliestCommit`.
+    // Published commits: v10
+    // Ratified commits: V11
+    val catalogCommitFiles = Seq(stagedCommitFile(11))
+    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val fileList = Seq(
+      classicCheckpointFileStatus(10),
+      deltaFileStatus(10)) ++ catalogCommitFiles
+    val versionToICT = Map(10L -> 1000L, 11L -> 1100L)
+    val ictEnablementInfo = (5L, 500L) // (version, timestamp)
+
+    // If we have canReturnEarliestCommit=false should fail
+    // Querying after without canReturnLatestCommit results in error
+    val e = intercept[KernelException] {
+      checkGetActiveCommitAtTimestampWithParsedLogData(
+        fileList,
+        parsedLogData,
+        versionToICT,
+        timestampToQuery = 400,
+        expectedVersion = 0,
+        ictEnablementInfo = ictEnablementInfo)
+    }
+    assert(e.getMessage.contains("is before the earliest available version 10. Please use a " +
+      "timestamp greater than or equal to 1000 ms"))
+
+    // Query with canReturnEarliestCommit=true should pass
+    checkGetActiveCommitAtTimestampWithParsedLogData(
+      fileList,
+      parsedLogData,
+      versionToICT,
+      timestampToQuery = 400,
+      expectedVersion = 10,
+      canReturnEarliestCommit = true,
+      ictEnablementInfo = ictEnablementInfo)
+  }
+
+  test("getActiveCommitAtTimestamp rejects non-ratified staged commits") {
+    val fileList = Seq(
+      classicCheckpointFileStatus(0),
+      deltaFileStatus(0))
+
+    // Test 1: Inline commits (non-materialized) should be rejected
+    val mockColumnarBatch = new ColumnarBatch {
+      override def getSchema: StructType = null
+      override def getColumnVector(ordinal: Int): ColumnVector = null
+      override def getSize: Int = 1
+    }
+    val inlineCommit = ParsedDeltaData.forInlineData(
+      1L,
+      mockColumnarBatch)
+    val inlineData = Seq(inlineCommit).asJava
+
+    assertThrows[IllegalArgumentException] {
+      // Args don't matter as validation should fail immediately
+      DeltaHistoryManager.getActiveCommitAtTimestamp(
+        createMockFSListFromEngine(fileList),
+        getMockSnapshot(dataPath, latestVersion = 0),
+        logPath,
+        10,
+        false,
+        false,
+        false,
+        inlineData)
+    }
+
+    // Test 2: Published deltas in ParsedLogData should be rejected (only staged commits allowed)
+    val publishedDelta = ParsedDeltaData.forFileStatus(deltaFileStatus(1))
+    val publishedData = Seq(publishedDelta).asJava
+
+    assertThrows[IllegalArgumentException] {
+      // Args don't matter as validation should fail immediately
+      DeltaHistoryManager.getActiveCommitAtTimestamp(
+        createMockFSListFromEngine(fileList),
+        getMockSnapshot(dataPath, latestVersion = 0),
+        logPath,
+        10,
+        false,
+        false,
+        false,
+        publishedData)
+    }
   }
 }

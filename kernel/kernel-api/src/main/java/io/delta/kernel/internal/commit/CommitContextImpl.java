@@ -99,6 +99,8 @@ public class CommitContextImpl implements CommitContext {
         getCommitAsVersion(),
         txnState.logPath,
         commitInfo,
+        Collections.emptyList(), // TODO: support passing in domain metadata
+        Collections::emptyMap, /* committerProperties */
         txnState.readTableOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
         txnState.updatedProtocolOpt,
         txnState.isMetadataUpdate() ? Optional.of(metadata) : Optional.empty());

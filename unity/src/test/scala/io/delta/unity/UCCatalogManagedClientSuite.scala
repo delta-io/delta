@@ -23,7 +23,6 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.internal.{CreateTableTransactionBuilderImpl, SnapshotImpl}
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.storage.commit.Commit
@@ -179,12 +178,12 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val ucCommit = createCommit(1)
     val hadoopFS = ucCommit.getFileStatus
 
-    val kernelParsedLogData = UCCatalogManagedClient
-      .getSortedKernelLogDataFromRatifiedCommits("ucTableId", Seq(ucCommit).asJava)
+    val kernelParsedDeltaData = UCCatalogManagedClient
+      .getSortedKernelParsedDeltaDataFromRatifiedCommits("ucTableId", Seq(ucCommit).asJava)
       .get(0)
-    val kernelFS = kernelParsedLogData.getFileStatus
+    val kernelFS = kernelParsedDeltaData.getFileStatus
 
-    assert(kernelParsedLogData.`type` == ParsedLogType.RATIFIED_STAGED_COMMIT)
+    assert(kernelParsedDeltaData.isFile)
     assert(kernelFS.getPath == hadoopFS.getPath.toString)
     assert(kernelFS.getSize == hadoopFS.getLen)
     assert(kernelFS.getModificationTime == hadoopFS.getModificationTime)
@@ -194,12 +193,12 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val ucCommitsUnsorted = Seq(createCommit(1), createCommit(2), createCommit(3)).asJava
 
     val kernelParsedLogData = UCCatalogManagedClient
-      .getSortedKernelLogDataFromRatifiedCommits("ucTableId", ucCommitsUnsorted)
+      .getSortedKernelParsedDeltaDataFromRatifiedCommits("ucTableId", ucCommitsUnsorted)
 
     assert(kernelParsedLogData.size() == 3)
-    assert(kernelParsedLogData.get(0).version == 1)
-    assert(kernelParsedLogData.get(1).version == 2)
-    assert(kernelParsedLogData.get(2).version == 3)
+    assert(kernelParsedLogData.get(0).getVersion == 1)
+    assert(kernelParsedLogData.get(1).getVersion == 2)
+    assert(kernelParsedLogData.get(2).getVersion == 3)
   }
 
   test("creates snapshot with UCCatalogManagedCommitter") {

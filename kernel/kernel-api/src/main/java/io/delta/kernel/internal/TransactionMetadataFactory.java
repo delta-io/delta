@@ -95,7 +95,8 @@ public class TransactionMetadataFactory {
     checkArgument(
         !partitionColumns.isPresent() || !clusteringColumns.isPresent(),
         "Cannot provide both partition columns and clustering columns");
-    validateInitialMetadata(tableProperties, schema, partitionColumns.orElse(emptyList()));
+    validateSchemaAndPartColsCreateOrReplace(
+        tableProperties, schema, partitionColumns.orElse(emptyList()));
     Output output =
         new TransactionMetadataFactory(
                 tablePath,
@@ -125,7 +126,8 @@ public class TransactionMetadataFactory {
     checkArgument(
         !partitionColumns.isPresent() || !clusteringColumns.isPresent(),
         "Cannot provide both partition columns and clustering columns");
-    validateInitialMetadata(userInputTableProperties, schema, partitionColumns.orElse(emptyList()));
+    validateSchemaAndPartColsCreateOrReplace(
+        userInputTableProperties, schema, partitionColumns.orElse(emptyList()));
     validateNotEnablingCatalogManagedOnReplace(userInputTableProperties);
     // In the case of Replace table there are a few delta-specific properties we want to preserve
     Map<String, String> replaceTableProperties =
@@ -298,15 +300,6 @@ public class TransactionMetadataFactory {
     updateColumnMappingMetadataAndResolveClusteringColumns(userProvidedLogicalClusteringColumns);
     updateRowTrackingMetadata();
     validateMetadataChangeAndApplyTypeWidening();
-    if (isCreateOrReplace) {
-      // For a new table, sanity check after protocol upgrades that the new schema is valid
-      // ToDo: Plumb through table features to validateSchema
-      ColumnMappingMode mappingMode =
-          ColumnMapping.getColumnMappingMode(getEffectiveMetadata().getConfiguration());
-      SchemaUtils.validateSchema(
-          getEffectiveMetadata().getSchema(), isColumnMappingModeEnabled(mappingMode));
-    }
-
     this.finalOutput = new Output(newProtocol, newMetadata, physicalNewClusteringColumns);
   }
 
@@ -694,12 +687,12 @@ public class TransactionMetadataFactory {
     return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
   }
 
-  private static void validateInitialMetadata(
+  private static void validateSchemaAndPartColsCreateOrReplace(
       Map<String, String> tableProperties, StructType schema, List<String> partitionColumns) {
     // New table verify the given schema and partition columns
     ColumnMappingMode mappingMode = ColumnMapping.getColumnMappingMode(tableProperties);
 
-    SchemaUtils.validateColumnNames(schema, isColumnMappingModeEnabled(mappingMode));
+    SchemaUtils.validateSchema(schema, isColumnMappingModeEnabled(mappingMode));
     SchemaUtils.validatePartitionColumns(schema, partitionColumns);
   }
 

@@ -31,6 +31,7 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import java.util.Collections;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +67,7 @@ public class SnapshotFactory {
             .computeTimestampToVersionTotalDurationTimer
             .time(
                 () ->
+                    // TODO provide catalogCommits to support ccv2 time-travel
                     DeltaHistoryManager.getActiveCommitAtTimestamp(
                             engine,
                             latestSnapshot,
@@ -73,7 +75,8 @@ public class SnapshotFactory {
                             millisSinceEpochUTC,
                             true /* mustBeRecreatable */,
                             false /* canReturnLastCommit */,
-                            false /* canReturnEarliestCommit */)
+                            false /* canReturnEarliestCommit */,
+                            Collections.emptyList() /* parsedDeltaDatas */)
                         .getVersion());
 
     snapshotQueryCtx.setResolvedVersion(resolvedVersionToLoad);

@@ -79,6 +79,21 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     createPredicate(symbol, List(left, right).asJava, optionToJava(collationIdentifier))
   }
 
+  protected def in(value: Expression, inList: Expression*): In = {
+    new In(value, inList.toList.asJava)
+  }
+
+  protected def in(
+      value: Expression,
+      collationIdentifier: Option[CollationIdentifier],
+      inList: Expression*): In = {
+    if (collationIdentifier.isDefined) {
+      new In(value, inList.toList.asJava, collationIdentifier.get)
+    } else {
+      new In(value, inList.toList.asJava)
+    }
+  }
+
   protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
     assert(actual.getDataType === expected.getDataType)
     assert(actual.getSize === expected.getSize)

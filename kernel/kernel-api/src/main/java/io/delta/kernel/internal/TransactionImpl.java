@@ -21,6 +21,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import static java.util.Collections.emptyMap;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.*;
 import io.delta.kernel.commit.CommitFailedException;
@@ -63,6 +64,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -120,6 +122,7 @@ public class TransactionImpl implements Transaction {
   private final DomainMetadataState domainMetadataState = new DomainMetadataState();
   private Optional<CRCInfo> currentCrcInfo;
   private Optional<Long> providedRowIdHighWatermark = Optional.empty();
+  private Supplier<Map<String, String>> committerProperties = Collections::emptyMap;
   private boolean closed; // To avoid trying to commit the same transaction again.
 
   public TransactionImpl(
@@ -188,6 +191,11 @@ public class TransactionImpl implements Transaction {
 
   public Optional<SetTransaction> getSetTxnOpt() {
     return setTxnOpt;
+  }
+
+  @Override
+  public void withCommitterProperties(Supplier<Map<String, String>> committerProperties) {
+    this.committerProperties = requireNonNull(committerProperties, "committerProperties is null");
   }
 
   @VisibleForTesting
@@ -532,6 +540,8 @@ public class TransactionImpl implements Transaction {
               commitAsVersion,
               logPath.toString(),
               attemptCommitInfo,
+              resolvedDomainMetadatas,
+              committerProperties,
               readSnapshotOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
               shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
               shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());

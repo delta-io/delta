@@ -16,6 +16,7 @@
 
 package io.delta.unity;
 
+import static io.delta.kernel.commit.CatalogCommitterUtils.CATALOG_MANAGED_ENABLEMENT_KEY;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.unity.utils.OperationTimer.timeUncheckedOperation;
 
@@ -23,8 +24,10 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
@@ -51,19 +54,10 @@ import org.slf4j.LoggerFactory;
 public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
-  /**
-   * Table property key to enable the catalogManaged table feature. This is a signal to Kernel to
-   * add this table feature to Kernel's protocol. This property won't be written to the delta
-   * metadata.
-   */
-  private static final String CATALOG_MANAGED_ENABLEMENT_KEY =
-      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
-          + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName();
-
   /** Key for identifying Unity Catalog table ID. */
-  private static final String UC_TABLE_ID_KEY = "ucTableId";
+  public static final String UC_TABLE_ID_KEY = "ucTableId";
 
-  private final UCClient ucClient;
+  protected final UCClient ucClient;
 
   public UCCatalogManagedClient(UCClient ucClient) {
     this.ucClient = Objects.requireNonNull(ucClient, "ucClient is null");
@@ -98,7 +92,7 @@ public class UCCatalogManagedClient {
     versionOpt.ifPresent(
         version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));
     final List<ParsedLogData> logData =
-        getSortedKernelLogDataFromRatifiedCommits(ucTableId, response.getCommits());
+        getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
 
     return timeUncheckedOperation(
         logger,
@@ -112,7 +106,7 @@ public class UCCatalogManagedClient {
           }
 
           return snapshotBuilder
-              .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
               .withLogData(logData)
               .build(engine);
         });
@@ -142,8 +136,22 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(engineInfo, "engineInfo is null");
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
-        .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+        .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
+  }
+
+  /////////////////////////////////////////
+  // Protected Methods for Extensibility //
+  /////////////////////////////////////////
+
+  /**
+   * Creates a UC committer instance for the specified table.
+   *
+   * <p>This method allows subclasses to provide custom committer implementations for specialized
+   * use cases.
+   */
+  protected Committer createUCCommitter(UCClient ucClient, String ucTableId, String tablePath) {
+    return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
   }
 
   ////////////////////
@@ -229,7 +237,7 @@ public class UCCatalogManagedClient {
    * loading a Delta table.
    */
   @VisibleForTesting
-  static List<ParsedLogData> getSortedKernelLogDataFromRatifiedCommits(
+  static List<ParsedLogData> getSortedKernelParsedDeltaDataFromRatifiedCommits(
       String ucTableId, List<Commit> commits) {
     final List<ParsedLogData> result =
         timeUncheckedOperation(
@@ -241,7 +249,7 @@ public class UCCatalogManagedClient {
                     .sorted(Comparator.comparingLong(Commit::getVersion))
                     .map(
                         commit ->
-                            ParsedLogData.forFileStatus(
+                            ParsedDeltaData.forFileStatus(
                                 hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
                     .collect(Collectors.toList()));
 

@@ -137,7 +137,7 @@ class DeltaDataSource
       // process would create a new entry in the schema log such that when the schema log is
       // looked up again in the execution phase, we would use the correct schema.
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
-          sqlContext.sparkSession, snapshot, parameters,
+          sqlContext.sparkSession, snapshot, catalogTableOpt, parameters,
           mergeConsecutiveSchemaChanges = shouldMergeConsecutiveSchemas)
         .flatMap(_.getCurrentTrackedMetadata.map(_.dataSchema))
         .getOrElse(snapshot.schema)
@@ -180,7 +180,7 @@ class DeltaDataSource
       getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path))
     val schemaTrackingLogOpt =
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
-        sqlContext.sparkSession, snapshot, parameters,
+        sqlContext.sparkSession, snapshot, catalogTableOpt, parameters,
         // Pass in the metadata path opt so we can use it for validation
         sourceMetadataPathOpt = Some(metadataPath))
 
@@ -485,6 +485,7 @@ object DeltaDataSource extends DatabricksLogging {
   def getMetadataTrackingLogForDeltaSource(
       spark: SparkSession,
       sourceSnapshot: SnapshotDescriptor,
+      catalogTableOpt: Option[CatalogTable],
       parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceMetadataTrackingLog] = {
@@ -498,7 +499,10 @@ object DeltaDataSource extends DatabricksLogging {
         }
 
         DeltaSourceMetadataTrackingLog.create(
-          spark, schemaTrackingLocation, sourceSnapshot,
+          spark,
+          schemaTrackingLocation,
+          sourceSnapshot,
+          catalogTableOpt,
           parameters,
           sourceMetadataPathOpt,
           mergeConsecutiveSchemaChanges

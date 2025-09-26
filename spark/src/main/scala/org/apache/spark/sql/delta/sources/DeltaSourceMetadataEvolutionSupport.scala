@@ -188,7 +188,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       startVersion: Long,
       endVersion: Long
   ): ClosableIterator[(Long, Action)] = {
-    deltaLog.getChangeLogFiles(startVersion, options.failOnDataLoss, catalogTableOpt).takeWhile {
+    deltaLog.getChangeLogFiles(startVersion, catalogTableOpt, options.failOnDataLoss).takeWhile {
       case (version, _) => version <= endVersion
     }.flatMapWithClose { case (version, fileStatus) =>
       DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)

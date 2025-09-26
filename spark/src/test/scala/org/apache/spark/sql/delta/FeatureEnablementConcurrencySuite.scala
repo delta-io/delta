@@ -28,6 +28,7 @@ import org.apache.parquet.hadoop.metadata.ParquetMetadata
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.parquet.ParquetReadSupport
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ThreadUtils
@@ -62,7 +63,7 @@ class FeatureEnablementConcurrencySuite
 
   private def createTestTable(
       properties: Seq[String] = Seq.empty,
-      numPartitions: Int = 2): DeltaLog = {
+      numPartitions: Int = 2): (DeltaLog, CatalogTable) = {
     sql(s"DROP TABLE IF EXISTS $testTableName")
     val propertiesString = if (properties.nonEmpty) properties.mkString(",") + "," else ""
     sql(
@@ -80,7 +81,9 @@ class FeatureEnablementConcurrencySuite
       .mode("append")
       .saveAsTable(testTableName)
 
-    DeltaLog.forTable(spark, TableIdentifier(testTableName))
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(
+      TableIdentifier(testTableName))
+    (DeltaLog.forTable(spark, catalogTable), catalogTable)
   }
 
   private def getParquetFooter(deltaLog: DeltaLog, file: AddFile): ParquetMetadata = {
@@ -173,7 +176,8 @@ class FeatureEnablementConcurrencySuite
   }
 
   test("checkConfigurationChangesForConflicts") {
-    val deltaLog = createTestTable()
+    val (deltaLog, catalogTable) = createTestTable()
+    val snapshot = deltaLog.update(catalogTableOpt = Some(catalogTable))
     val dummyTransactionInfo = CurrentTransactionInfo(
       txnId = "txn 1",
       readPredicates = Vector.empty,
@@ -181,19 +185,22 @@ class FeatureEnablementConcurrencySuite
       readWholeTable = false,
       readAppIds = Set.empty,
       metadata = Metadata(),
-      protocol = deltaLog.update().protocol,
+      protocol = snapshot.protocol,
       actions = Seq.empty[AddFile],
-      readSnapshot = deltaLog.update(),
+      readSnapshot = snapshot,
       commitInfo = None,
       readRowIdHighWatermark = 0L,
-      catalogTable = None,
+      catalogTable = Some(catalogTable),
       domainMetadata = Seq.empty,
       op = DeltaOperations.ManualUpdate)
 
-    val lastVersion = deltaLog.update().version
+    val lastVersion = snapshot.version
     val dummyCommit = deltaLog
       .getChangeLogFiles(
-        startVersion = lastVersion, endVersion = lastVersion, failOnDataLoss = false)
+        startVersion = lastVersion,
+        endVersion = lastVersion,
+        catalogTableOpt = Some(catalogTable),
+        failOnDataLoss = false)
       .map { case (_, file) => file }
       .filter(FileNames.isDeltaFile)
       .take(1)
@@ -272,7 +279,7 @@ class FeatureEnablementConcurrencySuite
     concurrentTxnName <- Seq("alterTableProperty", "delete")
   } test("Enable row tracking feature " +
       s"concurrent txn: $concurrentTxnName") {
-    val deltaLog = createTestTable(
+    val (deltaLog, catalogTable) = createTestTable(
       properties = Seq(s"'${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false'")
     )
     val ctx = new TestContext(deltaLog)
@@ -318,12 +325,13 @@ class FeatureEnablementConcurrencySuite
         }
     }
     ThreadUtils.awaitResult(enableFuture, timeout)
-    assert(DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(deltaLog.update().metadata))
+    assert(DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(
+        deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata))
   }
 
   for (withUnset <- BOOLEAN_DOMAIN)
   test(s"Disable row tracking feature - withUnset: $withUnset") {
-    val deltaLog = createTestTable()
+    val (deltaLog, _) = createTestTable()
     val ctx = new TestContext(deltaLog)
     AlterTableProperty(property = DeltaConfigs.ROW_TRACKING_ENABLED.key, value = "true")
       .execute(ctx)
@@ -344,8 +352,8 @@ class FeatureEnablementConcurrencySuite
   }
 
   test("Validate column metadata schema") {
-    val deltaLog = createTestTable()
-    val schema = deltaLog.update().metadata.schema
+    val (deltaLog, catalogTable) = createTestTable()
+    val schema = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata.schema
     assert(schema.fields.head.productArity === 4,
       """
         |Got a non expected field column arity.
@@ -355,10 +363,10 @@ class FeatureEnablementConcurrencySuite
 
   for (mode <- Seq(NameMapping, IdMapping))
   test(s"Create table with column mapping - mode: ${mode.name}") {
-    val deltaLog = createTestTable(
+    val (deltaLog, catalogTable) = createTestTable(
       properties = Seq(s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${mode.name}'"))
 
-    deltaLog.update().allFiles.collect().foreach { addFile =>
+    deltaLog.update(catalogTableOpt = Some(catalogTable)).allFiles.collect().foreach { addFile =>
       val footer = getParquetFooter(deltaLog, addFile)
       validateFooter(footer, expected = true)
     }
@@ -366,7 +374,7 @@ class FeatureEnablementConcurrencySuite
 
   for (txnInterleaved <- BOOLEAN_DOMAIN)
   test(s"Enable column mapping feature - txnInterleaved: $txnInterleaved") {
-    val deltaLog = createTestTable()
+    val (deltaLog, catalogTable) = createTestTable()
     val ctx = new TestContext(deltaLog)
 
     val columnMappingEnablementTxn = AlterTableProperty(
@@ -381,7 +389,7 @@ class FeatureEnablementConcurrencySuite
       columnMappingEnablementTxn.execute(ctx)
     }
 
-    val metadata = deltaLog.update().metadata
+    val metadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
     assert(metadata.columnMappingMode === NameMapping)
     assert(metadata.schema.fields.map(_.metadata).forall { m =>
       m.contains("delta.columnMapping.id") && m.contains("delta.columnMapping.physicalName")
@@ -397,7 +405,7 @@ class FeatureEnablementConcurrencySuite
 
     // When column mapping is enabled on an existing table we do not expect any metadata in the
     // parquet footer.
-    deltaLog.update().allFiles.collect().foreach { addFile =>
+    deltaLog.update(catalogTableOpt = Some(catalogTable)).allFiles.collect().foreach { addFile =>
       val footer = getParquetFooter(deltaLog, addFile)
       validateFooter(footer, expected = false)
     }
@@ -405,7 +413,7 @@ class FeatureEnablementConcurrencySuite
 
   for (startMode <- Seq(NameMapping, IdMapping, NoMapping))
   test(s"Verify invalid column mapping transitions - startMode: ${startMode.name}") {
-    val deltaLog = createTestTable(
+    val (deltaLog, _) = createTestTable(
       properties = Seq(s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${startMode.name}'"))
     val ctx = new TestContext(deltaLog)
 
@@ -427,7 +435,7 @@ class FeatureEnablementConcurrencySuite
 
   for (startMode <- Seq(NameMapping, IdMapping))
   test(s"Removing column mapping mode produces conflict - startMode: ${startMode.name}") {
-    val deltaLog = createTestTable(
+    val (deltaLog, catalogTable) = createTestTable(
       properties = Seq(s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${startMode.name}'"))
     val ctx = new TestContext(deltaLog)
 
@@ -441,15 +449,16 @@ class FeatureEnablementConcurrencySuite
       businessTxn.commit(ctx)
     }
     assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
-    assert(deltaLog.update().metadata.columnMappingMode === NoMapping)
+    assert(deltaLog.update(
+      catalogTableOpt = Some(catalogTable)).metadata.columnMappingMode === NoMapping)
   }
 
   test("Column mapping enablement with RESTORE") {
-    val deltaLog = createTestTable(
+    val (deltaLog, catalogTable) = createTestTable(
       properties = Seq(s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${IdMapping.name}'"))
     val ctx = new TestContext(deltaLog)
 
-    val columnMappingEnabledVersion = deltaLog.update().version
+    val columnMappingEnabledVersion = deltaLog.update(catalogTableOpt = Some(catalogTable)).version
 
     // Disable column mapping.
     AlterTableProperty(property = DeltaConfigs.COLUMN_MAPPING_MODE.key, value = NoMapping.name)

@@ -21,12 +21,17 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Contains all information (excluding the iterator of finalized actions) required to commit changes
@@ -57,6 +62,8 @@ public class CommitMetadata {
   private final long version;
   private final String logPath;
   private final CommitInfo commitInfo;
+  private final List<DomainMetadata> commitDomainMetadatas;
+  private final Supplier<Map<String, String>> committerProperties;
   private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
@@ -65,6 +72,8 @@ public class CommitMetadata {
       long version,
       String logPath,
       CommitInfo commitInfo,
+      List<DomainMetadata> commitDomainMetadatas,
+      Supplier<Map<String, String>> committerProperties,
       Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
       Optional<Protocol> newProtocolOpt,
       Optional<Metadata> newMetadataOpt) {
@@ -72,6 +81,10 @@ public class CommitMetadata {
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
     this.commitInfo = requireNonNull(commitInfo, "commitInfo is null");
+    this.commitDomainMetadatas =
+        Collections.unmodifiableList(
+            requireNonNull(commitDomainMetadatas, "txnDomainMetadatas is null"));
+    this.committerProperties = requireNonNull(committerProperties, "committerProperties is null");
     this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
@@ -100,6 +113,25 @@ public class CommitMetadata {
   /** The {@link CommitInfo} that is being written as part of this commit. */
   public CommitInfo getCommitInfo() {
     return commitInfo;
+  }
+
+  /**
+   * The {@link DomainMetadata}s that are being written as part of this commit. Includes those that
+   * are being explicitly added and those that are being explicitly removed (tombstoned).
+   *
+   * <p>Does not include the domain metadatas that already exist in the transaction's read snapshot,
+   * if any.
+   */
+  public List<DomainMetadata> getCommitDomainMetadatas() {
+    return commitDomainMetadatas;
+  }
+
+  /**
+   * Returns custom properties provided by the connector to be passed through to the committer.
+   * These properties are not inspected by Kernel and are used for catalog-specific functionality.
+   */
+  public Supplier<Map<String, String>> getCommitterProperties() {
+    return committerProperties;
   }
 
   /**

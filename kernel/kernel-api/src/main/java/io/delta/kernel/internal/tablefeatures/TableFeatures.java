@@ -217,11 +217,6 @@ public class TableFeatures {
     VariantTypeTableFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
     }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
-    }
   }
 
   private static class VariantTypeTableFeature extends VariantTypeTableFeatureBase
@@ -262,8 +257,8 @@ public class TableFeatures {
     }
 
     @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
+    public Set<TableFeature> requiredFeatures() {
+      return new HashSet<>(Arrays.asList(TableFeatures.VARIANT_RW_FEATURE));
     }
   }
   /* ---- End: variantShredding-preview ---- */

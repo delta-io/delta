@@ -33,6 +33,7 @@ import io.delta.kernel.utils.DataFileStatus;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Contains interfaces and common utility classes for defining the iceberg conversion compatibility
@@ -264,12 +265,15 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
               MapType.class,
               StructType.class));
 
+  private static final Set<Class<? extends DataType>> V3_SUPPORTED_TYPES =
+      Stream.concat(V2_SUPPORTED_TYPES.stream(), Stream.of(VariantType.class))
+          .collect(Collectors.toSet());
+
   protected static final IcebergCompatCheck V2_CHECK_HAS_SUPPORTED_TYPES =
       hasOnlySupportedTypes(V2_SUPPORTED_TYPES);
 
   protected static final IcebergCompatCheck V3_CHECK_HAS_SUPPORTED_TYPES =
-      // todo: add VariantType once it is supported
-      hasOnlySupportedTypes(V2_SUPPORTED_TYPES);
+      hasOnlySupportedTypes(V3_SUPPORTED_TYPES);
 
   // These are the common supported partition types for both Iceberg compat V2 and V3
   protected static final IcebergCompatCheck CHECK_HAS_ALLOWED_PARTITION_TYPES =

@@ -43,7 +43,8 @@ trait MockSnapshotUtils {
       dataPath: Path,
       latestVersion: Long,
       ictEnablementInfoOpt: Option[(Long, Long)] = None,
-      timestamp: Long = 0L): SnapshotImpl = {
+      timestamp: Long = 0L,
+      deltaFileAtEndVersion: Option[FileStatus] = None): SnapshotImpl = {
     val configuration = ictEnablementInfoOpt match {
       case Some((version, _)) if version == 0L =>
         Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
@@ -67,10 +68,10 @@ trait MockSnapshotUtils {
       stringStringMapValue(configuration.asJava));
     val logPath = new Path(dataPath, "_delta_log")
 
-    val fs = FileStatus.of(
+    val fs = deltaFileAtEndVersion.getOrElse(FileStatus.of(
       FileNames.deltaFile(logPath, latestVersion),
       1, /* size */
-      1 /* modificationTime */ )
+      1 /* modificationTime */ ))
     val logSegment = new LogSegment(
       logPath, /* logPath */
       latestVersion,

@@ -25,11 +25,9 @@ import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
-import io.delta.kernel.internal.files.ParsedLogData
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
+import io.delta.kernel.internal.files.{ParsedDeltaData, ParsedLogData}
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, MockSnapshotUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
@@ -235,10 +233,10 @@ class SnapshotBuilderSuite extends AnyFunSuite
   }
 
   Seq(
-    ParsedLogData.forInlineData(1, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch),
+    ParsedDeltaData.forInlineData(1, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
-    val suffix = s"- type=${parsedLogData.`type`}"
-    test(s"withLogData: non-RATIFIED_STAGED_COMMIT throws IllegalArgumentException $suffix") {
+    val suffix = s"- type=${parsedLogData.getParentCategoryName}"
+    test(s"withLogData: non-staged-ratified-commit throws IllegalArgumentException $suffix") {
       val builder = TableManager
         .loadSnapshot(dataPath.toString)
         .atVersion(1)
@@ -248,7 +246,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
         builder.build(emptyMockEngine)
       }.getMessage
 
-      assert(exMsg.contains("Only RATIFIED_STAGED_COMMIT log data is supported"))
+      assert(exMsg.contains("Only staged ratified commits are supported"))
     }
   }
 
