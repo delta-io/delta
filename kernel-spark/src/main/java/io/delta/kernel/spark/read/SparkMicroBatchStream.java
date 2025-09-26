@@ -140,10 +140,6 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   private KernelSourceOffset getStartingOffsetFromSpecificVersion(
       long fromVersion, boolean isInitialSnapshot) {
     try {
-      // Load the snapshot at the starting version to ensure it's valid
-      Snapshot startSnapshot =
-          TableManager.loadSnapshot(tablePath).atVersion(fromVersion).build(engine);
-
       if (isInitialSnapshot) {
         // For initial snapshot, we want to start reading from the files in this version
         // Create an offset that represents the end of this version's files
@@ -153,6 +149,9 @@ public class SparkMicroBatchStream implements MicroBatchStream {
             KernelSourceOffset.END_INDEX, // Use END_INDEX to indicate end of version
             isInitialSnapshot);
       } else {
+        // Load the snapshot at the starting version to ensure it's valid
+        Snapshot startSnapshot =
+                TableManager.loadSnapshot(tablePath).atVersion(fromVersion).build(engine);
         // For non-initial snapshots, we want to find the next version with file changes
         // Look for the next commit that has add file actions
         Snapshot latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine);
