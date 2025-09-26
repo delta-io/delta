@@ -93,9 +93,7 @@ public abstract class TableFeature {
     validate();
   }
 
-  /**
-   * @return the name of the table feature.
-   */
+  /** @return the name of the table feature. */
   public String featureName() {
     return featureName;
   }
@@ -108,23 +106,17 @@ public abstract class TableFeature {
     return this instanceof ReaderWriterFeatureType;
   }
 
-  /**
-   * @return the minimum reader version this feature requires
-   */
+  /** @return the minimum reader version this feature requires */
   public int minReaderVersion() {
     return minReaderVersion;
   }
 
-  /**
-   * @return the minimum writer version that this feature requires.
-   */
+  /** @return the minimum writer version that this feature requires. */
   public int minWriterVersion() {
     return minWriterVersion;
   }
 
-  /**
-   * @return if this feature is a legacy feature?
-   */
+  /** @return if this feature is a legacy feature? */
   public boolean isLegacyFeature() {
     return this instanceof LegacyFeatureType;
   }
