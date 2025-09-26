@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
@@ -34,7 +35,40 @@ import org.slf4j.LoggerFactory;
 
 public class LogSegment {
 
+  //////////////////////////////////////////
+  // Static factory methods and constants //
+  //////////////////////////////////////////
+
+  /**
+   * Creates a LogSegment from a single ParsedDeltaData. Used to construct a post-commit Snapshot
+   * after a CREATE transaction.
+   *
+   * @param logPath The path to the _delta_log directory
+   * @param parsedDelta The ParsedDeltaData (e.g., version 0)
+   * @return A new LogSegment with just this delta
+   * @throws IllegalArgumentException if the ParsedDeltaData is not file-based
+   */
+  public static LogSegment fromSingleDelta(Path logPath, ParsedDeltaData parsedDelta) {
+    checkArgument(parsedDelta.isFile(), "Currently, only file-based deltas are supported");
+    checkArgument(
+        parsedDelta.getVersion() == 0L,
+        "Version must be 0 for a LogSegment with only a single delta");
+
+    final FileStatus deltaFile = parsedDelta.getFileStatus();
+    final long version = parsedDelta.getVersion();
+    final List<FileStatus> deltas = Collections.singletonList(deltaFile);
+    final List<FileStatus> checkpoints = Collections.emptyList();
+    final List<FileStatus> compactions = Collections.emptyList();
+
+    return new LogSegment(
+        logPath, version, deltas, compactions, checkpoints, deltaFile, Optional.empty());
+  }
+
   private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
+
+  //////////////////////////////////
+  // Member methods and variables //
+  //////////////////////////////////
 
   private final Path logPath;
   private final long version;
@@ -235,6 +269,67 @@ public class LogSegment {
    */
   public List<FileStatus> allFilesWithCompactionsReversed() {
     return deltasCheckpointsCompactionsReversed.get();
+  }
+
+  /**
+   * Creates a new LogSegment by extending this LogSegment with additional deltas. Used to construct
+   * a post-commit Snapshot from a previous Snapshot.
+   *
+   * <p>The additional deltas must be contiguous and start at version + 1.
+   *
+   * @param additionalDeltas List of ParsedDeltaData to add (must be contiguous after current
+   *     version)
+   * @return A new LogSegment with the additional deltas
+   * @throws IllegalArgumentException if deltas are not contiguous or don't start at version + 1
+   */
+  public LogSegment copyWithAdditionalDeltas(List<ParsedDeltaData> additionalDeltas) {
+    if (additionalDeltas.isEmpty()) {
+      return this;
+    }
+
+    // For now, we only support file-based deltas
+    checkArgument(
+        additionalDeltas.stream().allMatch(ParsedDeltaData::isFile),
+        "Currently, only file-based deltas are supported");
+
+    // Validate that the first new delta starts at version + 1
+    final long firstNewVersion = additionalDeltas.get(0).getVersion();
+    checkArgument(
+        firstNewVersion == version + 1,
+        "First additional delta version %d must equal current version + 1 (%d)",
+        firstNewVersion,
+        version + 1);
+
+    // Validate that new deltas are contiguous
+    long expectedVersion = firstNewVersion;
+    for (ParsedDeltaData delta : additionalDeltas) {
+      checkArgument(
+          delta.getVersion() == expectedVersion,
+          "Delta versions must be contiguous. Expected %d but got %d",
+          expectedVersion,
+          delta.getVersion());
+      expectedVersion++;
+    }
+
+    // Convert ParsedDeltaData to FileStatus to comply with existing LogSegment constructor
+    final List<FileStatus> newDeltaFileStatuses =
+        additionalDeltas.stream().map(ParsedDeltaData::getFileStatus).collect(Collectors.toList());
+
+    // Create combined deltas list
+    final List<FileStatus> combinedDeltas = new ArrayList<>(deltas);
+    combinedDeltas.addAll(newDeltaFileStatuses);
+
+    // The new version is the version of the last additional delta
+    final ParsedDeltaData lastAdditionalDelta = ListUtils.getLast(additionalDeltas);
+
+    return new LogSegment(
+        logPath,
+        lastAdditionalDelta.getVersion(),
+        combinedDeltas,
+        compactions, // Keep existing compactions
+        checkpoints, // Keep existing checkpoints
+        lastAdditionalDelta.getFileStatus(),
+        lastSeenChecksum);
   }
 
   @Override
