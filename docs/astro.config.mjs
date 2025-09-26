@@ -43,6 +43,7 @@ export default defineConfig({
     "/delta-faq.html": "/delta-faq",
     "/optimizations-oss.html": "/optimizations-oss",
     "/delta-trino-integration.html": "/delta-trino-integration",
+    "/delta-starburst-integration.html": "/delta-starburst-integration",
     "/delta-presto-integration.html": "/delta-presto-integration",
     "/presto-integration.html": "/presto-integration",
     "/redshift-spectrum-integration.html": "/redshift-spectrum-integration",
@@ -161,6 +162,9 @@ export default defineConfig({
         },
         {
           slug: "delta-trino-integration",
+        },
+        {
+          slug: "delta-starburst-integration",
         },
         {
           slug: "delta-presto-integration",
