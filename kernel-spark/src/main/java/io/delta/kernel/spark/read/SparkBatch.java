@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.read;
 
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.spark.utils.PartitionUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -36,7 +37,6 @@ import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
 import scala.Function1;
-import scala.Option;
 import scala.Tuple2;
 import scala.collection.Iterator;
 import scala.collection.JavaConverters;
@@ -88,7 +88,9 @@ public class SparkBatch implements Batch {
   @Override
   public InputPartition[] planInputPartitions() {
     SparkSession sparkSession = SparkSession.active();
-    long maxSplitBytes = calculateMaxSplitBytes(sparkSession);
+    long maxSplitBytes =
+        PartitionUtils.calculateMaxSplitBytes(
+            (Object) sparkSession, totalBytes, partitionedFiles.size());
 
     scala.collection.Seq<FilePartition> filePartitions =
         FilePartition$.MODULE$.getFilePartitions(
@@ -142,23 +144,5 @@ public class SparkBatch implements Batch {
     result = 31 * result + Arrays.hashCode(dataFilters);
     result = 31 * result + Integer.hashCode(partitionedFiles.size());
     return result;
-  }
-
-  private long calculateMaxSplitBytes(SparkSession sparkSession) {
-    long defaultMaxSplitBytes = sqlConf.filesMaxPartitionBytes();
-    long openCostInBytes = sqlConf.filesOpenCostInBytes();
-    Option<Object> minPartitionNumOption = sqlConf.filesMinPartitionNum();
-
-    int minPartitionNum =
-        minPartitionNumOption.isDefined()
-            ? ((Number) minPartitionNumOption.get()).intValue()
-            : sparkSession.leafNodeDefaultParallelism();
-    if (minPartitionNum <= 0) {
-      minPartitionNum = 1;
-    }
-    long calculatedTotalBytes = totalBytes + (long) partitionedFiles.size() * openCostInBytes;
-    long bytesPerCore = calculatedTotalBytes / minPartitionNum;
-
-    return Math.min(defaultMaxSplitBytes, Math.max(openCostInBytes, bytesPerCore));
   }
 }

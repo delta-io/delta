@@ -120,7 +120,7 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    return new SparkMicroBatchStream();
+    return new SparkMicroBatchStream(tablePath, options.asCaseSensitiveMap());
   }
 
   @Override
