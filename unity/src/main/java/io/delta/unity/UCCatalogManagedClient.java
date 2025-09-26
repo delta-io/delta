@@ -225,8 +225,7 @@ public class UCCatalogManagedClient {
     final Map<String, String> requiredProperties = new HashMap<>();
 
     requiredProperties.put(
-        TableFeatures.getTableFeature("catalog_managed_r_w_feature_preview")
-            .getTablePropertyElementKey(),
+        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.getTablePropertyElementKey(),
         TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
     requiredProperties.put(UC_TABLE_ID_KEY, ucTableId);
 
