@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
-import static io.delta.kernel.internal.data.TransactionStateRow.getColumnMappingMode;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
@@ -64,6 +63,11 @@ public class ColumnMapping {
     public String toString() {
       return this.value;
     }
+  }
+
+  private enum SchemaConversionDirection {
+    LOGICAL_TO_PHYSICAL,
+    PHYSICAL_TO_LOGICAL
   }
 
   public static final String COLUMN_MAPPING_MODE_KEY = "delta.columnMapping.mode";
@@ -207,13 +211,13 @@ public class ColumnMapping {
   /** Returns the physical column and data type for a given logical column based on the schema. */
   public static Tuple2<Column, DataType> getPhysicalColumnNameAndDataType(
       StructType schema, Column logicalColumn) {
-    return convertColumnNameAndDataType(schema, logicalColumn, true /* logicalToPhysical */);
+    return convertColumnName(schema, logicalColumn, SchemaConversionDirection.LOGICAL_TO_PHYSICAL);
   }
 
   /** Returns the logical column and data type for a given physical column based on the schema. */
   public static Tuple2<Column, DataType> getLogicalColumnNameAndDataType(
       StructType schema, Column physicalColumn) {
-    return convertColumnNameAndDataType(schema, physicalColumn, false /* logicalToPhysical */);
+    return convertColumnName(schema, physicalColumn, SchemaConversionDirection.PHYSICAL_TO_LOGICAL);
   }
 
   /**
@@ -239,21 +243,26 @@ public class ColumnMapping {
    *
    * @param schema The schema to traverse
    * @param inputColumn The column to convert
-   * @param logicalToPhysical If true, converts logical to physical; if false, converts physical to
-   *     logical
+   * @param conversionDirection The direction of schema conversion, either from logical to physical
+   *     or physical to logical
    * @return Tuple of the converted column and its data type
    */
-  private static Tuple2<Column, DataType> convertColumnNameAndDataType(
-      StructType schema, Column inputColumn, boolean logicalToPhysical) {
-    Function<StructField, String> matchFunction;
-    Function<StructField, String> outputFunction;
+  private static Tuple2<Column, DataType> convertColumnName(
+      StructType schema, Column inputColumn, SchemaConversionDirection conversionDirection) {
+    Function<StructField, String> sourceNameExtractor;
+    Function<StructField, String> targetNameExtractor;
 
-    if (logicalToPhysical) {
-      matchFunction = StructField::getName;
-      outputFunction = ColumnMapping::getPhysicalName;
-    } else {
-      matchFunction = ColumnMapping::getPhysicalName;
-      outputFunction = StructField::getName;
+    switch (conversionDirection) {
+      case LOGICAL_TO_PHYSICAL:
+        sourceNameExtractor = StructField::getName;
+        targetNameExtractor = ColumnMapping::getPhysicalName;
+        break;
+      case PHYSICAL_TO_LOGICAL:
+        sourceNameExtractor = ColumnMapping::getPhysicalName;
+        targetNameExtractor = StructField::getName;
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown conversion direction: " + conversionDirection);
     }
 
     final List<String> outputNameParts = new ArrayList<>();
@@ -270,11 +279,11 @@ public class ColumnMapping {
       // Find the field that matches the input name using the appropriate matching function
       final StructField field =
           structType.fields().stream()
-              .filter(f -> matchFunction.apply(f).equalsIgnoreCase(inputNamePart))
+              .filter(f -> sourceNameExtractor.apply(f).equalsIgnoreCase(inputNamePart))
               .findFirst()
               .orElseThrow(() -> columnNotFoundInSchema(inputColumn, schema));
 
-      outputNameParts.add(outputFunction.apply(field));
+      outputNameParts.add(targetNameExtractor.apply(field));
       currentType = field.getDataType();
     }
 
