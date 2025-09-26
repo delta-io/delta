@@ -209,10 +209,12 @@ object RowId {
   def createRowIdField(
     protocol: Protocol,
     metadata: Metadata,
-    nullable: Boolean,
-    shouldSetIcebergReservedFieldId: Boolean): Option[StructField] =
+    nullable: Boolean): Option[StructField] =
     MaterializedRowId.getMaterializedColumnName(protocol, metadata)
-      .map(RowIdMetadataStructField(_, nullable, shouldSetIcebergReservedFieldId))
+      // Use column name instead of field ID when accessing the materialized row id
+      // column. This handles cases where field IDs are not available in the Parquet file,
+      // such as with legacy materialized columns created before column mapping enabled.
+      .map(RowIdMetadataStructField(_, nullable, shouldSetIcebergReservedFieldId = false))
 
   /*
    * A specialization of [[FileSourceGeneratedMetadataStructField]] used to represent RowId columns.

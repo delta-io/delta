@@ -818,7 +818,7 @@ case class DeltaSource(
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
       deltaLog.getChangeLogFiles(
-        startVersion, options.failOnDataLoss, catalogTableOpt).flatMapWithClose {
+        startVersion, catalogTableOpt, options.failOnDataLoss).flatMapWithClose {
         case (version, filestatus) =>
           // First pass reads the whole commit and closes the iterator.
           val iter = DeltaSource.createRewindableActionIterator(spark, deltaLog, filestatus)

@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import io.delta.storage.commit.{CommitResponse, GetCommitsResponse, UpdatedActions}
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -184,6 +184,24 @@ object DeltaTestImplicits {
 
     def upgradeProtocol(snapshot: Snapshot, newVersion: Protocol): Unit = {
       deltaLog.upgradeProtocol(None, snapshot, newVersion)
+    }
+
+    /**
+     * Test helper method for getChangeLogFiles that provides catalogTableOpt = None
+     * for backward compatibility with existing unit tests.
+     */
+    def getChangeLogFiles(startVersion: Long): Iterator[(Long, FileStatus)] = {
+      deltaLog.getChangeLogFiles(startVersion, catalogTableOpt = None)
+    }
+
+    /**
+     * Test helper method for getChanges that provides catalogTableOpt = None for backward
+     * compatibility with existing unit tests.
+     */
+    def getChanges(
+        startVersion: Long,
+        failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
+      deltaLog.getChanges(startVersion, catalogTableOpt = None, failOnDataLoss)
     }
   }
 

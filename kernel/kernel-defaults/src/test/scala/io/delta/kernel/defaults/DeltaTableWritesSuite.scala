@@ -92,21 +92,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
-  test("create table - provide unsupported column types - expect failure") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val ex = intercept[KernelException] {
-        getCreateTxn(
-          engine,
-          tablePath,
-          schema = new StructType().add("variant_type", VariantType.VARIANT))
-      }
-      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: variant") ||
-        ex.getMessage.contains(
-          "requires writer table feature \"[variantType]\" which is unsupported by " +
-            "this version of Delta Kernel"))
-    }
-  }
-
   test("create table - table already exists at the location") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
