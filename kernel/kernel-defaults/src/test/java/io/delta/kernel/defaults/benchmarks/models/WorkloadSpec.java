@@ -69,6 +69,11 @@ public abstract class WorkloadSpec {
     return caseName;
   }
 
+  @JsonProperty(value = "full_name", access = JsonProperty.Access.READ_ONLY)
+  public String getFullName() {
+    return tableInfo.name + "/" + caseName + "/" + type;
+  }
+
   public void setCaseName(String caseName) {
     this.caseName = caseName;
   }
