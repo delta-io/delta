@@ -29,13 +29,13 @@ import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionImpl}
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
+import io.delta.kernel.test.DeltaKernelTestUtils.OptimisticTxnTestHelper
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.RowId.{RowTrackingMetadataDomain => SparkRowTrackingMetadataDomain}
 import org.apache.spark.sql.delta.actions.{DomainMetadata => SparkDomainMetadata}
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
