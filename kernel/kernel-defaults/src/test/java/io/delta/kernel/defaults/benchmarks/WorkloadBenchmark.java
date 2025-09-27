@@ -102,7 +102,7 @@ public class WorkloadBenchmark<T> {
             .param("workloadSpecJson", workloadSpecsArray)
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
-            .forks(1)
+            //            .forks(1)
             .warmupIterations(0) // FIXME: set to 0 for faster debugging; change to >0 for real runs
             .measurementIterations(
                 1) // FIXME: set to 1 for faster debugging; change to >1 for real runs
@@ -112,6 +112,6 @@ public class WorkloadBenchmark<T> {
             .addProfiler(KernelMetricsProfiler.class)
             .build();
 
-    new Runner(opt).run();
+    new Runner(opt, new WorkloadOutputFormat()).run();
   }
 }

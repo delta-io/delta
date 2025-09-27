@@ -1,16 +1,216 @@
 package io.delta.kernel.defaults.benchmarks;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.HashMap;
 import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.IterationParams;
 import org.openjdk.jmh.results.BenchmarkResult;
 import org.openjdk.jmh.results.IterationResult;
+import org.openjdk.jmh.results.Result;
 import org.openjdk.jmh.results.RunResult;
 import org.openjdk.jmh.runner.format.OutputFormat;
+import org.openjdk.jmh.util.Statistics;
 
 public class WorkloadOutputFormat implements OutputFormat {
   public WorkloadOutputFormat() {}
+
+  private static final double[] PERCENTILES = {0.5, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0};
+
+  /** Metadata about the benchmark report itself. Json formatted */
+  private static class ReportMetadata {
+    @JsonProperty("generated_at")
+    private final String generated_at;
+
+    @JsonProperty("jmh_version")
+    private final String jmh_version;
+
+    @JsonProperty("report_version")
+    private final String report_version;
+
+    @JsonProperty("benchmark_suite")
+    private final String benchmark_suite;
+
+    public ReportMetadata(
+        String generated_at, String jmh_version, String report_version, String benchmark_suite) {
+      this.generated_at = generated_at;
+      this.jmh_version = jmh_version;
+      this.report_version = report_version;
+      this.benchmark_suite = benchmark_suite;
+    }
+
+    public String toString() {
+      return String.format(
+          "ReportMetadata{generated_at='%s', jmh_version='%s', report_version='%s', benchmark_suite='%s'}",
+          generated_at, jmh_version, report_version, benchmark_suite);
+    }
+  }
+
+  public static class ExecutionEnvironment {
+    @JsonProperty("jvm")
+    private final String jvm;
+
+    @JsonProperty("jvm_args")
+    private final String[] jvm_args;
+
+    @JsonProperty("jdk_version")
+    private final String jdk_version;
+
+    @JsonProperty("vm_name")
+    private final String vm_name;
+
+    @JsonProperty("vm_version")
+    private final String vm_version;
+
+    public ExecutionEnvironment(
+        String jvm, String[] jvm_args, String jdk_version, String vm_name, String vm_version) {
+      this.jvm = jvm;
+      this.jvm_args = jvm_args;
+      this.jdk_version = jdk_version;
+      this.vm_name = vm_name;
+      this.vm_version = vm_version;
+    }
+
+    public String toString() {
+      return String.format(
+          "ExecutionEnvironment{jvm='%s', jvm_args=%s, jdk_version='%s', vm_name='%s', vm_version='%s'}",
+          jvm, String.join(" ", jvm_args), jdk_version, vm_name, vm_version);
+    }
+  }
+
+  private static class BenchmarkDetails {
+    @JsonProperty("spec")
+    private WorkloadSpec spec;
+
+    @JsonProperty("additional_params")
+    private HashMap<String, String> additionalParams;
+
+    @JsonProperty("time")
+    private TimingMetric time;
+
+    @JsonProperty("secondary_metrics")
+    private HashMap<String, Object> secondary_metrics;
+
+    public BenchmarkDetails(
+        WorkloadSpec spec,
+        HashMap<String, String> additionalParams,
+        TimingMetric time,
+        HashMap<String, Object> secondary_metrics) {
+      this.spec = spec;
+      this.additionalParams = additionalParams;
+      this.time = time;
+      this.secondary_metrics = secondary_metrics;
+    }
+
+    public String toString() {
+      return String.format(
+          "BenchmarkDetails{spec=%s, additionalParams=%s, time=%s, secondary_metrics=%s}",
+          spec, additionalParams.toString(), time.toString(), secondary_metrics.toString());
+    }
+  }
+
+  private static class BenchmarkReport {
+    @JsonProperty("report_metadata")
+    private ReportMetadata reportMetadata;
+
+    @JsonProperty("execution_environment")
+    private ExecutionEnvironment executionEnvironment;
+
+    @JsonProperty("benchmark_configuration")
+    private HashMap<String, String> benchmarkConfiguration;
+
+    @JsonProperty("benchmarks")
+    private HashMap<String, BenchmarkDetails> benchmarks;
+
+    public BenchmarkReport(
+        ReportMetadata reportMetadata,
+        ExecutionEnvironment executionEnvironment,
+        HashMap<String, String> benchmarkConfiguration,
+        HashMap<String, BenchmarkDetails> benchmarks) {
+      this.reportMetadata = reportMetadata;
+      this.executionEnvironment = executionEnvironment;
+      this.benchmarkConfiguration = benchmarkConfiguration;
+      this.benchmarks = benchmarks;
+    }
+
+    public String toString() {
+      return String.format(
+          "BenchmarkReport{reportMetadata=%s, executionEnvironment=%s, benchmarkConfiguration=%s, benchmarks=%s}",
+          reportMetadata.toString(),
+          executionEnvironment.toString(),
+          benchmarkConfiguration.toString(),
+          benchmarks.toString());
+    }
+  }
+
+  private static class TimingMetric {
+    @JsonProperty("score")
+    private final double score;
+
+    @JsonProperty("score_unit")
+    private final String score_unit;
+
+    @JsonProperty("score_error")
+    private final double score_error;
+
+    @JsonProperty("score_confidence")
+    private final double[] score_confidence;
+
+    @JsonProperty("sample_count")
+    private final long sample_count;
+
+    @JsonProperty("percentiles")
+    private final HashMap<String, Double> percentiles;
+
+    public TimingMetric(
+        double score,
+        String score_unit,
+        double score_error,
+        double[] score_confidence,
+        long sample_count,
+        HashMap<String, Double> percentiles) {
+      this.score = score;
+      this.score_unit = score_unit;
+      this.score_error = score_error;
+      this.score_confidence = score_confidence;
+      this.sample_count = sample_count;
+      this.percentiles = percentiles;
+    }
+
+    public static TimingMetric fromResult(Result result) {
+      HashMap<String, Double> percentiles = new HashMap<>();
+      Statistics stats = result.getStatistics();
+      for (double p : PERCENTILES) {
+        String key = String.format("p%.4f", p);
+        percentiles.put(key, stats.getPercentile(p));
+      }
+      return new TimingMetric(
+          result.getScore(),
+          result.getScoreUnit(),
+          result.getScoreError(),
+          result.getScoreConfidence(),
+          result.getSampleCount(),
+          percentiles);
+    }
+
+    public String toString() {
+      return String.format(
+          "TimingMetric{score=%f, score_unit='%s', score_error=%f, score_confidence=[%s], sample_count=%d, percentiles=%s}",
+          score,
+          score_unit,
+          score_error,
+          String.join(
+              ", ",
+              new String[] {
+                String.valueOf(score_confidence[0]), String.valueOf(score_confidence[1])
+              }),
+          sample_count,
+          percentiles.toString());
+    }
+  }
 
   @Override
   public void iteration(BenchmarkParams benchParams, IterationParams params, int iteration) {}
@@ -31,15 +231,66 @@ public class WorkloadOutputFormat implements OutputFormat {
   @Override
   public void endRun(Collection<RunResult> result) {
     System.out.println("End run results:");
+    ReportMetadata metadata =
+        new ReportMetadata(
+            String.valueOf(System.currentTimeMillis()),
+            org.openjdk.jmh.Main.class.getPackage().getImplementationVersion(),
+            "1.0",
+            "Delta Kernel Benchmarks");
+    ExecutionEnvironment env =
+        new ExecutionEnvironment(
+            System.getProperty("java.vm.name"),
+            new String[] {},
+            System.getProperty("java.version"),
+            System.getProperty("java.vm.name"),
+            System.getProperty("java.vm.version"));
+    HashMap<String, String> benchConfig = new HashMap<>();
+
+    HashMap<String, BenchmarkDetails> benchmarks = new HashMap<>();
+
     for (RunResult res : result) {
       for (BenchmarkResult br : res.getBenchmarkResults()) {
-        System.out.println("Metadata: " + br.getMetadata().getMeasurementTime());
-        System.out.println("Data: " + br.getBenchmarkResults());
-        System.out.println("Primary result: " + br.getPrimaryResult());
-        System.out.println("Secondary result: " + br.getSecondaryResults());
-        System.out.println(br.getParams().getParam("workloadSpecJson"));
-        System.out.println(br.getScoreUnit());
+        try {
+          WorkloadSpec spec =
+              WorkloadSpec.fromJsonString(br.getParams().getParam("workloadSpecJson"));
+          HashMap<String, String> additionalParams = new HashMap<>();
+          additionalParams.put("engine", br.getParams().getParam("engineName"));
+
+          HashMap<String, Object> secondaryMetrics = new HashMap<>();
+          for (String resultKey : br.getSecondaryResults().keySet()) {
+            Result r = br.getSecondaryResults().get(resultKey);
+            if (r instanceof org.openjdk.jmh.results.SampleTimeResult) {
+              secondaryMetrics.put(r.getLabel(), TimingMetric.fromResult(r));
+            } else if (r instanceof org.openjdk.jmh.results.ScalarResult) {
+              secondaryMetrics.put(r.getLabel(), (long) r.getScore());
+            }
+          }
+          BenchmarkDetails details =
+              new BenchmarkDetails(
+                  spec,
+                  additionalParams,
+                  TimingMetric.fromResult(br.getPrimaryResult()),
+                  secondaryMetrics);
+          benchmarks.put(spec.getFullName(), details);
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
       }
+    }
+
+    BenchmarkReport report = new BenchmarkReport(metadata, env, benchConfig, benchmarks);
+
+    // Write report to user.dir
+    ObjectMapper mapper = new ObjectMapper();
+    try {
+      String jsonReport = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report);
+
+      String outputPath = System.getProperty("user.dir");
+      System.out.println("Writing benchmark report to " + outputPath + "/benchmark_report.json");
+      java.nio.file.Files.write(
+          java.nio.file.Paths.get(outputPath, "benchmark_report.json"), jsonReport.getBytes());
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to serialize benchmark report to JSON", e);
     }
   }
 
