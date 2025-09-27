@@ -63,7 +63,7 @@ public class ReadMetadataRunner extends WorkloadRunner {
   /** @return the name of this workload derived from the workload specification. */
   @Override
   public String getName() {
-    return "read_metadata/";
+    return "read_metadata";
   }
 
   /** @return The workload specification used to create this runner. */

@@ -76,6 +76,14 @@ public class ReadSpec extends WorkloadSpec {
     return version;
   }
 
+  /**
+   * @return the full name of this workload, derived from table name, case name, and operation type.
+   */
+  @JsonProperty(value = "full_name", access = JsonProperty.Access.READ_ONLY)
+  public String getFullName() {
+    return this.tableInfo.name + "/" + this.caseName + "/read/" + this.operationType;
+  }
+
   @Override
   public WorkloadRunner getRunner(Engine engine) {
     if (operationType.equals("read_metadata")) {
