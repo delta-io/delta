@@ -540,4 +540,69 @@ public class LogSegment {
       }
     }
   }
+
+  /**
+   * Create a new LogSegment by adding new commits to the current LogSegment.
+   *
+   * @param newCommits List of new commits to add (assumes they are contiguous and start from
+   *     version + 1)
+   * @return A new LogSegment with the new commits added to the deltas
+   */
+  public LogSegment createNewFromCommits(
+      List<io.delta.kernel.internal.files.ParsedLogData> newCommits) {
+    if (newCommits.isEmpty()) {
+      return this; // No new commits, return current log segment
+    }
+
+    // For now, assume there's only one commit and it's a DELTA
+    io.delta.kernel.internal.files.ParsedLogData newCommit = newCommits.get(0);
+    if (newCommit.type
+            != io.delta.kernel.internal.files.ParsedLogData.ParsedLogType.RATIFIED_STAGED_COMMIT
+        && newCommit.type
+            != io.delta.kernel.internal.files.ParsedLogData.ParsedLogType.PUBLISHED_DELTA) {
+      throw new IllegalArgumentException(
+          "Only DELTA commits are supported, got: " + newCommit.type);
+    }
+
+    // Create FileStatus from ParsedLogData
+    FileStatus newCommitFileStatus = newCommit.getFileStatus();
+
+    // Create new deltas list with the new commit added
+    List<FileStatus> newDeltas = new java.util.ArrayList<>(deltas);
+    newDeltas.add(newCommitFileStatus);
+
+    // Create new LogSegment with updated deltas
+    return new LogSegment(
+        logPath,
+        newCommit.version, // Use the version from the new commit
+        newDeltas,
+        compactions,
+        checkpoints,
+        newCommitFileStatus, // The new commit is the delta at end version
+        lastSeenChecksum);
+  }
+
+  /**
+   * Create a new LogSegment with transformed deltas using the provided function.
+   *
+   * @param deltaTransformer Function to transform each delta FileStatus
+   * @return A new LogSegment with transformed deltas
+   */
+  public LogSegment withTransformedDeltas(
+      java.util.function.Function<FileStatus, FileStatus> deltaTransformer) {
+    List<FileStatus> transformedDeltas =
+        deltas.stream().map(deltaTransformer).collect(java.util.stream.Collectors.toList());
+
+    // Transform deltaAtEndVersion if it matches any of the deltas
+    FileStatus transformedDeltaAtEndVersion = deltaTransformer.apply(deltaAtEndVersion);
+
+    return new LogSegment(
+        logPath,
+        version,
+        transformedDeltas,
+        compactions,
+        checkpoints,
+        transformedDeltaAtEndVersion,
+        lastSeenChecksum);
+  }
 }

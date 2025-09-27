@@ -67,6 +67,7 @@ public class CommitMetadata {
   private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
+  private final Optional<Long> lastBackfilledVersionOpt;
 
   public CommitMetadata(
       long version,
@@ -76,7 +77,8 @@ public class CommitMetadata {
       Supplier<Map<String, String>> committerProperties,
       Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
       Optional<Protocol> newProtocolOpt,
-      Optional<Metadata> newMetadataOpt) {
+      Optional<Metadata> newMetadataOpt,
+      Optional<Long> lastBackfilledVersionOpt) {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
@@ -88,6 +90,8 @@ public class CommitMetadata {
     this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
+    this.lastBackfilledVersionOpt =
+        requireNonNull(lastBackfilledVersionOpt, "lastBackfilledVersionOpt is null");
 
     checkArgument(
         readPandMOpt.isPresent() || newProtocolOpt.isPresent(),
@@ -164,6 +168,15 @@ public class CommitMetadata {
    */
   public Optional<Metadata> getNewMetadataOpt() {
     return newMetadataOpt;
+  }
+
+  /**
+   * The last known backfilled version for this table. This is the highest version number among the
+   * published delta files in the log. This hint can be used by catalog-managed committers to inform
+   * the commit coordinator about the backfill progress.
+   */
+  public Optional<Long> getLastBackfilledVersionOpt() {
+    return lastBackfilledVersionOpt;
   }
 
   /**

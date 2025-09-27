@@ -765,6 +765,11 @@ lazy val unity = (project in file("unity"))
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+
+      // The below test dependencies are only needed for real E2E integration tests against a real
+      // UC endpoint.
+      "io.unitycatalog" % "unitycatalog-client" % "0.2.1" % "test",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
     ),
     unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
   ).configureUnidoc()
