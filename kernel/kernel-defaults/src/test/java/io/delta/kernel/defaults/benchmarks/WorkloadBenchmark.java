@@ -85,15 +85,15 @@ public class WorkloadBenchmark<T> {
     }
 
     // Parse the Json specs from the json paths
-    List<WorkloadSpec> specs = new ArrayList<>();
+    List<WorkloadSpec> filteredSpecs = new ArrayList<>();
     for (WorkloadSpec spec : workloadSpecs) {
       // TODO: In the future, we can filter specific workloads using command line args here.
-      specs.addAll(spec.getBenchmarkVariants());
+      filteredSpecs.addAll(spec.getBenchmarkVariants());
     }
 
     // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
     String[] workloadSpecsArray =
-        specs.stream().map(WorkloadSpec::toJsonString).toArray(String[]::new);
+        filteredSpecs.stream().map(WorkloadSpec::toJsonString).toArray(String[]::new);
 
     // Configure and run JMH benchmark with the loaded workload specs
     Options opt =
