@@ -61,7 +61,7 @@ import org.apache.spark.util.{Clock, SystemClock}
  * @param path The path to the table
  * @param tableIdentifier The table identifier for this table
  */
-class DeltaTableV2 private[delta](
+class DeltaTableV2 private(
     val spark: SparkSession,
     val path: Path,
     val catalogTable: Option[CatalogTable],
@@ -462,18 +462,22 @@ object DeltaTableV2 {
       val deltaLog = deltaTable.deltaLog
       val rootDeltaLogPath = DeltaLog.logPathFor(deltaTable.rootPath.toString)
       val finalDeltaLogPath = DeltaLog.formalizeDeltaPath(spark, options, rootDeltaLogPath)
-      val catalogTableOpt = if (finalDeltaLogPath == deltaLog.logPath) {
-        // If there is no redirection, use existing catalogTable.
-        catalogTable
+      if (finalDeltaLogPath == deltaLog.logPath) {
+        // If there is no redirection, use existing delta table.
+        deltaTable
       } else {
         // If there is redirection, use the catalogTable of deltaLog.
-        deltaLog.getInitialCatalogTable
+        val catalogTable = deltaLog.getInitialCatalogTable
+        val newPath = new Path(deltaLog.dataPath.toUri)
+        new DeltaTableV2(
+          spark,
+          path = newPath,
+          catalogTable = catalogTable,
+          tableIdentifier = catalogTable.map(_.identifier.identifier),
+          timeTravelOpt = timeTravelOpt,
+          options = options
+        )
       }
-      val tableIdentifier = catalogTableOpt.map(_.identifier.identifier)
-      val newPath = new Path(deltaLog.dataPath.toUri)
-      deltaTable.copy(
-        path = newPath, catalogTable = catalogTableOpt, tableIdentifier = tableIdentifier
-      )
     }
   }
 
@@ -507,6 +511,26 @@ object DeltaTableV2 {
       Some(DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table)))
     case _ => None
   }
+
+  /**
+   * Creates a DeltaTableV2 instance with a custom DeltaLog object for testing purposes. This is
+   * useful because the DeltaTableV2 constructor is private and cannot be called from
+   * DeltaTestImplicit.
+   */
+  def testOnlyApplyWithCustomDeltaLog(
+    spark: SparkSession, path: Path, clock: Clock): DeltaTableV2 = {
+    new DeltaTableV2(
+      spark,
+      path,
+      catalogTable = None,
+      tableIdentifier = None,
+      timeTravelOpt = None,
+      options = Map.empty
+    ) {
+      override lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, path, clock)
+    }
+  }
+
 
   /**
    * When Delta Log throws InvalidProtocolVersionException it doesn't know the table name and uses
