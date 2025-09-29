@@ -282,6 +282,7 @@ public class SparkGoldenTableTest extends QueryTest {
         options,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {andPredicate},
         Arrays.asList("date=20180520/city=hz"));
+
     // city = 'hz' OR date = '20180520'
     org.apache.spark.sql.connector.expressions.filter.Predicate orPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
@@ -315,6 +316,24 @@ public class SparkGoldenTableTest extends QueryTest {
         table,
         options,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {orDataPredicate},
+        SparkScanTest.allCities);
+
+    // city = date
+    SparkScanTest.checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
+          SparkScanTest.negativeInterColPredicate
+        },
+        Arrays.asList());
+
+    // city <> date
+    SparkScanTest.checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
+          SparkScanTest.interColPredicate
+        },
         SparkScanTest.allCities);
   }
 

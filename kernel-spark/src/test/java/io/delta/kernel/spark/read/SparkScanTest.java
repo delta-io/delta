@@ -28,7 +28,7 @@ public class SparkScanTest extends SparkDsv2TestBase {
 
   @BeforeAll
   public static void setupGoldenTable(@TempDir File tempDir) {
-    createGoldenTable(tableName, tempDir.getAbsolutePath());
+    createPartitionedTable(tableName, tempDir.getAbsolutePath());
     tablePath = tempDir.getAbsolutePath();
   }
 
@@ -54,6 +54,12 @@ public class SparkScanTest extends SparkDsv2TestBase {
           new org.apache.spark.sql.connector.expressions.Expression[] {
             FieldReference.apply("date"), LiteralValue.apply("20180520", DataTypes.StringType)
           });
+  protected static final org.apache.spark.sql.connector.expressions.filter.Predicate partPredicate =
+      new org.apache.spark.sql.connector.expressions.filter.Predicate(
+          ">",
+          new org.apache.spark.sql.connector.expressions.Expression[] {
+            FieldReference.apply("part"), LiteralValue.apply(1, DataTypes.IntegerType)
+          });
   protected static final org.apache.spark.sql.connector.expressions.filter.Predicate dataPredicate =
       new org.apache.spark.sql.connector.expressions.filter.Predicate(
           ">",
@@ -66,6 +72,20 @@ public class SparkScanTest extends SparkDsv2TestBase {
               "=",
               new org.apache.spark.sql.connector.expressions.Expression[] {
                 FieldReference.apply("city"), LiteralValue.apply("zz", DataTypes.StringType)
+              });
+  protected static final org.apache.spark.sql.connector.expressions.filter.Predicate
+      interColPredicate =
+          new org.apache.spark.sql.connector.expressions.filter.Predicate(
+              "!=",
+              new org.apache.spark.sql.connector.expressions.Expression[] {
+                FieldReference.apply("city"), FieldReference.apply("date")
+              });
+  protected static final org.apache.spark.sql.connector.expressions.filter.Predicate
+      negativeInterColPredicate =
+          new org.apache.spark.sql.connector.expressions.filter.Predicate(
+              "=",
+              new org.apache.spark.sql.connector.expressions.Expression[] {
+                FieldReference.apply("city"), FieldReference.apply("date")
               });
   // a full set of cities in the golden table, repsents all partitions
   protected static final List<String> allCities =
@@ -243,6 +263,35 @@ public class SparkScanTest extends SparkDsv2TestBase {
         options,
         new org.apache.spark.sql.connector.expressions.filter.Predicate[] {orPredicate},
         allCities);
+  }
+
+  @Test
+  public void testDPP_interColumnFilter() throws Exception {
+    checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {interColPredicate},
+        allCities);
+  }
+
+  @Test
+  public void testDPP_negativeInterColumnFilter() throws Exception {
+    checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
+          negativeInterColPredicate
+        },
+        Arrays.asList());
+  }
+
+  @Test
+  public void testDPP_integerFilter() throws Exception {
+    checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {partPredicate},
+        Arrays.asList("part=2"));
   }
 
   protected static void checkSupportsRuntimeFilters(

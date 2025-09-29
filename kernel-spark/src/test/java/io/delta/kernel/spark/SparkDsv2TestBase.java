@@ -65,19 +65,19 @@ public abstract class SparkDsv2TestBase {
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
   }
 
-  protected static void createGoldenTable(String tableName, String path) {
+  protected static void createPartitionedTable(String tableName, String path) {
     spark.sql(
         String.format(
-            "CREATE TABLE `%s` (date STRING, city STRING, name STRING, cnt INT) USING delta LOCATION '%s' PARTITIONED BY (date, city)",
+            "CREATE TABLE `%s` (part INT, date STRING, city STRING, name STRING, cnt INT) USING delta LOCATION '%s' PARTITIONED BY (date, city, part)",
             tableName, path));
     spark.sql(
         String.format(
             "INSERT INTO %s VALUES "
-                + "('20180520', 'hz', 'Alice', '10'),"
-                + "('20180718', 'hz', 'Bob', '20'),"
-                + "('20180512', 'sh', 'Charlie', '30'),"
-                + "('20180520', 'bj', 'David', '40'),"
-                + "('20181212', 'sz', 'Eve', '50')",
+                + "('1', '20180520', 'hz', 'Alice', '10'),"
+                + "('1', '20180718', 'hz', 'Bob', '20'),"
+                + "('1', '20180512', 'sh', 'Charlie', '30'),"
+                + "('2', '20180520', 'bj', 'David', '40'),"
+                + "('2', '20181212', 'sz', 'Eve', '50')",
             tableName));
   }
 }
