@@ -53,8 +53,8 @@ public class WorkloadOutputFormat implements OutputFormat {
     @JsonProperty("jvm")
     private final String jvm;
 
-    @JsonProperty("jvm_args")
-    private final String[] jvm_args;
+    @JsonProperty("heap_size_mb")
+    private final String heapSizeMB;
 
     @JsonProperty("jdk_version")
     private final String jdk_version;
@@ -65,19 +65,51 @@ public class WorkloadOutputFormat implements OutputFormat {
     @JsonProperty("vm_version")
     private final String vm_version;
 
-    public ExecutionEnvironment(
-        String jvm, String[] jvm_args, String jdk_version, String vm_name, String vm_version) {
-      this.jvm = jvm;
-      this.jvm_args = jvm_args;
-      this.jdk_version = jdk_version;
-      this.vm_name = vm_name;
-      this.vm_version = vm_version;
+    @JsonProperty("cpu_model")
+    private final String cpuModel;
+
+    @JsonProperty("cpu_arch")
+    private final String cpuArch;
+
+    @JsonProperty("cpu_cores")
+    private final Long cpuCores;
+
+    @JsonProperty("cpu_threads")
+    private final String osName;
+
+    @JsonProperty("os_version")
+    private final String osVersion;
+
+    @JsonProperty("max_memory_mb")
+    private final Long maxMemoryMb;
+
+    public ExecutionEnvironment() {
+      this.jvm = System.getProperty("java.vm.name");
+      this.heapSizeMB = Runtime.getRuntime().maxMemory() / (1024 * 1024) + " MB";
+      this.jdk_version = System.getProperty("java.version");
+      this.vm_name = System.getProperty("java.vm.name");
+      this.vm_version = System.getProperty("java.vm.version");
+      this.cpuModel = System.getProperty("os.arch");
+      this.cpuArch = System.getProperty("os.arch");
+      this.cpuCores = (long) Runtime.getRuntime().availableProcessors();
+      this.osName = System.getProperty("os.name");
+      this.osVersion = System.getProperty("os.version");
+      this.maxMemoryMb = Runtime.getRuntime().maxMemory() / (1024 * 1024);
     }
 
     public String toString() {
       return String.format(
-          "ExecutionEnvironment{jvm='%s', jvm_args=%s, jdk_version='%s', vm_name='%s', vm_version='%s'}",
-          jvm, String.join(" ", jvm_args), jdk_version, vm_name, vm_version);
+          "ExecutionEnvironment{jvm='%s', heapSizeMB='%s', jdk_version='%s', vm_name='%s', vm_version='%s', cpuModel='%s', cpuArch='%s', cpuCores=%d, osName='%s', osVersion='%s'}",
+          jvm,
+          heapSizeMB,
+          jdk_version,
+          vm_name,
+          vm_version,
+          cpuModel,
+          cpuArch,
+          cpuCores,
+          osName,
+          osVersion);
     }
   }
 
@@ -184,7 +216,7 @@ public class WorkloadOutputFormat implements OutputFormat {
       HashMap<String, Double> percentiles = new HashMap<>();
       Statistics stats = result.getStatistics();
       for (double p : PERCENTILES) {
-        String key = String.format("p%.4f", p);
+        String key = String.format("p%.2f", p);
         percentiles.put(key, stats.getPercentile(p));
       }
       return new TimingMetric(
@@ -237,13 +269,7 @@ public class WorkloadOutputFormat implements OutputFormat {
             org.openjdk.jmh.Main.class.getPackage().getImplementationVersion(),
             "1.0",
             "Delta Kernel Benchmarks");
-    ExecutionEnvironment env =
-        new ExecutionEnvironment(
-            System.getProperty("java.vm.name"),
-            new String[] {},
-            System.getProperty("java.version"),
-            System.getProperty("java.vm.name"),
-            System.getProperty("java.vm.version"));
+    ExecutionEnvironment env = new ExecutionEnvironment();
     HashMap<String, String> benchConfig = new HashMap<>();
 
     HashMap<String, BenchmarkDetails> benchmarks = new HashMap<>();
@@ -265,6 +291,7 @@ public class WorkloadOutputFormat implements OutputFormat {
               secondaryMetrics.put(r.getLabel(), (long) r.getScore());
             }
           }
+
           BenchmarkDetails details =
               new BenchmarkDetails(
                   spec,
@@ -285,6 +312,7 @@ public class WorkloadOutputFormat implements OutputFormat {
     try {
       String jsonReport = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report);
 
+      System.out.println("Generated benchmark report:\n" + jsonReport);
       String outputPath = System.getProperty("user.dir");
       System.out.println("Writing benchmark report to " + outputPath + "/benchmark_report.json");
       java.nio.file.Files.write(

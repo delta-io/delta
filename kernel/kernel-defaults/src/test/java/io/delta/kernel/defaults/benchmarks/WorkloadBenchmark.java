@@ -28,7 +28,6 @@ import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.conf.Configuration;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
-import org.openjdk.jmh.results.format.ResultFormatType;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -108,7 +107,6 @@ public class WorkloadBenchmark<T> {
                 1) // FIXME: set to 1 for faster debugging; change to >1 for real runs
             .warmupTime(TimeValue.seconds(1))
             .measurementTime(TimeValue.seconds(1))
-            .resultFormat(ResultFormatType.JSON)
             .addProfiler(KernelMetricsProfiler.class)
             .build();
 
