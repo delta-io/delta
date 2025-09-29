@@ -258,7 +258,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Map<String, String> tablePropertiesWithDomainMetadataEnabled =
           new HashMap<>(tableProperties.orElse(emptyMap()));
       tablePropertiesWithDomainMetadataEnabled.put(
-          TableFeatures.DOMAIN_METADATA_W_FEATURE.getTablePropertyElementKey(), "supported");
+          TableFeatures.DOMAIN_METADATA_W_FEATURE.getTableFeatureSupportKey(), "supported");
       tableProperties = Optional.of(tablePropertiesWithDomainMetadataEnabled);
     }
 

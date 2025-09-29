@@ -61,7 +61,7 @@ public class CatalogCommitterUtils {
     if (protocol.supportsReaderFeatures() || protocol.supportsWriterFeatures()) {
       for (String featureName : protocol.getReaderAndWriterFeatures()) {
         properties.put(
-            TableFeatures.getTableFeature(featureName).getTablePropertyElementKey(),
+            TableFeatures.getTableFeature(featureName).getTableFeatureSupportKey(),
             TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
       }
     }
