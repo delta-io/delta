@@ -31,6 +31,11 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.*;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.connector.expressions.FieldReference;
+import org.apache.spark.sql.connector.expressions.LiteralValue;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.execution.datasources.*;
@@ -42,7 +47,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.collection.JavaConverters;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
-public class SparkScan implements Scan, SupportsReportStatistics {
+public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final String tablePath;
   private final StructType readDataSchema;
@@ -257,5 +262,205 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
   Configuration getConfiguration() {
     return hadoopConf;
+  }
+
+  @Override
+  public NamedReference[] filterAttributes() {
+    return Arrays.stream(partitionSchema.fields())
+        .map(field -> FieldReference.column(field.name()))
+        .toArray(NamedReference[]::new);
+  }
+
+  @Override
+  public void filter(org.apache.spark.sql.connector.expressions.filter.Predicate[] predicates) {
+    // 1. get all predicates on partition columns
+    final Set<String> partitionColNames =
+        Arrays.stream(partitionSchema.fields()).map(StructField::name).collect(Collectors.toSet());
+    List<org.apache.spark.sql.connector.expressions.filter.Predicate> partitionPredicates =
+        new ArrayList<>();
+    for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate : predicates) {
+      boolean isPartitionPredicate = true;
+      for (NamedReference ref : predicate.references()) {
+        if (!partitionColNames.contains(ref.fieldNames()[0])) {
+          isPartitionPredicate = false;
+          break;
+        }
+      }
+      if (isPartitionPredicate) {
+        partitionPredicates.add(predicate);
+      }
+    }
+
+    // 2. apply partition predicates to filter partitionedFiles
+    ensurePlanned();
+    List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
+    for (PartitionedFile pf : partitionedFiles) {
+      boolean keep = true;
+      for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate :
+          partitionPredicates) {
+        if (!evaluatePartitionValueOnPredicate(predicate, pf.partitionValues())) {
+          keep = false;
+          break;
+        }
+      }
+      if (keep) {
+        runtimeFilteredPartitionedFiles.add(pf);
+      }
+    }
+
+    // 3. update totalBytes and partitionedFiles
+    this.partitionedFiles.clear();
+    this.partitionedFiles.addAll(runtimeFilteredPartitionedFiles);
+    this.totalBytes = 0L;
+    for (PartitionedFile pf : this.partitionedFiles) {
+      this.totalBytes += pf.fileSize();
+    }
+  }
+
+  /*
+   * Evaluate a predicate on partition values.
+   * Return true if the partition values satisfy the predicate, false otherwise.
+   */
+  private boolean evaluatePartitionValueOnPredicate(
+      org.apache.spark.sql.connector.expressions.filter.Predicate predicate,
+      InternalRow partitionValues) {
+    try {
+      // Convert the DSV2 predicate to Catalyst expression
+      Expression catalystExpr = dsv2PredicateToCatalystExpression(predicate, partitionSchema);
+
+      // Use an interpreted predicate for evaluation
+      BasePredicate basePredicate = new InterpretedPredicate(catalystExpr);
+
+      // Evaluate and return result
+      return basePredicate.eval(partitionValues);
+
+    } catch (Exception e) {
+      // Log the error and return true (conservative approach - don't filter out)
+      return true;
+    }
+  }
+
+  private Expression dsv2PredicateToCatalystExpression(
+      org.apache.spark.sql.connector.expressions.filter.Predicate predicate, StructType schema) {
+
+    String predicateName = predicate.name();
+    org.apache.spark.sql.connector.expressions.Expression[] children = predicate.children();
+
+    switch (predicateName) {
+      case "=":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.EqualTo(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case ">":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.GreaterThan(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case ">=":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "<":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.LessThan(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "<=":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.LessThanOrEqual(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "IS_NULL":
+        if (children.length == 1) {
+          return new org.apache.spark.sql.catalyst.expressions.IsNull(
+              resolveExpression(children[0], schema));
+        }
+        break;
+
+      case "IS_NOT_NULL":
+        if (children.length == 1) {
+          return new org.apache.spark.sql.catalyst.expressions.IsNotNull(
+              resolveExpression(children[0], schema));
+        }
+        break;
+
+      case "AND":
+        if (predicate instanceof org.apache.spark.sql.connector.expressions.filter.And) {
+          org.apache.spark.sql.connector.expressions.filter.And and =
+              (org.apache.spark.sql.connector.expressions.filter.And) predicate;
+          return new org.apache.spark.sql.catalyst.expressions.And(
+              dsv2PredicateToCatalystExpression(and.left(), schema),
+              dsv2PredicateToCatalystExpression(and.right(), schema));
+        }
+        break;
+
+      case "OR":
+        if (predicate instanceof org.apache.spark.sql.connector.expressions.filter.Or) {
+          org.apache.spark.sql.connector.expressions.filter.Or or =
+              (org.apache.spark.sql.connector.expressions.filter.Or) predicate;
+          return new org.apache.spark.sql.catalyst.expressions.Or(
+              dsv2PredicateToCatalystExpression(or.left(), schema),
+              dsv2PredicateToCatalystExpression(or.right(), schema));
+        }
+        break;
+
+      case "NOT":
+        if (predicate instanceof org.apache.spark.sql.connector.expressions.filter.Not) {
+          org.apache.spark.sql.connector.expressions.filter.Not not =
+              (org.apache.spark.sql.connector.expressions.filter.Not) predicate;
+          return new org.apache.spark.sql.catalyst.expressions.Not(
+              dsv2PredicateToCatalystExpression(not.child(), schema));
+        }
+        break;
+
+      case "IN":
+        if (children.length >= 2) {
+          List<Expression> values = new ArrayList<>();
+          for (int i = 1; i < children.length; i++) {
+            values.add(resolveExpression(children[i], schema));
+          }
+          return new org.apache.spark.sql.catalyst.expressions.In(
+              resolveExpression(children[0], schema), JavaConverters.asScalaBuffer(values).toSeq());
+        }
+        break;
+    }
+
+    // Default to always true for unsupported predicates
+    return org.apache.spark.sql.catalyst.expressions.Literal.create(
+        true, org.apache.spark.sql.types.DataTypes.BooleanType);
+  }
+
+  private Expression resolveExpression(
+      org.apache.spark.sql.connector.expressions.Expression expr, StructType schema) {
+    if (expr instanceof NamedReference) {
+      NamedReference ref = (NamedReference) expr;
+      String columnName = ref.fieldNames()[0];
+      int index = java.util.Arrays.asList(schema.fieldNames()).indexOf(columnName);
+      if (index >= 0) {
+        StructField field = schema.fields()[index];
+        return new BoundReference(index, field.dataType(), field.nullable());
+      }
+      throw new IllegalArgumentException("Column not found: " + columnName);
+    } else if (expr instanceof LiteralValue) {
+      LiteralValue<?> literal = (LiteralValue<?>) expr;
+      return org.apache.spark.sql.catalyst.expressions.Literal.create(
+          literal.value(), literal.dataType());
+    } else {
+      // For unsupported expression types, return a literal true
+      return org.apache.spark.sql.catalyst.expressions.Literal.create(
+          true, org.apache.spark.sql.types.DataTypes.BooleanType);
+    }
   }
 }
