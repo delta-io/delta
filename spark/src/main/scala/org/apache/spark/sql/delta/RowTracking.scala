@@ -90,13 +90,14 @@ object RowTracking {
       metadata: Metadata,
       nullableConstantFields: Boolean,
       nullableGeneratedFields: Boolean): Iterable[StructField] = {
+    val shouldSetIcebergReservedFieldId = false
     RowId.createRowIdField(
-      protocol, metadata, nullableGeneratedFields) ++
+      protocol, metadata, nullableGeneratedFields, shouldSetIcebergReservedFieldId) ++
       RowId.createBaseRowIdField(protocol, metadata, nullableConstantFields) ++
       DefaultRowCommitVersion.createDefaultRowCommitVersionField(
         protocol, metadata, nullableConstantFields) ++
       RowCommitVersion.createMetadataStructField(
-        protocol, metadata, nullableGeneratedFields)
+        protocol, metadata, nullableGeneratedFields, shouldSetIcebergReservedFieldId)
   }
 
   /**
