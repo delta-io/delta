@@ -91,7 +91,7 @@ crossScalaVersions := Nil
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
 val targetJvm = settingKey[String]("Target JVM version")
-Global / targetJvm := "8"
+Global / targetJvm := "11"
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
 lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
