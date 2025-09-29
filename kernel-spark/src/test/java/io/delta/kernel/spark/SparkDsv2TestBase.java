@@ -64,4 +64,20 @@ public abstract class SparkDsv2TestBase {
         String.format(
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
   }
+
+  protected static void createGoldenTable(String tableName, String path) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE `%s` (date STRING, city STRING, name STRING, cnt INT) USING delta LOCATION '%s' PARTITIONED BY (date, city)",
+            tableName, path));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES "
+                + "('20180520', 'hz', 'Alice', '10'),"
+                + "('20180718', 'hz', 'Bob', '20'),"
+                + "('20180512', 'sh', 'Charlie', '30'),"
+                + "('20180520', 'bj', 'David', '40'),"
+                + "('20181212', 'sz', 'Eve', '50')",
+            tableName));
+  }
 }

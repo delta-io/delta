@@ -397,33 +397,33 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         break;
 
       case "AND":
-        if (predicate instanceof org.apache.spark.sql.connector.expressions.filter.And) {
-          org.apache.spark.sql.connector.expressions.filter.And and =
-              (org.apache.spark.sql.connector.expressions.filter.And) predicate;
-          return new org.apache.spark.sql.catalyst.expressions.And(
-              dsv2PredicateToCatalystExpression(and.left(), schema),
-              dsv2PredicateToCatalystExpression(and.right(), schema));
-        }
-        break;
+        return new org.apache.spark.sql.catalyst.expressions.And(
+            dsv2PredicateToCatalystExpression(
+                (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                    predicate.children()[0],
+                schema),
+            dsv2PredicateToCatalystExpression(
+                (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                    predicate.children()[1],
+                schema));
 
       case "OR":
-        if (predicate instanceof org.apache.spark.sql.connector.expressions.filter.Or) {
-          org.apache.spark.sql.connector.expressions.filter.Or or =
-              (org.apache.spark.sql.connector.expressions.filter.Or) predicate;
-          return new org.apache.spark.sql.catalyst.expressions.Or(
-              dsv2PredicateToCatalystExpression(or.left(), schema),
-              dsv2PredicateToCatalystExpression(or.right(), schema));
-        }
-        break;
+        return new org.apache.spark.sql.catalyst.expressions.Or(
+            dsv2PredicateToCatalystExpression(
+                (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                    predicate.children()[0],
+                schema),
+            dsv2PredicateToCatalystExpression(
+                (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                    predicate.children()[1],
+                schema));
 
       case "NOT":
-        if (predicate instanceof org.apache.spark.sql.connector.expressions.filter.Not) {
-          org.apache.spark.sql.connector.expressions.filter.Not not =
-              (org.apache.spark.sql.connector.expressions.filter.Not) predicate;
-          return new org.apache.spark.sql.catalyst.expressions.Not(
-              dsv2PredicateToCatalystExpression(not.child(), schema));
-        }
-        break;
+        return new org.apache.spark.sql.catalyst.expressions.Not(
+            dsv2PredicateToCatalystExpression(
+                (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                    predicate.children()[0],
+                schema));
 
       case "IN":
         if (children.length >= 2) {
