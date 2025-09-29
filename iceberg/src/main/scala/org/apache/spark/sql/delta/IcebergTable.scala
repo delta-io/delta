@@ -248,6 +248,22 @@ class IcebergTable(
          throw new UnsupportedOperationException(
            IcebergTable.caseSensitiveConversionExceptionMsg(e.getMessage))
      }
+
+    val hasMergeOnReadDeletionFiles = Option(icebergTable.currentSnapshot())
+      .flatMap(_.summary().asScala.get("total-delete-files").map(_.toLong)) match {
+      case Some(num) => num > 0L
+      case None if icebergTable.currentSnapshot() != null =>
+        icebergTable.currentSnapshot()
+          .deleteManifests(icebergTable.io())
+          .asScala.exists(dm => dm.hasAddedFiles() || dm.hasExistingFiles())
+      case None => false
+    }
+
+    if (hasMergeOnReadDeletionFiles) {
+      throw new UnsupportedOperationException(
+        s"Cannot support convert Iceberg table with row-level deletes." +
+          s"Please trigger an Iceberg compaction and retry the command.")
+    }
   }
 }
 
