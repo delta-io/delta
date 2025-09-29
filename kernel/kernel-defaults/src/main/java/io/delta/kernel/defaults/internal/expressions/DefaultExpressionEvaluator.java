@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.internal.expressions;
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
+import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
@@ -30,6 +31,8 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.skipping.DataSkippingPredicate;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -77,10 +80,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
   private static class ExpressionTransformResult {
     public final Expression expression; // transformed expression
     public final DataType outputType; // output type of the expression
+    public final boolean hasNonUTF8BinaryPruning;
 
     ExpressionTransformResult(Expression expression, DataType outputType) {
       this.expression = expression;
       this.outputType = outputType;
+      this.hasNonUTF8BinaryPruning = false;
+    }
+
+    ExpressionTransformResult(Expression expression, DataType outputType, boolean hasNonUTF8BinaryPruning) {
+      this.expression = expression;
+      this.outputType = outputType;
+      this.hasNonUTF8BinaryPruning = hasNonUTF8BinaryPruning;
     }
   }
 
@@ -106,16 +117,36 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
     @Override
     ExpressionTransformResult visitAnd(And and) {
-      Predicate left = validateIsPredicate(and, visit(and.getLeft()));
-      Predicate right = validateIsPredicate(and, visit(and.getRight()));
-      return new ExpressionTransformResult(new And(left, right), BooleanType.BOOLEAN);
+      ExpressionTransformResult leftResult = visit(and.getLeft());
+      ExpressionTransformResult rightResult = visit(and.getRight());
+
+      Predicate left = validateIsPredicate(and, leftResult);
+      Predicate right = validateIsPredicate(and, rightResult);
+
+      if (leftResult.hasNonUTF8BinaryPruning && rightResult.hasNonUTF8BinaryPruning) {
+        return new ExpressionTransformResult(ALWAYS_TRUE, BooleanType.BOOLEAN, true);
+      } else if (leftResult.hasNonUTF8BinaryPruning) {
+        return new ExpressionTransformResult(right, BooleanType.BOOLEAN, true);
+      } else if (rightResult.hasNonUTF8BinaryPruning) {
+        return new ExpressionTransformResult(left, BooleanType.BOOLEAN, true);
+      } else {
+        return new ExpressionTransformResult(new And(left, right), BooleanType.BOOLEAN, false);
+      }
     }
 
     @Override
     ExpressionTransformResult visitOr(Or or) {
-      Predicate left = validateIsPredicate(or, visit(or.getLeft()));
-      Predicate right = validateIsPredicate(or, visit(or.getRight()));
-      return new ExpressionTransformResult(new Or(left, right), BooleanType.BOOLEAN);
+      ExpressionTransformResult leftResult = visit(or.getLeft());
+      ExpressionTransformResult rightResult = visit(or.getRight());
+
+      Predicate left = validateIsPredicate(or, leftResult);
+      Predicate right = validateIsPredicate(or, rightResult);
+
+      if (leftResult.hasNonUTF8BinaryPruning || rightResult.hasNonUTF8BinaryPruning) {
+        return new ExpressionTransformResult(ALWAYS_TRUE, BooleanType.BOOLEAN, true);
+      } else {
+        return new ExpressionTransformResult(new Or(left, right), BooleanType.BOOLEAN, false);
+      }
     }
 
     @Override
@@ -139,8 +170,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         case "<":
         case "<=":
         case "IS NOT DISTINCT FROM":
-          return new ExpressionTransformResult(
-              transformBinaryComparator(predicate), BooleanType.BOOLEAN);
+          Tuple2<Expression, Boolean> transformed = transformBinaryComparator(predicate);
+          return new ExpressionTransformResult(transformed._1, BooleanType.BOOLEAN, transformed._2);
         default:
           // We should never reach this based on the ExpressionVisitor
           throw new IllegalStateException(
@@ -207,29 +238,45 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               transformedLookupKey.expression,
               transformedLookupKey.outputType);
 
+      boolean hasNonUTF8BinaryPruning = transformedMapInput.hasNonUTF8BinaryPruning || transformedLookupKey.hasNonUTF8BinaryPruning;
       return new ExpressionTransformResult(
-          transformedExpression, ((MapType) transformedMapInput.outputType).getValueType());
+          transformedExpression, ((MapType) transformedMapInput.outputType).getValueType(), hasNonUTF8BinaryPruning);
     }
 
     @Override
     ExpressionTransformResult visitNot(Predicate predicate) {
-      Predicate child = validateIsPredicate(predicate, visit(predicate.getChildren().get(0)));
-      return new ExpressionTransformResult(
-          new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
+      ExpressionTransformResult childResult = visit(childAt(predicate, 0));
+      Predicate child = validateIsPredicate(predicate, childResult);
+      if (childResult.hasNonUTF8BinaryPruning) {
+        return new ExpressionTransformResult(ALWAYS_TRUE, BooleanType.BOOLEAN, true);
+      } else {
+        return new ExpressionTransformResult(
+            new Predicate(predicate.getName(), child), BooleanType.BOOLEAN, false);
+      }
     }
 
     @Override
     ExpressionTransformResult visitIsNotNull(Predicate predicate) {
-      Expression child = visit(predicate.getChildren().get(0)).expression;
-      return new ExpressionTransformResult(
-          new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
+      ExpressionTransformResult childResult = visit(childAt(predicate, 0));
+      Expression child = childResult.expression;
+      if (childResult.hasNonUTF8BinaryPruning) {
+        return new ExpressionTransformResult(ALWAYS_TRUE, BooleanType.BOOLEAN, true);
+      } else {
+        return new ExpressionTransformResult(
+            new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
+      }
     }
 
     @Override
     ExpressionTransformResult visitIsNull(Predicate predicate) {
-      Expression child = visit(getUnaryChild(predicate)).expression;
-      return new ExpressionTransformResult(
-          new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
+      ExpressionTransformResult childResult = visit(childAt(predicate, 0));
+      Expression child = childResult.expression;
+      if (childResult.hasNonUTF8BinaryPruning) {
+        return new ExpressionTransformResult(ALWAYS_TRUE, BooleanType.BOOLEAN, true);
+      } else {
+        return new ExpressionTransformResult(
+            new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
+      }
     }
 
     @Override
@@ -245,10 +292,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         throw unsupportedExpressionException(
             coalesce, "Coalesce is only supported for arguments of the same type");
       }
+      boolean hasNonUTF8BinaryPruning = children.stream().anyMatch(e -> e.hasNonUTF8BinaryPruning);
       return new ExpressionTransformResult(
           new ScalarExpression(
               "COALESCE", children.stream().map(e -> e.expression).collect(Collectors.toList())),
-          children.get(0).outputType);
+          children.get(0).outputType,
+          hasNonUTF8BinaryPruning);
     }
 
     @Override
@@ -272,11 +321,13 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         throw unsupportedExpressionException(
             add, "ADD is only supported for numeric types: byte, short, int, long, float, double");
       }
+      boolean hasNonUTF8BinaryPruning = children.stream().anyMatch(e -> e.hasNonUTF8BinaryPruning);
 
       return new ExpressionTransformResult(
           new ScalarExpression(
               "ADD", Arrays.asList(children.get(0).expression, children.get(1).expression)),
-          children.get(0).outputType);
+          children.get(0).outputType,
+          hasNonUTF8BinaryPruning);
     }
 
     @Override
@@ -303,10 +354,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             "TIMEADD requires a timestamp and a Long (milliseconds) to add to it");
       }
 
+      boolean hasNonUTF8BinaryPruning = children.stream().anyMatch(e -> e.hasNonUTF8BinaryPruning);
+
       return new ExpressionTransformResult(
           new ScalarExpression("TIMEADD", Arrays.asList(timestampColumn, durationMilliseconds)),
-          timestampColumnType // Result is also a timestamp
-          );
+          timestampColumnType, // Result is also a timestamp
+          hasNonUTF8BinaryPruning);
     }
 
     @Override
@@ -318,7 +371,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               substring,
               children.stream().map(e -> e.expression).collect(toList()),
               children.stream().map(e -> e.outputType).collect(toList()));
-      return new ExpressionTransformResult(transformedExpression, StringType.STRING);
+      boolean hasNonUTF8BinaryPruning = children.stream().anyMatch(e -> e.hasNonUTF8BinaryPruning);
+      return new ExpressionTransformResult(transformedExpression, StringType.STRING, hasNonUTF8BinaryPruning);
     }
 
     @Override
@@ -330,8 +384,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               like,
               children.stream().map(e -> e.expression).collect(toList()),
               children.stream().map(e -> e.outputType).collect(toList()));
+      boolean hasNonUTF8BinaryPruning = children.stream().anyMatch(e -> e.hasNonUTF8BinaryPruning);
 
-      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN, hasNonUTF8BinaryPruning);
     }
 
     @Override
@@ -343,7 +398,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               startsWith,
               children.stream().map(e -> e.expression).collect(toList()),
               children.stream().map(e -> e.outputType).collect(toList()));
-      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+      boolean hasNonUTF8BinaryPruning = children.stream().anyMatch(e -> e.hasNonUTF8BinaryPruning);
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN, hasNonUTF8BinaryPruning);
     }
 
     @Override
@@ -372,23 +428,26 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return (Predicate) result.expression;
     }
 
-    private Expression transformBinaryComparator(Predicate predicate) {
+    private Tuple2<Expression, Boolean> transformBinaryComparator(Predicate predicate) {
       ExpressionTransformResult leftResult = visit(getLeft(predicate));
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
 
       if (predicate.getCollationIdentifier().isPresent()) {
-        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
-        checkIsUTF8BinaryCollation(predicate, collationIdentifier);
-
         for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
           checkIsStringType(
               dataType,
               predicate,
               format("Predicate %s expects STRING type inputs", predicate.getName()));
         }
-        return new Predicate(predicate.getName(), left, right, collationIdentifier);
+
+        if (shouldEvaluateCollatedComparatorToTrue(predicate, leftResult, rightResult)) {
+          return new Tuple2<>(ALWAYS_TRUE, true);
+        }
+        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
+        checkIsUTF8BinaryCollation(predicate, collationIdentifier);
+        return new Tuple2<>(new Predicate(predicate.getName(), left, right, collationIdentifier), false);
       }
 
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
@@ -405,7 +464,25 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           throw unsupportedExpressionException(predicate, msg);
         }
       }
-      return new Predicate(predicate.getName(), left, right);
+      return new Tuple2<>(new Predicate(predicate.getName(), left, right), false);
+    }
+
+    private boolean shouldEvaluateCollatedComparatorToTrue(Predicate predicate, ExpressionTransformResult leftResult, ExpressionTransformResult rightResult) {
+      checkArgument(
+          predicate.getCollationIdentifier().isPresent(),
+          "Predicate %s does not have collation specified",
+          predicate
+      );
+      CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
+      if (leftResult.hasNonUTF8BinaryPruning || rightResult.hasNonUTF8BinaryPruning) {
+        return true;
+      } else if (predicate instanceof DataSkippingPredicate && !collationIdentifier.isSparkUTF8BinaryCollation()) {
+        return true;
+      } else if (predicate.getChildren().stream().anyMatch(child -> child instanceof PartitionValueExpression)
+          && !collationIdentifier.isSparkUTF8BinaryCollation()) {
+        return true;
+      } else {
+        return false;
     }
   }
 
