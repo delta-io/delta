@@ -27,7 +27,13 @@ import io.delta.kernel.internal.util.InternalUtils;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.*;
+import org.apache.spark.sql.catalyst.expressions.BoundReference;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.connector.expressions.LiteralValue;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.sources.*;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.collection.JavaConverters;
 
@@ -386,6 +392,172 @@ public final class ExpressionUtils {
 
     return new FilterClassificationResult(
         isKernelSupported, isPartialConversion, isDataFilter, kernelPredicate);
+  }
+
+  /**
+   * Converts a Spark DataSourceV2 Predicate to a Catalyst Expression for filter pushdown.
+   *
+   * <p>This method translates supported DSV2 predicates into their equivalent Catalyst expressions
+   * using the provided schema for column resolution. Unsupported predicates default to a literal
+   * true expression to avoid filtering out any data.
+   *
+   * <p>Supported predicates include:
+   *
+   * <ul>
+   *   <li>Comparison: =, >, >=, <, <=
+   *   <li>Null tests: IS_NULL, IS_NOT_NULL
+   *   <li>Logical operators: AND, OR, NOT
+   *   <li>IN operator
+   * </ul>
+   *
+   * @param predicate the DSV2 Predicate to convert
+   * @param schema the schema used for resolving column references
+   * @return Catalyst Expression representing the converted predicate, or a literal true for
+   *     unsupported predicates
+   */
+  public static Expression dsv2PredicateToCatalystExpression(
+      org.apache.spark.sql.connector.expressions.filter.Predicate predicate, StructType schema) {
+
+    String predicateName = predicate.name();
+    org.apache.spark.sql.connector.expressions.Expression[] children = predicate.children();
+
+    switch (predicateName) {
+      case "=":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.EqualTo(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case ">":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.GreaterThan(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case ">=":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "<":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.LessThan(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "<=":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.LessThanOrEqual(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "IS_NULL":
+        if (children.length == 1) {
+          return new org.apache.spark.sql.catalyst.expressions.IsNull(
+              resolveExpression(children[0], schema));
+        }
+        break;
+
+      case "IS_NOT_NULL":
+        if (children.length == 1) {
+          return new org.apache.spark.sql.catalyst.expressions.IsNotNull(
+              resolveExpression(children[0], schema));
+        }
+        break;
+
+      case "AND":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.And(
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema),
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[1],
+                  schema));
+        }
+        break;
+
+      case "OR":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.Or(
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema),
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[1],
+                  schema));
+        }
+        break;
+
+      case "NOT":
+        if (children.length == 1) {
+          return new org.apache.spark.sql.catalyst.expressions.Not(
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema));
+        }
+        break;
+
+      case "IN":
+        if (children.length >= 2) {
+          List<Expression> values = new ArrayList<>();
+          for (int i = 1; i < children.length; i++) {
+            values.add(resolveExpression(children[i], schema));
+          }
+          return new org.apache.spark.sql.catalyst.expressions.In(
+              resolveExpression(children[0], schema), JavaConverters.asScalaBuffer(values).toSeq());
+        }
+        break;
+    }
+
+    // Default to always true for unsupported predicates
+    return org.apache.spark.sql.catalyst.expressions.Literal.create(
+        true, org.apache.spark.sql.types.DataTypes.BooleanType);
+  }
+
+  /**
+   * Resolves a DSV2 Expression to a Catalyst Expression using the provided schema.
+   *
+   * <p>This method handles NamedReference and LiteralValue expressions. NamedReferences are
+   * resolved to BoundReferences based on the schema, while LiteralValues are converted to Catalyst
+   * Literals. Unsupported expression types default to a literal true expression.
+   *
+   * @param expr the DSV2 Expression to resolve
+   * @param schema the schema used for resolving column references
+   * @return Catalyst Expression representing the resolved expression, or a literal true for
+   *     unsupported expressions
+   */
+  private static Expression resolveExpression(
+      org.apache.spark.sql.connector.expressions.Expression expr, StructType schema) {
+    if (expr instanceof NamedReference) {
+      NamedReference ref = (NamedReference) expr;
+      String columnName = ref.fieldNames()[0];
+      int index = java.util.Arrays.asList(schema.fieldNames()).indexOf(columnName);
+      if (index >= 0) {
+        StructField field = schema.fields()[index];
+        return new BoundReference(index, field.dataType(), field.nullable());
+      }
+      throw new IllegalArgumentException("Column not found: " + columnName);
+    } else if (expr instanceof LiteralValue) {
+      LiteralValue<?> literal = (LiteralValue<?>) expr;
+      return org.apache.spark.sql.catalyst.expressions.Literal.create(
+          literal.value(), literal.dataType());
+    } else {
+      // For unsupported expression types, return a literal true
+      return org.apache.spark.sql.catalyst.expressions.Literal.create(
+          true, org.apache.spark.sql.types.DataTypes.BooleanType);
+    }
   }
 
   private ExpressionUtils() {}
