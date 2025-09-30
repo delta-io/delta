@@ -195,12 +195,7 @@ public class SnapshotFactory {
 
   private LogReplay getLogReplay(
       Engine engine, Lazy<LogSegment> lazyLogSegment, SnapshotQueryContext snapshotCtx) {
-    return new LogReplay(
-        tablePath,
-        engine,
-        lazyLogSegment,
-        Optional.empty() /* snapshotHint */,
-        snapshotCtx.getSnapshotMetrics());
+    return new LogReplay(tablePath, engine, lazyLogSegment, snapshotCtx.getSnapshotMetrics());
   }
 
   private Protocol getProtocol(LogReplay logReplay) {
