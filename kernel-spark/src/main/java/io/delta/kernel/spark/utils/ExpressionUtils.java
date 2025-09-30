@@ -24,6 +24,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Or;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.spark.exceptions.NonexistentColumnException;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.*;
@@ -598,7 +599,7 @@ public final class ExpressionUtils {
         StructField field = schema.fields()[index];
         return new BoundReference(index, field.dataType(), field.nullable());
       }
-      throw new IllegalArgumentException("Column not found: " + columnName);
+      throw new NonexistentColumnException(columnName);
     } else if (expr instanceof LiteralValue) {
       LiteralValue<?> literal = (LiteralValue<?>) expr;
       return org.apache.spark.sql.catalyst.expressions.Literal.create(
