@@ -28,8 +28,7 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
-import org.apache.spark.sql.types.StructField;
-import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.types.*;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
@@ -52,6 +51,80 @@ public class SparkTable implements Table, SupportsRead {
   private final StructType partitionSchema;
   private final Column[] columns;
   private final Transform[] partitionTransforms;
+
+  /**
+   * Validates that all fields in the schema use allowed data types.
+   * 
+   * @param schema the schema to validate
+   * @throws IllegalArgumentException if any field uses a disallowed data type
+   */
+  private static void validateSchemaTypes(StructType schema) {
+    for (StructField field : schema.fields()) {
+      validateDataType(field.dataType(), field.name());
+    }
+  }
+
+  /**
+   * Recursively validates a data type and its nested types.
+   * 
+   * @param dataType the data type to validate
+   * @param fieldPath the path to the field (for error messages)
+   * @throws IllegalArgumentException if the data type is not allowed
+   */
+  private static void validateDataType(DataType dataType, String fieldPath) {
+    if (isAllowedType(dataType)) {
+      // For struct types, validate nested fields
+      if (dataType instanceof StructType) {
+        StructType structType = (StructType) dataType;
+        for (StructField field : structType.fields()) {
+          validateDataType(field.dataType(), fieldPath + "." + field.name());
+        }
+      }
+      // For array types, validate element type
+      else if (dataType instanceof ArrayType) {
+        ArrayType arrayType = (ArrayType) dataType;
+        validateDataType(arrayType.elementType(), fieldPath + ".element");
+      }
+      // For map types, validate key and value types
+      else if (dataType instanceof MapType) {
+        MapType mapType = (MapType) dataType;
+        validateDataType(mapType.keyType(), fieldPath + ".key");
+        validateDataType(mapType.valueType(), fieldPath + ".value");
+      }
+    } else {
+      throw new IllegalArgumentException(
+          String.format("Unsupported data type '%s' for field '%s'. " +
+              "Only numeric types (ByteType, ShortType, IntegerType, LongType, FloatType, " +
+              "DoubleType, DecimalType), string types (StringType, VarcharType, CharType), " +
+              "BinaryType, and BooleanType are supported.",
+              dataType.typeName(), fieldPath));
+    }
+  }
+
+  /**
+   * Checks if a data type is allowed.
+   * 
+   * @param dataType the data type to check
+   * @return true if the data type is allowed, false otherwise
+   */
+  private static boolean isAllowedType(DataType dataType) {
+    return dataType instanceof ByteType ||
+           dataType instanceof ShortType ||
+           dataType instanceof IntegerType ||
+           dataType instanceof LongType ||
+           dataType instanceof FloatType ||
+           dataType instanceof DoubleType ||
+           dataType instanceof DecimalType ||
+           dataType instanceof StringType ||
+           dataType instanceof VarcharType ||
+           dataType instanceof CharType ||
+           dataType instanceof BinaryType ||
+           dataType instanceof BooleanType ||
+           // Allow complex types but validate their nested types
+           dataType instanceof StructType ||
+           dataType instanceof ArrayType ||
+           dataType instanceof MapType;
+  }
 
   /**
    * Creates a SparkTable backed by a Delta Kernel snapshot and initializes Spark-facing metadata
@@ -82,6 +155,7 @@ public class SparkTable implements Table, SupportsRead {
                 .build(io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf));
 
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    validateSchemaTypes(this.schema);
     this.partColNames =
         Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
 
