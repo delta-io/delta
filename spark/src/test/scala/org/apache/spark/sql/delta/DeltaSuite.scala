@@ -204,6 +204,44 @@ class DeltaSuite extends QueryTest
     checkAnswer(data.toDF(), Row(1) :: Row(2) :: Row(3) :: Row(4) :: Row(5) :: Row(6) :: Nil)
   }
 
+  test("null struct with NullType field kept as null") {
+    withTempTable(createTable = false) { tableName =>
+      Seq(((null, 2), 1), (null, 2)).toDF("key", "value")
+        .write.format("delta").saveAsTable(tableName)
+
+      // Evolve the schema because tables with NullType columns cannot be read currently.
+      Seq(((10, 10), 10)).toDF("key", "value")
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .saveAsTable(tableName)
+
+      // Confirm struct value stays as null (fields are not set to null).
+      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"value" === 2)
+      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
+  }
+
+  test("null struct with NullType field, with backticks in the column name, kept as null") {
+    withTempTable(createTable = false) { tableName =>
+      Seq(((null, 2), 1), (null, 2)).toDF("key`", "val`ue")
+        .write.format("delta").saveAsTable(tableName)
+
+      // Evolve the schema because tables with NullType columns cannot be read currently.
+      Seq(((10, 10), 10)).toDF("key`", "val`ue")
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .saveAsTable(tableName)
+
+      // Confirm struct value stays as null (fields are not set to null).
+      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"`val``ue`" === 2)
+      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
+  }
+
   test("partitioned append - nulls") {
     val tempDir = Utils.createTempDir()
     Seq(Some(1), None).toDF()
