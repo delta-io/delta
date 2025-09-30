@@ -33,6 +33,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -51,6 +52,117 @@ import java.util.Optional;
 
 /** Implementation of {@link Snapshot}. */
 public class SnapshotImpl implements Snapshot {
+
+  //////////////////////////////////////////
+  // Static factory methods and constants //
+  //////////////////////////////////////////
+
+  /**
+   * Creates a post-commit Snapshot after a transaction.
+   *
+   * @param engine The engine to use for operations
+   * @param dataPath The path to the table
+   * @param previousSnapshot Optional previous snapshot (empty for CREATE transactions)
+   * @param newlyCommittedDeltaFiles XXXX
+   * @param committer The committer for the snapshot
+   * @param txnEffectiveProtocol The effective protocol after the transaction
+   * @param txnEffectiveMetadata The effective metadata after the transaction
+   * @param txnInCommitTimestampOpt The in-commit timestamp from the transaction (if available)
+   * @return A new post-commit Snapshot
+   */
+  public static SnapshotImpl createPostCommitSnapshot(
+      Engine engine,
+      Path dataPath,
+      Optional<SnapshotImpl> previousSnapshot,
+      List<ParsedDeltaData> newlyCommittedDeltaFiles,
+      Committer committer,
+      Protocol txnEffectiveProtocol,
+      Metadata txnEffectiveMetadata,
+      Optional<Long> txnInCommitTimestampOpt) {
+    // TODO: plumb through CRCInfo
+
+    // TODO: Create SnapshotQueryContext.forPostCommitSnapshot
+    final SnapshotQueryContext snapshotContext =
+        SnapshotQueryContext.forLatestSnapshot(dataPath.toString());
+
+    final LogSegment logSegment =
+        createLogSegmentForPostCommit(dataPath, previousSnapshot, newlyCommittedDeltaFiles);
+
+    // TODO: We should make post-commit Snapshots be fully incremental. That is, we replay state
+    //       using any previously-computed state from the previous Snapshot / LogReplay.
+    final LogReplay logReplay =
+        new LogReplay(
+            dataPath,
+            engine,
+            new Lazy<>(() -> logSegment),
+            Optional.empty(), // snapshotHint
+            snapshotContext.getSnapshotMetrics());
+
+    return new SnapshotImpl(
+        dataPath,
+        logSegment.getVersion(),
+        new Lazy<>(() -> logSegment),
+        logReplay,
+        txnEffectiveProtocol,
+        txnEffectiveMetadata,
+        committer,
+        snapshotContext,
+        txnInCommitTimestampOpt);
+  }
+
+  /** Creates an initial Snapshot for a table at a specific version. */
+  public static SnapshotImpl createInitialSnapshot(
+      Path dataPath,
+      long version,
+      Lazy<LogSegment> lazyLogSegment,
+      LogReplay logReplay,
+      Protocol protocol,
+      Metadata metadata,
+      Committer committer,
+      SnapshotQueryContext snapshotContext) {
+    return new SnapshotImpl(
+        dataPath,
+        version,
+        lazyLogSegment,
+        logReplay,
+        protocol,
+        metadata,
+        committer,
+        snapshotContext,
+        Optional.empty()); // postCommitInCommitTimestampOpt
+  }
+
+  private static LogSegment createLogSegmentForPostCommit(
+      Path dataPath,
+      Optional<SnapshotImpl> previousSnapshot,
+      List<ParsedDeltaData> newlyCommittedDeltaFiles) {
+    if (previousSnapshot.isPresent()) {
+      // UPDATE/REPLACE case: extend existing LogSegment
+      return previousSnapshot
+          .get()
+          .getLogSegment()
+          .copyWithAdditionalDeltas(newlyCommittedDeltaFiles);
+    } else {
+      // CREATE case: single delta at version 0
+      checkArgument(
+          newlyCommittedDeltaFiles.size() == 1,
+          "CREATE transaction must have exactly one delta, got %d",
+          newlyCommittedDeltaFiles.size());
+      final ParsedDeltaData firstDelta = newlyCommittedDeltaFiles.get(0);
+
+      checkArgument(
+          firstDelta.getVersion() == 0,
+          "CREATE transaction requires version 0, got %s",
+          firstDelta.getVersion());
+
+      return LogSegment.fromSingleDelta(new Path(dataPath, "_delta_log"), firstDelta);
+    }
+  }
+
+  //////////////////////////////////
+  // Member methods and variables //
+  //////////////////////////////////
+
   private final Path logPath;
   private final Path dataPath;
   private final long version;
@@ -71,7 +183,8 @@ public class SnapshotImpl implements Snapshot {
       Protocol protocol,
       Metadata metadata,
       Committer committer,
-      SnapshotQueryContext snapshotContext) {
+      SnapshotQueryContext snapshotContext,
+      Optional<Long> postCommitInCommitTimestampOpt) {
     checkArgument(version >= 0, "A snapshot cannot have version < 0");
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
@@ -81,7 +194,7 @@ public class SnapshotImpl implements Snapshot {
     this.protocol = requireNonNull(protocol);
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
-    this.inCommitTimestampOpt = Optional.empty();
+    this.inCommitTimestampOpt = postCommitInCommitTimestampOpt;
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
     // constructor because some Snapshot metrics, like {@link
@@ -265,4 +378,5 @@ public class SnapshotImpl implements Snapshot {
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
   }
+
 }
