@@ -57,7 +57,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testUpdate(@TempDir File tempDir) {
+  public void testLoadLatestSnapshot(@TempDir File tempDir) {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_update";
     createEmptyTestTable(testTablePath, testTableName);
@@ -82,7 +82,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testMultipleUpdates(@TempDir File tempDir) {
+  public void testMultipleLoadLatestSnapshot(@TempDir File tempDir) {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_multiple_updates";
     createEmptyTestTable(testTablePath, testTableName);
