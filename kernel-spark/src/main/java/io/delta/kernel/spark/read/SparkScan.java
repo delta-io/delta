@@ -33,7 +33,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.catalyst.expressions.BasePredicate;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -319,8 +318,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       InternalRow partitionValues) {
     try {
       Expression catalystExpr = dsv2PredicateToCatalystExpression(predicate, partitionSchema);
-      BasePredicate basePredicate = new InterpretedPredicate(catalystExpr);
-      return basePredicate.eval(partitionValues);
+      InterpretedPredicate interpretedPredicate = new InterpretedPredicate(catalystExpr);
+      return interpretedPredicate.eval(partitionValues);
     } catch (Exception e) {
       // return true if any exception happens during evaluation
       // This is a conservative approach that does not filter out any partition
