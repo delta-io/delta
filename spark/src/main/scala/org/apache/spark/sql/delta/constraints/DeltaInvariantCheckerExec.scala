@@ -43,7 +43,8 @@ import org.apache.spark.sql.types.StructType
  */
 case class DeltaInvariantChecker(
     child: LogicalPlan,
-    deltaConstraints: Seq[CheckDeltaInvariant]) extends UnaryNode {
+    deltaConstraints: Seq[CheckDeltaInvariant],
+    spark: SparkSession) extends UnaryNode {
   assert(deltaConstraints.nonEmpty)
 
   override def output: Seq[Attribute] = child.output
@@ -59,14 +60,14 @@ object DeltaInvariantChecker {
       constraints: Seq[Constraint]): DeltaInvariantChecker = {
     val invariantChecks =
       DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
-    DeltaInvariantChecker(child, invariantChecks)
+    DeltaInvariantChecker(child, invariantChecks, spark)
   }
 }
 
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
-    case DeltaInvariantChecker(child, constraints) =>
-      DeltaInvariantCheckerExec(planLater(child), constraints) :: Nil
+    case DeltaInvariantChecker(child, constraints, spark) =>
+      DeltaInvariantCheckerExec(planLater(child), constraints, spark) :: Nil
     case _ => Nil
   }
 }
@@ -77,7 +78,8 @@ object DeltaInvariantCheckerStrategy extends SparkStrategy {
  */
 case class DeltaInvariantCheckerExec(
     child: SparkPlan,
-    constraints: Seq[CheckDeltaInvariant]) extends UnaryExecNode {
+    constraints: Seq[CheckDeltaInvariant],
+    spark: SparkSession) extends UnaryExecNode {
 
   override def output: Seq[Attribute] = child.output
 
@@ -115,7 +117,7 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
       constraints: Seq[Constraint]): DeltaInvariantCheckerExec = {
     val invariantChecks =
       DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
-    DeltaInvariantCheckerExec(child, invariantChecks)
+    DeltaInvariantCheckerExec(child, invariantChecks, spark)
   }
 
   // Specialized optimizer to run necessary rules so that the check expressions can be evaluated.
