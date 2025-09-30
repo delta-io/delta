@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
-import static io.delta.kernel.internal.data.TransactionStateRow.getColumnMappingMode;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
@@ -30,6 +29,7 @@ import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndU
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /** Utilities related to the column mapping feature. */
@@ -63,6 +63,11 @@ public class ColumnMapping {
     public String toString() {
       return this.value;
     }
+  }
+
+  private enum SchemaConversionDirection {
+    LOGICAL_TO_PHYSICAL,
+    PHYSICAL_TO_LOGICAL
   }
 
   public static final String COLUMN_MAPPING_MODE_KEY = "delta.columnMapping.mode";
@@ -206,26 +211,13 @@ public class ColumnMapping {
   /** Returns the physical column and data type for a given logical column based on the schema. */
   public static Tuple2<Column, DataType> getPhysicalColumnNameAndDataType(
       StructType schema, Column logicalColumn) {
-    List<String> physicalNameParts = new ArrayList<>();
-    DataType currentType = schema;
+    return convertColumnName(schema, logicalColumn, SchemaConversionDirection.LOGICAL_TO_PHYSICAL);
+  }
 
-    // Traverse through each level of the logical name to resolve its corresponding physical name.
-    for (String namePart : logicalColumn.getNames()) {
-      if (!(currentType instanceof StructType)) {
-        throw columnNotFoundInSchema(logicalColumn, schema);
-      }
-
-      StructType structType = (StructType) currentType;
-      // Find the field in the current structure that matches the given name
-      StructField field =
-          structType.fields().stream()
-              .filter(f -> f.getName().equalsIgnoreCase(namePart))
-              .findFirst()
-              .orElseThrow(() -> columnNotFoundInSchema(logicalColumn, schema));
-      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
-      currentType = field.getDataType();
-    }
-    return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
+  /** Returns the logical column and data type for a given physical column based on the schema. */
+  public static Tuple2<Column, DataType> getLogicalColumnNameAndDataType(
+      StructType schema, Column physicalColumn) {
+    return convertColumnName(schema, physicalColumn, SchemaConversionDirection.PHYSICAL_TO_LOGICAL);
   }
 
   /**
@@ -245,6 +237,58 @@ public class ColumnMapping {
   ////////////////////////////
   // Private Helper Methods //
   ////////////////////////////
+
+  /**
+   * Common helper method for column name conversion between logical and physical representations.
+   *
+   * @param schema The schema to traverse
+   * @param inputColumn The column to convert
+   * @param conversionDirection The direction of schema conversion, either from logical to physical
+   *     or physical to logical
+   * @return Tuple of the converted column and its data type
+   */
+  private static Tuple2<Column, DataType> convertColumnName(
+      StructType schema, Column inputColumn, SchemaConversionDirection conversionDirection) {
+    Function<StructField, String> sourceNameExtractor;
+    Function<StructField, String> targetNameExtractor;
+
+    switch (conversionDirection) {
+      case LOGICAL_TO_PHYSICAL:
+        sourceNameExtractor = StructField::getName;
+        targetNameExtractor = ColumnMapping::getPhysicalName;
+        break;
+      case PHYSICAL_TO_LOGICAL:
+        sourceNameExtractor = ColumnMapping::getPhysicalName;
+        targetNameExtractor = StructField::getName;
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown conversion direction: " + conversionDirection);
+    }
+
+    final List<String> outputNameParts = new ArrayList<>();
+    DataType currentType = schema;
+
+    // Traverse through each level to resolve the corresponding name mapping
+    for (String inputNamePart : inputColumn.getNames()) {
+      if (!(currentType instanceof StructType)) {
+        throw columnNotFoundInSchema(inputColumn, schema);
+      }
+
+      final StructType structType = (StructType) currentType;
+
+      // Find the field that matches the input name using the appropriate matching function
+      final StructField field =
+          structType.fields().stream()
+              .filter(f -> sourceNameExtractor.apply(f).equalsIgnoreCase(inputNamePart))
+              .findFirst()
+              .orElseThrow(() -> columnNotFoundInSchema(inputColumn, schema));
+
+      outputNameParts.add(targetNameExtractor.apply(field));
+      currentType = field.getDataType();
+    }
+
+    return new Tuple2<>(new Column(outputNameParts.toArray(new String[0])), currentType);
+  }
 
   /** Visible for testing */
   static int findMaxColumnId(StructType schema) {
