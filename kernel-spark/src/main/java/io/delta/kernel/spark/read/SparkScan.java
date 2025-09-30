@@ -65,7 +65,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final ZoneId zoneId;
 
   // Planned input files and stats
-  private final List<PartitionedFile> partitionedFiles = new ArrayList<>();
+  private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
   private volatile boolean planned = false;
 
@@ -306,8 +306,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
             .collect(Collectors.toList());
 
     // 3. update totalBytes and partitionedFiles
-    this.partitionedFiles.clear();
-    this.partitionedFiles.addAll(runtimeFilteredPartitionedFiles);
+    this.partitionedFiles = runtimeFilteredPartitionedFiles;
     this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
   }
 
