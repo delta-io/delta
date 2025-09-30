@@ -126,9 +126,13 @@ public class StreamingHelper {
     long earliest =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(
-                kernelEngine, snapshot.getLogPath(), Optional.empty()/*earliestRatifiedCommitVersion*/)
+                kernelEngine,
+                snapshot.getLogPath(),
+                Optional.empty() /*earliestRatifiedCommitVersion*/)
             : DeltaHistoryManager.getEarliestDeltaFile(
-                kernelEngine, snapshot.getLogPath(), Optional.empty()/*earliestRatifiedCommitVersion*/);
+                kernelEngine,
+                snapshot.getLogPath(),
+                Optional.empty() /*earliestRatifiedCommitVersion*/);
 
     long latest = snapshot.getVersion();
     if (version < earliest || ((version > latest) && !allowOutOfRange)) {
