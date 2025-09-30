@@ -329,6 +329,7 @@ public class SparkScanTest extends SparkDsv2TestBase {
       }
     }
 
+    assertEquals(expectedPartitionFilesAfterDpp.size(), afterDppFiles.size());
     assertEquals(new HashSet<>(expectedPartitionFilesAfterDpp), new HashSet<>(afterDppFiles));
     assertEquals(expectedTotalBytesAfterDpp, afterDppTotalBytes);
   }
