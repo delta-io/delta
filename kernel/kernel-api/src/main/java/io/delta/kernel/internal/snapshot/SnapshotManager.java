@@ -43,7 +43,6 @@ import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -52,17 +51,10 @@ import org.slf4j.LoggerFactory;
 
 public class SnapshotManager {
 
-  /**
-   * The latest {@link SnapshotHint} for this table. The initial value inside the AtomicReference is
-   * `null`.
-   */
-  private final AtomicReference<SnapshotHint> latestSnapshotHint;
-
   private final Path tablePath;
   private final Path logPath;
 
   public SnapshotManager(Path tablePath) {
-    this.latestSnapshotHint = new AtomicReference<>();
     this.tablePath = tablePath;
     this.logPath = new Path(tablePath, "_delta_log");
   }
@@ -162,21 +154,6 @@ public class SnapshotManager {
     }
   }
 
-  /**
-   * Updates the current `latestSnapshotHint` with the `newHint` if and only if the newHint is newer
-   * (i.e. has a later table version).
-   *
-   * <p>Must be thread-safe.
-   */
-  private void registerHint(SnapshotHint newHint) {
-    latestSnapshotHint.updateAndGet(
-        currHint -> {
-          if (currHint == null) return newHint; // the initial reference value is null
-          if (newHint.getVersion() > currHint.getVersion()) return newHint;
-          return currHint;
-        });
-  }
-
   private SnapshotImpl createSnapshot(
       LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
     // Note: LogReplay now loads the protocol and metadata (P & M) only when invoked (as opposed to
@@ -185,11 +162,7 @@ public class SnapshotManager {
 
     final LogReplay logReplay =
         new LogReplay(
-            tablePath,
-            engine,
-            new Lazy<>(() -> initSegment),
-            Optional.ofNullable(latestSnapshotHint.get()),
-            snapshotContext.getSnapshotMetrics());
+            tablePath, engine, new Lazy<>(() -> initSegment), snapshotContext.getSnapshotMetrics());
 
     final SnapshotImpl snapshot =
         new SnapshotImpl(
@@ -201,11 +174,6 @@ public class SnapshotManager {
             logReplay.getMetadata(),
             DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
             snapshotContext);
-
-    final SnapshotHint hint =
-        new SnapshotHint(snapshot.getVersion(), snapshot.getProtocol(), snapshot.getMetadata());
-
-    registerHint(hint);
 
     return snapshot;
   }
