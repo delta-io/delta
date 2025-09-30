@@ -19,152 +19,18 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.nio.file.Files
 
-import io.delta.kernel.Table
 import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.functions.col
 import org.scalatest.BeforeAndAfterAll
 
 class LegacyLogReplayEngineMetricsSuite extends AbstractLogReplayEngineMetricsSuite
-    with TestUtilsWithLegacyKernelAPIs {
-
-  protected def loadPandMCheckMetricsForTable(
-      table: Table,
-      engine: MetricsEngine,
-      expJsonVersionsRead: Seq[Long],
-      expParquetVersionsRead: Seq[Long],
-      expParquetReadSetSizes: Seq[Long] = null,
-      expChecksumReadSet: Seq[Long] = null,
-      version: Long = -1): Unit = {
-    engine.resetMetrics()
-
-    version match {
-      case -1 => table.getLatestSnapshot(engine)
-      case ver => table.getSnapshotAsOfVersion(engine, ver)
-    }
-
-    assertMetrics(
-      engine,
-      expJsonVersionsRead,
-      expParquetVersionsRead,
-      expParquetReadSetSizes,
-      expChecksumReadSet = expChecksumReadSet)
-
-  }
-
-  // SnapshotHint tests only apply for the legacy APIs since in the new APIs there is no persistent
-  // Table instance
-
-  test("hint with no new commits, should read no files") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      for (_ <- 0 to 14) {
-        appendCommit(path)
-      }
-
-      val table = Table.forPath(engine, path)
-
-      table.getLatestSnapshot(engine).getSchema()
-
-      // A hint is now saved at v14
-      loadPandMCheckMetricsForTable(
-        table,
-        engine,
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Nil)
-    }
-  }
-
-  test("hint with no P or M updates") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      for (_ <- 0 to 14) { appendCommit(path) }
-
-      val table = Table.forPath(engine, path)
-
-      table.getLatestSnapshot(engine).getSchema()
-
-      // A hint is now saved at v14
-
-      // Case: only one version change
-      appendCommit(path) // v15
-      loadPandMCheckMetricsForTable(
-        table,
-        engine,
-        expJsonVersionsRead = Seq(15),
-        expParquetVersionsRead = Nil)
-
-      // A hint is now saved at v15
-
-      // Case: several version changes
-      for (_ <- 16 to 19) { appendCommit(path) }
-      loadPandMCheckMetricsForTable(
-        table,
-        engine,
-        expJsonVersionsRead = 19L to 16L by -1L,
-        expParquetVersionsRead = Nil)
-
-      // A hint is now saved at v19
-
-      // Case: [delta-io/delta#2262] [Fix me!] Read the entire checkpoint at v20, even if v20.json
-      // and v19 hint are available
-      appendCommit(path) // v20
-      loadPandMCheckMetricsForTable(
-        table,
-        engine,
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Seq(20))
-    }
-  }
-
-  test("hint with a P or M update") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      for (_ <- 0 to 3) { appendCommit(path) }
-
-      val table = Table.forPath(engine, path)
-
-      table.getLatestSnapshot(engine).getSchema()
-
-      // A hint is now saved at v3
-
-      // v4 changes the metadata (schema)
-      spark.range(10)
-        .withColumn("col1", col("id"))
-        .write
-        .format("delta")
-        .option("mergeSchema", "true")
-        .mode("append")
-        .save(path)
-
-      loadPandMCheckMetricsForTable(
-        table,
-        engine,
-        expJsonVersionsRead = Seq(4),
-        expParquetVersionsRead = Nil)
-      // a hint is now saved at v4
-
-      // v5 changes the protocol (which also updates the metadata)
-      spark.sql(s"""
-                   |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
-                   |  'delta.minReaderVersion' = '2',
-                   |  'delta.minWriterVersion' = '5',
-                   |  'delta.columnMapping.mode' = 'name'
-                   |)
-                   |""".stripMargin)
-
-      loadPandMCheckMetricsForTable(
-        table,
-        engine,
-        expJsonVersionsRead = Seq(5),
-        expParquetVersionsRead = Nil)
-    }
-  }
-
-}
+    with TestUtilsWithLegacyKernelAPIs
 
 class LogReplayEngineMetricsSuite extends AbstractLogReplayEngineMetricsSuite
-    with TestUtilsWithTableManagerAPIs {}
+    with TestUtilsWithTableManagerAPIs
 
 /**
  * Suite to test the engine metrics while replaying logs for getting the table protocol and

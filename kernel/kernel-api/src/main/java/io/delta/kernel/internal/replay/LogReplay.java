@@ -147,11 +147,12 @@ public class LogReplay {
     this.lazyLatestCrcInfo =
         new Lazy<>(
             () ->
-                snapshotMetrics.loadCrcTotalDurationTimer.time(
-                    () ->
-                        getLogSegment()
-                            .getLastSeenChecksum()
-                            .flatMap(crcFile -> ChecksumReader.getCRCInfo(engine, crcFile))));
+                getLogSegment()
+                    .getLastSeenChecksum()
+                    .flatMap(
+                        crcFile ->
+                            snapshotMetrics.loadCrcTotalDurationTimer.time(
+                                () -> ChecksumReader.getCRCInfo(engine, crcFile))));
 
     // Lazy loading of protocol and metadata only when needed
     this.lazyProtocolAndMetadata = createLazyProtocolAndMetadata(engine, snapshotMetrics);
