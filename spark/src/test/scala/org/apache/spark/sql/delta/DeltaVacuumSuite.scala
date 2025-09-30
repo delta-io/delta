@@ -1379,7 +1379,6 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           // The following is done to ensure deltaLog object uses the same clock that Vacuum
           // logic uses.
           DeltaLog.clearCache()
-          DeltaLog.forTable(spark, dir, clock)
           val table = DeltaTableV2(spark, dir, clock)
 
           setCommitClock(table, 0L, clock)
