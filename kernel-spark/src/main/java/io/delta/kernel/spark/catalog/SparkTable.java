@@ -54,7 +54,7 @@ public class SparkTable implements Table, SupportsRead {
 
   /**
    * Validates that all fields in the schema use allowed data types.
-   * 
+   *
    * @param schema the schema to validate
    * @throws IllegalArgumentException if any field uses a disallowed data type
    */
@@ -66,7 +66,7 @@ public class SparkTable implements Table, SupportsRead {
 
   /**
    * Recursively validates a data type and its nested types.
-   * 
+   *
    * @param dataType the data type to validate
    * @param fieldPath the path to the field (for error messages)
    * @throws IllegalArgumentException if the data type is not allowed
@@ -93,37 +93,39 @@ public class SparkTable implements Table, SupportsRead {
       }
     } else {
       throw new IllegalArgumentException(
-          String.format("Unsupported data type '%s' for field '%s'. " +
-              "Only numeric types (ByteType, ShortType, IntegerType, LongType, FloatType, " +
-              "DoubleType, DecimalType), string types (StringType, VarcharType, CharType), " +
-              "BinaryType, and BooleanType are supported.",
+          String.format(
+              "Unsupported data type '%s' for field '%s'. "
+                  + "Only numeric types (ByteType, ShortType, IntegerType, LongType, FloatType, "
+                  + "DoubleType, DecimalType), string types (StringType, VarcharType, CharType), "
+                  + "BinaryType, and BooleanType are supported.",
               dataType.typeName(), fieldPath));
     }
   }
 
   /**
    * Checks if a data type is allowed.
-   * 
+   *
    * @param dataType the data type to check
    * @return true if the data type is allowed, false otherwise
    */
   private static boolean isAllowedType(DataType dataType) {
-    return dataType instanceof ByteType ||
-           dataType instanceof ShortType ||
-           dataType instanceof IntegerType ||
-           dataType instanceof LongType ||
-           dataType instanceof FloatType ||
-           dataType instanceof DoubleType ||
-           dataType instanceof DecimalType ||
-           dataType instanceof StringType ||
-           dataType instanceof VarcharType ||
-           dataType instanceof CharType ||
-           dataType instanceof BinaryType ||
-           dataType instanceof BooleanType ||
-           // Allow complex types but validate their nested types
-           dataType instanceof StructType ||
-           dataType instanceof ArrayType ||
-           dataType instanceof MapType;
+    return dataType instanceof ByteType
+        || dataType instanceof ShortType
+        || dataType instanceof IntegerType
+        || dataType instanceof LongType
+        || dataType instanceof FloatType
+        || dataType instanceof DoubleType
+        || dataType instanceof DecimalType
+        || dataType instanceof StringType
+        || dataType instanceof VarcharType
+        || dataType instanceof CharType
+        || dataType instanceof BinaryType
+        || dataType instanceof BooleanType
+        ||
+        // Allow complex types but validate their nested types
+        dataType instanceof StructType
+        || dataType instanceof ArrayType
+        || dataType instanceof MapType;
   }
 
   /**
