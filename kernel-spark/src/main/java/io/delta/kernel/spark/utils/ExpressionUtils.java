@@ -422,6 +422,52 @@ public final class ExpressionUtils {
     org.apache.spark.sql.connector.expressions.Expression[] children = predicate.children();
 
     switch (predicateName) {
+      case "IS_NULL":
+        if (children.length == 1) {
+          return new org.apache.spark.sql.catalyst.expressions.IsNull(
+              resolveExpression(children[0], schema));
+        }
+        break;
+
+      case "IS_NOT_NULL":
+        if (children.length == 1) {
+          return new org.apache.spark.sql.catalyst.expressions.IsNotNull(
+              resolveExpression(children[0], schema));
+        }
+        break;
+
+      case "STARTS_WITH":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.StartsWith(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "ENDS_WITH":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.EndsWith(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "CONTAINS":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.Contains(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+        }
+        break;
+
+      case "IN":
+        if (children.length >= 2) {
+          List<Expression> values = new ArrayList<>();
+          for (int i = 1; i < children.length; i++) {
+            values.add(resolveExpression(children[i], schema));
+          }
+          return new org.apache.spark.sql.catalyst.expressions.In(
+              resolveExpression(children[0], schema), JavaConverters.asScalaBuffer(values).toSeq());
+        }
+        break;
+
       case "=":
         if (children.length == 2) {
           return new org.apache.spark.sql.catalyst.expressions.EqualTo(
@@ -429,16 +475,17 @@ public final class ExpressionUtils {
         }
         break;
 
-      case ">":
+      case "<>":
         if (children.length == 2) {
-          return new org.apache.spark.sql.catalyst.expressions.GreaterThan(
-              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
+          return new org.apache.spark.sql.catalyst.expressions.Not(
+              new org.apache.spark.sql.catalyst.expressions.EqualTo(
+                  resolveExpression(children[0], schema), resolveExpression(children[1], schema)));
         }
         break;
 
-      case ">=":
+      case "<=>":
         if (children.length == 2) {
-          return new org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual(
+          return new org.apache.spark.sql.catalyst.expressions.EqualNullSafe(
               resolveExpression(children[0], schema), resolveExpression(children[1], schema));
         }
         break;
@@ -457,17 +504,17 @@ public final class ExpressionUtils {
         }
         break;
 
-      case "IS_NULL":
-        if (children.length == 1) {
-          return new org.apache.spark.sql.catalyst.expressions.IsNull(
-              resolveExpression(children[0], schema));
+      case ">":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.GreaterThan(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
         }
         break;
 
-      case "IS_NOT_NULL":
-        if (children.length == 1) {
-          return new org.apache.spark.sql.catalyst.expressions.IsNotNull(
-              resolveExpression(children[0], schema));
+      case ">=":
+        if (children.length == 2) {
+          return new org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual(
+              resolveExpression(children[0], schema), resolveExpression(children[1], schema));
         }
         break;
 
@@ -509,14 +556,17 @@ public final class ExpressionUtils {
         }
         break;
 
-      case "IN":
-        if (children.length >= 2) {
-          List<Expression> values = new ArrayList<>();
-          for (int i = 1; i < children.length; i++) {
-            values.add(resolveExpression(children[i], schema));
-          }
-          return new org.apache.spark.sql.catalyst.expressions.In(
-              resolveExpression(children[0], schema), JavaConverters.asScalaBuffer(values).toSeq());
+      case "ALWAYS_TRUE":
+        if (children.length == 0) {
+          return org.apache.spark.sql.catalyst.expressions.Literal.create(
+              true, org.apache.spark.sql.types.DataTypes.BooleanType);
+        }
+        break;
+
+      case "ALWAYS_FALSE":
+        if (children.length == 0) {
+          return org.apache.spark.sql.catalyst.expressions.Literal.create(
+              false, org.apache.spark.sql.types.DataTypes.BooleanType);
         }
         break;
     }
