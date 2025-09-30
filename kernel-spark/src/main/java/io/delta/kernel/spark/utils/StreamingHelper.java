@@ -113,16 +113,6 @@ public class StreamingHelper {
   /**
    * Checks if a specific version of the Delta table exists and is accessible.
    *
-   * <p>This method verifies that the requested version falls within the available version range.
-   * The available range depends on the {@code mustBeRecreatable} parameter:
-   *
-   * <ul>
-   *   <li>If {@code mustBeRecreatable} is true, only versions that can be fully recreated from the
-   *       transaction log are considered available.
-   *   <li>If {@code mustBeRecreatable} is false, all versions with log entries are considered
-   *       available, even if some intermediate log files are missing.
-   * </ul>
-   *
    * @param version the version to check
    * @param mustBeRecreatable if true, requires that the version can be fully recreated from
    *     available log files
@@ -136,9 +126,9 @@ public class StreamingHelper {
     long earliest =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(
-                kernelEngine, snapshot.getLogPath(), Optional.empty())
+                kernelEngine, snapshot.getLogPath(), Optional.empty()/*earliestRatifiedCommitVersion*/)
             : DeltaHistoryManager.getEarliestDeltaFile(
-                kernelEngine, snapshot.getLogPath(), Optional.empty());
+                kernelEngine, snapshot.getLogPath(), Optional.empty()/*earliestRatifiedCommitVersion*/);
 
     long latest = snapshot.getVersion();
     if (version < earliest || ((version > latest) && !allowOutOfRange)) {
