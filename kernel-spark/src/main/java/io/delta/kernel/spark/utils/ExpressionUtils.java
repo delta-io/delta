@@ -405,10 +405,13 @@ public final class ExpressionUtils {
    * <p>Supported predicates include:
    *
    * <ul>
-   *   <li>Comparison: =, >, >=, <, <=
    *   <li>Null tests: IS_NULL, IS_NOT_NULL
-   *   <li>Logical operators: AND, OR, NOT
+   *   <li>String functions: STARTS_WITH, ENDS_WITH, CONTAINS
    *   <li>IN operator
+   *   <li>Comparison: =, >, >=, <, <=
+   *   <li>Null-safe comparison: <=>
+   *   <li>Logical operators: AND, OR, NOT
+   *   <li>Constant predicates: ALWAYS_TRUE, ALWAYS_FALSE
    * </ul>
    *
    * @param predicate the DSV2 Predicate to convert
