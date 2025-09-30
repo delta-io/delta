@@ -62,7 +62,7 @@ public class StreamingHelper {
   public Snapshot unsafeVolatileSnapshot() {
     Snapshot unsafeVolatileSnapshot = snapshotAtomicReference.get();
     if (unsafeVolatileSnapshot == null) {
-      return update();
+      return loadLatestSnapshot();
     }
     return unsafeVolatileSnapshot;
   }
@@ -72,7 +72,7 @@ public class StreamingHelper {
    *
    * @return the newly loaded snapshot
    */
-  public Snapshot update() {
+  public Snapshot loadLatestSnapshot() {
     Snapshot snapshot = TableManager.loadSnapshot(tablePath).build(kernelEngine);
     snapshotAtomicReference.set(snapshot);
     return snapshot;
@@ -98,7 +98,7 @@ public class StreamingHelper {
       Boolean canReturnLastCommit,
       Boolean mustBeRecreatable,
       Boolean canReturnEarliestCommit) {
-    SnapshotImpl snapshot = (SnapshotImpl) update();
+    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         kernelEngine,
         snapshot,
@@ -122,7 +122,7 @@ public class StreamingHelper {
    */
   public void checkVersionExists(Long version, Boolean mustBeRecreatable, Boolean allowOutOfRange)
       throws VersionNotFoundException {
-    SnapshotImpl snapshot = (SnapshotImpl) update();
+    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
     long earliest =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(

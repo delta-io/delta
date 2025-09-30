@@ -64,17 +64,21 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
-    Snapshot initialSnapshot = streamingHelper.update();
+    Snapshot initialSnapshot = streamingHelper.loadLatestSnapshot();
     assertEquals(0L, initialSnapshot.getVersion());
 
     spark.sql(String.format("INSERT INTO %s VALUES (4, 'David')", testTableName));
 
     org.apache.spark.sql.delta.Snapshot deltaSnapshot =
         deltaLog.update(false, Option.empty(), Option.empty());
-    Snapshot updatedSnapshot = streamingHelper.update();
+    Snapshot updatedSnapshot = streamingHelper.loadLatestSnapshot();
+    org.apache.spark.sql.delta.Snapshot cachedSnapshot = deltaLog.unsafeVolatileSnapshot();
+    Snapshot kernelcachedSnapshot = streamingHelper.unsafeVolatileSnapshot();
 
     assertEquals(1L, updatedSnapshot.getVersion());
     assertEquals(deltaSnapshot.version(), updatedSnapshot.getVersion());
+    assertEquals(1L, kernelcachedSnapshot.getVersion());
+    assertEquals(cachedSnapshot.version(), kernelcachedSnapshot.getVersion());
   }
 
   @Test
@@ -86,7 +90,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
-    assertEquals(0L, streamingHelper.update().getVersion());
+    assertEquals(0L, streamingHelper.loadLatestSnapshot().getVersion());
 
     for (int i = 0; i < 3; i++) {
       spark.sql(
@@ -94,7 +98,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
 
       org.apache.spark.sql.delta.Snapshot deltaSnapshot =
           deltaLog.update(false, Option.empty(), Option.empty());
-      Snapshot kernelSnapshot = streamingHelper.update();
+      Snapshot kernelSnapshot = streamingHelper.loadLatestSnapshot();
 
       long expectedVersion = i + 1;
       assertEquals(expectedVersion, deltaSnapshot.version());
