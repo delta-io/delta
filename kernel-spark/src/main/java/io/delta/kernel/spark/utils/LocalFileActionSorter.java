@@ -27,9 +27,6 @@ import org.apache.spark.annotation.Experimental;
  *
  * <p>This implementation materializes all AddFile rows in memory and sorts them using Java's
  * Collections.sort. This is acceptable for initial snapshots as DeltaSource does the same.
- *
- * <p>Memory usage: approximately 200-500 bytes per file. For 1 million files, this requires about
- * 200-500 MB of heap memory.
  */
 @Experimental
 public class LocalFileActionSorter implements FileActionSorter {
