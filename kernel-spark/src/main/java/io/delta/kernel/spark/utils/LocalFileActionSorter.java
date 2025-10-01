@@ -53,11 +53,23 @@ public class LocalFileActionSorter implements FileActionSorter {
 
     allAddFiles.sort(
         (row1, row2) -> {
+          // Compare modificationTime first
           int modTimeIdx1 = row1.getSchema().indexOf("modificationTime");
           int modTimeIdx2 = row2.getSchema().indexOf("modificationTime");
           long modTime1 = row1.getLong(modTimeIdx1);
           long modTime2 = row2.getLong(modTimeIdx2);
-          return Long.compare(modTime1, modTime2);
+
+          int timeCompare = Long.compare(modTime1, modTime2);
+          if (timeCompare != 0) {
+            return timeCompare;
+          }
+
+          // If modificationTime is equal, compare path
+          int pathIdx1 = row1.getSchema().indexOf("path");
+          int pathIdx2 = row2.getSchema().indexOf("path");
+          String path1 = row1.getString(pathIdx1);
+          String path2 = row2.getString(pathIdx2);
+          return path1.compareTo(path2);
         });
 
     return Utils.toCloseableIterator(allAddFiles.iterator());
