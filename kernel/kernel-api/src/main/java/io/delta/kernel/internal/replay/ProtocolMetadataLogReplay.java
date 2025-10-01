@@ -22,6 +22,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.CachedCrcInfoResult;
 import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -37,12 +38,7 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Static utility class for loading Protocol and Metadata from Delta log files.
- *
- * <p>This class handles the replay of Protocol and Metadata actions from a LogSegment, using CRC
- * information if available for optimization.
- */
+/** Static utility class for loading Protocol and Metadata from Delta log files. */
 public class ProtocolMetadataLogReplay {
 
   private static final Logger logger = LoggerFactory.getLogger(ProtocolMetadataLogReplay.class);
@@ -55,21 +51,15 @@ public class ProtocolMetadataLogReplay {
   public static class Result {
     public final Protocol protocol;
     public final Metadata metadata;
+    public final CachedCrcInfoResult crcInfoUsed;
+    private final long logFilesRead;
 
-    /**
-     * Information about CRC usage:
-     * <ul>
-     *   <li>Optional.empty() = Never attempted to read CRC file
-     *   <li>Optional.of(Optional.empty()) = Attempted to read but failed (exception/invalid)
-     *   <li>Optional.of(Optional.of(crcInfo)) = Successfully read and parsed CRC
-     * </ul>
-     */
-    public final Optional<Optional<CRCInfo>> crcInfoUsed;
-
-    public Result(Protocol protocol, Metadata metadata, Optional<Optional<CRCInfo>> crcInfoUsed) {
+    public Result(
+        Protocol protocol, Metadata metadata, CachedCrcInfoResult crcInfoUsed, long logFilesRead) {
       this.protocol = protocol;
       this.metadata = metadata;
       this.crcInfoUsed = crcInfoUsed;
+      this.logFilesRead = logFilesRead;
     }
   }
 
@@ -93,10 +83,12 @@ public class ProtocolMetadataLogReplay {
     TableFeatures.validateKernelCanReadTheTable(result.protocol, dataPath.toString());
 
     logger.info(
-        "[{}] Took {}ms to load Protocol and Metadata at version {}",
+        "[{}] Took {}ms to load Protocol and Metadata at version {}. {}, read {} log files",
         dataPath,
         snapshotMetrics.loadProtocolMetadataTotalDurationTimer.totalDurationMs(),
-        logSegment.getVersion());
+        logSegment.getVersion(),
+        buildCrcStatusMessage(logSegment, result.crcInfoUsed),
+        result.logFilesRead);
 
     return result;
   }
@@ -127,7 +119,8 @@ public class ProtocolMetadataLogReplay {
       if (crcInfo.isPresent()) {
         final Protocol protocol = crcInfo.get().getProtocol();
         final Metadata metadata = crcInfo.get().getMetadata();
-        return new Result(protocol, metadata, Optional.of(crcInfo));
+        return new Result(
+            protocol, metadata, CachedCrcInfoResult.success(crcInfo.get()), 0 /* logFilesRead */);
       }
     }
 
@@ -163,8 +156,8 @@ public class ProtocolMetadataLogReplay {
 
               if (metadata != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                // We didn't need to read CRC, so return Optional.empty()
-                return new Result(protocol, metadata, Optional.empty());
+                return new Result(
+                    protocol, metadata, CachedCrcInfoResult.fromLazy(lazyCrcInfo), logReadCount);
               }
 
               break; // We just found the protocol, exit this for-loop
@@ -185,8 +178,8 @@ public class ProtocolMetadataLogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                // We didn't need to read CRC, so return Optional.empty()
-                return new Result(protocol, metadata, Optional.empty());
+                return new Result(
+                    protocol, metadata, CachedCrcInfoResult.fromLazy(lazyCrcInfo), logReadCount);
               }
 
               break; // We just found the metadata, exit this for-loop
@@ -206,13 +199,9 @@ public class ProtocolMetadataLogReplay {
             if (metadata == null) {
               metadata = crcInfo.get().getMetadata();
             }
-            logger.info(
-                "{}: Loading Protocol and Metadata read {} logs with CRC at version {}",
-                dataPath.toString(),
-                logReadCount,
-                crcVersionOpt.get());
 
-            return new Result(protocol, metadata, Optional.of(crcInfo));
+            return new Result(
+                protocol, metadata, CachedCrcInfoResult.success(crcInfo.get()), logReadCount);
           }
         }
       }
@@ -230,12 +219,26 @@ public class ProtocolMetadataLogReplay {
           String.format("No metadata found at version %s", logSegment.getVersion()));
     }
 
-    // Return the appropriate CRC state:
-    // - If we never computed lazyCrcInfo, return Optional.empty() (never tried)
-    // - If we computed it, wrap the result in Optional.of() (tried, may have succeeded or failed)
-    return new Result(
-        protocol,
-        metadata,
-        lazyCrcInfo.isPresent() ? Optional.of(lazyCrcInfo.get()) : Optional.empty());
+    return new Result(protocol, metadata, CachedCrcInfoResult.fromLazy(lazyCrcInfo), logReadCount);
+  }
+
+  /** Builds a descriptive status message about CRC file usage. */
+  private static String buildCrcStatusMessage(
+      LogSegment logSegment, CachedCrcInfoResult crcInfoUsed) {
+    final Optional<FileStatus> crcFileOpt = logSegment.getLastSeenChecksum();
+
+    if (!crcFileOpt.isPresent()) {
+      return "CRC not present in LogSegment";
+    }
+
+    final String crcFileName = new Path(crcFileOpt.get().getPath()).getName();
+
+    if (crcInfoUsed.wasSuccessful()) {
+      return String.format("CRC file %s read successfully", crcFileName);
+    } else if (crcInfoUsed.wasAttempted()) {
+      return String.format("CRC file %s read failed", crcFileName);
+    } else {
+      return String.format("CRC file %s not read", crcFileName);
+    }
   }
 }

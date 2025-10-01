@@ -24,6 +24,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.CachedCrcInfoResult;
 import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -131,27 +132,24 @@ public class LogReplay {
       Path dataPath,
       Engine engine,
       Lazy<LogSegment> lazyLogSegment,
-      Optional<Optional<CRCInfo>> previouslyReadLatestCrcInfo,
+      CachedCrcInfoResult previouslyCachedCrcInfo,
       SnapshotMetrics snapshotMetrics) {
     this.dataPath = dataPath;
 
     this.lazyLogSegment = lazyLogSegment;
 
     // Lazy loading of CRC info only when needed.
-    // If previouslyReadLatestCrcInfo is present, we've already attempted to read CRC
     this.lazyLatestCrcInfo =
-        previouslyReadLatestCrcInfo
-            .map(crcOpt -> new Lazy<>(() -> crcOpt)) // Already computed, just return it!
-            .orElse(
-                new Lazy<>(
-                    () -> // Not computed yet, do the work
-                    getLogSegment()
-                            .getLastSeenChecksum()
-                            .flatMap(
-                                crcFile ->
-                                    snapshotMetrics.loadCrcTotalDurationTimer.time(
-                                        () ->
-                                            ChecksumReader.tryReadChecksumFile(engine, crcFile)))));
+        previouslyCachedCrcInfo.wasAttempted()
+            ? new Lazy<>(previouslyCachedCrcInfo::getCrcInfo) // Already computed, just return it!
+            : new Lazy<>(
+                () -> // Not computed yet, do the work
+                getLogSegment()
+                        .getLastSeenChecksum()
+                        .flatMap(
+                            crcFile ->
+                                snapshotMetrics.loadCrcTotalDurationTimer.time(
+                                    () -> ChecksumReader.tryReadChecksumFile(engine, crcFile))));
 
     // Lazy loading of domain metadata only when needed
     this.lazyActiveDomainMetadataMap =

@@ -24,7 +24,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.CachedCrcInfoResult;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -138,19 +138,15 @@ public class SnapshotFactory {
     final Optional<Long> versionToLoad = getTargetVersionToLoad(engine, snapshotCtx);
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx, versionToLoad);
 
-    // Empty => not computed yet
-    // Some(Empty) => tried to compute, but error reading CRC file or could not parse CRC file
-    // Some(Some(Value)) => successfully computed and read CRC file
-    Optional<Optional<CRCInfo>> crcInfo;
     Protocol protocol;
     Metadata metadata;
+    CachedCrcInfoResult crcInfo;
 
     if (ctx.protocolAndMetadataOpt.isPresent()) {
       protocol = ctx.protocolAndMetadataOpt.get()._1;
       metadata = ctx.protocolAndMetadataOpt.get()._2;
-      crcInfo = Optional.empty(); // Not computed yet
+      crcInfo = CachedCrcInfoResult.notAttempted(); // Not computed yet
     } else {
-      // Load P&M using the new class
       LogSegment logSegment = lazyLogSegment.get();
       ProtocolMetadataLogReplay.Result result =
           ProtocolMetadataLogReplay.loadProtocolAndMetadata(
