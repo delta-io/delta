@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal.table;
 
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
@@ -66,12 +67,25 @@ public class SnapshotFactory {
       long millisSinceEpochUTC,
       List<ParsedLogData> logDatas) {
 
-    // Filter out only the ratified staged commits as that is all that DeltaHistoryManager supports
+    // DeltaHistoryManager only supports ratified staged commits, which is currently what is
+    // supported in SnapshotBuilderImpl. Validate this is true and cast to ParsedDeltaData.
     List<ParsedDeltaData> parsedDeltaDatas =
         logDatas.stream()
-            .filter(logData -> logData instanceof ParsedDeltaData)
-            .map(logData -> (ParsedDeltaData) logData)
-            .filter(deltaData -> deltaData.isFile() && deltaData.isRatifiedCommit())
+            .map(
+                logData -> {
+                  checkState(
+                      logData instanceof ParsedDeltaData,
+                      String.format(
+                          "SnapshotBuilderImpl only supported ParsedDeltaData but found something else: %s",
+                          logData));
+                  ParsedDeltaData deltaData = (ParsedDeltaData) logData;
+                  checkState(
+                      deltaData.isFile() && deltaData.isRatifiedCommit(),
+                      String.format(
+                          "SnapshotBuilderImpl only supports ratified staged commits but found something else: %s",
+                          deltaData));
+                  return deltaData;
+                })
             .collect(Collectors.toList());
 
     final long resolvedVersionToLoad =
