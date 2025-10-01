@@ -76,13 +76,13 @@ public class SnapshotFactory {
                   checkState(
                       logData instanceof ParsedDeltaData,
                       String.format(
-                          "SnapshotBuilderImpl only supported ParsedDeltaData but found something else: %s",
+                          "SnapshotBuilderImpl only supports ParsedDeltaData but found: %s",
                           logData));
                   ParsedDeltaData deltaData = (ParsedDeltaData) logData;
                   checkState(
                       deltaData.isFile() && deltaData.isRatifiedCommit(),
                       String.format(
-                          "SnapshotBuilderImpl only supports ratified staged commits but found something else: %s",
+                          "SnapshotBuilderImpl only supports ratified staged commits but found: %s",
                           deltaData));
                   return deltaData;
                 })
