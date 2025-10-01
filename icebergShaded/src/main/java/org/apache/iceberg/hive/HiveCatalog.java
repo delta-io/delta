@@ -47,12 +47,7 @@ import org.apache.iceberg.Transaction;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
-import org.apache.iceberg.exceptions.NoSuchIcebergViewException;
-import org.apache.iceberg.exceptions.NoSuchNamespaceException;
-import org.apache.iceberg.exceptions.NoSuchTableException;
-import org.apache.iceberg.exceptions.NoSuchViewException;
-import org.apache.iceberg.exceptions.NotFoundException;
+import org.apache.iceberg.exceptions.*;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
@@ -447,7 +442,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     String tableName = baseTableIdentifier.name();
     try {
       Table table = clients.run(client -> client.getTable(database, tableName));
-      HiveOperationsBase.validateTableIsIceberg(table, fullTableName(name, baseTableIdentifier));
+      validateTableIsIceberg(table, fullTableName(name, baseTableIdentifier));
       return true;
     } catch (NoSuchTableException | NoSuchObjectException e) {
       return false;
@@ -458,6 +453,15 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
       throw new RuntimeException(
               "Interrupted in call to check table existence of " + baseTableIdentifier, e);
     }
+  }
+
+  private void validateTableIsIceberg(Table table, String fullName) {
+    HiveOperationsBase.validateTableIsIceberg(table, fullName);
+    String metadataLocation = table.getParameters().get(BaseMetastoreTableOperations.METADATA_LOCATION_PROP);
+    NoSuchIcebergTableException.check(
+            metadataLocation != null,
+            "Not an iceberg table: %s, metadataLocation is null",
+            fullName);
   }
 
   @Override
