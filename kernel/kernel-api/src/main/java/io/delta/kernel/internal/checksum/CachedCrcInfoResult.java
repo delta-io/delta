@@ -21,8 +21,8 @@ import java.util.Optional;
 
 /**
  * Represents the result of attempting to read and cache CRC information. This is a simple wrapper
- * around Optional<Optional<CRCInfo>> to make the three-state nature more explicit and easier to
- * work with.
+ * around {@code Optional<Optional<CRCInfo>>} to make the three-state nature more explicit and
+ * easier to work with.
  *
  * <p>The three states are:
  *
@@ -73,11 +73,6 @@ public class CachedCrcInfoResult {
   /** @return true if CRC was successfully read */
   public boolean wasSuccessful() {
     return value.isPresent() && value.get().isPresent();
-  }
-
-  /** @return The underlying Optional<Optional<CRCInfo>> for compatibility */
-  public Optional<Optional<CRCInfo>> getValue() {
-    return value;
   }
 
   /** @return The CRC info if successfully read, empty otherwise */

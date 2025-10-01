@@ -67,9 +67,9 @@ public class ProtocolMetadataLogReplay {
    * Loads the latest Protocol and Metadata from the log files in the given LogSegment.
    *
    * <p>Uses the {@code LogSegment::lastSeenChecksum} to bound how many delta files it reads. That
-   * is, we only need to read delta files *newer* than that CRC file to search for any new P & M. If
-   * we don't find both the P & M by the time we get to the CRC file version, we can just use the P
-   * and M from it.
+   * is, we only need to read delta files *newer* than that CRC file to search for any new P and M.
+   * If we don't find both the P and M by the time we get to the CRC file version, we can just use
+   * the P and M from it.
    *
    * <p>Also validates that the Kernel can read the table at the loaded protocol version.
    */
