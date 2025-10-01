@@ -528,7 +528,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
 
   test("fromSingleDelta -- creates valid LogSegment") {
     val deltaData = ParsedDeltaData.forFileStatus(deltaFileStatus(0))
-    val logSegment = LogSegment.createFromSingleDelta(logPath, deltaData)
+    val logSegment = LogSegment.createForNewTable(logPath, deltaData)
 
     assert(logSegment.getVersion === 0)
     assert(logSegment.getDeltas.size() === 1)
@@ -540,7 +540,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
   test("fromSingleDelta -- non-zero version fails") {
     val deltaData = ParsedDeltaData.forFileStatus(deltaFileStatus(1))
     val exMsg = intercept[IllegalArgumentException] {
-      LogSegment.createFromSingleDelta(logPath, deltaData)
+      LogSegment.createForNewTable(logPath, deltaData)
     }.getMessage
     assert(exMsg.contains("Version must be 0 for a LogSegment with only a single delta"))
   }
@@ -548,7 +548,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
   test("fromSingleDelta -- inline delta fails") {
     val inlineDelta = ParsedDeltaData.forInlineData(0, emptyColumnarBatch)
     val exMsg = intercept[IllegalArgumentException] {
-      LogSegment.createFromSingleDelta(logPath, inlineDelta)
+      LogSegment.createForNewTable(logPath, inlineDelta)
     }.getMessage
     assert(exMsg.contains("Currently, only file-based deltas are supported"))
   }

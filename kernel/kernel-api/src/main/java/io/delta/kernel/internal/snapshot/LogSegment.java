@@ -40,28 +40,27 @@ public class LogSegment {
   //////////////////////////////////////////
 
   /**
-   * Creates a LogSegment from a single ParsedDeltaData. Used to construct a post-commit Snapshot
-   * after a CREATE transaction.
+   * Creates a LogSegment for a newly created table from a single {@link ParsedDeltaData}. Used to
+   * construct a post-commit Snapshot after a CREATE transaction.
    *
    * @param logPath The path to the _delta_log directory
-   * @param parsedDelta The ParsedDeltaData (e.g., version 0)
+   * @param parsedDeltaVersion0 The ParsedDeltaData that must be for version 0
    * @return A new LogSegment with just this delta
    * @throws IllegalArgumentException if the ParsedDeltaData is not file-based
    */
-  public static LogSegment createFromSingleDelta(Path logPath, ParsedDeltaData parsedDelta) {
-    checkArgument(parsedDelta.isFile(), "Currently, only file-based deltas are supported");
+  public static LogSegment createForNewTable(Path logPath, ParsedDeltaData parsedDeltaVersion0) {
+    checkArgument(parsedDeltaVersion0.isFile(), "Currently, only file-based deltas are supported");
     checkArgument(
-        parsedDelta.getVersion() == 0L,
+        parsedDeltaVersion0.getVersion() == 0L,
         "Version must be 0 for a LogSegment with only a single delta");
 
-    final FileStatus deltaFile = parsedDelta.getFileStatus();
-    final long version = parsedDelta.getVersion();
+    final FileStatus deltaFile = parsedDeltaVersion0.getFileStatus();
     final List<FileStatus> deltas = Collections.singletonList(deltaFile);
     final List<FileStatus> checkpoints = Collections.emptyList();
     final List<FileStatus> compactions = Collections.emptyList();
 
     return new LogSegment(
-        logPath, version, deltas, compactions, checkpoints, deltaFile, Optional.empty());
+        logPath, 0 /* version */, deltas, compactions, checkpoints, deltaFile, Optional.empty());
   }
 
   private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
