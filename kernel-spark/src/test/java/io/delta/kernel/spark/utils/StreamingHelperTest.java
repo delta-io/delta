@@ -21,20 +21,29 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
+import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.sources.IndexedFile;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
+import scala.collection.immutable.Map$;
 
 public class StreamingHelperTest extends SparkDsv2TestBase {
 
@@ -360,5 +369,176 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
           .history()
           .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);
     }
+  }
+
+  /**
+   * Helper method to compare DeltaSource IndexedFile with Kernel IndexedFileAction. Returns the
+   * path from AddFile if available.
+   */
+  private String getAddFilePath(IndexedFile indexedFile) {
+    if (indexedFile.add() != null) {
+      return indexedFile.add().path();
+    }
+    return null;
+  }
+
+  /** Helper method to get path from Kernel IndexedFileAction */
+  private String getAddFilePath(IndexedFileAction action) {
+    if (action.getAddFile() != null) {
+      Row addFile = action.getAddFile();
+      int pathIdx = addFile.getSchema().indexOf("path");
+      if (pathIdx >= 0 && !addFile.isNullAt(pathIdx)) {
+        return addFile.getString(pathIdx);
+      }
+    }
+    return null;
+  }
+
+  /** Helper method to compare two lists of file changes */
+  private void compareFileChanges(
+      List<IndexedFile> deltaSourceFiles, List<IndexedFileAction> kernelFiles) {
+    assertEquals(
+        deltaSourceFiles.size(),
+        kernelFiles.size(),
+        "Number of file changes should match between DeltaSource and Kernel");
+
+    for (int i = 0; i < deltaSourceFiles.size(); i++) {
+      IndexedFile deltaFile = deltaSourceFiles.get(i);
+      IndexedFileAction kernelFile = kernelFiles.get(i);
+
+      assertEquals(
+          deltaFile.version(),
+          kernelFile.getVersion(),
+          String.format("Version mismatch at index %d", i));
+
+      assertEquals(
+          deltaFile.index(), kernelFile.getIndex(), String.format("Index mismatch at index %d", i));
+
+      String deltaPath = getAddFilePath(deltaFile);
+      String kernelPath = getAddFilePath(kernelFile);
+
+      if (deltaPath != null || kernelPath != null) {
+        assertEquals(deltaPath, kernelPath, String.format("AddFile path mismatch at index %d", i));
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("getFileChangesParameters")
+  public void testGetFileChanges(
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Optional<Long> endVersion,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    // Use unique table name per test instance to avoid conflicts
+    // Use testDescription to generate unique table name
+    String testTableName =
+        "test_file_changes_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Create 5 versions of data
+    for (int i = 0; i < 5; i++) {
+      spark.sql(String.format("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, i, i));
+    }
+
+    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
+        createDeltaSource(deltaLog, testTablePath);
+
+    // Get changes using DeltaSource
+    scala.Option<org.apache.spark.sql.delta.sources.DeltaSourceOffset> scalaEndOffset =
+        scala.Option.empty();
+    if (endVersion.isPresent()) {
+      scalaEndOffset =
+          scala.Option.apply(
+              new org.apache.spark.sql.delta.sources.DeltaSourceOffset(
+                  deltaLog.tableId(), // reservoirId
+                  endVersion.get(), // reservoirVersion
+                  Long.MAX_VALUE, // index (use MAX_VALUE for version-only offset)
+                  false)); // isInitialSnapshot
+    }
+    ClosableIterator<IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, scalaEndOffset, true);
+    List<IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // Get changes using StreamingHelper
+    try (CloseableIterator<IndexedFileAction> kernelChanges =
+        streamingHelper.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endVersion)) {
+      List<IndexedFileAction> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+
+      // Compare results
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  /**
+   * Provides test parameters for the parameterized getFileChanges test.
+   *
+   * <p>Each parameter set includes: fromVersion, fromIndex, isInitialSnapshot, endVersion,
+   * testDescription
+   */
+  private static Stream<Arguments> getFileChangesParameters() {
+    return Stream.of(
+        // Basic cases: fromIndex = -1, isInitialSnapshot = false, no endVersion
+        Arguments.of(0L, -1L, false, Optional.empty(), "Basic: from version 0"),
+        Arguments.of(1L, -1L, false, Optional.empty(), "Basic: from version 1"),
+        Arguments.of(3L, -1L, false, Optional.empty(), "Basic: from middle version"),
+
+        // With fromIndex > -1
+        Arguments.of(0L, 0L, false, Optional.empty(), "With fromIndex: version 0, index 0"),
+        Arguments.of(1L, 1L, false, Optional.empty(), "With fromIndex: version 1, index 1"),
+
+        // With endVersion
+        Arguments.of(0L, -1L, false, Optional.of(2L), "With endVersion: 0 to 2"),
+        Arguments.of(1L, -1L, false, Optional.of(3L), "With endVersion: 1 to 3"),
+        Arguments.of(2L, -1L, false, Optional.of(4L), "With endVersion: 2 to 4"),
+
+        // With isInitialSnapshot = true
+        Arguments.of(0L, -1L, true, Optional.empty(), "InitialSnapshot: version 0"),
+        Arguments.of(1L, -1L, true, Optional.empty(), "InitialSnapshot: version 1"),
+        Arguments.of(2L, -1L, true, Optional.empty(), "InitialSnapshot: version 2"),
+
+        // InitialSnapshot with fromIndex
+        Arguments.of(0L, 0L, true, Optional.empty(), "InitialSnapshot: version 0, index 0"),
+        Arguments.of(1L, 1L, true, Optional.empty(), "InitialSnapshot: version 1, index 1"),
+
+        // InitialSnapshot with endVersion
+        Arguments.of(0L, -1L, true, Optional.of(2L), "InitialSnapshot with endVersion: 0 to 2"),
+        Arguments.of(1L, -1L, true, Optional.of(3L), "InitialSnapshot with endVersion: 1 to 3"),
+
+        // Complex combinations
+        Arguments.of(1L, 1L, false, Optional.of(3L), "Complex: v1 idx1 to v3"),
+        Arguments.of(2L, 0L, true, Optional.of(4L), "Complex: InitialSnapshot v2 idx0 to v4"));
+  }
+
+  /** Helper method to create a DeltaSource for testing */
+  private org.apache.spark.sql.delta.sources.DeltaSource createDeltaSource(
+      DeltaLog deltaLog, String tablePath) {
+    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    scala.collection.immutable.Seq<org.apache.spark.sql.catalyst.expressions.Expression> emptySeq =
+        scala.collection.JavaConverters.asScalaBuffer(
+                new java.util.ArrayList<org.apache.spark.sql.catalyst.expressions.Expression>())
+            .toList();
+    return new org.apache.spark.sql.delta.sources.DeltaSource(
+        spark,
+        deltaLog,
+        Option.empty(),
+        options,
+        deltaLog.update(false, Option.empty(), Option.empty()),
+        tablePath + "/_checkpoint",
+        Option.empty(),
+        emptySeq);
   }
 }
