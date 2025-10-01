@@ -24,36 +24,34 @@ import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
 /**
- * Version checksum file containing table state information for integrity validation.
+ * A catalog commit Delta file represent an atomic change to a table.
  *
- * <p>These auxiliary files contain important metadata about the table state at a specific version
- * to enable detection of non-compliant modifications to Delta files. Contains information like
- * table size, file counts, and metadata. Example: {@code 00000000000000000001.crc}
+ * <p>Example: {@code _delta_log/_staged_commits/00000000000000000001.uuid-1234.json}
  */
-public final class ParsedChecksumData extends ParsedLogData {
+public final class ParsedCatalogCommitData extends ParsedDeltaData {
 
-  public static ParsedChecksumData forFileStatus(FileStatus fileStatus) {
+  public static ParsedCatalogCommitData forFileStatus(FileStatus fileStatus) {
     checkArgument(
-        FileNames.isChecksumFile(fileStatus.getPath()),
-        "Expected a checksum file but got %s",
+        FileNames.isStagedDeltaFile(fileStatus.getPath()),
+        "Expected a staged commit file but got %s",
         fileStatus.getPath());
 
     final String path = fileStatus.getPath();
-    final long version = FileNames.checksumVersion(path);
-    return new ParsedChecksumData(version, Optional.of(fileStatus), Optional.empty());
+    final long version = FileNames.deltaVersion(path);
+    return new ParsedCatalogCommitData(version, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedChecksumData forInlineData(long version, ColumnarBatch inlineData) {
-    return new ParsedChecksumData(version, Optional.empty(), Optional.of(inlineData));
+  public static ParsedCatalogCommitData forInlineData(long version, ColumnarBatch inlineData) {
+    return new ParsedCatalogCommitData(version, Optional.empty(), Optional.of(inlineData));
   }
 
-  private ParsedChecksumData(
+  private ParsedCatalogCommitData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);
   }
 
   @Override
   public Class<? extends ParsedLogData> getGroupByCategoryClass() {
-    return ParsedChecksumData.class;
+    return ParsedCatalogCommitData.class;
   }
 }

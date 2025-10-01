@@ -27,7 +27,7 @@ import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
-import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
@@ -286,7 +286,7 @@ public class UCCatalogManagedClient {
                     .sorted(Comparator.comparingLong(Commit::getVersion))
                     .map(
                         commit ->
-                            ParsedDeltaData.forFileStatus(
+                            ParsedCatalogCommitData.forFileStatus(
                                 hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
                     .collect(Collectors.toList()));
 

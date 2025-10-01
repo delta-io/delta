@@ -29,7 +29,8 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
-import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
@@ -106,7 +107,8 @@ public class UCCatalogManagedCommitter implements Committer {
     final FileStatus kernelPublishedDeltaFileStatus =
         writeDeltaFile(engine, finalizedActions, commitMetadata.getPublishedDeltaFilePath());
 
-    return new CommitResponse(ParsedLogData.forFileStatus(kernelPublishedDeltaFileStatus));
+    return new CommitResponse(
+        ParsedPublishedDeltaData.forFileStatus(kernelPublishedDeltaFileStatus));
   }
 
   /**
@@ -124,7 +126,7 @@ public class UCCatalogManagedCommitter implements Committer {
 
     commitToUC(commitMetadata, kernelStagedCommitFileStatus);
 
-    return new CommitResponse(ParsedLogData.forFileStatus(kernelStagedCommitFileStatus));
+    return new CommitResponse(ParsedCatalogCommitData.forFileStatus(kernelStagedCommitFileStatus));
   }
 
   /////////////////////////////////////////

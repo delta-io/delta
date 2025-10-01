@@ -16,15 +16,13 @@
 
 package io.delta.kernel.defaults.catalogManaged
 
-import java.util.Optional
-
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.{SnapshotBuilder, TableManager}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.DeltaHistoryManager
-import io.delta.kernel.internal.files.{ParsedDeltaData, ParsedLogData}
+import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, IN_COMMIT_TIMESTAMP_W_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
@@ -100,9 +98,9 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       val logPath = new Path(tablePath, "_delta_log")
 
-      val parsedDeltaData = parsedLogData
-        .filter(_.isInstanceOf[ParsedDeltaData])
-        .map(_.asInstanceOf[ParsedDeltaData])
+      val parsedRatifiedCatalogCommits = parsedLogData
+        .filter(_.isInstanceOf[ParsedCatalogCommitData])
+        .map(_.asInstanceOf[ParsedCatalogCommitData])
 
       val latestSnapshot = TableManager
         .loadSnapshot(tablePath)
@@ -123,7 +121,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
           true, /* mustBeRecreatable */
           canReturnLastCommit,
           canReturnEarliestCommit,
-          parsedDeltaData.asJava)
+          parsedRatifiedCatalogCommits.asJava)
         assert(activeCommit.getVersion == expectedVersion)
       }
 

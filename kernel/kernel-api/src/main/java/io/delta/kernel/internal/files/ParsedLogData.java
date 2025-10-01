@@ -32,7 +32,8 @@ import java.util.Optional;
  * file types include:
  *
  * <ul>
- *   <li>Delta commit files: {@code 00000000000000000001.json}
+ *   <li>Published Delta files: {@code 00000000000000000001.json}
+ *   <li>Catalog Commit files: {@code _staged_commits/00000000000000000001.uuid-1234.json}
  *   <li>Checkpoint files: {@code 00000000000000000001.checkpoint.parquet}
  *   <li>V2 checkpoint files: {@code 00000000000000000001.checkpoint.uuid-1234.json}
  *   <li>Multi-part checkpoint files: {@code
@@ -47,8 +48,10 @@ public abstract class ParsedLogData {
   public static ParsedLogData forFileStatus(FileStatus fileStatus) {
     final String path = fileStatus.getPath();
 
-    if (FileNames.isCommitFile(path)) {
-      return ParsedDeltaData.forFileStatus(fileStatus);
+    if (FileNames.isPublishedDeltaFile(path)) {
+      return ParsedPublishedDeltaData.forFileStatus(fileStatus);
+    } else if (FileNames.isStagedDeltaFile(path)) {
+      return ParsedCatalogCommitData.forFileStatus(fileStatus);
     } else if (FileNames.isLogCompactionFile(path)) {
       return ParsedLogCompactionData.forFileStatus(fileStatus);
     } else if (FileNames.isChecksumFile(path)) {
@@ -122,16 +125,8 @@ public abstract class ParsedLogData {
     return inlineDataOpt.get();
   }
 
-  /**
-   * Returns a human-readable name for the parent category class. Used as a helper utility for
-   * debugging and print statements.
-   */
-  public String getParentCategoryName() {
-    return getParentCategoryClass().getSimpleName();
-  }
-
-  /** Returns the parent category class used for grouping collections of ParsedLogData instances. */
-  public abstract Class<? extends ParsedLogData> getParentCategoryClass();
+  /** Returns the category class used for grouping collections of LISTed ParsedLogData instances. */
+  public abstract Class<? extends ParsedLogData> getGroupByCategoryClass();
 
   /** Protected method for subclasses to override to add output to {@link #toString}. */
   protected void appendAdditionalToStringFields(StringBuilder sb) {

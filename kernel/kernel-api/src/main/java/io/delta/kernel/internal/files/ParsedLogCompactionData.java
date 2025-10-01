@@ -68,12 +68,7 @@ public final class ParsedLogCompactionData extends ParsedLogData {
   }
 
   @Override
-  public String getParentCategoryName() {
-    return "LogCompaction";
-  }
-
-  @Override
-  public Class<? extends ParsedLogData> getParentCategoryClass() {
+  public Class<? extends ParsedLogData> getGroupByCategoryClass() {
     return ParsedLogCompactionData.class;
   }
 

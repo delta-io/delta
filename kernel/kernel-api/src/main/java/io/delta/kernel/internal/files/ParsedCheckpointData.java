@@ -54,7 +54,7 @@ public abstract class ParsedCheckpointData extends ParsedLogData
   protected abstract int compareToSameType(ParsedCheckpointData that);
 
   @Override
-  public Class<? extends ParsedLogData> getParentCategoryClass() {
+  public Class<? extends ParsedLogData> getGroupByCategoryClass() {
     return ParsedCheckpointData.class;
   }
 
