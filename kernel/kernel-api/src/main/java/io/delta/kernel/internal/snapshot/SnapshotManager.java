@@ -129,7 +129,11 @@ public class SnapshotManager {
       throws TableNotFoundException {
     final long versionToLoad =
         SnapshotFactory.resolveTimestampToSnapshotVersion(
-            engine, snapshotContext, latestSnapshot, millisSinceEpochUTC);
+            engine,
+            snapshotContext,
+            latestSnapshot,
+            millisSinceEpochUTC,
+            Collections.emptyList() /* logDatas */);
 
     return getSnapshotAt(engine, versionToLoad, snapshotContext);
   }
