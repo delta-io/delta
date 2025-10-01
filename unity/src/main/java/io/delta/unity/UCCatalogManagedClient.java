@@ -93,6 +93,7 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(ucTableId, "ucTableId is null");
     Objects.requireNonNull(tablePath, "tablePath is null");
     Objects.requireNonNull(versionOpt, "versionOpt is null");
+    Objects.requireNonNull(timestampOpt, "timestampOpt is null");
     versionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
     timestampOpt.ifPresent(t -> checkArgument(t >= 0, "timestamp must be non-negative"));
     checkArgument(

@@ -23,6 +23,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.{CreateTableTransactionBuilderImpl, SnapshotImpl}
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
@@ -52,6 +53,22 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val tableData = new TableData(-1, ArrayBuffer[Commit]())
     ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
     new UCCatalogManagedClient(ucClient)
+  }
+
+  /** Helper method with reasonable defaults */
+  private def loadSnapshot(
+      ucCatalogManagedClient: UCCatalogManagedClient,
+      engine: Engine = defaultEngine,
+      ucTableId: String = "ucTableId",
+      tablePath: String = "tablePath",
+      versionToLoad: Optional[java.lang.Long] = emptyLongOpt,
+      timestampToLoad: Optional[java.lang.Long] = emptyLongOpt): SnapshotImpl = {
+    ucCatalogManagedClient.loadSnapshot(
+      engine,
+      ucTableId,
+      tablePath,
+      versionToLoad,
+      timestampToLoad).asInstanceOf[SnapshotImpl]
   }
 
   /**
@@ -89,9 +106,11 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     // Step 2: Load the table using UCCatalogManagedClient
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-    val snapshot = ucCatalogManagedClient
-      .loadSnapshot(defaultEngine, "ucTableId", tablePath, versionToLoad, timestampToLoad)
-      .asInstanceOf[SnapshotImpl]
+    val snapshot = loadSnapshot(
+      ucCatalogManagedClient,
+      tablePath = tablePath,
+      versionToLoad = versionToLoad,
+      timestampToLoad = timestampToLoad)
 
     // Step 3: Validate
     val version = expectedVersion.getOrElse(versionToLoad.orElse(maxRatifiedVersion))
@@ -116,57 +135,38 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     assertThrows[NullPointerException] {
       // engine is null
-      ucCatalogManagedClient.loadSnapshot(
-        null,
-        "ucTableId",
-        "tablePath",
-        Optional.of(0L),
-        Optional.empty())
+      loadSnapshot(ucCatalogManagedClient, engine = null)
     }
     assertThrows[NullPointerException] {
       // ucTableId is null
-      ucCatalogManagedClient.loadSnapshot(
-        defaultEngine,
-        null,
-        "tablePath",
-        Optional.of(0L),
-        Optional.empty())
+      loadSnapshot(ucCatalogManagedClient, ucTableId = null)
     }
     assertThrows[NullPointerException] {
       // tablePath is null
-      ucCatalogManagedClient.loadSnapshot(
-        defaultEngine,
-        "ucTableId",
-        null,
-        Optional.of(0L),
-        Optional.empty())
+      loadSnapshot(ucCatalogManagedClient, tablePath = null)
+    }
+    assertThrows[NullPointerException] {
+      // versionToLoad is null
+      loadSnapshot(ucCatalogManagedClient, versionToLoad = null)
+    }
+    assertThrows[NullPointerException] {
+      // timestampToLoad is null
+      loadSnapshot(ucCatalogManagedClient, timestampToLoad = null)
     }
     assertThrows[IllegalArgumentException] {
       // version < 0
-      ucCatalogManagedClient.loadSnapshot(
-        defaultEngine,
-        "ucTableId",
-        "tablePath",
-        Optional.of(-1L),
-        Optional.empty())
+      loadSnapshot(ucCatalogManagedClient, versionToLoad = Optional.of(-1L))
     }
     assertThrows[IllegalArgumentException] {
       // timestamp < 0
-      ucCatalogManagedClient.loadSnapshot(
-        defaultEngine,
-        "ucTableId",
-        "tablePath",
-        Optional.empty(),
-        Optional.of(-1L))
+      loadSnapshot(ucCatalogManagedClient, timestampToLoad = Optional.of(-1L))
     }
     assertThrows[IllegalArgumentException] {
       // cannot provide both timestamp and version
-      ucCatalogManagedClient.loadSnapshot(
-        defaultEngine,
-        "ucTableId",
-        "tablePath",
-        Optional.of(10L),
-        Optional.of(10L))
+      loadSnapshot(
+        ucCatalogManagedClient,
+        versionToLoad = Optional.of(10L),
+        timestampToLoad = Optional.of(10L))
     }
   }
 
@@ -180,13 +180,11 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
         val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
         val ex = intercept[RuntimeException] {
-          ucCatalogManagedClient
-            .loadSnapshot(
-              defaultEngine,
-              "nonExistentTableId",
-              "tablePath",
-              versionToLoad,
-              timestampToLoad)
+          loadSnapshot(
+            ucCatalogManagedClient,
+            ucTableId = "nonExistentTableId",
+            versionToLoad = versionToLoad,
+            timestampToLoad = timestampToLoad)
         }
         assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
       }
@@ -201,8 +199,11 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
         val tablePath = getTestResourceFilePath("catalog-owned-preview")
         val ucCatalogManagedClient =
           createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
-        val snapshot = ucCatalogManagedClient
-          .loadSnapshot(defaultEngine, "ucTableId", tablePath, versionToLoad, timestampToLoad)
+        val snapshot = loadSnapshot(
+          ucCatalogManagedClient,
+          tablePath = tablePath,
+          versionToLoad = versionToLoad,
+          timestampToLoad = timestampToLoad)
 
         assert(snapshot.getVersion == 0L)
       }
@@ -313,9 +314,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
     val ucCatalogManagedClient =
       createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
-    val snapshot = ucCatalogManagedClient
-      .loadSnapshot(defaultEngine, "ucTableId", tablePath, Optional.of(0L), Optional.empty())
-      .asInstanceOf[SnapshotImpl]
+    val snapshot =
+      loadSnapshot(ucCatalogManagedClient, tablePath = tablePath, versionToLoad = Optional.of(0L))
     assert(snapshot.getCommitter.isInstanceOf[UCCatalogManagedCommitter])
   }
 
