@@ -169,7 +169,7 @@ public class SnapshotManager {
             tablePath, engine, new Lazy<>(() -> initSegment), snapshotContext.getSnapshotMetrics());
 
     final SnapshotImpl snapshot =
-        new SnapshotImpl(
+        SnapshotImpl.createInitialSnapshot(
             tablePath,
             initSegment.getVersion(),
             new Lazy<>(() -> initSegment),

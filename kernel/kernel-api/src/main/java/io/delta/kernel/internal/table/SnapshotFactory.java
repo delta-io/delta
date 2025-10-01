@@ -163,7 +163,7 @@ public class SnapshotFactory {
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx, versionToLoad);
     final LogReplay logReplay = getLogReplay(engine, lazyLogSegment, snapshotCtx);
 
-    return new SnapshotImpl(
+    return SnapshotImpl.createInitialSnapshot(
         tablePath,
         versionToLoad.orElseGet(() -> lazyLogSegment.get().getVersion()),
         lazyLogSegment,
