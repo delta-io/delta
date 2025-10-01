@@ -24,11 +24,13 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import java.util.Collections;
@@ -135,15 +137,39 @@ public class SnapshotFactory {
   private SnapshotImpl createSnapshot(Engine engine, SnapshotQueryContext snapshotCtx) {
     final Optional<Long> versionToLoad = getTargetVersionToLoad(engine, snapshotCtx);
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx, versionToLoad);
-    final LogReplay logReplay = getLogReplay(engine, lazyLogSegment, snapshotCtx);
+
+    // Empty => not computed yet
+    // Some(Empty) => tried to compute, but error reading CRC file or could not parse CRC file
+    // Some(Some(Value)) => successfully computed and read CRC file
+    Optional<Optional<CRCInfo>> crcInfo;
+    Protocol protocol;
+    Metadata metadata;
+
+    if (ctx.protocolAndMetadataOpt.isPresent()) {
+      protocol = ctx.protocolAndMetadataOpt.get()._1;
+      metadata = ctx.protocolAndMetadataOpt.get()._2;
+      crcInfo = Optional.empty(); // Not computed yet
+    } else {
+      // Load P&M using the new class
+      LogSegment logSegment = lazyLogSegment.get();
+      ProtocolMetadataLogReplay.Result result =
+          ProtocolMetadataLogReplay.loadProtocolAndMetadata(
+              engine, logSegment, tablePath, snapshotCtx.getSnapshotMetrics());
+      protocol = result.protocol;
+      metadata = result.metadata;
+      crcInfo = result.crcInfoUsed;
+    }
+
+    final LogReplay logReplay =
+        new LogReplay(tablePath, engine, lazyLogSegment, crcInfo, snapshotCtx.getSnapshotMetrics());
 
     return new SnapshotImpl(
         tablePath,
         versionToLoad.orElseGet(() -> lazyLogSegment.get().getVersion()),
         lazyLogSegment,
         logReplay,
-        getProtocol(logReplay),
-        getMetadata(logReplay),
+        protocol,
+        metadata,
         ctx.committerOpt.orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE),
         snapshotCtx);
   }
@@ -191,18 +217,5 @@ public class SnapshotFactory {
       return ctx.versionOpt;
     }
     return Optional.empty();
-  }
-
-  private LogReplay getLogReplay(
-      Engine engine, Lazy<LogSegment> lazyLogSegment, SnapshotQueryContext snapshotCtx) {
-    return new LogReplay(tablePath, engine, lazyLogSegment, snapshotCtx.getSnapshotMetrics());
-  }
-
-  private Protocol getProtocol(LogReplay logReplay) {
-    return ctx.protocolAndMetadataOpt.map(x -> x._1).orElseGet(logReplay::getProtocol);
-  }
-
-  private Metadata getMetadata(LogReplay logReplay) {
-    return ctx.protocolAndMetadataOpt.map(x -> x._2).orElseGet(logReplay::getMetadata);
   }
 }

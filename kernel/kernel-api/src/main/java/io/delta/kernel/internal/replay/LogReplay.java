@@ -30,9 +30,7 @@ import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -67,11 +65,7 @@ public class LogReplay {
 
   //////////////////////////
   // Static Schema Fields //
-  //////////////////////////
-
-  /** Read schema when searching for the latest Protocol and Metadata. */
-  public static final StructType PROTOCOL_METADATA_READ_SCHEMA =
-      new StructType().add("protocol", Protocol.FULL_SCHEMA).add("metaData", Metadata.FULL_SCHEMA);
+  /////////////////////////
 
   /** We don't need to read the entire RemoveFile, only the path and dv info */
   private static StructType REMOVE_FILE_SCHEMA =
@@ -131,31 +125,33 @@ public class LogReplay {
   private final Path dataPath;
   private final Lazy<LogSegment> lazyLogSegment;
   private final Lazy<Optional<CRCInfo>> lazyLatestCrcInfo;
-  private final Lazy<Tuple2<Protocol, Metadata>> lazyProtocolAndMetadata;
   private final Lazy<Map<String, DomainMetadata>> lazyActiveDomainMetadataMap;
 
   public LogReplay(
       Path dataPath,
       Engine engine,
       Lazy<LogSegment> lazyLogSegment,
+      Optional<Optional<CRCInfo>> previouslyReadLatestCrcInfo,
       SnapshotMetrics snapshotMetrics) {
     this.dataPath = dataPath;
 
     this.lazyLogSegment = lazyLogSegment;
 
-    // Lazy loading of CRC info only when needed
+    // Lazy loading of CRC info only when needed.
+    // If previouslyReadLatestCrcInfo is present, we've already attempted to read CRC
     this.lazyLatestCrcInfo =
-        new Lazy<>(
-            () ->
-                getLogSegment()
-                    .getLastSeenChecksum()
-                    .flatMap(
-                        crcFile ->
-                            snapshotMetrics.loadCrcTotalDurationTimer.time(
-                                () -> ChecksumReader.getCRCInfo(engine, crcFile))));
-
-    // Lazy loading of protocol and metadata only when needed
-    this.lazyProtocolAndMetadata = createLazyProtocolAndMetadata(engine, snapshotMetrics);
+        previouslyReadLatestCrcInfo
+            .map(crcOpt -> new Lazy<>(() -> crcOpt)) // Already computed, just return it!
+            .orElse(
+                new Lazy<>(
+                    () -> // Not computed yet, do the work
+                    getLogSegment()
+                            .getLastSeenChecksum()
+                            .flatMap(
+                                crcFile ->
+                                    snapshotMetrics.loadCrcTotalDurationTimer.time(
+                                        () ->
+                                            ChecksumReader.tryReadChecksumFile(engine, crcFile)))));
 
     // Lazy loading of domain metadata only when needed
     this.lazyActiveDomainMetadataMap =
@@ -170,12 +166,8 @@ public class LogReplay {
   // Public APIs //
   /////////////////
 
-  public Protocol getProtocol() {
-    return lazyProtocolAndMetadata.get()._1;
-  }
-
-  public Metadata getMetadata() {
-    return lazyProtocolAndMetadata.get()._2;
+  public long getVersion() {
+    return getLogSegment().getVersion();
   }
 
   public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
@@ -185,10 +177,6 @@ public class LogReplay {
   /** Returns map for all active domain metadata. */
   public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
     return lazyActiveDomainMetadataMap.get();
-  }
-
-  public long getVersion() {
-    return getLogSegment().getVersion();
   }
 
   /**
@@ -254,143 +242,6 @@ public class LogReplay {
     } else {
       return logSegment.allLogFilesReversed();
     }
-  }
-
-  private Lazy<Tuple2<Protocol, Metadata>> createLazyProtocolAndMetadata(
-      Engine engine, SnapshotMetrics snapshotMetrics) {
-    return new Lazy<>(
-        () -> {
-          // Ensure log segment is loaded and valid before starting any protocol/metadata loading
-          // timers. This ensures that failures during log segment construction (e.g., invalid
-          // version, missing table) occur before protocol/metadata loading metrics are recorded.
-          final LogSegment logSegment = getLogSegment();
-          final long targetVersion = logSegment.getVersion();
-
-          final Tuple2<Protocol, Metadata> result =
-              snapshotMetrics.loadProtocolMetadataTotalDurationTimer.time(
-                  () -> {
-                    Tuple2<Protocol, Metadata> protocolAndMetadata =
-                        loadTableProtocolAndMetadata(
-                            engine, logSegment, lazyLatestCrcInfo.get(), targetVersion);
-
-                    TableFeatures.validateKernelCanReadTheTable(
-                        protocolAndMetadata._1, dataPath.toString());
-
-                    return protocolAndMetadata;
-                  });
-
-          logger.info(
-              "[{}] Took {}ms to load Protocol and Metadata at version {}",
-              dataPath.toString(),
-              snapshotMetrics.loadProtocolMetadataTotalDurationTimer.totalDurationMs(),
-              targetVersion);
-
-          return result;
-        });
-  }
-
-  /**
-   * Returns the latest Protocol and Metadata from the delta files in the `logSegment`. Does *not*
-   * validate that this delta-kernel connector understands the table at that protocol.
-   *
-   * <p>Uses the `latestCrcInfo` to bound how many delta files it reads. i.e. we only need to read
-   * delta files newer than the latestCrcInfo to search for any new P & M. If we don't find them, we
-   * can just use the P and/or M from the latestCrcInfo.
-   */
-  protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-      Engine engine, LogSegment logSegment, Optional<CRCInfo> latestCrcInfo, long snapshotVersion) {
-    long logReadCount = 0;
-    // Exit early if the CRC already has the info we need.
-    if (latestCrcInfo.isPresent() && latestCrcInfo.get().getVersion() == snapshotVersion) {
-      return new Tuple2<>(latestCrcInfo.get().getProtocol(), latestCrcInfo.get().getMetadata());
-    }
-
-    Protocol protocol = null;
-    Metadata metadata = null;
-
-    try (CloseableIterator<ActionWrapper> reverseIter =
-        new ActionsIterator(
-            engine,
-            getLogReplayFiles(logSegment),
-            PROTOCOL_METADATA_READ_SCHEMA,
-            Optional.empty())) {
-      while (reverseIter.hasNext()) {
-        final ActionWrapper nextElem = reverseIter.next();
-        final long version = nextElem.getVersion();
-        logReadCount++;
-        // Load this lazily (as needed). We may be able to just use the CRC.
-        ColumnarBatch columnarBatch = null;
-
-        if (protocol == null) {
-          columnarBatch = nextElem.getColumnarBatch();
-          assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
-
-          final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
-
-          for (int i = 0; i < protocolVector.getSize(); i++) {
-            if (!protocolVector.isNullAt(i)) {
-              protocol = Protocol.fromColumnVector(protocolVector, i);
-
-              if (metadata != null) {
-                // Stop since we have found the latest Protocol and Metadata.
-                return new Tuple2<>(protocol, metadata);
-              }
-
-              break; // We just found the protocol, exit this for-loop
-            }
-          }
-        }
-
-        if (metadata == null) {
-          if (columnarBatch == null) {
-            columnarBatch = nextElem.getColumnarBatch();
-            assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
-          }
-          final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
-
-          for (int i = 0; i < metadataVector.getSize(); i++) {
-            if (!metadataVector.isNullAt(i)) {
-              metadata = Metadata.fromColumnVector(metadataVector, i);
-
-              if (protocol != null) {
-                // Stop since we have found the latest Protocol and Metadata.
-                return new Tuple2<>(protocol, metadata);
-              }
-
-              break; // We just found the metadata, exit this for-loop
-            }
-          }
-        }
-
-        // Since we haven't returned, at least one of P or M is null.
-        // Note: Suppose the CRC is at version N. We check the CRC eagerly at N + 1 so
-        // that we don't read or open any files at version N.
-        if (latestCrcInfo.isPresent() && version == latestCrcInfo.get().getVersion() + 1) {
-          if (protocol == null) {
-            protocol = latestCrcInfo.get().getProtocol();
-          }
-          if (metadata == null) {
-            metadata = latestCrcInfo.get().getMetadata();
-          }
-          logger.info(
-              "{}: Loading Protocol and Metadata read {} logs with CRC at version {}",
-              dataPath.toString(),
-              logReadCount,
-              latestCrcInfo.map(crcInfo -> String.valueOf(crcInfo.getVersion())).orElse("N/A"));
-          return new Tuple2<>(protocol, metadata);
-        }
-      }
-    } catch (IOException ex) {
-      throw new RuntimeException("Could not close iterator", ex);
-    }
-
-    if (protocol == null) {
-      throw new IllegalStateException(
-          String.format("No protocol found at version %s", logSegment.getVersion()));
-    }
-
-    throw new IllegalStateException(
-        String.format("No metadata found at version %s", logSegment.getVersion()));
   }
 
   private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
@@ -488,8 +339,7 @@ public class LogReplay {
    * Retrieves a map of domainName to {@link DomainMetadata} from the log files.
    *
    * <p>Loading domain metadata requires an additional round of log replay so this is done lazily
-   * only when domain metadata is requested. We might want to merge this into {@link
-   * #loadTableProtocolAndMetadata}.
+   * and only when domain metadata is requested.
    *
    * @param engine The engine used to process the log files.
    * @param minLogVersion The minimum log version to read (inclusive). When provided, only reads log

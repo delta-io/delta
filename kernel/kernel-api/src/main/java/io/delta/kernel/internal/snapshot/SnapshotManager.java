@@ -37,6 +37,7 @@ import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay;
 import io.delta.kernel.internal.table.SnapshotFactory;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
@@ -156,13 +157,17 @@ public class SnapshotManager {
 
   private SnapshotImpl createSnapshot(
       LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
-    // Note: LogReplay now loads the protocol and metadata (P & M) only when invoked (as opposed to
-    //       eagerly in its constructor). Nonetheless, we invoke it right away, so SnapshotImpl is
-    //       still constructed with an "eagerly"-loaded P & M.
+    final ProtocolMetadataLogReplay.Result protocolMetadataResult =
+        ProtocolMetadataLogReplay.loadProtocolAndMetadata(
+            engine, initSegment, tablePath, snapshotContext.getSnapshotMetrics());
 
     final LogReplay logReplay =
         new LogReplay(
-            tablePath, engine, new Lazy<>(() -> initSegment), snapshotContext.getSnapshotMetrics());
+            tablePath,
+            engine,
+            new Lazy<>(() -> initSegment),
+            protocolMetadataResult.crcInfoUsed,
+            snapshotContext.getSnapshotMetrics());
 
     final SnapshotImpl snapshot =
         new SnapshotImpl(
@@ -170,8 +175,8 @@ public class SnapshotManager {
             initSegment.getVersion(),
             new Lazy<>(() -> initSegment),
             logReplay,
-            logReplay.getProtocol(),
-            logReplay.getMetadata(),
+            protocolMetadataResult.protocol,
+            protocolMetadataResult.metadata,
             DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
             snapshotContext);
 
