@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.files.*;
 import io.delta.kernel.internal.fs.Path;
@@ -33,6 +34,7 @@ import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay;
 import io.delta.kernel.internal.table.SnapshotFactory;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
@@ -156,13 +158,17 @@ public class SnapshotManager {
 
   private SnapshotImpl createSnapshot(
       LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
-    // Note: LogReplay now loads the protocol and metadata (P & M) only when invoked (as opposed to
-    //       eagerly in its constructor). Nonetheless, we invoke it right away, so SnapshotImpl is
-    //       still constructed with an "eagerly"-loaded P & M.
+    final Lazy<Optional<CRCInfo>> lazyCrcInfo =
+        SnapshotFactory.createLazyChecksumFileLoaderWithMetrics(
+            engine, initSegment, snapshotContext.getSnapshotMetrics());
 
+    final ProtocolMetadataLogReplay.Result protocolMetadataResult =
+        ProtocolMetadataLogReplay.loadProtocolAndMetadata(
+            engine, tablePath, initSegment, lazyCrcInfo, snapshotContext.getSnapshotMetrics());
+
+    // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
     final LogReplay logReplay =
-        new LogReplay(
-            tablePath, engine, new Lazy<>(() -> initSegment), snapshotContext.getSnapshotMetrics());
+        new LogReplay(engine, tablePath, new Lazy<>(() -> initSegment), lazyCrcInfo);
 
     final SnapshotImpl snapshot =
         new SnapshotImpl(
@@ -170,8 +176,8 @@ public class SnapshotManager {
             initSegment.getVersion(),
             new Lazy<>(() -> initSegment),
             logReplay,
-            logReplay.getProtocol(),
-            logReplay.getMetadata(),
+            protocolMetadataResult.protocol,
+            protocolMetadataResult.metadata,
             DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
             snapshotContext);
 

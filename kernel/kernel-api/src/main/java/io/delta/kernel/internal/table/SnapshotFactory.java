@@ -24,15 +24,20 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import io.delta.kernel.utils.FileStatus;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -51,6 +56,10 @@ import org.slf4j.LoggerFactory;
  * Snapshot}.
  */
 public class SnapshotFactory {
+
+  //////////////////////////////////////////
+  // Static utility methods and variables //
+  //////////////////////////////////////////
 
   /**
    * Resolves the latest table version that exists at or before the given {@code
@@ -103,7 +112,37 @@ public class SnapshotFactory {
     return resolvedVersionToLoad;
   }
 
+  /**
+   * Creates a lazy loader for CRC file information. The CRC file is loaded only once when needed.
+   *
+   * <p>If {@link Lazy#isPresent()} is false, then the CRC file was never attempted to be loaded.
+   *
+   * <p>If {@link Lazy#isPresent()} is true, then the result is:
+   *
+   * <ul>
+   *   <li>{@code Optional.empty()} if there is no CRC file in this LogSegment, we failed to read
+   *       it, or we failed to parse it (e.g. missing required fields)
+   *   <li>{@code Optional.of(crcInfo)} if the file exists and was successfully read and parsed
+   * </ul>
+   */
+  public static Lazy<Optional<CRCInfo>> createLazyChecksumFileLoaderWithMetrics(
+      Engine engine, LogSegment logSegment, SnapshotMetrics snapshotMetrics) {
+    return new Lazy<>(
+        () -> {
+          final Optional<FileStatus> crcFileOpt = logSegment.getLastSeenChecksum();
+          if (!crcFileOpt.isPresent()) {
+            return Optional.empty();
+          }
+          return snapshotMetrics.loadCrcTotalDurationTimer.time(
+              () -> ChecksumReader.tryReadChecksumFile(engine, crcFileOpt.get()));
+        });
+  }
+
   private static final Logger logger = LoggerFactory.getLogger(SnapshotFactory.class);
+
+  //////////////////////////////////
+  // Member methods and variables //
+  //////////////////////////////////
 
   private final SnapshotBuilderImpl.Context ctx;
   private final Path tablePath;
@@ -144,15 +183,38 @@ public class SnapshotFactory {
   private SnapshotImpl createSnapshot(Engine engine, SnapshotQueryContext snapshotCtx) {
     final Optional<Long> versionToLoad = getTargetVersionToLoad(engine, snapshotCtx);
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx, versionToLoad);
-    final LogReplay logReplay = getLogReplay(engine, lazyLogSegment, snapshotCtx);
+    final Lazy<Optional<CRCInfo>> lazyCrcInfo =
+        createLazyChecksumFileLoaderWithMetrics(
+            engine, lazyLogSegment.get(), snapshotCtx.getSnapshotMetrics());
+
+    Protocol protocol;
+    Metadata metadata;
+
+    if (ctx.protocolAndMetadataOpt.isPresent()) {
+      protocol = ctx.protocolAndMetadataOpt.get()._1;
+      metadata = ctx.protocolAndMetadataOpt.get()._2;
+    } else {
+      ProtocolMetadataLogReplay.Result result =
+          ProtocolMetadataLogReplay.loadProtocolAndMetadata(
+              engine,
+              tablePath,
+              lazyLogSegment.get(),
+              lazyCrcInfo,
+              snapshotCtx.getSnapshotMetrics());
+      protocol = result.protocol;
+      metadata = result.metadata;
+    }
+
+    // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
+    final LogReplay logReplay = new LogReplay(engine, tablePath, lazyLogSegment, lazyCrcInfo);
 
     return new SnapshotImpl(
         tablePath,
         versionToLoad.orElseGet(() -> lazyLogSegment.get().getVersion()),
         lazyLogSegment,
         logReplay,
-        getProtocol(logReplay),
-        getMetadata(logReplay),
+        protocol,
+        metadata,
         ctx.committerOpt.orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE),
         snapshotCtx);
   }
@@ -201,18 +263,5 @@ public class SnapshotFactory {
       return ctx.versionOpt;
     }
     return Optional.empty();
-  }
-
-  private LogReplay getLogReplay(
-      Engine engine, Lazy<LogSegment> lazyLogSegment, SnapshotQueryContext snapshotCtx) {
-    return new LogReplay(tablePath, engine, lazyLogSegment, snapshotCtx.getSnapshotMetrics());
-  }
-
-  private Protocol getProtocol(LogReplay logReplay) {
-    return ctx.protocolAndMetadataOpt.map(x -> x._1).orElseGet(logReplay::getProtocol);
-  }
-
-  private Metadata getMetadata(LogReplay logReplay) {
-    return ctx.protocolAndMetadataOpt.map(x -> x._2).orElseGet(logReplay::getMetadata);
   }
 }
