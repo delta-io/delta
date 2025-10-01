@@ -35,6 +35,7 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.expressions.Expression;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.sources.*;
@@ -273,10 +274,7 @@ public class SparkGoldenTableTest extends QueryTest {
     // city = 'hz' AND date = '20180520'
     org.apache.spark.sql.connector.expressions.filter.Predicate andPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
-            "AND",
-            new org.apache.spark.sql.connector.expressions.Expression[] {
-              SparkScanTest.cityPredicate, SparkScanTest.datePredicate
-            });
+            "AND", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.datePredicate});
     SparkScanTest.checkSupportsRuntimeFilters(
         table,
         options,
@@ -286,10 +284,7 @@ public class SparkGoldenTableTest extends QueryTest {
     // city = 'hz' OR date = '20180520'
     org.apache.spark.sql.connector.expressions.filter.Predicate orPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
-            "OR",
-            new org.apache.spark.sql.connector.expressions.Expression[] {
-              SparkScanTest.cityPredicate, SparkScanTest.datePredicate
-            });
+            "OR", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.datePredicate});
     SparkScanTest.checkSupportsRuntimeFilters(
         table,
         scanOptions,
@@ -308,10 +303,7 @@ public class SparkGoldenTableTest extends QueryTest {
     //  city = 'hz' OR cnt > 10
     org.apache.spark.sql.connector.expressions.filter.Predicate orDataPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
-            "OR",
-            new org.apache.spark.sql.connector.expressions.Expression[] {
-              SparkScanTest.cityPredicate, SparkScanTest.dataPredicate
-            });
+            "OR", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.dataPredicate});
     SparkScanTest.checkSupportsRuntimeFilters(
         table,
         options,
