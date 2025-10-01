@@ -48,7 +48,7 @@ public class LogSegment {
    * @return A new LogSegment with just this delta
    * @throws IllegalArgumentException if the ParsedDeltaData is not file-based
    */
-  public static LogSegment fromSingleDelta(Path logPath, ParsedDeltaData parsedDelta) {
+  public static LogSegment createFromSingleDelta(Path logPath, ParsedDeltaData parsedDelta) {
     checkArgument(parsedDelta.isFile(), "Currently, only file-based deltas are supported");
     checkArgument(
         parsedDelta.getVersion() == 0L,
@@ -277,59 +277,48 @@ public class LogSegment {
    *
    * <p>The additional deltas must be contiguous and start at version + 1.
    *
-   * @param additionalDeltas List of ParsedDeltaData to add (must be contiguous after current
-   *     version)
+   * @param addedDeltas List of ParsedDeltaData to add (must be contiguous and start at current
+   *     version + 1)
    * @return A new LogSegment with the additional deltas
    * @throws IllegalArgumentException if deltas are not contiguous or don't start at version + 1
    */
-  public LogSegment copyWithAdditionalDeltas(List<ParsedDeltaData> additionalDeltas) {
-    if (additionalDeltas.isEmpty()) {
+  public LogSegment newWithAddedDeltas(List<ParsedDeltaData> addedDeltas) {
+    if (addedDeltas.isEmpty()) {
       return this;
     }
 
-    // For now, we only support file-based deltas
-    checkArgument(
-        additionalDeltas.stream().allMatch(ParsedDeltaData::isFile),
-        "Currently, only file-based deltas are supported");
+    // Validate file-based (not inline), contiguous, and starts at version + 1. Then, convert to
+    // file status.
+    final List<FileStatus> newDeltaFileStatuses = new ArrayList<>(addedDeltas.size());
+    long expectedVersion = version + 1;
 
-    // Validate that the first new delta starts at version + 1
-    final long firstNewVersion = additionalDeltas.get(0).getVersion();
-    checkArgument(
-        firstNewVersion == version + 1,
-        "First additional delta version %d must equal current version + 1 (%d)",
-        firstNewVersion,
-        version + 1);
+    for (ParsedDeltaData delta : addedDeltas) {
+      checkArgument(delta.isFile(), "Currently, only file-based deltas are supported");
 
-    // Validate that new deltas are contiguous
-    long expectedVersion = firstNewVersion;
-    for (ParsedDeltaData delta : additionalDeltas) {
       checkArgument(
           delta.getVersion() == expectedVersion,
           "Delta versions must be contiguous. Expected %d but got %d",
           expectedVersion,
           delta.getVersion());
+
+      newDeltaFileStatuses.add(delta.getFileStatus());
+
       expectedVersion++;
     }
 
-    // Convert ParsedDeltaData to FileStatus to comply with existing LogSegment constructor
-    final List<FileStatus> newDeltaFileStatuses =
-        additionalDeltas.stream().map(ParsedDeltaData::getFileStatus).collect(Collectors.toList());
-
-    // Create combined deltas list
     final List<FileStatus> combinedDeltas = new ArrayList<>(deltas);
     combinedDeltas.addAll(newDeltaFileStatuses);
 
-    // The new version is the version of the last additional delta
-    final ParsedDeltaData lastAdditionalDelta = ListUtils.getLast(additionalDeltas);
+    final ParsedDeltaData lastAddedDelta = ListUtils.getLast(addedDeltas);
 
     return new LogSegment(
         logPath,
-        lastAdditionalDelta.getVersion(),
+        lastAddedDelta.getVersion(), // Use the updated version
         combinedDeltas,
         compactions, // Keep existing compactions
         checkpoints, // Keep existing checkpoints
-        lastAdditionalDelta.getFileStatus(),
-        lastSeenChecksum);
+        lastAddedDelta.getFileStatus(),
+        lastSeenChecksum); // Keep existing lastSeenChecksum
   }
 
   @Override

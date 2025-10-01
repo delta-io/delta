@@ -455,7 +455,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       checkpoints = checkpointFs10List)
 
     val additionalDeltas = List(ParsedDeltaData.forFileStatus(stagedCommitFile(11))).asJava
-    val updated = baseSegment.copyWithAdditionalDeltas(additionalDeltas)
+    val updated = baseSegment.newWithAddedDeltas(additionalDeltas)
 
     assert(updated.getVersion === 11)
     assert(updated.getDeltas.size() === 1)
@@ -466,7 +466,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       version = 10,
       checkpoints = checkpointFs10List)
 
-    val updated = baseSegment.copyWithAdditionalDeltas(parsedRatifiedCommits11To12List)
+    val updated = baseSegment.newWithAddedDeltas(parsedRatifiedCommits11To12List)
 
     assert(updated.getVersion === 12)
     assert(updated.getDeltas.size() === 2)
@@ -477,7 +477,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       version = 10,
       checkpoints = checkpointFs10List)
 
-    val updated = baseSegment.copyWithAdditionalDeltas(Collections.emptyList())
+    val updated = baseSegment.newWithAddedDeltas(Collections.emptyList())
     assert(updated eq baseSegment)
   }
 
@@ -488,9 +488,9 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
 
     val wrongVersionDeltas = List(ParsedDeltaData.forFileStatus(stagedCommitFile(12))).asJava
     val exMsg = intercept[IllegalArgumentException] {
-      baseSegment.copyWithAdditionalDeltas(wrongVersionDeltas)
+      baseSegment.newWithAddedDeltas(wrongVersionDeltas)
     }.getMessage
-    assert(exMsg.contains("First additional delta version 12 must equal current version + 1 (11)"))
+    assert(exMsg.contains("Expected 11 but got 12"))
   }
 
   test("copyWithAdditionalDeltas: deltas must be contiguous") {
@@ -502,7 +502,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       ParsedDeltaData.forFileStatus(stagedCommitFile(11)),
       ParsedDeltaData.forFileStatus(stagedCommitFile(13))).asJava
     val exMsg = intercept[IllegalArgumentException] {
-      baseSegment.copyWithAdditionalDeltas(nonContiguousDeltas)
+      baseSegment.newWithAddedDeltas(nonContiguousDeltas)
     }.getMessage
     assert(exMsg.contains("Delta versions must be contiguous. Expected 12 but got 13"))
   }
@@ -517,7 +517,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
     val inlineDeltas = List(inlineDelta).asJava
 
     val exMsg = intercept[IllegalArgumentException] {
-      baseSegment.copyWithAdditionalDeltas(inlineDeltas)
+      baseSegment.newWithAddedDeltas(inlineDeltas)
     }.getMessage
     assert(exMsg.contains("Currently, only file-based deltas are supported"))
   }
@@ -528,7 +528,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
 
   test("fromSingleDelta -- creates valid LogSegment") {
     val deltaData = ParsedDeltaData.forFileStatus(deltaFileStatus(0))
-    val logSegment = LogSegment.fromSingleDelta(logPath, deltaData)
+    val logSegment = LogSegment.createFromSingleDelta(logPath, deltaData)
 
     assert(logSegment.getVersion === 0)
     assert(logSegment.getDeltas.size() === 1)
@@ -540,7 +540,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
   test("fromSingleDelta -- non-zero version fails") {
     val deltaData = ParsedDeltaData.forFileStatus(deltaFileStatus(1))
     val exMsg = intercept[IllegalArgumentException] {
-      LogSegment.fromSingleDelta(logPath, deltaData)
+      LogSegment.createFromSingleDelta(logPath, deltaData)
     }.getMessage
     assert(exMsg.contains("Version must be 0 for a LogSegment with only a single delta"))
   }
@@ -548,7 +548,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
   test("fromSingleDelta -- inline delta fails") {
     val inlineDelta = ParsedDeltaData.forInlineData(0, emptyColumnarBatch)
     val exMsg = intercept[IllegalArgumentException] {
-      LogSegment.fromSingleDelta(logPath, inlineDelta)
+      LogSegment.createFromSingleDelta(logPath, inlineDelta)
     }.getMessage
     assert(exMsg.contains("Currently, only file-based deltas are supported"))
   }
