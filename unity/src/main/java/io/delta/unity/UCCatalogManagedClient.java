@@ -94,8 +94,7 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(tablePath, "tablePath is null");
     Objects.requireNonNull(versionOpt, "versionOpt is null");
     versionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
-    timestampOpt.ifPresent(
-        timestamp -> checkArgument(timestamp >= 0, "timestamp must be non-negative"));
+    timestampOpt.ifPresent(t -> checkArgument(t >= 0, "timestamp must be non-negative"));
     checkArgument(
         !timestampOpt.isPresent() || !versionOpt.isPresent(),
         "cannot provide both timestamp and version");
@@ -126,16 +125,8 @@ public class UCCatalogManagedClient {
             // If timestampOpt is present, we know versionOpt is not ==> logData was not requested
             // with an endVersion and thus can be re-used to load the latest snapshot
             Snapshot latestSnapshot =
-                timeUncheckedOperation(
-                    logger,
-                    "TableManager.loadSnapshot at latest for time-travel query",
-                    ucTableId,
-                    () ->
-                        TableManager.loadSnapshot(tablePath)
-                            .withCommitter(
-                                new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
-                            .withLogData(logData)
-                            .build(engine));
+                loadLatestSnapshotForTimestampTimeTravelQuery(
+                    engine, ucTableId, tablePath, logData);
             snapshotBuilder = snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
           }
 
@@ -307,5 +298,24 @@ public class UCCatalogManagedClient {
       org.apache.hadoop.fs.FileStatus hadoopFS) {
     return io.delta.kernel.utils.FileStatus.of(
         hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
+  }
+
+  /**
+   * Helper method to load the latest snapshot and time the operation. This is used to load the
+   * latest snapshot for timestamp-based time-travel queries. Reuses existing logData that has
+   * already been queried from the catalog (it is required that this includes the latest commits
+   * from the catalog and were not queried with an endVersion).
+   */
+  private Snapshot loadLatestSnapshotForTimestampTimeTravelQuery(
+      Engine engine, String ucTableId, String tablePath, List<ParsedLogData> logData) {
+    return timeUncheckedOperation(
+        logger,
+        "TableManager.loadSnapshot at latest for time-travel query",
+        ucTableId,
+        () ->
+            TableManager.loadSnapshot(tablePath)
+                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                .withLogData(logData)
+                .build(engine));
   }
 }
