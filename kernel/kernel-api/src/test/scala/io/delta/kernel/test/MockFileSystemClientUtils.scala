@@ -56,6 +56,10 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   def deltaFileStatus(v: Long, path: Path = logPath): FileStatus =
     FileStatus.of(FileNames.deltaFile(path, v), v, v * 10)
 
+  /** Delta checksum file status where the timestamp = 10*version */
+  def deltaCheckSumFileStatus(v: Long, path: Path = logPath): FileStatus =
+    FileStatus.of(FileNames.checksumFile(path, v).toString, v, v * 10)
+
   /** Compaction file status where the timestamp = 10*startVersion */
   def logCompactionStatus(s: Long, e: Long, path: Path = logPath): FileStatus =
     FileStatus.of(FileNames.logCompactionPath(path, s, e).toString, s, s * 10)
@@ -64,6 +68,12 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   def deltaFileStatuses(deltaVersions: Seq[Long], path: Path = logPath): Seq[FileStatus] = {
     assert(deltaVersions.size == deltaVersions.toSet.size)
     deltaVersions.map(v => deltaFileStatus(v, path))
+  }
+
+  /** Delta checksum file statuses where the timestamp = 10*version */
+  def deltaCheckSumFileStatuses(deltaVersions: Seq[Long], path: Path = logPath): Seq[FileStatus] = {
+    assert(deltaVersions.size == deltaVersions.toSet.size)
+    deltaVersions.map(v => deltaCheckSumFileStatus(v, path))
   }
 
   /** Compaction file statuses where the timestamp = 10*startVersion */

@@ -56,7 +56,8 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
     )).foreach {
     case (testName, expectedDeletedFiles, currentTime, retentionPeriod) =>
       // _deltalog directory contents - contains only delta files
-      val logFiles = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6))
+      val logFiles = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6)) ++
+        deltaCheckSumFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6))
       test(s"metadataCleanup: $testName: $currentTime, $retentionPeriod") {
         cleanupAndVerify(logFiles, expectedDeletedFiles.fileList(), currentTime, retentionPeriod)
       }
@@ -67,6 +68,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
     // _deltalog directory contains a combination of delta files and checkpoint files
 
     val logFiles = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) ++
+      deltaCheckSumFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) ++
       (checkpointType match {
         case "classic" =>
           singularCheckpointFileStatuses(Seq(3, 6, 9, 12))
@@ -153,7 +155,8 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("first log entry is a checkpoint") {
     val logFiles = multiCheckpointFileStatuses(Seq(25), multiPartCheckpointPartsSize) ++
       singularCheckpointFileStatuses(Seq(29)) ++
-      deltaFileStatuses(Seq(25, 26, 27, 28, 29, 30, 31, 32))
+      deltaFileStatuses(Seq(25, 26, 27, 28, 29, 30, 31, 32)) ++
+      deltaCheckSumFileStatuses(Seq(25, 26, 27, 28, 29, 30, 31, 32))
 
     Seq(
       (
@@ -194,6 +197,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("incomplete checkpoints should not be considered") {
     val logFiles = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) ++
+      deltaCheckSumFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) ++
       multiCheckpointFileStatuses(Seq(3), multiPartCheckpointPartsSize)
         // delete the third part of the checkpoint
         .filterNot(_.getPath.contains(s"%010d.%010d".format(2, 4))) ++
@@ -223,6 +227,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
       case (expDeletedDeltaVersions, expDeletedCheckpointVersions, currentTime, retentionPeriod) =>
 
         val expectedDeletedFiles = (deltaFileStatuses(expDeletedDeltaVersions) ++
+          deltaCheckSumFileStatuses(expDeletedDeltaVersions) ++
           expDeletedCheckpointVersions.flatMap {
             case v @ 3 => multiCheckpointFileStatuses(Seq(v), multiPartCheckpointPartsSize)
                 .filterNot(_.getPath.contains(s"%010d.%010d".format(2, 4)))
@@ -273,6 +278,7 @@ object MetadataCleanupSuite extends MockFileSystemClientUtils {
 
     def fileList(): Seq[String] = {
       (deltaFileStatuses(deltaVersions) ++
+        deltaCheckSumFileStatuses(deltaVersions) ++
         singularCheckpointFileStatuses(classicCheckpointVersions) ++
         multiCheckpointFileStatuses(multipartCheckpointVersions, multiPartCheckpointPartsSize) ++
         v2CPFileStatuses(v2CheckpointVersions)).sortBy(_.getPath).map(_.getPath)

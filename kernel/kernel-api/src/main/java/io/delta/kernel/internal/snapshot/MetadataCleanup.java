@@ -139,7 +139,8 @@ public class MetadataCleanup {
           break;
         }
 
-        if (FileNames.isCommitFile(nextFile.getPath())) {
+        if (FileNames.isCommitFile(nextFile.getPath())
+            || FileNames.isChecksumFile(nextFile.getPath())) {
           // Step 3: If the file is a delta log file, add it to the `potentialFilesToDelete` list
           // We can't delete these files until we encounter a checkpoint later that indicates
           // that the log files are no longer needed.
