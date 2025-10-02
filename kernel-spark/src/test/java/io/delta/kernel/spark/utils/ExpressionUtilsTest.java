@@ -20,12 +20,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.spark.exceptions.NonexistentColumnException;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
+import org.apache.spark.sql.connector.expressions.FieldReference;
+import org.apache.spark.sql.connector.expressions.LiteralValue;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.sources.*;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
@@ -379,138 +381,129 @@ public class ExpressionUtilsTest {
   @Test
   public void testDsv2PredicateToCatalystExpression_IsNull() {
     org.apache.spark.sql.types.StructType schema = createTestSchema();
-    org.apache.spark.sql.connector.expressions.NamedReference nameRef =
-        org.apache.spark.sql.connector.expressions.FieldReference.apply("name");
+    NamedReference nameRef = FieldReference.apply("name");
     org.apache.spark.sql.connector.expressions.filter.Predicate isNullPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             "IS_NULL", new org.apache.spark.sql.connector.expressions.Expression[] {nameRef});
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(isNullPredicate, schema);
 
+    assertTrue(result.isPresent(), "Result should be present");
     assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.IsNull,
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.IsNull,
         "Result should be IsNull expression");
   }
 
   @Test
   public void testDsv2PredicateToCatalystExpression_IsNotNull() {
     org.apache.spark.sql.types.StructType schema = createTestSchema();
-    org.apache.spark.sql.connector.expressions.NamedReference nameRef =
-        org.apache.spark.sql.connector.expressions.FieldReference.apply("name");
+    NamedReference nameRef = FieldReference.apply("name");
     org.apache.spark.sql.connector.expressions.filter.Predicate isNotNullPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             "IS_NOT_NULL", new org.apache.spark.sql.connector.expressions.Expression[] {nameRef});
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(isNotNullPredicate, schema);
 
+    assertTrue(result.isPresent(), "Result should be present");
     assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.IsNotNull,
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.IsNotNull,
         "Result should be IsNotNull expression");
   }
 
   @Test
   public void testDsv2PredicateToCatalystExpression_EqualTo() {
     org.apache.spark.sql.types.StructType schema = createTestSchema();
-    org.apache.spark.sql.connector.expressions.NamedReference idRef =
-        org.apache.spark.sql.connector.expressions.FieldReference.apply("id");
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> value =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            42, org.apache.spark.sql.types.DataTypes.IntegerType);
+    NamedReference idRef = FieldReference.apply("id");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(42, org.apache.spark.sql.types.DataTypes.IntegerType);
     org.apache.spark.sql.connector.expressions.filter.Predicate equalToPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             "=", new org.apache.spark.sql.connector.expressions.Expression[] {idRef, value});
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(equalToPredicate, schema);
 
+    assertTrue(result.isPresent(), "Result should be present");
     assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.EqualTo,
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.EqualTo,
         "Result should be EqualTo expression");
   }
 
   @Test
   public void testDsv2PredicateToCatalystExpression_LessThan() {
     org.apache.spark.sql.types.StructType schema = createTestSchema();
-    org.apache.spark.sql.connector.expressions.NamedReference ageRef =
-        org.apache.spark.sql.connector.expressions.FieldReference.apply("age");
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> value =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            30, org.apache.spark.sql.types.DataTypes.IntegerType);
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(30, org.apache.spark.sql.types.DataTypes.IntegerType);
     org.apache.spark.sql.connector.expressions.filter.Predicate lessThanPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             "<", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value});
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(lessThanPredicate, schema);
 
+    assertTrue(result.isPresent(), "Result should be present");
     assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.LessThan,
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.LessThan,
         "Result should be LessThan expression");
   }
 
   @Test
   public void testDsv2PredicateToCatalystExpression_GreaterThanOrEqual() {
     org.apache.spark.sql.types.StructType schema = createTestSchema();
-    org.apache.spark.sql.connector.expressions.NamedReference ageRef =
-        org.apache.spark.sql.connector.expressions.FieldReference.apply("age");
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> value =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            18, org.apache.spark.sql.types.DataTypes.IntegerType);
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(18, org.apache.spark.sql.types.DataTypes.IntegerType);
     org.apache.spark.sql.connector.expressions.filter.Predicate greaterThanOrEqualPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             ">=", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value});
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(greaterThanOrEqualPredicate, schema);
 
+    assertTrue(result.isPresent(), "Result should be present");
     assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual,
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual,
         "Result should be GreaterThanOrEqual expression");
   }
 
   @Test
   public void testDsv2PredicateToCatalystExpression_In() {
     org.apache.spark.sql.types.StructType schema = createTestSchema();
-    org.apache.spark.sql.connector.expressions.NamedReference idRef =
-        org.apache.spark.sql.connector.expressions.FieldReference.apply("id");
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> val1 =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            1, org.apache.spark.sql.types.DataTypes.IntegerType);
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> val2 =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            2, org.apache.spark.sql.types.DataTypes.IntegerType);
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> val3 =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            3, org.apache.spark.sql.types.DataTypes.IntegerType);
+    NamedReference idRef = FieldReference.apply("id");
+    LiteralValue<Integer> val1 =
+        LiteralValue.apply(1, org.apache.spark.sql.types.DataTypes.IntegerType);
+    LiteralValue<Integer> val2 =
+        LiteralValue.apply(2, org.apache.spark.sql.types.DataTypes.IntegerType);
+    LiteralValue<Integer> val3 =
+        LiteralValue.apply(3, org.apache.spark.sql.types.DataTypes.IntegerType);
     org.apache.spark.sql.connector.expressions.filter.Predicate inPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             "IN",
             new org.apache.spark.sql.connector.expressions.Expression[] {idRef, val1, val2, val3});
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(inPredicate, schema);
 
+    assertTrue(result.isPresent(), "Result should be present");
     assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.In,
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.In,
         "Result should be In expression");
     org.apache.spark.sql.catalyst.expressions.In inExpr =
-        (org.apache.spark.sql.catalyst.expressions.In) result;
+        (org.apache.spark.sql.catalyst.expressions.In) result.get();
     assertEquals(3, inExpr.list().size(), "IN expression should have 3 values");
   }
 
   @Test
   public void testDsv2PredicateToCatalystExpression_And() {
     org.apache.spark.sql.types.StructType schema = createTestSchema();
-    org.apache.spark.sql.connector.expressions.NamedReference ageRef =
-        org.apache.spark.sql.connector.expressions.FieldReference.apply("age");
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> value1 =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            18, org.apache.spark.sql.types.DataTypes.IntegerType);
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> value2 =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            65, org.apache.spark.sql.types.DataTypes.IntegerType);
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value1 =
+        LiteralValue.apply(18, org.apache.spark.sql.types.DataTypes.IntegerType);
+    LiteralValue<Integer> value2 =
+        LiteralValue.apply(65, org.apache.spark.sql.types.DataTypes.IntegerType);
 
     org.apache.spark.sql.connector.expressions.filter.Predicate leftPredicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
@@ -525,12 +518,67 @@ public class ExpressionUtilsTest {
               leftPredicate, rightPredicate
             });
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(andPredicate, schema);
 
+    assertTrue(result.isPresent(), "Result should be present");
     assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.And,
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.And,
         "Result should be And expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_Or() {
+    org.apache.spark.sql.types.StructType schema = createTestSchema();
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value1 =
+        LiteralValue.apply(18, org.apache.spark.sql.types.DataTypes.IntegerType);
+    LiteralValue<Integer> value2 =
+        LiteralValue.apply(65, org.apache.spark.sql.types.DataTypes.IntegerType);
+
+    org.apache.spark.sql.connector.expressions.filter.Predicate leftPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "<", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value1});
+    org.apache.spark.sql.connector.expressions.filter.Predicate rightPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            ">", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value2});
+    org.apache.spark.sql.connector.expressions.filter.Predicate orPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "OR",
+            new org.apache.spark.sql.connector.expressions.Expression[] {
+              leftPredicate, rightPredicate
+            });
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(orPredicate, schema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.Or,
+        "Result should be Or expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_Not() {
+    org.apache.spark.sql.types.StructType schema = createTestSchema();
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(18, org.apache.spark.sql.types.DataTypes.IntegerType);
+
+    org.apache.spark.sql.connector.expressions.filter.Predicate childPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "<", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value});
+    org.apache.spark.sql.connector.expressions.filter.Predicate notPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "NOT", new org.apache.spark.sql.connector.expressions.Expression[] {childPredicate});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(notPredicate, schema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.Not,
+        "Result should be Not expression");
   }
 
   @Test
@@ -540,14 +588,15 @@ public class ExpressionUtilsTest {
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             "ALWAYS_TRUE", new org.apache.spark.sql.connector.expressions.Expression[] {});
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(alwaysTruePredicate, schema);
 
+    assertTrue(result.isPresent(), "Result should be present");
     assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.Literal,
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.Literal,
         "Result should be Literal expression");
     org.apache.spark.sql.catalyst.expressions.Literal literal =
-        (org.apache.spark.sql.catalyst.expressions.Literal) result;
+        (org.apache.spark.sql.catalyst.expressions.Literal) result.get();
     assertEquals(true, literal.value(), "ALWAYS_TRUE should return literal true");
   }
 
@@ -558,33 +607,26 @@ public class ExpressionUtilsTest {
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             "UNSUPPORTED_OPERATOR", new org.apache.spark.sql.connector.expressions.Expression[] {});
 
-    org.apache.spark.sql.catalyst.expressions.Expression result =
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
         ExpressionUtils.dsv2PredicateToCatalystExpression(unsupportedPredicate, schema);
 
-    assertTrue(
-        result instanceof org.apache.spark.sql.catalyst.expressions.Literal,
-        "Unsupported predicates should default to literal true");
-    org.apache.spark.sql.catalyst.expressions.Literal literal =
-        (org.apache.spark.sql.catalyst.expressions.Literal) result;
-    assertEquals(true, literal.value(), "Unsupported predicates should default to true");
+    assertFalse(result.isPresent(), "Unsupported predicates should return empty Optional");
   }
 
   @Test
   public void testDsv2PredicateToCatalystExpression_ColumnNotFound() {
     org.apache.spark.sql.types.StructType schema = createTestSchema();
-    org.apache.spark.sql.connector.expressions.NamedReference invalidRef =
-        org.apache.spark.sql.connector.expressions.FieldReference.apply("nonexistent_column");
-    org.apache.spark.sql.connector.expressions.LiteralValue<Integer> value =
-        org.apache.spark.sql.connector.expressions.LiteralValue.apply(
-            42, org.apache.spark.sql.types.DataTypes.IntegerType);
+    NamedReference invalidRef = FieldReference.apply("nonexistent_column");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(42, org.apache.spark.sql.types.DataTypes.IntegerType);
     org.apache.spark.sql.connector.expressions.filter.Predicate predicate =
         new org.apache.spark.sql.connector.expressions.filter.Predicate(
             "=", new org.apache.spark.sql.connector.expressions.Expression[] {invalidRef, value});
 
-    // This should throw IllegalArgumentException
-    assertThrows(
-        NonexistentColumnException.class,
-        () -> ExpressionUtils.dsv2PredicateToCatalystExpression(predicate, schema),
-        "Should throw exception when column is not found in schema");
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(predicate, schema);
+
+    assertFalse(
+        result.isPresent(), "Should return empty Optional when column is not found in schema");
   }
 }

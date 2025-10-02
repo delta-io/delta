@@ -274,57 +274,38 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public void filter(org.apache.spark.sql.connector.expressions.filter.Predicate[] predicates) {
-    // 1. get all predicates on partition columns
-    Set<String> partitionColNames =
-        Arrays.stream(partitionSchema.fields()).map(StructField::name).collect(Collectors.toSet());
 
-    // partitionPredicates are predicates that all references are on partition columns
-    List<org.apache.spark.sql.connector.expressions.filter.Predicate> partitionPredicates =
-        Arrays.stream(predicates)
-            .filter(
-                p ->
-                    Arrays.stream(p.references())
-                        .allMatch(ref -> partitionColNames.contains(ref.fieldNames()[0])))
-            .collect(Collectors.toList());
-
-    if (partitionPredicates.isEmpty()) {
-      // DPP: no partition predicate to apply, skip filtering
+    // Try to convert runtime predicates to catalyst expressions, then create predicate evaluators
+    List<BasePredicate> evaluators = new ArrayList<>();
+    for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate : predicates) {
+      // only the predicates on partition columns will be converted
+      Optional<Expression> catalystExpr =
+          dsv2PredicateToCatalystExpression(predicate, partitionSchema);
+      if (catalystExpr.isPresent()) {
+        BasePredicate predicateEvaluator =
+            org.apache.spark.sql.catalyst.expressions.Predicate.create(catalystExpr.get());
+        evaluators.add(predicateEvaluator);
+      }
+    }
+    if (evaluators.isEmpty()) {
       return;
     }
 
-    // 2. apply partition predicates to filter partitionedFiles
+    // Filter existing partitionedFiles with runtime filter evaluators
     ensurePlanned();
-    List<PartitionedFile> runtimeFilteredPartitionedFiles =
-        partitionedFiles.stream()
-            .filter(
-                pf ->
-                    partitionPredicates.stream()
-                        .allMatch(
-                            predicate ->
-                                evaluatePartitionValueOnPredicate(predicate, pf.partitionValues())))
-            .collect(Collectors.toList());
+    List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
+    for (PartitionedFile pf : this.partitionedFiles) {
+      InternalRow partitionValues = pf.partitionValues();
+      boolean allMatch = evaluators.stream().allMatch(evaluator -> evaluator.eval(partitionValues));
+      if (allMatch) {
+        runtimeFilteredPartitionedFiles.add(pf);
+      }
+    }
 
-    // 3. update totalBytes and partitionedFiles
-    this.partitionedFiles = runtimeFilteredPartitionedFiles;
-    this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
-  }
-
-  /*
-   * Evaluate a predicate on partition values.
-   * Return true if the partition values satisfy the predicate, false otherwise.
-   */
-  private boolean evaluatePartitionValueOnPredicate(
-      org.apache.spark.sql.connector.expressions.filter.Predicate predicate,
-      InternalRow partitionValues) {
-    try {
-      Expression catalystExpr = dsv2PredicateToCatalystExpression(predicate, partitionSchema);
-      BasePredicate predicateEvaluator =
-          org.apache.spark.sql.catalyst.expressions.Predicate.create(catalystExpr);
-      return predicateEvaluator.eval(partitionValues);
-    } catch (Exception e) {
-      // return true if any exception happens during evaluation
-      // This is a conservative approach that does not filter out any partition
-      return true;
+    // Update partitionedFiles and totalBytes, if any partition is filtered out
+    if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
+      this.partitionedFiles = runtimeFilteredPartitionedFiles;
+      this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
     }
   }
 }
