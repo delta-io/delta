@@ -35,7 +35,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -239,7 +239,7 @@ case class DeltaSink(
 
     def exprForColumn(df: DataFrame, columnName: String): Expression =
       if (sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_ESCAPE_COLUMN_NAMES)) {
-        df.col(SchemaUtils.quoteIdentifier(columnName)).expr
+        df.col(QuotingUtils.quoteIdentifier(columnName)).expr
       } else {
         df.col(columnName).expr
       }

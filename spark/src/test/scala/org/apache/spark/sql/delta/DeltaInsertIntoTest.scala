@@ -25,6 +25,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.{DebugFilesystem, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.util.QuotingUtils
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.StructType
@@ -345,7 +346,7 @@ trait DeltaInsertIntoTest
 
           def runInsert(): Unit =
             insert.runInsert(
-              columns = insertData.schema.map(f => SchemaUtils.quoteIdentifier(f.name)),
+              columns = insertData.schema.map(f => QuotingUtils.quoteIfNeeded(f.name)),
               whereCol = overwriteWhere._1,
               whereValue = overwriteWhere._2
             )

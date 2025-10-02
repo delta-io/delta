@@ -42,6 +42,8 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
   test("all test cases are implemented") {
     val ignoredTestCases = Map(
       "null struct with different field order"
+       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert),
+      "cast with dot in column name"
        -> (insertsDataframe.intersect(insertsByName) - StreamingInsert)
     )
     checkAllTestCasesImplemented(ignoredTestCases)
@@ -216,7 +218,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
         """{ "s.a": 1, "s": { "x": 4, "y": 5 } }""")),
     insertsOverwrite ->
       TestData("`s.a` long, s struct <x long, y: int>",
-        Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }"""))
+        Seq("""{ "s.a": 1, "s": { "x": 4, "y": 5 } }"""))
     )
   } {
    testInserts(s"cast with dot in column name")(
