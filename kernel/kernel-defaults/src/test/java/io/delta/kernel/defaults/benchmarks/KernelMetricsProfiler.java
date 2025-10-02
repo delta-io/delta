@@ -46,6 +46,13 @@ import org.openjdk.jmh.util.SampleBuffer;
  */
 public class KernelMetricsProfiler implements InternalProfiler {
 
+  /**
+   * Creates a new KernelMetricsProfiler instance.
+   *
+   * <p>This constructor is called by JMH when the profiler is registered via {@code
+   * addProfiler(KernelMetricsProfiler.class)}. No initialization is needed as the profiler uses
+   * static state to collect metrics across all benchmark iterations.
+   */
   public KernelMetricsProfiler() {}
 
   public static final List<MetricsReport> reports = new ArrayList<>();
@@ -70,23 +77,23 @@ public class KernelMetricsProfiler implements InternalProfiler {
   }
 
   /**
-   * Generates a scalar result with average aggregation policy for count metrics.
+   * Generates a secondary scalar result with average aggregation policy for count metrics.
    *
    * @param name the name of the metric
    * @param value the metric value
-   * @return a ScalarResult configured for count metrics with average aggregation
+   * @return a ScalarResult configured as a secondary metric for count data with average aggregation
    */
   private static ScalarResult generateAvgScalarCount(String name, double value) {
     return new ScalarResult(name, value, "count", AggregationPolicy.AVG);
   }
 
   /**
-   * Generates a time sample result for timing metrics.
+   * Generates a secondary time sample result for timing metrics.
    *
    * @param name the name of the timing metric
    * @param value the timing value
    * @param unit the time unit for the value
-   * @return a SampleTimeResult for the timing metric
+   * @return a SampleTimeResult configured as a secondary metric for timing data
    */
   private static SampleTimeResult generateTimeSample(String name, long value, TimeUnit unit) {
     SampleBuffer buf = new SampleBuffer();
@@ -95,12 +102,12 @@ public class KernelMetricsProfiler implements InternalProfiler {
   }
 
   /**
-   * Extracts metrics from a scan report and converts them to JMH results.
+   * Extracts scan metrics from a scan report and converts them to JMH secondary results.
    *
    * @param report the scan report containing metrics to extract
-   * @return a stream of JMH Result objects representing the extracted metrics
+   * @return a stream of JMH secondary Result objects representing the extracted scan metrics
    */
-  private Stream<? extends Result> extractMetrics(ScanReport report) {
+  private Stream<? extends Result> extractSecondaryScanMetrics(ScanReport report) {
     ScanMetricsResult scanReport = report.getScanMetrics();
     Stream<? extends Result> out =
         Stream.of(
@@ -130,7 +137,7 @@ public class KernelMetricsProfiler implements InternalProfiler {
     Stream<? extends Result> out = Stream.empty();
     for (MetricsReport report : reports) {
       if (report instanceof ScanReport) {
-        out = Stream.concat(out, extractMetrics((ScanReport) report));
+        out = Stream.concat(out, extractSecondaryScanMetrics((ScanReport) report));
       }
     }
     return out.collect(Collectors.toList());

@@ -49,7 +49,7 @@ import java.util.List;
  * spec.json (on disk)
  *     ↓ fromJsonPath()
  * WorkloadSpec + tableInfo + caseName
- *     ↓ getBenchmarkVariants()
+ *     ↓ getWorkloadVariants()
  * List&lt;WorkloadSpec&gt; (with operation types set)
  *     ↓ getRunner()
  * WorkloadRunner instances (ready to execute)
@@ -73,7 +73,7 @@ import java.util.List;
  * <ol>
  *   <li>Create a subclass of WorkloadSpec (e.g., WriteSpec)
  *   <li>Add test-specific fields (e.g., writeMode, numRecords)
- *   <li>Override getBenchmarkVariants() to generate operation variants
+ *   <li>Override getWorkloadVariants() to generate operation variants
  *   <li>Override getRunner() to return appropriate WorkloadRunner instances
  *   <li>Register the subclass in @JsonSubTypes annotation
  * </ol>
@@ -165,19 +165,19 @@ public abstract class WorkloadSpec {
   }
 
   /**
-   * Generates benchmark variants from this test case specification.
+   * Generates workload variants from this test case specification.
    *
-   * <p>A single WorkloadSpec can generate multiple benchmark variants. For example, a read spec
-   * might generate both read_metadata and read_data variants. Each variant becomes a separate JMH
-   * benchmark run.
+   * <p>A single WorkloadSpec can generate multiple workload variants. For example, a read spec
+   * might generate both read_metadata and read_data variants. Each variant can be executed as a
+   * benchmark or test.
    *
    * <p>The default implementation returns a single variant (itself). Subclasses should override to
    * generate multiple variants if needed.
    *
-   * @return list of WorkloadSpec variants, each representing a separate benchmark run
+   * @return list of WorkloadSpec variants, each representing a separate workload execution
    */
   @JsonIgnore
-  public List<WorkloadSpec> getBenchmarkVariants() {
+  public List<WorkloadSpec> getWorkloadVariants() {
     return Collections.singletonList(this);
   }
 

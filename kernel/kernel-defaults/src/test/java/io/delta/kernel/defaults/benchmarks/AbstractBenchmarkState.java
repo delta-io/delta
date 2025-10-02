@@ -22,12 +22,15 @@ import io.delta.kernel.engine.*;
 import org.openjdk.jmh.annotations.*;
 
 /**
- * Base state class for all benchmark state. This class is responsible for setting up the workload
- * runner based on the workload specification and engine parameters provided by JMH.
+ * Base state class for all benchmark state. This class is responsible for setting up the {@link
+ * WorkloadRunner} based on the {@link WorkloadSpec} and engine parameters provided by JMH.
  *
  * <p>To add support for a new engine, extend this class and implement the {@link
  * #getEngine(String)} method to return an instance of the desired engine based on the provided
  * engine name.
+ *
+ * @see WorkloadRunner
+ * @see WorkloadSpec
  */
 @State(Scope.Thread)
 public abstract class AbstractBenchmarkState {

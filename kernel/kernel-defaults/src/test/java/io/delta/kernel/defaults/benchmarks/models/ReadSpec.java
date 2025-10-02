@@ -58,7 +58,7 @@ import java.util.List;
  *
  * <h2>Variant Generation</h2>
  *
- * <p>When getBenchmarkVariants() is called, this spec generates variants:
+ * <p>When getWorkloadVariants() is called, this spec generates variants:
  *
  * <pre>{@code
  * ReadSpec(type="read", version=5)
@@ -88,13 +88,13 @@ public class ReadSpec extends WorkloadSpec {
   @JsonProperty("version")
   private Long version;
 
-  /** Expected data file for validation (future feature). From spec file. */
+  /** Expected data file for validating the read data result. From spec file. */
   @JsonProperty("expected_data")
   private String expectedData;
 
   /**
    * The operation type for this variant ("read_metadata" or "read_data"). Set during variant
-   * generation via getBenchmarkVariants(), not present in spec files.
+   * generation via getWorkloadVariants(), not present in spec files.
    */
   @JsonProperty("operation_type")
   private String operationType;
@@ -142,9 +142,9 @@ public class ReadSpec extends WorkloadSpec {
   }
 
   /**
-   * Generates benchmark variants from this test case specification.
+   * Generates workload variants from this test case specification.
    *
-   * <p>A single ReadSpec test case can generate multiple benchmark variants, one for each operation
+   * <p>A single ReadSpec test case can generate multiple workload variants, one for each operation
    * type. Each variant is a complete ReadSpec with the operation type set.
    *
    * <p>Currently generates:
@@ -155,10 +155,10 @@ public class ReadSpec extends WorkloadSpec {
    *
    * <p>Future: will also generate read_data variant when implemented.
    *
-   * @return list of ReadSpec variants, each representing a separate benchmark run
+   * @return list of ReadSpec variants, each representing a separate workload execution
    */
   @Override
-  public List<WorkloadSpec> getBenchmarkVariants() {
+  public List<WorkloadSpec> getWorkloadVariants() {
     // TODO: In the future, we will support the read_data operation as well.
     String[] operationTypes = {"read_metadata"};
     List<WorkloadSpec> out = new ArrayList<>();
