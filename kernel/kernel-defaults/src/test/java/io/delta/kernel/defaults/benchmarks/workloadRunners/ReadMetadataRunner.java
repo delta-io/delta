@@ -39,12 +39,18 @@ public class ReadMetadataRunner extends WorkloadRunner {
   private final ReadSpec workloadSpec;
 
   /**
-   * Constructs the ReadMetadataRunner from the workload spec and the base workload directory
-   * containing test tables.
+   * Constructs the ReadMetadataRunner from the workload spec and engine.
    *
    * @param workloadSpec The read_metadata workload specification.
+   * @param engine The engine to use for executing the workload.
+   * @throws IllegalArgumentException if the operation type is not "read_metadata"
    */
   public ReadMetadataRunner(ReadSpec workloadSpec, Engine engine) {
+    // ensure the operation type is read_metadata
+    if (!workloadSpec.getOperationType().equals("read_metadata")) {
+      throw new IllegalArgumentException(
+          "ReadMetadataRunner can only be used for read_metadata workloads");
+    }
     this.workloadSpec = workloadSpec;
     this.engine = engine;
   }

@@ -15,6 +15,23 @@ import org.openjdk.jmh.results.RunResult;
 import org.openjdk.jmh.runner.format.OutputFormat;
 import org.openjdk.jmh.util.Statistics;
 
+/**
+ * Custom JMH output format that generates structured JSON benchmark reports.
+ *
+ * <p>This output format captures benchmark results and generates a comprehensive JSON report
+ * containing execution environment details, benchmark configuration, timing metrics, and secondary
+ * metrics. The report includes detailed percentile analysis and is written to the working directory
+ * as {@code benchmark_report.json}.
+ *
+ * <p>The generated report structure includes:
+ *
+ * <ul>
+ *   <li>Report metadata (generation time, JMH version, etc.)
+ *   <li>Execution environment (JVM, OS, hardware details)
+ *   <li>Benchmark configuration and parameters
+ *   <li>Benchmark details (spec, additional params, timing metrics, secondary metrics)
+ * </ul>
+ */
 public class WorkloadOutputFormat implements OutputFormat {
   public WorkloadOutputFormat() {}
 
@@ -74,7 +91,7 @@ public class WorkloadOutputFormat implements OutputFormat {
     @JsonProperty("cpu_cores")
     private final Long cpuCores;
 
-    @JsonProperty("cpu_threads")
+    @JsonProperty("os_name")
     private final String osName;
 
     @JsonProperty("os_version")
