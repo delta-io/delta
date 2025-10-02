@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
@@ -344,7 +345,7 @@ trait DeltaInsertIntoTest
 
           def runInsert(): Unit =
             insert.runInsert(
-              columns = insertData.schema.map(_.name),
+              columns = insertData.schema.map(f => SchemaUtils.quoteIdentifier(f.name)),
               whereCol = overwriteWhere._1,
               whereValue = overwriteWhere._2
             )

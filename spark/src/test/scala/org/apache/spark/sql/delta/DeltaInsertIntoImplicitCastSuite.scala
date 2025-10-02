@@ -229,6 +229,9 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
        Seq("""{ "s.a": 1, "s": { "x": 4, "y": 5 } }""")),
      expectedResult = ExpectedResult.Success(expectedAnswer),
      includeInserts = inserts,
+     // Dataframe INSERTs by name don't support implicit casting except for streaming
+     // writes, no point in testing them.
+     excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
      confs = Seq(DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_ESCAPE_COLUMN_NAMES.key -> "true")
    )
  }
