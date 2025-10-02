@@ -87,7 +87,7 @@ public class WorkloadBenchmark<T> {
     List<WorkloadSpec> filteredSpecs = new ArrayList<>();
     for (WorkloadSpec spec : workloadSpecs) {
       // TODO: In the future, we can filter specific workloads using command line args here.
-      filteredSpecs.addAll(spec.getBenchmarkVariants());
+      filteredSpecs.addAll(spec.getWorkloadVariants());
     }
 
     // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].

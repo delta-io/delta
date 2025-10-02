@@ -28,8 +28,7 @@ import java.util.stream.Stream;
 /** Useful utilities and values for benchmarks. */
 public class BenchmarkUtils {
 
-  public static final Path RESOURCES_DIR =
-      Paths.get(System.getProperty("user.dir") + "/src/test/resources");
+  public static final Path RESOURCES_DIR = getResourcesDirectory();
   public static final Path WORKLOAD_SPECS_DIR = RESOURCES_DIR.resolve("workload_specs");
 
   private static final String DELTA_DIR_NAME = "delta";
@@ -38,10 +37,37 @@ public class BenchmarkUtils {
   private static final String TABLE_INFO_FILE_NAME = "table_info.json";
 
   /**
+   * Gets the resources directory, ensuring user.dir system property is set.
+   *
+   * @return the path to the test resources directory
+   * @throws IllegalStateException if user.dir system property is not set
+   */
+  private static Path getResourcesDirectory() {
+    String userDir = System.getProperty("user.dir");
+    if (userDir == null || userDir.trim().isEmpty()) {
+      throw new IllegalStateException(
+          "System property 'user.dir' is not set. This is required to locate test resources.");
+    }
+    return Paths.get(userDir + "/src/test/resources");
+  }
+
+  /**
    * Scans the workloads directory and loads all JSON workload specifications.
    *
+   * <p>This method:
+   *
+   * <ol>
+   *   <li>Finds all table directories in the workload specs directory
+   *   <li>Loads table_info.json from each table directory
+   *   <li>Loads all spec.json files from specs/ subdirectories
+   *   <li>Enriches each spec with tableInfo and caseName
+   *   <li>Returns loaded specs (not yet expanded into variants)
+   * </ol>
+   *
+   * <p>Note: Variant generation happens later via {@link WorkloadSpec#getWorkloadVariants()}.
+   *
    * @param specDirPath Path to the directory containing workload specifications
-   * @return List of loaded workload specifications
+   * @return List of loaded workload specifications (base specs, not variants)
    * @throws WorkloadLoadException if workloads cannot be loaded
    */
   public static List<WorkloadSpec> loadAllWorkloads(Path specDirPath) {
