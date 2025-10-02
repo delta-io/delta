@@ -96,6 +96,11 @@ public class DefaultFileSystemClient implements FileSystemClient {
     return fileIO.getFileStatus(path);
   }
 
+  @Override
+  public void copy(String srcPath, String destPath, boolean overwrite) throws IOException {
+    fileIO.copy(srcPath, destPath, overwrite);
+  }
+
   private ByteArrayInputStream getStream(String filePath, int offset, int size) {
     InputFile inputFile = this.fileIO.newInputFile(filePath, /* fileSize */ -1);
     try (SeekableInputStream stream = inputFile.newStream()) {

@@ -38,6 +38,7 @@ import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
 import io.delta.kernel.internal.hook.ChecksumFullHook;
@@ -278,13 +279,26 @@ public class TransactionImpl implements Transaction {
                         snapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram)))
             .orElse(TransactionMetrics.forNewTable());
     try {
-      long committedVersion =
+      // TODO: Keep track of ALL of the conflicting commits in and include them here!
+      final ParsedLogData committedLogData =
           transactionMetrics.totalCommitTimer.time(
               () -> commitWithRetry(engine, dataActions, transactionMetrics));
+
+      long committedVersion = committedLogData.version;
+
+      // Create post-commit snapshot if we had a read snapshot
+      SnapshotImpl postCommitSnapshot = null;
+      if (readSnapshotOpt.isPresent()) {
+        // Create a list with the committed log data
+        List<io.delta.kernel.internal.files.ParsedLogData> newCommits =
+            java.util.Arrays.asList(committedLogData);
+        postCommitSnapshot = readSnapshotOpt.get().createNewFromCommits(engine, newCommits);
+      }
+
       TransactionReport transactionReport =
           recordTransactionReport(
               engine,
-              Optional.of(committedVersion),
+              Optional.of(committedLogData.version),
               getEffectiveClusteringColumns(),
               transactionMetrics,
               Optional.empty() /* exception */);
@@ -293,7 +307,8 @@ public class TransactionImpl implements Transaction {
       return new TransactionCommitResult(
           committedVersion,
           generatePostCommitHooks(committedVersion, txnMetricsCaptured),
-          transactionReport);
+          transactionReport,
+          postCommitSnapshot);
     } catch (Exception e) {
       recordTransactionReport(
           engine,
@@ -305,7 +320,7 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  private long commitWithRetry(
+  private ParsedLogData commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
       long commitAsVersion = getReadTableVersion() + 1;
@@ -479,7 +494,7 @@ public class TransactionImpl implements Transaction {
     return attemptInCommitTimestamp;
   }
 
-  private long doCommit(
+  private ParsedLogData doCommit(
       Engine engine,
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
@@ -544,14 +559,13 @@ public class TransactionImpl implements Transaction {
               committerProperties,
               readSnapshotOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
               shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
-              shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());
+              shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty(),
+              readSnapshotOpt.flatMap(SnapshotImpl::getLastBackfilledVersion));
 
       DirectoryCreationUtils.createAllDeltaDirectoriesAsNeeded(
           engine, logPath, commitAsVersion, commitMetadata.getReadProtocolOpt(), protocol);
 
-      committer.commit(engine, dataAndMetadataActions, commitMetadata);
-
-      return commitAsVersion;
+      return committer.commit(engine, dataAndMetadataActions, commitMetadata).getCommitLogData();
     } catch (IOException ioe) {
       // Error closing the CloseableIterator of actions or error creating the delta log directory
       throw new UncheckedIOException(ioe);

@@ -18,6 +18,7 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -101,4 +102,47 @@ public interface Snapshot {
    * @since 3.4.0
    */
   UpdateTableTransactionBuilder buildUpdateTableTransaction(String engineInfo, Operation operation);
+
+  /**
+   * Returns all ratified staged commits in this snapshot that can be published to standard Delta
+   * log locations. These are commits that exist as staged files (e.g.,
+   * `_staged_commits/0000N.uuid.json`) and need to be copied to published locations (e.g.,
+   * `0000N.json`) to maintain Delta log consistency.
+   *
+   * <p>This method excludes inline commits as they don't require file copying.
+   *
+   * @return a list of {@link ParsedLogData} representing ratified staged commits
+   * @since 3.4.0
+   */
+  List<ParsedLogData> getRatifiedCommits();
+
+  /**
+   * Publishes ratified staged commits to their published locations and returns a new {@link
+   * Snapshot} that reflects the published state. This operation:
+   *
+   * <ol>
+   *   <li>Calls the committer's publish method to copy staged files to published locations
+   *   <li>Creates a new Snapshot where published commits have updated file paths and types
+   *   <li>Returns the new immutable Snapshot reflecting the published state
+   * </ol>
+   *
+   * <p>The publishing maintains contiguity by processing commits in version order and stopping at
+   * the first gap or failure. The returned Snapshot will have RATIFIED_STAGED_COMMIT entries
+   * converted to PUBLISHED_DELTA with updated file paths.
+   *
+   * @param engine the {@link Engine} instance used for file operations
+   * @return a new {@link Snapshot} reflecting the published state, or this Snapshot if no commits
+   *     were published
+   * @since 3.4.0
+   */
+  Snapshot publish(Engine engine);
+
+  /**
+   * Returns statistics about this snapshot, including information about ratified commits and
+   * publishing status.
+   *
+   * @return statistics about this snapshot
+   * @since 3.4.0
+   */
+  SnapshotStatistics getStatistics();
 }

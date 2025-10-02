@@ -99,6 +99,20 @@ public class HadoopFileIO implements FileIO {
     return Optional.ofNullable(hadoopConf.get(confKey));
   }
 
+  @Override
+  public void copy(String srcPath, String destPath, boolean overwrite) throws IOException {
+    Path src = new Path(srcPath);
+    Path dest = new Path(destPath);
+    FileSystem srcFs = src.getFileSystem(hadoopConf);
+    FileSystem destFs = dest.getFileSystem(hadoopConf);
+
+    // Use Hadoop's FileUtil.copy method for efficient copying
+    if (!org.apache.hadoop.fs.FileUtil.copy(
+        srcFs, src, destFs, dest, false, overwrite, hadoopConf)) {
+      throw new IOException("Failed to copy file from " + srcPath + " to " + destPath);
+    }
+  }
+
   private FileSystem getFs(String path) {
     try {
       Path pathObject = new Path(path);

@@ -23,6 +23,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.SnapshotStatistics;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
@@ -33,6 +34,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -40,11 +42,14 @@ import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.FileStatus;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -175,6 +180,20 @@ public class SnapshotImpl implements Snapshot {
   // Internal APIs //
   ///////////////////
 
+  public SnapshotImpl createNewFromCommits(Engine engine, List<ParsedLogData> newCommits) {
+    if (newCommits.isEmpty()) {
+      return this;
+    }
+
+    ParsedLogData newCommit = newCommits.get(0);
+    LogSegment newLogSegment = lazyLogSegment.get().createNewFromCommits(newCommits);
+    SnapshotQueryContext postCommitSnapshotCtx =
+        SnapshotQueryContext.forPostCommitSnapshot(dataPath.toString(), version, newCommit.version);
+
+    return createSnapshotWithNewLogSegment(
+        engine, newLogSegment, newCommit.version, postCommitSnapshotCtx);
+  }
+
   // TODO: make this API public after closing open threads for Replace Table operation
   public ReplaceTableTransactionBuilder buildReplaceTableTransaction(
       StructType schema, String engineInfo) {
@@ -264,5 +283,123 @@ public class SnapshotImpl implements Snapshot {
    */
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
+  }
+
+  @Override
+  public List<ParsedLogData> getRatifiedCommits() {
+    List<ParsedLogData> ratifiedCommits = new ArrayList<>();
+    LogSegment logSegment = getLogSegment();
+
+    // Filter deltas to find only ratified staged commits
+    for (FileStatus delta : logSegment.getDeltas()) {
+      ParsedLogData parsedLogData = ParsedLogData.forFileStatus(delta);
+      if (parsedLogData.type == ParsedLogData.ParsedLogType.RATIFIED_STAGED_COMMIT) {
+        ratifiedCommits.add(parsedLogData);
+      }
+    }
+
+    return ratifiedCommits;
+  }
+
+  /**
+   * Returns the highest version number among the published delta files in this snapshot's log
+   * segment. This represents the last known backfilled version.
+   *
+   * @return Optional containing the highest version of published delta files, or empty if none
+   *     exist
+   */
+  public Optional<Long> getLastBackfilledVersion() {
+    LogSegment logSegment = getLogSegment();
+    long maxPublishedVersion = -1;
+
+    // Find the highest version among published delta files
+    for (FileStatus delta : logSegment.getDeltas()) {
+      ParsedLogData parsedLogData = ParsedLogData.forFileStatus(delta);
+      if (parsedLogData.type == ParsedLogData.ParsedLogType.PUBLISHED_DELTA) {
+        maxPublishedVersion = Math.max(maxPublishedVersion, parsedLogData.version);
+      }
+    }
+
+    return maxPublishedVersion == -1 ? Optional.empty() : Optional.of(maxPublishedVersion);
+  }
+
+  @Override
+  public Snapshot publish(Engine engine) {
+    // Call the committer's publish method to perform the actual file operations
+    long maxPublishedVersion = committer.publish(engine, this);
+
+    if (maxPublishedVersion == -1) {
+      // No commits were published, return the same snapshot
+      return this;
+    }
+
+    // Create a new LogSegment with transformed deltas that reflect the published state
+    LogSegment newLogSegment =
+        lazyLogSegment
+            .get()
+            .withTransformedDeltas(
+                delta -> {
+                  ParsedLogData parsedLogData = ParsedLogData.forFileStatus(delta);
+
+                  if (parsedLogData.type == ParsedLogData.ParsedLogType.RATIFIED_STAGED_COMMIT
+                      && parsedLogData.version <= maxPublishedVersion) {
+                    // This commit was published, create a new FileStatus with published path
+                    String publishedPath =
+                        FileNames.deltaFile(logPath.toString(), parsedLogData.version);
+                    return FileStatus.of(
+                        publishedPath, delta.getSize(), delta.getModificationTime());
+                  } else {
+                    // Keep the original delta (either not ratified staged or not published)
+                    return delta;
+                  }
+                });
+
+    SnapshotQueryContext publishedSnapshotCtx =
+        SnapshotQueryContext.forVersionSnapshot(dataPath.toString(), version);
+
+    return createSnapshotWithNewLogSegment(engine, newLogSegment, version, publishedSnapshotCtx);
+  }
+
+  @Override
+  public SnapshotStatistics getStatistics() {
+    return new SnapshotStatisticsImpl();
+  }
+
+  /** Create a new SnapshotImpl with a new LogSegment, reusing other components. */
+  private SnapshotImpl createSnapshotWithNewLogSegment(
+      Engine engine, LogSegment newLogSegment, long newVersion, SnapshotQueryContext snapshotCtx) {
+
+    Lazy<LogSegment> newLazyLogSegment = new Lazy<>(() -> newLogSegment);
+    LogReplay newLogReplay =
+        new LogReplay(
+            dataPath,
+            engine,
+            newLazyLogSegment,
+            Optional.empty(),
+            snapshotCtx.getSnapshotMetrics());
+
+    return new SnapshotImpl(
+        dataPath,
+        newVersion,
+        newLazyLogSegment,
+        newLogReplay,
+        protocol,
+        metadata,
+        committer,
+        snapshotCtx);
+  }
+
+  /** Implementation of {@link SnapshotStatistics} for SnapshotImpl. */
+  private class SnapshotStatisticsImpl implements SnapshotStatistics {
+
+    @Override
+    public long getNumRatifiedCommits() {
+      return getRatifiedCommits().size();
+    }
+
+    @Override
+    public boolean shouldPublish() {
+      return getNumRatifiedCommits() > 0;
+    }
   }
 }

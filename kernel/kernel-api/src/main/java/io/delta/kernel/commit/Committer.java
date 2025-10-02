@@ -16,6 +16,7 @@
 
 package io.delta.kernel.commit;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -63,6 +64,24 @@ public interface Committer {
   CommitResponse commit(
       Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
       throws CommitFailedException;
+
+  /**
+   * Publishes ratified staged commits to their published locations (e.g., from
+   * `_staged_commits/0000N.uuid.json` to `0000N.json`). This operation maintains contiguity by
+   * publishing commits in version order and stopping at the first gap or failure.
+   *
+   * <p>For catalog-managed tables, this copies staged commit files to published locations. For
+   * filesystem-managed tables, this is a no-op.
+   *
+   * @param engine the {@link Engine} instance used for file operations
+   * @param snapshot the {@link Snapshot} containing ratified commits to publish
+   * @return the highest contiguous version that was successfully published, or -1 if no commits
+   *     were published or this is a filesystem-managed table
+   */
+  default long publish(Engine engine, Snapshot snapshot) {
+    // Default no-op implementation for filesystem-managed tables
+    return -1;
+  }
 
   // TODO: API to get the required table properties
 }

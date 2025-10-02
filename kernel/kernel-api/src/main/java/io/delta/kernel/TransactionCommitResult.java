@@ -35,12 +35,25 @@ public class TransactionCommitResult {
   private final long version;
   private final List<PostCommitHook> postCommitHooks;
   private final TransactionReport transactionReport;
+  private final Snapshot postCommitSnapshot;
 
   public TransactionCommitResult(
       long version, List<PostCommitHook> postCommitHooks, TransactionReport transactionReport) {
     this.version = version;
     this.postCommitHooks = requireNonNull(postCommitHooks);
     this.transactionReport = requireNonNull(transactionReport);
+    this.postCommitSnapshot = null; // For backward compatibility
+  }
+
+  public TransactionCommitResult(
+      long version,
+      List<PostCommitHook> postCommitHooks,
+      TransactionReport transactionReport,
+      Snapshot postCommitSnapshot) {
+    this.version = version;
+    this.postCommitHooks = requireNonNull(postCommitHooks);
+    this.transactionReport = requireNonNull(transactionReport);
+    this.postCommitSnapshot = postCommitSnapshot;
   }
 
   /**
@@ -72,5 +85,10 @@ public class TransactionCommitResult {
   /** @return the report and metrics for this transaction */
   public TransactionReport getTransactionReport() {
     return transactionReport;
+  }
+
+  /** @return the post-commit snapshot, may be null for backward compatibility */
+  public Snapshot getPostCommitSnapshot() {
+    return postCommitSnapshot;
   }
 }
