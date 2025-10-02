@@ -94,7 +94,6 @@ public class BenchmarkUtils {
 
     TableInfo tableInfo =
         TableInfo.fromJsonPath(tableInfoPath.toString(), deltaDir.toAbsolutePath().toString());
-    System.out.println("Loading specs for table: " + tableInfo);
 
     return findSpecDirectories(specsDir).stream()
         .map(specDir -> loadSingleSpec(specDir, tableInfo))
@@ -143,7 +142,6 @@ public class BenchmarkUtils {
       WorkloadSpec workloadSpec =
           WorkloadSpec.fromJsonPath(specFile.toString(), specName, tableInfo);
 
-      System.out.println("Loaded workload spec: " + workloadSpec);
       return workloadSpec;
 
     } catch (Exception e) {

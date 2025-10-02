@@ -24,30 +24,78 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Workload specification for read_metadata benchmarks. This workload reads the metadata of the
- * Delta table located at the provided table_root. If a snapshot_version is provided, the metadata
- * at that version is read; otherwise, the latest metadata is read.
+ * Workload specification for read benchmarks. Defines test cases for reading Delta tables at
+ * specific versions or latest, with different operation types.
  *
- * <p>To run this workload, you can construct a {@link ReadMetadataRunner} from this spec using
- * {@link WorkloadSpec#getRunner(Engine)}.
+ * <h2>Overview</h2>
  *
- * <p>Sample JSON specification for local delta table at specific version: { "type":
- * "read_metadata", "name": "read-basic-checkpoint-at-v5", "table_root": "basic-checkpoint-table",
- * "snapshot_version": 5 }
+ * <p>A ReadSpec represents a single test case that can generate multiple benchmark variants:
  *
- * <p>Sample JSON specification for S3 delta table at latest version: { "type": "read_metadata",
- * "name": "read-basic-checkpoint-at-latest", "table_root":
- * "s3:///my-bucket/delta-tables/basic-checkpoint-table" }
+ * <ul>
+ *   <li><b>read_metadata</b>: Scans table metadata (add/remove files) at the specified version
+ *   <li><b>read_data</b>: Reads actual data and validates against expected results (future)
+ * </ul>
+ *
+ * <h2>Spec File Format</h2>
+ *
+ * <p>On-disk spec files contain only test parameters (minimal):
+ *
+ * <pre>{@code
+ * {
+ *   "type": "read",
+ *   "version": 5             // optional: specific version, omit for latest
+ * }
+ * }</pre>
+ *
+ * <h2>Runtime Enrichment</h2>
+ *
+ * <p>During loading, the spec is enriched with runtime metadata:
+ *
+ * <ul>
+ *   <li><b>tableInfo</b>: Added from table_info.json in parent directory
+ *   <li><b>caseName</b>: Added from the spec directory name
+ * </ul>
+ *
+ * <h2>Variant Generation</h2>
+ *
+ * <p>When getBenchmarkVariants() is called, this spec generates variants:
+ *
+ * <pre>{@code
+ * ReadSpec(type="read", version=5)
+ *   → ReadSpec(type="read", version=5, operationType="read_metadata")
+ *   → ReadSpec(type="read", version=5, operationType="read_data")  // future
+ * }</pre>
+ *
+ * <h2>Fields</h2>
+ *
+ * <ul>
+ *   <li><b>version</b>: Snapshot version to read (null = latest). From spec file.
+ *   <li><b>expected_data</b>: Expected data file for validation (future). From spec file.
+ *   <li><b>operationType</b>: Operation variant ("read_metadata", "read_data"). Set during variant
+ *       generation, not in spec file.
+ * </ul>
+ *
+ * <h2>Usage</h2>
+ *
+ * <p>To run this workload, use {@link WorkloadSpec#getRunner(Engine)} to get the appropriate {@link
+ * ReadMetadataRunner} or ReadDataRunner based on the operation type.
+ *
+ * @see ReadMetadataRunner
  */
 public class ReadSpec extends WorkloadSpec {
 
-  /** The snapshot version to read. If null, the latest version must be read. */
+  /** The snapshot version to read. If null, the latest version will be read. From spec file. */
   @JsonProperty("version")
   private Long version;
 
+  /** Expected data file for validation (future feature). From spec file. */
   @JsonProperty("expected_data")
   private String expectedData;
 
+  /**
+   * The operation type for this variant ("read_metadata" or "read_data"). Set during variant
+   * generation via getBenchmarkVariants(), not present in spec files.
+   */
   @JsonProperty("operation_type")
   private String operationType;
 
@@ -93,6 +141,22 @@ public class ReadSpec extends WorkloadSpec {
     }
   }
 
+  /**
+   * Generates benchmark variants from this test case specification.
+   *
+   * <p>A single ReadSpec test case can generate multiple benchmark variants, one for each operation
+   * type. Each variant is a complete ReadSpec with the operation type set.
+   *
+   * <p>Currently generates:
+   *
+   * <ul>
+   *   <li>read_metadata variant - scans table metadata
+   * </ul>
+   *
+   * <p>Future: will also generate read_data variant when implemented.
+   *
+   * @return list of ReadSpec variants, each representing a separate benchmark run
+   */
   @Override
   public List<WorkloadSpec> getBenchmarkVariants() {
     // TODO: In the future, we will support the read_data operation as well.
@@ -101,10 +165,18 @@ public class ReadSpec extends WorkloadSpec {
     for (String opType : operationTypes) {
       ReadSpec specVariant =
           new ReadSpec(this.tableInfo, this.caseName, this.version, this.expectedData, opType);
-      System.out.println("Created ReadSpec variant: " + specVariant);
       out.add(specVariant);
     }
     return out;
+  }
+
+  /**
+   * Gets the operation type for this read variant.
+   *
+   * @return the operation type ("read_metadata" or "read_data")
+   */
+  public String getOperationType() {
+    return operationType;
   }
 
   @Override
