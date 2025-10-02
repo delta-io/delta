@@ -30,14 +30,20 @@ import java.util.Optional;
  *
  * <p>Different child classes are used to represent the different log types.
  *
- * <p>Any given type can be written as a file or represented inline as a {@link ColumnarBatch}.
+ * <p>Any given log type can be written as a file or represented inline and given to Kernel as a
+ * {@link ColumnarBatch}. That is: Kernel just needs to know how to parse and interpret a given log
+ * type (Kernel will of course treat Deltas differently than Checksums) as well as how to get that
+ * log type's bytes. This is why a given log type can be represented as either a file or inline.
+ *
+ * <p>For now, our APIs only allow creating {@link ParsedCatalogCommitData} inline, but we may
+ * change and expand this capability in the future.
  *
  * <p>The supported log types are:
  *
  * <ul>
- *   <li>Published Delta files: {@code 00000000000000000001.json}
- *   <li>Catalog Commit files: {@code _staged_commits/00000000000000000001.uuid-1234.json} *
- *   <li>Log compaction files: {@code 00000000000000000001.00000000000000000009.compacted.json} *
+ *   <li>Published Deltas: {@code 00000000000000000001.json}
+ *   <li>Catalog Commits: {@code _staged_commits/00000000000000000001.uuid-1234.json}
+ *   <li>Log compaction files: {@code 00000000000000000001.00000000000000000009.compacted.json}
  *   <li>Checksum files: {@code 00000000000000000001.crc}
  *   <li>Classic Checkpoint files: {@code 00000000000000000001.checkpoint.parquet}
  *   <li>V2 checkpoint files: {@code 00000000000000000001.checkpoint.uuid-1234.json}

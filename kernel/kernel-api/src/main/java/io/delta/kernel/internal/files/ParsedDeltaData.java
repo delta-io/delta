@@ -20,7 +20,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
-/** Base class for Delta commit files that represent atomic changes to a table. */
+/** Base class for Delta types that represent atomic changes to a table. */
 public abstract class ParsedDeltaData extends ParsedLogData {
 
   protected ParsedDeltaData(
