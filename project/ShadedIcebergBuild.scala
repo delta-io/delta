@@ -108,6 +108,9 @@ object ShadedIcebergBuild {
     "HiveTableOperations$1.class"
     ) =>
       MergeStrategy.first
+    case PathList("org", "slf4j", xs @ _*) =>
+      // SLF4J is provided by Spark runtime, exclude from assembly
+      MergeStrategy.discard
     case x => prev(x)
   }
 }
