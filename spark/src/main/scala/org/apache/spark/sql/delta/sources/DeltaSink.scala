@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.{Alias, Expression}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
@@ -237,9 +237,16 @@ case class DeltaSink(
 
     if (!needCast) return data
 
+    def exprForColumn(df: DataFrame, columnName: String): Expression =
+      if (sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_ESCAPE_COLUMN_NAMES)) {
+        df.col(SchemaUtils.quoteIdentifier(columnName)).expr
+      } else {
+        df.col(columnName).expr
+      }
+
     val castColumns = data.columns.map { columnName =>
       val castExpr = castIfNeeded(
-        fromExpression = data.col(columnName).expr,
+        fromExpression = exprForColumn(data, columnName),
         dataType = targetTypes(columnName),
         castingBehavior = CastByName(allowMissingStructField = true),
         columnName = columnName
