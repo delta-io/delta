@@ -9,12 +9,14 @@ import org.codehaus.jackson.map.ObjectMapper;
  * Represents metadata about a Delta table used in benchmark workloads.
  *
  * <p>This class contains information about a Delta table that is used by benchmark workloads to
- * locate and access the table data. It includes the table name, description, and the root path
- * where the table is stored.
+ * locate and access the table data. It includes the table name, description, the root path where
+ * the table is stored, and optional engine information.
  *
  * <p>TableInfo instances are typically loaded from JSON files in the workload specifications
  * directory structure. Each table directory should contain a {@code table_info.json} file with the
- * table metadata and a {@code delta} subdirectory containing the actual table data.
+ * table metadata and a {@code delta} subdirectory containing the actual table data. The table root
+ * path is the absolute path to the root of the table and is provided separately in {@link
+ * WorkloadSpec#fromJsonPath(String, String)}.
  *
  * <p>Example JSON structure:
  *
@@ -22,7 +24,7 @@ import org.codehaus.jackson.map.ObjectMapper;
  * {
  *   "name": "large-table",
  *   "description": "A large Delta table with multi-part checkpoints for performance testing",
- *   "table_root": "/path/to/table/delta"
+ *   "engineInfo": "Apache-Spark/3.5.1 Delta-Lake/3.1.0"
  * }
  * }</pre>
  */
@@ -34,6 +36,13 @@ public class TableInfo {
   /** A human-readable description of the table and its purpose. */
   @JsonProperty("description")
   public String description;
+
+  /**
+   * Information about the engine used to create this table (e.g., "Apache-Spark/3.5.1
+   * Delta-Lake/3.1.0"). Optional field to track which engine/version created the table data.
+   */
+  @JsonProperty("engineInfo")
+  public String engineInfo;
 
   /** The root path where the Delta table is stored. */
   @JsonProperty("table_root")
@@ -91,13 +100,19 @@ public class TableInfo {
   /**
    * Returns a string representation of this TableInfo.
    *
-   * <p>The string includes the table name and description, but excludes the table root path for
-   * security reasons (as it may contain sensitive path information).
+   * <p>The string includes the table name, description, and engine info, but excludes the table
+   * root path for security reasons (as it may contain sensitive path information).
    *
    * @return a string representation of this TableInfo
    */
   @Override
   public String toString() {
-    return "TableInfo{name='" + name + "', description='" + description + "'}";
+    return "TableInfo{name='"
+        + name
+        + "', description='"
+        + description
+        + "', engineInfo='"
+        + engineInfo
+        + "'}";
   }
 }
