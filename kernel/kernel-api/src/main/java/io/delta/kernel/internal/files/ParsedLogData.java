@@ -26,20 +26,23 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Abstract representation of any valid file type in a Delta log.
+ * Abstract representation of any valid log type in the Delta log.
  *
- * <p>Content may be stored as a file on disk or inline as a columnar batch in memory. Supported log
- * file types include:
+ * <p>Different child classes are used to represent the different log types.
+ *
+ * <p>Any given type can be written as a file or represented inline as a {@link ColumnarBatch}.
+ *
+ * <p>The supported log types are:
  *
  * <ul>
  *   <li>Published Delta files: {@code 00000000000000000001.json}
- *   <li>Catalog Commit files: {@code _staged_commits/00000000000000000001.uuid-1234.json}
- *   <li>Checkpoint files: {@code 00000000000000000001.checkpoint.parquet}
+ *   <li>Catalog Commit files: {@code _staged_commits/00000000000000000001.uuid-1234.json} *
+ *   <li>Log compaction files: {@code 00000000000000000001.00000000000000000009.compacted.json} *
+ *   <li>Checksum files: {@code 00000000000000000001.crc}
+ *   <li>Classic Checkpoint files: {@code 00000000000000000001.checkpoint.parquet}
  *   <li>V2 checkpoint files: {@code 00000000000000000001.checkpoint.uuid-1234.json}
  *   <li>Multi-part checkpoint files: {@code
  *       00000000000000000001.checkpoint.0000000001.0000000010.parquet}
- *   <li>Log compaction files: {@code 00000000000000000001.00000000000000000009.compacted.json}
- *   <li>Checksum files: {@code 00000000000000000001.crc}
  * </ul>
  */
 // TODO: Move this to be a public API

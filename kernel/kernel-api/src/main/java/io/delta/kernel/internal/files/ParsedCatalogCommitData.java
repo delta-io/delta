@@ -24,9 +24,12 @@ import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
 /**
- * A catalog commit Delta file represent an atomic change to a table.
+ * A catalog commit Delta file represents an atomic change to a table.
  *
- * <p>Example: {@code _delta_log/_staged_commits/00000000000000000001.uuid-1234.json}
+ * <p>Can be staged and written to a staged commit file, like so: {@code
+ * _delta_log/_staged_commits/00000000000000000001.uuid-1234.json}.
+ *
+ * <p>Can also be inline.
  */
 public final class ParsedCatalogCommitData extends ParsedDeltaData {
 
