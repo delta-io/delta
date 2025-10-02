@@ -41,10 +41,6 @@ public final class ParsedPublishedDeltaData extends ParsedDeltaData {
     return new ParsedPublishedDeltaData(version, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedPublishedDeltaData forInlineData(long version, ColumnarBatch inlineData) {
-    return new ParsedPublishedDeltaData(version, Optional.empty(), Optional.of(inlineData));
-  }
-
   private ParsedPublishedDeltaData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);
