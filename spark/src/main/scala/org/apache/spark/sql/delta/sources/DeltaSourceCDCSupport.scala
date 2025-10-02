@@ -213,6 +213,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           endOffset.reservoirVersion,
           groupedFileAndCommitInfoActions,
           spark,
+          catalogTableOpt,
           isStreaming = true)
         .fileChangeDf
     }
