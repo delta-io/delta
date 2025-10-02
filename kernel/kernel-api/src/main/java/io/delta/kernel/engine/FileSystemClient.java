@@ -94,4 +94,13 @@ public interface FileSystemClient {
    * @throws IOException for any IO error.
    */
   FileStatus getFileStatus(String path) throws IOException;
+
+  /**
+   * @throws java.nio.file.FileAlreadyExistsException if the destination file already exists and
+   *     {@code overwrite} is false.
+   */
+  default void copyFileAtomically(String srcPath, String destPath, boolean overwrite)
+      throws IOException {
+    throw new UnsupportedOperationException("Not yet implemented");
+  }
 }

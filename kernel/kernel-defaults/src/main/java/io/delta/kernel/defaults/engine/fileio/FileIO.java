@@ -106,4 +106,13 @@ public interface FileIO {
    * @return If no such value is present, an {@link Optional#empty()} is returned.
    */
   Optional<String> getConf(String confKey);
+
+  /**
+   * @throws java.nio.file.FileAlreadyExistsException if the destination file already exists and
+   *     {@code overwrite} is false.
+   */
+  default void copyFileAtomically(String srcPath, String destPath, boolean overwrite)
+      throws IOException {
+    throw new UnsupportedOperationException("Not yet implemented");
+  }
 }
