@@ -17,6 +17,7 @@
 package io.delta.kernel.internal.files;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
@@ -25,6 +26,20 @@ import java.util.Optional;
  */
 public abstract class ParsedCheckpointData extends ParsedLogData
     implements Comparable<ParsedCheckpointData> {
+
+  public static ParsedCheckpointData forFileStatus(FileStatus fileStatus) {
+    final String path = fileStatus.getPath();
+
+    if (FileNames.isClassicCheckpointFile(path)) {
+      return ParsedClassicCheckpointData.forFileStatus(fileStatus);
+    } else if (FileNames.isV2CheckpointFile(path)) {
+      return ParsedV2CheckpointData.forFileStatus(fileStatus);
+    } else if (FileNames.isMultiPartCheckpointFile(path)) {
+      return ParsedMultiPartCheckpointData.forFileStatus(fileStatus);
+    } else {
+      throw new IllegalArgumentException("Unknown checkpoint file type: " + path);
+    }
+  }
 
   /**
    * Enum representing checkpoint type priorities for comparison when multiple checkpoint types

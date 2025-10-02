@@ -57,20 +57,14 @@ public abstract class ParsedLogData {
   public static ParsedLogData forFileStatus(FileStatus fileStatus) {
     final String path = fileStatus.getPath();
 
-    if (FileNames.isPublishedDeltaFile(path)) {
-      return ParsedPublishedDeltaData.forFileStatus(fileStatus);
-    } else if (FileNames.isStagedDeltaFile(path)) {
-      return ParsedCatalogCommitData.forFileStatus(fileStatus);
+    if (FileNames.isCommitFile(path)) {
+      return ParsedDeltaData.forFileStatus(fileStatus);
+    } else if (FileNames.isCheckpointFile(path)) {
+      return ParsedCheckpointData.forFileStatus(fileStatus);
     } else if (FileNames.isLogCompactionFile(path)) {
       return ParsedLogCompactionData.forFileStatus(fileStatus);
     } else if (FileNames.isChecksumFile(path)) {
       return ParsedChecksumData.forFileStatus(fileStatus);
-    } else if (FileNames.isClassicCheckpointFile(path)) {
-      return ParsedClassicCheckpointData.forFileStatus(fileStatus);
-    } else if (FileNames.isV2CheckpointFile(path)) {
-      return ParsedV2CheckpointData.forFileStatus(fileStatus);
-    } else if (FileNames.isMultiPartCheckpointFile(path)) {
-      return ParsedMultiPartCheckpointData.forFileStatus(fileStatus);
     } else {
       throw new IllegalArgumentException("Unknown log file type: " + path);
     }

@@ -17,11 +17,24 @@
 package io.delta.kernel.internal.files;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
 /** Base class for Delta types that represent atomic changes to a table. */
 public abstract class ParsedDeltaData extends ParsedLogData {
+
+  public static ParsedDeltaData forFileStatus(FileStatus fileStatus) {
+    final String path = fileStatus.getPath();
+
+    if (FileNames.isPublishedDeltaFile(path)) {
+      return ParsedPublishedDeltaData.forFileStatus(fileStatus);
+    } else if (FileNames.isStagedDeltaFile(path)) {
+      return ParsedCatalogCommitData.forFileStatus(fileStatus);
+    } else {
+      throw new IllegalArgumentException("Unknown delta file type: " + path);
+    }
+  }
 
   protected ParsedDeltaData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {

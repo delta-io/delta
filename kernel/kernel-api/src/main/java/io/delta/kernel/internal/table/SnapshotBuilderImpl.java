@@ -121,7 +121,8 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     validateVersionAndTimestampMutuallyExclusive();
     validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
-    validateLogDataContainsOnlyRatifiedCommits(); // TODO: delta-io/delta#4765 support other types
+    // TODO: delta-io/delta#4765 support other types
+    validateLogDataContainsOnlyStagedRatifiedCommits();
     validateLogDataIsSortedContiguous();
   }
 
@@ -171,7 +172,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
   }
 
-  private void validateLogDataContainsOnlyRatifiedCommits() {
+  private void validateLogDataContainsOnlyStagedRatifiedCommits() {
     for (ParsedLogData logData : ctx.logDatas) {
       checkArgument(
           logData instanceof ParsedCatalogCommitData && logData.isFile(),
