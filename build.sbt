@@ -915,6 +915,9 @@ lazy val iceberg = (project in file("iceberg"))
         if !deltaIcebergSparkIncludePrefixes.exists { prefix =>
           s"org/apache/spark/${xs.mkString("/")}".startsWith(prefix) } =>
         MergeStrategy.discard
+      case PathList("org", "slf4j", xs @ _*) =>
+        // SLF4J is provided by Spark runtime, exclude from assembly
+        MergeStrategy.discard
       case PathList("scoverage", xs @ _*) =>
         MergeStrategy.discard
       case x =>

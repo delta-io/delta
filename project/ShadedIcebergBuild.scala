@@ -32,7 +32,6 @@ object ShadedIcebergBuild {
     ExclusionRule("org.apache.avro"),
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.databind"),
-    ExclusionRule("org.slf4j"),
   )
 
   val hadoopClientExclusionRules = List.apply(
