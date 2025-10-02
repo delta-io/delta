@@ -76,4 +76,60 @@ class CloseableIteratorSuite extends AnyFunSuite {
     assert(toList(result) === List(1, 3))
   }
 
+  test("CloseableIterator::flatMap -- simple case 1") {
+    val innerIter1 = toCloseableIter(Seq("a", "b"))
+    val innerIter2 = toCloseableIter(Seq("c"))
+    val innerIter3 = toCloseableIter(Seq("d", "e", "f"))
+    val iterOfIters = toCloseableIter(Seq(innerIter1, innerIter2, innerIter3))
+
+    val flattened = iterOfIters.flatMap(x => x)
+
+    assert(toList(flattened) === List("a", "b", "c", "d", "e", "f"))
+  }
+
+  test("CloseableIterator::flatMap -- simple case 2") {
+    val result = normalDataIter.flatMap { x => toCloseableIter(Seq(x, x * 10)) }
+    assert(toList(result) === List(1, 10, 2, 20, 3, 30, 4, 40, 5, 50))
+  }
+
+  test("CloseableIterator::flatMap -- handles empty inner iterators") {
+    val result = normalDataIter.flatMap { x =>
+      if (x % 2 == 0) {
+        toCloseableIter(Seq(x))
+      } else {
+        toCloseableIter(Seq.empty[Int])
+      }
+    }
+    assert(toList(result) === List(2, 4))
+  }
+
+  test("CloseableIterator::flatMap -- properly closes inner iterators") {
+    var closedCount = 0
+
+    val trackingIter = toCloseableIter(Seq(1, 2, 3)).flatMap { x =>
+      new CloseableIterator[Int] {
+        private val inner = toCloseableIter(Seq(x, x * 10))
+
+        override def hasNext: Boolean = inner.hasNext
+        override def next(): Int = inner.next()
+        override def close(): Unit = {
+          closedCount += 1
+          inner.close()
+        }
+      }
+    }
+
+    assert(toList(trackingIter) === List(1, 10, 2, 20, 3, 30)) // Consume all elements
+    assert(closedCount === 3) // Verify that all 3 inner iterators were closed
+  }
+
+  test("CloseableIterator::flatMap -- chains with other operations") {
+    val result = normalDataIter
+      .filter(x => x <= 3) // [1, 2, 3
+      .flatMap(x => toCloseableIter(Seq(x, x * 10))) // [1, 10, 2, 20, 3, 30]
+      .map(_ + 1) // [2, 11, 3, 21, 4, 31]
+
+    assert(toList(result) === List(2, 11, 3, 21, 4, 31))
+  }
+
 }

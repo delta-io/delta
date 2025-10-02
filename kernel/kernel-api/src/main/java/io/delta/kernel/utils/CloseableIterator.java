@@ -120,6 +120,42 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
   }
 
   /**
+   * Applies the given mapper function to each element and concatenates the resulting iterators.
+   *
+   * @param mapper A function that maps each element to a {@link CloseableIterator}
+   * @param <U> The type of elements in the resulting iterator
+   * @return A {@link CloseableIterator} containing all elements from the mapped iterators
+   */
+  default <U> CloseableIterator<U> flatMap(Function<T, CloseableIterator<U>> mapper) {
+    CloseableIterator<T> delegate = this;
+    return new CloseableIterator<U>() {
+      private CloseableIterator<U> currentIterator = null;
+
+      @Override
+      public boolean hasNext() {
+        while ((currentIterator == null || !currentIterator.hasNext()) && delegate.hasNext()) {
+          Utils.closeCloseablesSilently(currentIterator);
+          currentIterator = mapper.apply(delegate.next());
+        }
+        return currentIterator != null && currentIterator.hasNext();
+      }
+
+      @Override
+      public U next() {
+        if (!hasNext()) {
+          throw new NoSuchElementException();
+        }
+        return currentIterator.next();
+      }
+
+      @Override
+      public void close() throws IOException {
+        Utils.closeCloseables(currentIterator, delegate);
+      }
+    };
+  }
+
+  /**
    * Returns a new {@link CloseableIterator} that includes only the elements of this iterator for
    * which the given {@code mapper} function returns {@code true}.
    *
