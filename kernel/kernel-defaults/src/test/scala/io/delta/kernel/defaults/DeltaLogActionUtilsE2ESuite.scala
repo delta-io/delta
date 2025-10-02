@@ -187,4 +187,77 @@ class DeltaLogActionUtilsE2ESuite extends AnyFunSuite with TestUtils {
       }
     }
   }
+
+  test(
+    "getCommitsFromCommitFilesWithProtocolValidation: lazy loading (actions not read if getActions not called)") {
+    withTempDir { tableDir =>
+      val tablePath = tableDir.getAbsolutePath
+
+      // Create table with 3 inserts
+      spark.sql(s"CREATE TABLE delta.`$tablePath` (id INT, value STRING) USING delta")
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'v1')")
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (2, 'v2')")
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (3, 'v3')")
+
+      // Get commit files for all 3 versions
+      val commitFiles = listDeltaLogFilesAsIter(
+        defaultEngine,
+        java.util.Collections.singleton(FileNames.DeltaLogFileType.COMMIT),
+        new Path(tablePath),
+        1,
+        Optional.of(3L),
+        false /* mustBeRecreatable */
+      ).toInMemoryList
+
+      val actionSet = new java.util.HashSet[DeltaLogActionUtils.DeltaAction]()
+      actionSet.add(DeltaLogActionUtils.DeltaAction.ADD)
+
+      val commitsIter = DeltaLogActionUtils.getCommitsFromCommitFilesWithProtocolValidation(
+        defaultEngine,
+        tablePath,
+        commitFiles,
+        actionSet)
+
+      try {
+        var commitCount = 0
+        while (commitsIter.hasNext) {
+          val commit = commitsIter.next()
+          commitCount += 1
+
+          // Access metadata (should not trigger file read)
+          val version = commit.getVersion
+          val timestamp = commit.getTimestamp
+          assert(version >= 1 && version <= 3)
+          assert(timestamp > 0)
+
+          // Only read actions for version 2 (simulating skip of other versions)
+          if (version == 2) {
+            val actionsIter = commit.getActions
+            try {
+              var actionCount = 0
+              while (actionsIter.hasNext) {
+                val batch = actionsIter.next()
+                actionCount += batch.getSize
+              }
+              assert(actionCount > 0, s"Expected actions for version $version")
+            } finally {
+              actionsIter.close()
+            }
+          }
+          // For versions 1 and 3, we never call getActions()
+          // This simulates skipping commits without reading their files
+
+          commit.close()
+        }
+
+        assert(commitCount == 3, s"Expected 3 commits, got $commitCount")
+
+        // If lazy loading works correctly, only version 2's file was read
+        // (We can't easily verify this without instrumentation, but the test
+        // demonstrates the API usage pattern for skipping commits)
+      } finally {
+        commitsIter.close()
+      }
+    }
+  }
 }

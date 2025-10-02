@@ -453,63 +453,47 @@ public class DeltaLogActionUtils {
               // Extract version from file name
               long version = FileNames.deltaVersion(new Path(commitFile.getPath()));
 
-              // Read actions from this single commit file
-              CloseableIterator<ColumnarBatch> rawActionsIter =
-                  DeltaLogActionUtils.readCommitFiles(
-                      engine, Collections.singletonList(commitFile), readSchema);
+              // Use file modification time for timestamp (lazy approach)
+              // This avoids reading the file to extract commitInfo.inCommitTimestamp
+              long timestamp = commitFile.getModificationTime();
 
-              // Extract timestamp from the first batch (from commitInfo.inCommitTimestamp)
-              // Similar to ActionsIterator.combine(), we peek at the first batch to extract
-              // timestamp
-              final CloseableIterator<ColumnarBatch> rewoundActionsIter;
-              final long timestamp;
-              if (rawActionsIter.hasNext()) {
-                ColumnarBatch firstBatch = rawActionsIter.next();
-                // Try to extract inCommitTimestamp from commitInfo in the first batch
-                Optional<Long> inCommitTimestampOpt =
-                    io.delta.kernel.internal.util.InCommitTimestampUtils
-                        .tryExtractInCommitTimestamp(firstBatch);
-                timestamp =
-                    inCommitTimestampOpt.orElse(
-                        commitFile.getModificationTime()); // fallback to file mod time
-                // Rewind iterator by prepending the first batch
-                rewoundActionsIter =
-                    io.delta.kernel.internal.util.Utils.singletonCloseableIterator(firstBatch)
-                        .combine(rawActionsIter);
-              } else {
-                // Empty commit file (shouldn't happen, but be defensive)
-                rewoundActionsIter = rawActionsIter;
-                timestamp = commitFile.getModificationTime();
-              }
+              // Create a lazy supplier that will read the commit file only when getActions() is
+              // called
+              java.util.function.Supplier<CloseableIterator<ColumnarBatch>> actionsSupplier =
+                  () -> {
+                    // Read actions from this single commit file
+                    CloseableIterator<ColumnarBatch> rawActionsIter =
+                        DeltaLogActionUtils.readCommitFiles(
+                            engine, Collections.singletonList(commitFile), readSchema);
 
-              // Apply protocol validation and column dropping
-              CloseableIterator<ColumnarBatch> actionsIter =
-                  rewoundActionsIter.map(
-                      batch -> {
-                        // Validate protocol
-                        int protocolIdx = batch.getSchema().indexOf("protocol");
-                        ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-                        for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
-                          if (!protocolVector.isNullAt(rowId)) {
-                            Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                            TableFeatures.validateKernelCanReadTheTable(protocol, tablePath);
+                    // Apply protocol validation and column dropping
+                    return rawActionsIter.map(
+                        batch -> {
+                          // Validate protocol
+                          int protocolIdx = batch.getSchema().indexOf("protocol");
+                          ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+                          for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
+                            if (!protocolVector.isNullAt(rowId)) {
+                              Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+                              TableFeatures.validateKernelCanReadTheTable(protocol, tablePath);
+                            }
                           }
-                        }
 
-                        // Drop extra columns if needed
-                        ColumnarBatch batchToReturn = batch;
-                        if (shouldDropProtocolColumn) {
-                          batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
-                        }
-                        int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
-                        if (shouldDropCommitInfoColumn) {
-                          batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
-                        }
-                        return batchToReturn;
-                      });
+                          // Drop extra columns if needed
+                          ColumnarBatch batchToReturn = batch;
+                          if (shouldDropProtocolColumn) {
+                            batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
+                          }
+                          int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
+                          if (shouldDropCommitInfoColumn) {
+                            batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
+                          }
+                          return batchToReturn;
+                        });
+                  };
 
               return new io.delta.kernel.internal.commitrange.CommitActionsImpl(
-                  version, timestamp, actionsIter);
+                  version, timestamp, actionsSupplier);
             });
   }
 
