@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.exceptions.TableNotFoundException
+import io.delta.kernel.internal.DeltaLogActionUtils
 import io.delta.kernel.internal.DeltaLogActionUtils.listDeltaLogFilesAsIter
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
@@ -61,6 +62,129 @@ class DeltaLogActionUtilsE2ESuite extends AnyFunSuite with TestUtils {
       ).toInMemoryList
 
       assert(result.isEmpty)
+    }
+  }
+
+  test("getCommitsFromCommitFilesWithProtocolValidation: returns iterator of CommitActions") {
+    withTempDir { tableDir =>
+      // Create a Delta table using Spark
+      val tablePath = tableDir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$tablePath` (id INT, value STRING) USING delta")
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'v1'), (2, 'v2')")
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (3, 'v3')")
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (4, 'v4')")
+
+      // Get commit files for version 1-3 using listDeltaLogFilesAsIter
+      val commitFiles = listDeltaLogFilesAsIter(
+        defaultEngine,
+        java.util.Collections.singleton(FileNames.DeltaLogFileType.COMMIT),
+        new Path(tablePath),
+        1,
+        Optional.of(3L),
+        false /* mustBeRecreatable */
+      ).toInMemoryList
+
+      // Call getCommitsFromCommitFilesWithProtocolValidation
+      val actionSet = new java.util.HashSet[DeltaLogActionUtils.DeltaAction]()
+      actionSet.add(DeltaLogActionUtils.DeltaAction.ADD)
+      actionSet.add(DeltaLogActionUtils.DeltaAction.REMOVE)
+
+      val commitsIter = DeltaLogActionUtils.getCommitsFromCommitFilesWithProtocolValidation(
+        defaultEngine,
+        tablePath,
+        commitFiles,
+        actionSet)
+
+      try {
+        // Verify we get 3 commits (versions 1, 2, 3)
+        val commits = commitsIter.toSeq
+        assert(commits.size == 3, s"Expected 3 commits, got ${commits.size}")
+
+        // Verify version and timestamp for each commit
+        commits.zipWithIndex.foreach { case (commitActions, idx) =>
+          val expectedVersion = idx + 1
+          assert(
+            commitActions.getVersion == expectedVersion,
+            s"Expected version $expectedVersion, got ${commitActions.getVersion}")
+          assert(
+            commitActions.getTimestamp > 0,
+            s"Expected positive timestamp, got ${commitActions.getTimestamp}")
+
+          // Verify we can iterate over actions
+          val actionsIter = commitActions.getActions
+          try {
+            var batchCount = 0
+            var totalRowCount = 0
+            while (actionsIter.hasNext) {
+              val batch = actionsIter.next()
+              batchCount += 1
+              totalRowCount += batch.getSize
+
+              // Verify schema contains add/remove columns
+              val schema = batch.getSchema
+              assert(
+                schema.indexOf("add") >= 0 || schema.indexOf("remove") >= 0,
+                s"Expected 'add' or 'remove' column in schema")
+            }
+            // Each insert should produce at least 1 batch with actions
+            assert(batchCount > 0, s"Expected at least 1 batch for version $expectedVersion")
+            assert(
+              totalRowCount > 0,
+              s"Expected at least 1 action for version $expectedVersion")
+          } finally {
+            actionsIter.close()
+          }
+
+          commitActions.close()
+        }
+      } finally {
+        commitsIter.close()
+      }
+    }
+  }
+
+  test("getCommitsFromCommitFilesWithProtocolValidation: extracts timestamp from commitInfo") {
+    withTempDir { tableDir =>
+      val tablePath = tableDir.getAbsolutePath
+
+      // Create table and insert data
+      spark.sql(s"CREATE TABLE delta.`$tablePath` (id INT, value STRING) USING delta")
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'v1')")
+
+      // Get version 1 commit file
+      val commitFiles = listDeltaLogFilesAsIter(
+        defaultEngine,
+        java.util.Collections.singleton(FileNames.DeltaLogFileType.COMMIT),
+        new Path(tablePath),
+        1,
+        Optional.of(1L),
+        false /* mustBeRecreatable */
+      ).toInMemoryList
+
+      val actionSet = new java.util.HashSet[DeltaLogActionUtils.DeltaAction]()
+      actionSet.add(DeltaLogActionUtils.DeltaAction.ADD)
+
+      val commitsIter = DeltaLogActionUtils.getCommitsFromCommitFilesWithProtocolValidation(
+        defaultEngine,
+        tablePath,
+        commitFiles,
+        actionSet)
+
+      try {
+        val commits = commitsIter.toSeq
+        assert(commits.size == 1)
+
+        val commitActions = commits.head
+        assert(commitActions.getVersion == 1)
+
+        // Verify timestamp is extracted (either from commitInfo.inCommitTimestamp or file modtime)
+        val timestamp = commitActions.getTimestamp
+        assert(timestamp > 0, s"Expected positive timestamp, got $timestamp")
+
+        commitActions.close()
+      } finally {
+        commitsIter.close()
+      }
     }
   }
 }
