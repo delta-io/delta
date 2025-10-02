@@ -33,8 +33,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.catalyst.expressions.BasePredicate;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
@@ -276,14 +276,15 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public void filter(org.apache.spark.sql.connector.expressions.filter.Predicate[] predicates) {
 
     // Try to convert runtime predicates to catalyst expressions, then create predicate evaluators
-    List<BasePredicate> evaluators = new ArrayList<>();
+    List<InterpretedPredicate> evaluators = new ArrayList<>();
     for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate : predicates) {
       // only the predicates on partition columns will be converted
       Optional<Expression> catalystExpr =
           dsv2PredicateToCatalystExpression(predicate, partitionSchema);
       if (catalystExpr.isPresent()) {
-        BasePredicate predicateEvaluator =
-            org.apache.spark.sql.catalyst.expressions.Predicate.create(catalystExpr.get());
+        InterpretedPredicate predicateEvaluator =
+            org.apache.spark.sql.catalyst.expressions.Predicate.createInterpreted(
+                catalystExpr.get());
         evaluators.add(predicateEvaluator);
       }
     }
