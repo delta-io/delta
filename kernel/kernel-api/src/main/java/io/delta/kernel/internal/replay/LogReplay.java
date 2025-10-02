@@ -24,7 +24,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.checksum.CRCInfo;
-import io.delta.kernel.internal.checksum.CachedCrcInfoResult;
+import io.delta.kernel.internal.checksum.CachedCrcInfo;
 import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -132,7 +132,7 @@ public class LogReplay {
       Path dataPath,
       Engine engine,
       Lazy<LogSegment> lazyLogSegment,
-      CachedCrcInfoResult previouslyCachedCrcInfo,
+      CachedCrcInfo cachedCrcInfo,
       SnapshotMetrics snapshotMetrics) {
     this.dataPath = dataPath;
 
@@ -140,10 +140,10 @@ public class LogReplay {
 
     // Lazy loading of CRC info only when needed.
     this.lazyLatestCrcInfo =
-        previouslyCachedCrcInfo.wasAttempted()
-            ? new Lazy<>(previouslyCachedCrcInfo::getCrcInfo) // Already computed, just return it!
+        cachedCrcInfo.wasCrcReadAttempted()
+            ? new Lazy<>(cachedCrcInfo::getCrcReadAttemptResult)
             : new Lazy<>(
-                () -> // Not computed yet, do the work
+                () -> // CRC read not yet, do the work now
                 getLogSegment()
                         .getLastSeenChecksum()
                         .flatMap(
@@ -151,6 +151,7 @@ public class LogReplay {
                                 snapshotMetrics.loadCrcTotalDurationTimer.time(
                                     () -> ChecksumReader.tryReadChecksumFile(engine, crcFile))));
 
+    // TODO: Refactor DomainMetadata loading to static utility, just like P & M loading
     // Lazy loading of domain metadata only when needed
     this.lazyActiveDomainMetadataMap =
         new Lazy<>(

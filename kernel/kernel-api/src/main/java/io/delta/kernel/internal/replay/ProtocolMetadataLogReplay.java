@@ -22,7 +22,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checksum.CRCInfo;
-import io.delta.kernel.internal.checksum.CachedCrcInfoResult;
+import io.delta.kernel.internal.checksum.CachedCrcInfo;
 import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -51,14 +51,14 @@ public class ProtocolMetadataLogReplay {
   public static class Result {
     public final Protocol protocol;
     public final Metadata metadata;
-    public final CachedCrcInfoResult crcInfoUsed;
+    public final CachedCrcInfo cachedCrcInfo;
     private final long logFilesRead;
 
     public Result(
-        Protocol protocol, Metadata metadata, CachedCrcInfoResult crcInfoUsed, long logFilesRead) {
+        Protocol protocol, Metadata metadata, CachedCrcInfo cachedCrcInfo, long logFilesRead) {
       this.protocol = protocol;
       this.metadata = metadata;
-      this.crcInfoUsed = crcInfoUsed;
+      this.cachedCrcInfo = cachedCrcInfo;
       this.logFilesRead = logFilesRead;
     }
   }
@@ -87,7 +87,7 @@ public class ProtocolMetadataLogReplay {
         dataPath,
         snapshotMetrics.loadProtocolMetadataTotalDurationTimer.totalDurationMs(),
         logSegment.getVersion(),
-        buildCrcStatusMessage(logSegment, result.crcInfoUsed),
+        buildCrcStatusMessage(logSegment, result.cachedCrcInfo),
         result.logFilesRead);
 
     return result;
@@ -120,7 +120,7 @@ public class ProtocolMetadataLogReplay {
         final Protocol protocol = crcInfo.get().getProtocol();
         final Metadata metadata = crcInfo.get().getMetadata();
         return new Result(
-            protocol, metadata, CachedCrcInfoResult.success(crcInfo.get()), 0 /* logFilesRead */);
+            protocol, metadata, CachedCrcInfo.success(crcInfo.get()), 0 /* logFilesRead */);
       }
     }
 
@@ -157,7 +157,7 @@ public class ProtocolMetadataLogReplay {
               if (metadata != null) {
                 // Stop since we have found the latest Protocol and Metadata.
                 return new Result(
-                    protocol, metadata, CachedCrcInfoResult.fromLazy(lazyCrcInfo), logReadCount);
+                    protocol, metadata, CachedCrcInfo.fromLazy(lazyCrcInfo), logReadCount);
               }
 
               break; // We just found the protocol, exit this for-loop
@@ -179,7 +179,7 @@ public class ProtocolMetadataLogReplay {
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
                 return new Result(
-                    protocol, metadata, CachedCrcInfoResult.fromLazy(lazyCrcInfo), logReadCount);
+                    protocol, metadata, CachedCrcInfo.fromLazy(lazyCrcInfo), logReadCount);
               }
 
               break; // We just found the metadata, exit this for-loop
@@ -201,7 +201,7 @@ public class ProtocolMetadataLogReplay {
             }
 
             return new Result(
-                protocol, metadata, CachedCrcInfoResult.success(crcInfo.get()), logReadCount);
+                protocol, metadata, CachedCrcInfo.success(crcInfo.get()), logReadCount);
           }
         }
       }
@@ -219,12 +219,11 @@ public class ProtocolMetadataLogReplay {
           String.format("No metadata found at version %s", logSegment.getVersion()));
     }
 
-    return new Result(protocol, metadata, CachedCrcInfoResult.fromLazy(lazyCrcInfo), logReadCount);
+    return new Result(protocol, metadata, CachedCrcInfo.fromLazy(lazyCrcInfo), logReadCount);
   }
 
   /** Builds a descriptive status message about CRC file usage. */
-  private static String buildCrcStatusMessage(
-      LogSegment logSegment, CachedCrcInfoResult crcInfoUsed) {
+  private static String buildCrcStatusMessage(LogSegment logSegment, CachedCrcInfo crcInfoUsed) {
     final Optional<FileStatus> crcFileOpt = logSegment.getLastSeenChecksum();
 
     if (!crcFileOpt.isPresent()) {
@@ -233,9 +232,9 @@ public class ProtocolMetadataLogReplay {
 
     final String crcFileName = new Path(crcFileOpt.get().getPath()).getName();
 
-    if (crcInfoUsed.wasSuccessful()) {
+    if (crcInfoUsed.hasParsedCrc()) {
       return String.format("CRC file %s read successfully", crcFileName);
-    } else if (crcInfoUsed.wasAttempted()) {
+    } else if (crcInfoUsed.didCrcReadFail()) {
       return String.format("CRC file %s read failed", crcFileName);
     } else {
       return String.format("CRC file %s not read", crcFileName);

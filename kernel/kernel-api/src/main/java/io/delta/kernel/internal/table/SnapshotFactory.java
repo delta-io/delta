@@ -24,7 +24,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.checksum.CachedCrcInfoResult;
+import io.delta.kernel.internal.checksum.CachedCrcInfo;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -140,12 +140,12 @@ public class SnapshotFactory {
 
     Protocol protocol;
     Metadata metadata;
-    CachedCrcInfoResult crcInfo;
+    CachedCrcInfo crcInfo;
 
     if (ctx.protocolAndMetadataOpt.isPresent()) {
       protocol = ctx.protocolAndMetadataOpt.get()._1;
       metadata = ctx.protocolAndMetadataOpt.get()._2;
-      crcInfo = CachedCrcInfoResult.notAttempted(); // Not computed yet
+      crcInfo = CachedCrcInfo.notAttempted(); // Not computed yet
     } else {
       LogSegment logSegment = lazyLogSegment.get();
       ProtocolMetadataLogReplay.Result result =
@@ -153,7 +153,7 @@ public class SnapshotFactory {
               engine, logSegment, tablePath, snapshotCtx.getSnapshotMetrics());
       protocol = result.protocol;
       metadata = result.metadata;
-      crcInfo = result.crcInfoUsed;
+      crcInfo = result.cachedCrcInfo;
     }
 
     final LogReplay logReplay =

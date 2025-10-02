@@ -166,7 +166,7 @@ public class SnapshotManager {
             tablePath,
             engine,
             new Lazy<>(() -> initSegment),
-            protocolMetadataResult.crcInfoUsed,
+            protocolMetadataResult.cachedCrcInfo,
             snapshotContext.getSnapshotMetrics());
 
     final SnapshotImpl snapshot =
