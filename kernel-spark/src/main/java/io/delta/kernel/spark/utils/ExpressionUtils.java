@@ -493,6 +493,7 @@ public final class ExpressionUtils {
               if (valueOpt.isPresent()) {
                 values.add(valueOpt.get());
               } else {
+                // if any value in the IN list cannot be converted, return empty
                 return Optional.empty();
               }
             }
@@ -682,6 +683,8 @@ public final class ExpressionUtils {
         StructField field = schema.fields()[index];
         return Optional.of(new BoundReference(index, field.dataType(), field.nullable()));
       } catch (IllegalArgumentException e) {
+        // schema.fieldIndex(columnName) throws IllegalArgumentException if a field with the given
+        // name does not exist
         return Optional.empty();
       }
     } else if (expr instanceof LiteralValue) {
