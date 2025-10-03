@@ -37,8 +37,8 @@ class LogDataUtilsSuite extends AnyFunSuite with MockFileSystemClientUtils with 
 
   test("validateLogDataContainsOnlyRatifiedStagedCommits: valid list passes") {
     val logDatas = Seq(
-      ParsedDeltaData.forFileStatus(stagedCommitFile(1)),
-      ParsedDeltaData.forFileStatus(stagedCommitFile(2)))
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(1)),
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(2)))
     // Should not throw any exception
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(logDatas.asJava)
   }
@@ -46,14 +46,14 @@ class LogDataUtilsSuite extends AnyFunSuite with MockFileSystemClientUtils with 
   test("validateLogDataContainsOnlyRatifiedStagedCommits: inline delta fails") {
     intercept[IllegalArgumentException] {
       LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(
-        Seq(ParsedDeltaData.forInlineData(3, emptyInlineData)).asJava)
+        Seq(ParsedCatalogCommitData.forInlineData(3, emptyInlineData)).asJava)
     }
   }
 
   test("validateLogDataContainsOnlyRatifiedStagedCommits: published delta fails") {
     intercept[IllegalArgumentException] {
       LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(
-        Seq(ParsedDeltaData.forFileStatus(deltaFileStatus(1))).asJava)
+        Seq(ParsedPublishedDeltaData.forFileStatus(deltaFileStatus(1))).asJava)
     }
   }
 
