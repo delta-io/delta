@@ -126,10 +126,10 @@ public class SnapshotFactory {
    * </ul>
    */
   public static Lazy<Optional<CRCInfo>> createLazyChecksumFileLoaderWithMetrics(
-      Engine engine, LogSegment logSegment, SnapshotMetrics snapshotMetrics) {
+      Engine engine, Lazy<LogSegment> lazyLogSegment, SnapshotMetrics snapshotMetrics) {
     return new Lazy<>(
         () -> {
-          final Optional<FileStatus> crcFileOpt = logSegment.getLastSeenChecksum();
+          final Optional<FileStatus> crcFileOpt = lazyLogSegment.get().getLastSeenChecksum();
           if (!crcFileOpt.isPresent()) {
             return Optional.empty();
           }
@@ -185,7 +185,7 @@ public class SnapshotFactory {
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx, versionToLoad);
     final Lazy<Optional<CRCInfo>> lazyCrcInfo =
         createLazyChecksumFileLoaderWithMetrics(
-            engine, lazyLogSegment.get(), snapshotCtx.getSnapshotMetrics());
+            engine, lazyLogSegment, snapshotCtx.getSnapshotMetrics());
 
     Protocol protocol;
     Metadata metadata;

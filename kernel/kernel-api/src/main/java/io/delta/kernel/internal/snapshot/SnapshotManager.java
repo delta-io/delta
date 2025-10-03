@@ -158,23 +158,24 @@ public class SnapshotManager {
 
   private SnapshotImpl createSnapshot(
       LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
+    final Lazy<LogSegment> lazyLogSegment = new Lazy<>(() -> initSegment);
+
     final Lazy<Optional<CRCInfo>> lazyCrcInfo =
         SnapshotFactory.createLazyChecksumFileLoaderWithMetrics(
-            engine, initSegment, snapshotContext.getSnapshotMetrics());
+            engine, lazyLogSegment, snapshotContext.getSnapshotMetrics());
 
     final ProtocolMetadataLogReplay.Result protocolMetadataResult =
         ProtocolMetadataLogReplay.loadProtocolAndMetadata(
             engine, tablePath, initSegment, lazyCrcInfo, snapshotContext.getSnapshotMetrics());
 
     // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
-    final LogReplay logReplay =
-        new LogReplay(engine, tablePath, new Lazy<>(() -> initSegment), lazyCrcInfo);
+    final LogReplay logReplay = new LogReplay(engine, tablePath, lazyLogSegment, lazyCrcInfo);
 
     final SnapshotImpl snapshot =
         new SnapshotImpl(
             tablePath,
             initSegment.getVersion(),
-            new Lazy<>(() -> initSegment),
+            lazyLogSegment,
             logReplay,
             protocolMetadataResult.protocol,
             protocolMetadataResult.metadata,

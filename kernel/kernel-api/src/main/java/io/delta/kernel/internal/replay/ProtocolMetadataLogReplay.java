@@ -56,10 +56,6 @@ public class ProtocolMetadataLogReplay {
       this.metadata = metadata;
       this.logFilesRead = logFilesRead;
     }
-
-    public long getLogFilesRead() {
-      return logFilesRead;
-    }
   }
 
   /**
@@ -92,7 +88,7 @@ public class ProtocolMetadataLogReplay {
         dataPath,
         snapshotMetrics.loadProtocolMetadataTotalDurationTimer.totalDurationMs(),
         logSegment.getVersion(),
-        result.getLogFilesRead());
+        result.logFilesRead);
 
     return result;
   }
