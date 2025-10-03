@@ -532,6 +532,22 @@ trait AbstractTestUtils
   }
 
   /**
+   * Creates a temporary directory with Delta log structure (_delta_log, _staged_commits,
+   * _sidecars), passes (tablePath, logPath) to `f`, and deletes the directory after `f` returns.
+   */
+  protected def withTempDirAndAllDeltaSubDirs(f: (String, String) => Unit): Unit = {
+    val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
+    val deltaLogDir = new File(tempDir, "_delta_log")
+    deltaLogDir.mkdirs()
+    new File(deltaLogDir, "_staged_commits").mkdirs()
+    new File(deltaLogDir, "_sidecars").mkdirs()
+    try f(tempDir.getAbsolutePath, deltaLogDir.getAbsolutePath)
+    finally {
+      FileUtils.deleteDirectory(tempDir)
+    }
+  }
+
+  /**
    * Create a unique table name and drops it after completing `f`
    */
   protected def withTempTable[T](f: String => T): T = {
