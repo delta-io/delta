@@ -17,8 +17,7 @@
 package io.delta.unity
 
 import java.io.IOException
-import java.nio.file.Files
-import java.util.{Optional, UUID}
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -29,14 +28,12 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
-import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 import io.delta.unity.InMemoryUCClient.TableData
 
-import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.funsuite.AnyFunSuite
 
 class UCCatalogManagedCommitterSuite
@@ -45,29 +42,6 @@ class UCCatalogManagedCommitterSuite
     with TestFixtures
     with VectorTestUtils
     with MockFileSystemClientUtils {
-
-  /**
-   * Utility to create a temp table directory as well as the _delta_log and
-   * _delta_log/_staged_commits subdirectories. Executes the provided function `f` with the table
-   * and delta log paths.
-   *
-   * Note: Normal Kernel txn execution will create the staged commits directory. This method should
-   * only be used for mock unit tests that don't perform a full txn execution.
-   */
-  private def withTempTableAndLogPathAndStagedCommitFolderCreated(
-      f: (String, String) => Unit): Unit = {
-    val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
-    val tablePath = defaultEngine.getFileSystemClient.resolvePath(tempDir.getAbsolutePath)
-    val logPath = s"$tablePath/_delta_log"
-
-    // This also creates the _delta_log directory
-    defaultEngine.getFileSystemClient.mkdirs(s"$logPath/_staged_commits")
-
-    try f(tablePath, logPath)
-    finally {
-      FileUtils.deleteDirectory(tempDir)
-    }
-  }
 
   private def catalogManagedWriteCommitMetadata(
       version: Long,
@@ -78,15 +52,6 @@ class UCCatalogManagedCommitterSuite
       new KernelTuple2[Protocol, Metadata](
         protocolWithCatalogManagedSupport,
         basicPartitionedMetadata)))
-
-  private def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
-    import io.delta.kernel.defaults.integration.DataBuilderUtils
-    import io.delta.kernel.types.{StringType, StructField, StructType}
-
-    val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
-    val simpleRow = DataBuilderUtils.row(schema, elem)
-    singletonCloseableIterator(simpleRow)
-  }
 
   // ============================================================
   // ===================== Misc. Unit Tests =====================
@@ -222,7 +187,7 @@ class UCCatalogManagedCommitterSuite
   }
 
   test("writeDeltaFile returns real FileStatus") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
@@ -250,7 +215,7 @@ class UCCatalogManagedCommitterSuite
   // ===============================================================
 
   test("CATALOG_WRITE: protocol and metadata changes are passed to UC client") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       ucClient.createTableIfNotExistsOrThrow("ucTableId", new TableData(-1, ArrayBuffer[Commit]()))
@@ -284,7 +249,7 @@ class UCCatalogManagedCommitterSuite
   }
 
   test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API (no P&M change") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       // Set up UC client with initial table with maxRatifiedVersion = -1, numCommits = 0. This
       // represents a table that was just created and at version 0. We will then commit version 1.
@@ -314,7 +279,7 @@ class UCCatalogManagedCommitterSuite
 
       // Verify the file is in the correct location
       val expectedPattern =
-        s"^$tablePath/_delta_log/_staged_commits/00000000000000000001\\.[^.]+\\.json$$"
+        s"^file:$tablePath/_delta_log/_staged_commits/00000000000000000001\\.[^.]+\\.json$$"
       assert(stagedCommitFilePath.matches(expectedPattern))
 
       // Verify UC client was invoked and table was updated.
@@ -334,7 +299,7 @@ class UCCatalogManagedCommitterSuite
   }
 
   test("CATALOG_WRITE: IOException writing staged commit => CFE(retryable=true, conflict=false)") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
         override def writeJsonFileAtomically(
@@ -362,7 +327,7 @@ class UCCatalogManagedCommitterSuite
   }
 
   test("CATALOG_WRITE: i.d.s.c.CommitFailedException during UC commit => kernel CFE") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
         override def forceThrowInCommitMethod(): Unit =
@@ -388,7 +353,7 @@ class UCCatalogManagedCommitterSuite
   }
 
   test("CATALOG_WRITE: IOException during UC commit => CFE(retryable=true, conflict=false)") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
         override def forceThrowInCommitMethod(): Unit = throw new IOException("UC network error")
@@ -410,7 +375,7 @@ class UCCatalogManagedCommitterSuite
   }
 
   test("CATALOG_WRITE: i.d.s.c.u.UCCCE during UC commit => CFE(retryable=false, conflict=false)") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
         override def forceThrowInCommitMethod(): Unit = {
@@ -440,7 +405,7 @@ class UCCatalogManagedCommitterSuite
   // ================================================================
 
   test("CATALOG_CREATE: writes published delta file for version 0") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val testValue = "CREATE_TABLE_DATA_12345"
@@ -460,7 +425,7 @@ class UCCatalogManagedCommitterSuite
       val publishedDeltaFilePath = response.getCommitLogData.getFileStatus.getPath
 
       // Verify the published delta file exists and is version 0
-      val expectedFilePath = s"$logPath/00000000000000000000.json"
+      val expectedFilePath = s"file:$logPath/00000000000000000000.json"
       assert(publishedDeltaFilePath == expectedFilePath)
 
       val file = new java.io.File(new java.net.URI(publishedDeltaFilePath))
@@ -478,7 +443,7 @@ class UCCatalogManagedCommitterSuite
   }
 
   test("CATALOG_CREATE: IOException during write throws CFE(retryable=true, conflict=false)") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {

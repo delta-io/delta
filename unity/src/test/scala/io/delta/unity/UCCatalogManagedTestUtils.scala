@@ -19,9 +19,16 @@ package io.delta.unity
 import java.net.URI
 import java.util.Optional
 
+import scala.collection.JavaConverters._
+
+import io.delta.kernel.commit.PublishMetadata
+import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
+import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.test.ActionUtils
+import io.delta.kernel.utils.CloseableIterator
 import io.delta.storage.commit.Commit
 
 import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
@@ -56,5 +63,21 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
       client.commitWithDefaults(tableId, fakeURI, Optional.of(createCommit(v)))
     }
     client
+  }
+
+  def createPublishMetadata(
+      snapshotVersion: Long,
+      logPath: String,
+      catalogCommits: List[ParsedCatalogCommitData]): PublishMetadata = {
+    new PublishMetadata(snapshotVersion, logPath, catalogCommits.asJava)
+  }
+
+  def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
+    import io.delta.kernel.defaults.integration.DataBuilderUtils
+    import io.delta.kernel.types.{StringType, StructField, StructType}
+
+    val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
+    val simpleRow = DataBuilderUtils.row(schema, elem)
+    singletonCloseableIterator(simpleRow)
   }
 }
