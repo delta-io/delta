@@ -177,7 +177,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     case s: SparkException
       if materializedSourceRDD.nonEmpty &&
         MergeIntoMaterializeSourceShims.mergeMaterializedSourceRddBlockLostError(
-          materializedSourceRDD.get.id)) =>
+          materializedSourceRDD.get.id) =>
       logWarning(log"Materialized ${MDC(DeltaLogKeys.OPERATION, operation)} source RDD block " +
         log"lost. ${MDC(DeltaLogKeys.OPERATION, operation)} needs to be restarted. " +
         log"This was attempt number ${MDC(DeltaLogKeys.ATTEMPT, attempt)}.")
