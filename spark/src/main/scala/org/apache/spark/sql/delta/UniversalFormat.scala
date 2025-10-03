@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -200,33 +199,30 @@ object UniversalFormat extends DeltaLogging {
     var protocolToCheck = uniformProtocol.getOrElse(newestProtocol)
     var metadataToCheck = uniformMetadata.getOrElse(newestMetadata)
     changed = uniformProtocol.nonEmpty || uniformMetadata.nonEmpty
+    var protocolUpdate: Option[Protocol] = None
+    var metadataUpdate: Option[Metadata] = None
 
-    val (v1protocolUpdate, v1metadataUpdate) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      spark,
-      snapshot,
-      newestProtocol = protocolToCheck,
-      newestMetadata = metadataToCheck,
-      operation,
-      actions
+    val compatChecks: Seq[
+      (SparkSession, Snapshot, Protocol, Metadata, Option[DeltaOperations.Operation],
+        Seq[Action]) => (Option[Protocol], Option[Metadata])] = Seq(
+      IcebergCompatV1.enforceInvariantsAndDependencies,
+      IcebergCompatV2.enforceInvariantsAndDependencies
     )
-    protocolToCheck = v1protocolUpdate.getOrElse(protocolToCheck)
-    metadataToCheck = v1metadataUpdate.getOrElse(metadataToCheck)
-    changed ||= v1protocolUpdate.nonEmpty || v1metadataUpdate.nonEmpty
-
-    val (v2protocolUpdate, v2metadataUpdate) = IcebergCompatV2.enforceInvariantsAndDependencies(
-      spark,
-      snapshot,
-      newestProtocol = protocolToCheck,
-      newestMetadata = metadataToCheck,
-      operation,
-      actions
-    )
-    changed ||= v2protocolUpdate.nonEmpty || v2metadataUpdate.nonEmpty
+    compatChecks.foreach { compatCheck =>
+      val updates = compatCheck(
+        spark, snapshot, protocolToCheck, metadataToCheck, operation, actions
+      )
+      protocolUpdate = updates._1
+      metadataUpdate = updates._2
+      protocolToCheck = protocolUpdate.getOrElse(protocolToCheck)
+      metadataToCheck = metadataUpdate.getOrElse(metadataToCheck)
+      changed ||= protocolUpdate.nonEmpty || metadataUpdate.nonEmpty
+    }
 
     if (changed) {
       (
-        v2protocolUpdate.orElse(Some(protocolToCheck)),
-        v2metadataUpdate.orElse(Some(metadataToCheck))
+        protocolUpdate.orElse(Some(protocolToCheck)),
+        metadataUpdate.orElse(Some(metadataToCheck))
       )
     } else {
       (None, None)
@@ -304,7 +300,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    */
   def enqueueSnapshotForConversion(
     snapshotToConvert: Snapshot,
-    txn: OptimisticTransactionImpl): Unit
+    txn: CommittedTransaction): Unit
 
   /**
    * Perform a blocking conversion when performing an OptimisticTransaction
@@ -317,7 +313,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    * @return Converted Delta version and commit timestamp
    */
   def convertSnapshot(
-    snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)]
+    snapshotToConvert: Snapshot, txn: CommittedTransaction): Option[(Long, Long)]
 
   /**
    * Perform a blocking conversion for the given catalogTable
@@ -342,6 +338,12 @@ object IcebergConstants {
   val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
   val ICEBERG_PROVIDER = "iceberg"
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+
+  // Reserved field ID for the `_row_id` column
+  // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids
+  val ICEBERG_ROW_TRACKING_ROW_ID_FIELD_ID = 2147483540L
+  // Reserved field ID for the `_last_updated_sequence_number` column
+  val ICEBERG_ROW_TRACKING_LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID = 2147483539L
 }
 
 object HudiConstants {

@@ -137,12 +137,9 @@ class ShowDeltaTableColumnsSuite extends QueryTest
         e.getMessage()
           .contains(s"table or view `$fakeSchemaName`.`$tableName` cannot be found"))
 
-      e = intercept[AnalysisException] {
+      checkShowColumns(fakeSchemaName, schemaName, intercept[AnalysisException] {
         sql(s"SHOW COLUMNS IN $schemaName.$tableName IN $fakeSchemaName")
-      }
-      assert(e
-        .getMessage()
-        .contains(s"SHOW COLUMNS with conflicting databases: '$fakeSchemaName' != '$schemaName'"))
+      })
     }
   }
 
@@ -177,18 +174,25 @@ class ShowDeltaTableColumnsSuite extends QueryTest
 
   test("delta table: respect the Spark configuration on whether schema name is case sensitive") {
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {
-      assert(intercept[AnalysisException] {
+      checkShowColumns("DELTA", "delta", intercept[AnalysisException] {
         showDeltaColumnsTest(f => s"delta.`${f.toString}`", schemaName = Some("DELTA"))
-      }.getMessage().contains(s"SHOW COLUMNS with conflicting databases: 'DELTA' != 'delta'"))
+      })
 
-      assert(intercept[AnalysisException] {
+      checkShowColumns("delta", "DELTA", intercept[AnalysisException] {
         showDeltaColumnsTest(f => s"DELTA.`${f.toString}`", schemaName = Some("delta"))
-      }.getMessage().contains(s"SHOW COLUMNS with conflicting databases: 'delta' != 'DELTA'"))
+      })
     }
 
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
       showDeltaColumnsTest(f => s"delta.`${f.toString}`", schemaName = Some("DELTA"))
       showDeltaColumnsTest(f => s"DELTA.`${f.toString}`", schemaName = Some("delta"))
     }
+  }
+
+  private def checkShowColumns(schema1: String, schema2: String, e: AnalysisException): Unit = {
+    val expectedMessage = Seq(
+      s"SHOW COLUMNS with conflicting databases: '$schema1' != '$schema2'",  // SPARK-3.5
+      s"SHOW COLUMNS with conflicting namespaces: `$schema1` != `$schema2`") // SPARK-4.0
+    assert(expectedMessage.exists(e.getMessage().contains))
   }
 }

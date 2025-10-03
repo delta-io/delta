@@ -17,21 +17,29 @@
 package org.apache.spark.sql.delta.commands.convert
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, SerializableFileStatus, Snapshot => DeltaSnapshot}
+import org.apache.spark.sql.delta.DeltaErrors.cloneFromIcebergSourceWithPartitionEvolution
+import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PARTITION_SPECS
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{BaseTable, DataFile, DataFiles, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
+import org.apache.iceberg.{BaseTable, DataFile, DataFiles, DeleteFile, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
+import org.apache.iceberg.transforms.IcebergPartitionUtil
+import org.apache.iceberg.types.Type.TypeID
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.StructType
 
+
 class IcebergFileManifest(
     spark: SparkSession,
-    table: Table,
-    partitionSchema: StructType) extends ConvertTargetFileManifest with LoggingShims {
+    table: IcebergTableLike,
+    partitionSchema: StructType,
+    convertStats: Boolean = true) extends ConvertTargetFileManifest with LoggingShims {
 
   // scalastyle:off sparkimplicits
   import spark.implicits._
@@ -42,6 +50,20 @@ class IcebergFileManifest(
   private var _numFiles: Option[Long] = None
 
   private var _sizeInBytes: Option[Long] = None
+
+  private val specIdsToIfSpecHasNonBucketPartition =
+    table.specs().asScala.map { case (specId, spec) =>
+      specId.toInt -> IcebergPartitionUtil.hasNonBucketPartition(spec)
+  }
+
+  private val partitionEvolutionEnabled =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
+
+  private val statsAllowTypes: Set[TypeID] = IcebergStatsUtils.typesAllowStatsConversion(spark)
+  private val allowPartialStatsConverted: Boolean =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_CLONE_ICEBERG_ALLOW_PARTIAL_STATS
+    )
 
   val basePath = table.location()
 
@@ -78,20 +100,18 @@ class IcebergFileManifest(
       return spark.emptyDataset[ConvertTargetFile]
     }
 
-    // We do not support Iceberg Merge-On-Read using delete files and will by default
-    // throw errors when encountering them. This flag will bypass the check and ignore the delete
-    // files, and in other words, generating a CORRUPTED table. We keep this flag only for
-    // backward compatibility. No new use cases of this flag should be allowed.
-    val unsafeConvertMorTable =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
     val hasMergeOnReadDeletionFiles = table.currentSnapshot().deleteManifests(table.io()).size() > 0
-    if (hasMergeOnReadDeletionFiles && !unsafeConvertMorTable) {
+    if (hasMergeOnReadDeletionFiles) {
       throw new UnsupportedOperationException(
         s"Cannot support convert Iceberg table with row-level deletes." +
           s"Please trigger an Iceberg compaction and retry the command.")
     }
 
     // Localize variables so we don't need to serialize the File Manifest class
+    // Some contexts: Spark needs all variables in closure to be serializable
+    // while class members carry the entire class, so they require serialization of the class
+    // As IcebergFileManifest is not serializable,
+    // we localize member variables to avoid serialization of the class
     val localTable = table
     // We use the latest snapshot timestamp for all generated Delta AddFiles due to the fact that
     // retrieving timestamp for each DataFile is non-trivial time-consuming. This can be improved
@@ -101,21 +121,29 @@ class IcebergFileManifest(
     val shouldConvertPartition = spark.sessionState.conf
       .getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)
     val convertPartition = if (shouldConvertPartition) {
-      new IcebergPartitionConverter(localTable, partitionSchema)
+      new IcebergPartitionConverter(localTable, partitionSchema, partitionEvolutionEnabled)
     } else {
       null
     }
 
-    val manifestFiles = localTable
-      .currentSnapshot()
-      .dataManifests(localTable.io())
-      .asScala
-      .map(new ManifestFileWrapper(_))
-      .toSeq
-    spark
-      .createDataset(manifestFiles)
-      .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
-      .map { dataFile: DataFileWrapper =>
+    val shouldConvertStats = convertStats
+    val partialStatsConvertedEnabled = allowPartialStatsConverted
+    val statsAllowTypesSet = statsAllowTypes
+
+    val shouldCheckPartitionEvolution = !partitionEvolutionEnabled
+    val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
+    val tableSpecsSize = table.specs().size()
+
+    val dataFiles = loadIcebergFiles()
+
+    dataFiles.map { dataFile: DataFileWrapper =>
+        if (shouldCheckPartitionEvolution) {
+          IcebergFileManifest.validateLimitedPartitionEvolution(
+            dataFile.specId,
+            tableSpecsSize,
+            specIdsToIfSpecHasNonBucketPartitionMap
+          )
+        }
         ConvertTargetFile(
           SerializableFileStatus(
             path = dataFile.path,
@@ -125,14 +153,74 @@ class IcebergFileManifest(
           ),
           partitionValues = if (shouldConvertPartition) {
             Some(convertPartition.toDelta(dataFile.partition()))
+          } else None,
+          stats = if (shouldConvertStats) {
+            IcebergStatsUtils.icebergStatsToDelta(
+              localTable.schema,
+              dataFile,
+              statsAllowTypesSet,
+              shouldSkipForFile = (df: DataFile) => {
+                !partialStatsConvertedEnabled && IcebergStatsUtils.hasPartialStats(df)
+              }
+            )
           } else None
         )
       }
       .cache()
   }
 
+  private def loadIcebergFiles(): (
+    Dataset[DataFileWrapper]
+  ) = {
+    val localTable = table
+    val manifestFiles =
+          localTable
+            .currentSnapshot()
+            .dataManifests(localTable.io())
+            .asScala
+            .map(new ManifestFileWrapper(_))
+            .toSeq
+    val dataFiles =
+          spark
+            .createDataset(manifestFiles)
+            .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+    dataFiles
+  }
+
+
   override def close(): Unit = {
     fileSparkResults.map(_.unpersist())
     fileSparkResults = None
+  }
+}
+
+object IcebergFileManifest {
+  // scalastyle:off
+  /**
+   * Validates on partition evolution for proposed partitionSpecId
+   * We don't support the conversion of tables with partition evolution
+   *
+   * However, we allow one special case where
+   *  all data files have either no-partition or bucket-partition
+   *  regardless of multiple partition spec present in the table
+   */
+  // scalastyle:on
+  private def validateLimitedPartitionEvolution(
+      partitionSpecId: Int,
+      tableSpecsSize: Int,
+      specIdsToIfSpecHasNonBucketPartition: mutable.Map[Int, Boolean]): Unit = {
+    if (hasPartitionEvolved(
+      partitionSpecId, tableSpecsSize, specIdsToIfSpecHasNonBucketPartition)
+    ) {
+      throw cloneFromIcebergSourceWithPartitionEvolution()
+    }
+  }
+
+  private def hasPartitionEvolved(
+      partitionSpecID: Int,
+      tableSpecsSize: Int,
+      specIdsToIfSpecHasNonBucketPartition: mutable.Map[Int, Boolean]): Boolean = {
+    val isSpecPartitioned = specIdsToIfSpecHasNonBucketPartition(partitionSpecID)
+    isSpecPartitioned && tableSpecsSize > 1
   }
 }

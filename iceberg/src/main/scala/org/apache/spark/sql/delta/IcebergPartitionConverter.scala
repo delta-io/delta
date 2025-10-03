@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
-import org.apache.iceberg.{PartitionData, PartitionField, Schema, StructLike, Table}
+import org.apache.iceberg.{PartitionData, PartitionField, PartitionSpec, Schema, StructLike, Table}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 import org.apache.iceberg.types.{Conversions, Type => IcebergType}
 import org.apache.iceberg.types.Type.{PrimitiveType => IcebergPrimitiveType, TypeID}
@@ -53,9 +53,10 @@ object IcebergPartitionConverter {
   //                         value, as the partField and partitionData from file1 have different
   //                         ordering and thus same index indicates different column.
   def physicalNameToPartitionField(
-      table: Table, partitionSchema: StructType): Map[String, PartitionField] =
+      table: IcebergTableLike, partitionSchema: StructType): Map[String, PartitionField] =
     table.spec().fields().asScala.collect {
-      case field if field.transform().toString != "void" =>
+      case field if field.transform().toString != "void" &&
+          !field.transform().toString.contains("bucket") =>
         DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> field
     }.toMap
 }
@@ -68,9 +69,20 @@ case class IcebergPartitionConverter(
   val timestampFormatter: TimestampFormatter =
       TimestampFormatter(ConvertUtils.timestampPartitionPattern, java.util.TimeZone.getDefault)
 
-  def this(table: Table, partitionSchema: StructType) =
+  def this(
+      table: IcebergTableLike,
+      partitionSchema: StructType,
+      partitionEvolutionEnabled: Boolean) =
     this(table.schema(),
-      IcebergPartitionConverter.physicalNameToPartitionField(table, partitionSchema))
+      // We only allow empty partition when partition evolution happened
+      // This is an extra safety mechanism as we should have already passed
+      // a non-bucket partitionSchema when table has >1 specs
+      if (table.specs().size() > 1 && !partitionEvolutionEnabled) {
+        Map.empty[String, PartitionField]
+      } else {
+        IcebergPartitionConverter.physicalNameToPartitionField(table, partitionSchema)
+      }
+    )
 
   /**
    * Convert an Iceberg [[PartitionData]] into a Map of (columnID -> partitionValue) used by Delta

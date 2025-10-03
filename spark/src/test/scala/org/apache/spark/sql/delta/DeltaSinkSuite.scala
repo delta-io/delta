@@ -21,13 +21,17 @@ import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.streaming.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
@@ -71,7 +75,9 @@ abstract class DeltaSinkTest
 
 class DeltaSinkSuite
   extends DeltaSinkTest
-  with DeltaColumnMappingTestUtils {
+  with DeltaColumnMappingTestUtils
+  with CoordinatedCommitsBaseSuite
+  with DeltaSQLTestUtils {
 
   import testImplicits._
 
@@ -615,6 +621,48 @@ class DeltaSinkSuite
     }
   }
 
+  test(
+    "DeltaSink.deltaLog is not initialized in DeltaSink constructor"
+  ) {
+    withTempTable(createTable = true) { tableName =>
+      val outputDir = DeltaLog.forTable(spark, TableIdentifier(tableName)).dataPath
+
+      // Create a DeltaSink instance directly
+      val deltaSink = new DeltaSink(
+        spark.sqlContext,
+        outputDir,
+        partitionColumns = Seq.empty[String],
+        outputMode = OutputMode.Append,
+        options = new DeltaOptions(Map(
+          "checkpointlocation" -> outputDir.toString,
+          "path" -> outputDir.toString
+        ), spark.sessionState.conf)
+      )
+
+      // Helper function to check if deltaLog is initialized using reflection
+      def isDeltaLogInitialized(sink: DeltaSink): Boolean = {
+        val fieldOpt = classOf[DeltaSink].getDeclaredFields.find(
+          f => f.getName.contains("deltaLog") && f.getType == classOf[DeltaLog])
+        assert(fieldOpt.isDefined, "deltaLog field not found")
+        fieldOpt.exists { field =>
+          field.setAccessible(true)
+          field.get(sink) != null
+        }
+      }
+
+      // Test that deltaLog is NOT initialized after constructor
+      assert(!isDeltaLogInitialized(deltaSink),
+        "deltaLog should not be initialized after constructor")
+    }
+  }
+}
+
+class DeltaSinkWithCoordinatedCommitsBatch1Suite extends DeltaSinkSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSinkWithCoordinatedCommitsBatch100Suite extends DeltaSinkSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
 
 abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite

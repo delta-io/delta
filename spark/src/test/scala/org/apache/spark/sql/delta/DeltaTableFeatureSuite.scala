@@ -22,6 +22,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -40,6 +41,13 @@ class DeltaTableFeatureSuite
   with DeltaSQLCommandTest {
 
   private lazy val testTableSchema = spark.range(1).schema
+  override protected def sparkConf: SparkConf = {
+    // All the drop feature tests below are targeting the drop feature with history truncation
+    // implementation. The fast drop feature implementation adds a new writer feature when dropping
+    // a feature and also does not require any waiting time. The fast drop feature implementation
+    // is tested extensively in the DeltaFastDropFeatureSuite.
+    super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+  }
 
   // This is solely a test hook. Users cannot create new Delta tables with protocol lower than
   // that of their current version.
@@ -483,7 +491,8 @@ class DeltaTableFeatureSuite
 
       val tableFeature =
         TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
-      assert(tableFeature.historyContainsFeature(spark, log.update()))
+      assert(tableFeature.historyContainsFeature(
+        spark, DeltaTableV2(spark, log.dataPath), log.update()))
 
       // Dropping feature should fail because the feature still has traces in deltas.
       val e = intercept[DeltaTableFeatureException] {

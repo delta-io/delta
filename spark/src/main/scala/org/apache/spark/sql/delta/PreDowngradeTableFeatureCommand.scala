@@ -20,17 +20,43 @@ import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
+import org.apache.spark.sql.delta.commands.backfill.RowTrackingUnBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
+import org.apache.spark.sql.functions.{approx_count_distinct, col, not}
+
+/**
+ * Used as the return type of `removeFeatureTracesIfNeeded`. The contents are the following:
+ *
+ * 1) performedChanges. True when the preDowngrade command performed a cleaning action.
+ *    False otherwise.
+ * 2) lastCommitVersionOpt. Optionally, it returns the version of the last commit. This is used as
+ *    a starting version for the protocol downgrade commit. Defining the last commit allows
+ *    to conflict resolve all the commits that occurred between the last pre-downgrade commit
+ *    and the protocol downgrade commit.
+ */
+sealed case class PreDowngradeStatus(
+    performedChanges: Boolean,
+    lastCommitVersionOpt: Option[Long] = None)
+
+object PreDowngradeStatus {
+  val DID_NOT_PERFORM_CHANGES = PreDowngradeStatus(performedChanges = false)
+  val PERFORMED_CHANGES = PreDowngradeStatus(performedChanges = true)
+}
 
 /**
  * A base class for implementing a preparation command for removing table features.
@@ -41,20 +67,18 @@ import org.apache.spark.sql.catalyst.analysis.ResolvedTable
  * See [[RemovableFeature.preDowngradeCommand]].
  */
 sealed abstract class PreDowngradeTableFeatureCommand {
-  /**
-   * Returns true when it performs a cleaning action. When no action was required
-   * it returns false.
-   */
-  def removeFeatureTracesIfNeeded(): Boolean
+  def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus
 }
 
 case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
   // To remove the feature we only need to remove the table property.
-  override def removeFeatureTracesIfNeeded(): Boolean = {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     // Make sure feature data/metadata exist before proceeding.
-    if (TestRemovableWriterFeature.validateRemoval(table.initialSnapshot)) return false
+    if (TestRemovableWriterFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
 
     if (DeltaUtils.isTesting) {
       recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
@@ -62,25 +86,38 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
 
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(
-      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
-    true
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(spark)
+    PreDowngradeStatus.PERFORMED_CHANGES
   }
+}
+
+case class TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus =
+    PreDowngradeStatus.PERFORMED_CHANGES
+}
+
+case class TestUnsupportedWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus =
+    PreDowngradeStatus.PERFORMED_CHANGES
 }
 
 case class TestWriterWithHistoryValidationFeaturePreDowngradeCommand(table: DeltaTableV2)
     extends PreDowngradeTableFeatureCommand
     with DeltaLogging {
   // To remove the feature we only need to remove the table property.
-  override def removeFeatureTracesIfNeeded(): Boolean = {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     // Make sure feature data/metadata exist before proceeding.
-    if (TestRemovableWriterWithHistoryTruncationFeature.validateRemoval(table.initialSnapshot)) {
-      return false
+    val snapshot = table.initialSnapshot
+    if (TestRemovableWriterWithHistoryTruncationFeature.validateDropInvariants(table, snapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
     }
 
     val properties = Seq(TestRemovableWriterWithHistoryTruncationFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(
-      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
-    true
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(spark)
+    PreDowngradeStatus.PERFORMED_CHANGES
   }
 }
 
@@ -88,9 +125,11 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
   // To remove the feature we only need to remove the table property.
-  override def removeFeatureTracesIfNeeded(): Boolean = {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     // Make sure feature data/metadata exist before proceeding.
-    if (TestRemovableReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
+    if (TestRemovableReaderWriterFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
 
     if (DeltaUtils.isTesting) {
       recordDeltaEvent(table.deltaLog, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
@@ -98,34 +137,205 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
 
     val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(
-      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
-    true
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(spark)
+    PreDowngradeStatus.PERFORMED_CHANGES
   }
 }
 
 case class TestLegacyWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand {
   /** Return true if we removed the property, false if no action was needed. */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
-    if (TestRemovableLegacyWriterFeature.validateRemoval(table.initialSnapshot)) return false
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    if (TestRemovableLegacyWriterFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
 
     val properties = Seq(TestRemovableLegacyWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(
-      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
-    true
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(spark)
+    PreDowngradeStatus.PERFORMED_CHANGES
   }
 }
 
 case class TestLegacyReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand {
   /** Return true if we removed the property, false if no action was needed. */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
-    if (TestRemovableLegacyReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    val snapshot = table.initialSnapshot
+    if (TestRemovableLegacyReaderWriterFeature.validateDropInvariants(table, snapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
 
     val properties = Seq(TestRemovableLegacyReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(
-      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
-    true
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(spark)
+    PreDowngradeStatus.PERFORMED_CHANGES
+  }
+}
+
+private[delta] class DeletionVectorsRemovalMetrics(
+    val numDeletionVectorsToRemove: Long,
+    val numDeletionVectorRowsToRemove: Long,
+    var dvTombstonesWithinRetentionPeriod: Long = 0L,
+    var addDVTombstonesTime: Long = 0L,
+    var downgradeTimeMs: Long = 0L)
+
+case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+
+  /**
+   * Create RemoveFiles (tombstones) that directly reference deletion vector within the retention
+   * period. These protect the latter from accidental removal from clients that do not support
+   * deletion vectors.
+   *
+   * Note, we always create the DV tombstones even for the drop feature with history
+   * truncation implementation. This is to protect against a corner case where the user run
+   * drop feature with fastDropFeature.enabled = false and then run again with
+   * fastDropFeature.enabled = true.
+   *
+   * @param checkIfSnapshotUpdatedSinceTs The timestamp to use for updating the snapshot.
+   * @param metrics The deletion vectors removal metrics. This function only updates the DV
+   *                tombstone related metrics.
+   */
+  private def generateDVTombstones(
+      spark: SparkSession,
+      checkIfSnapshotUpdatedSinceTs: Long,
+      metrics: DeletionVectorsRemovalMetrics): Unit = {
+    import scala.jdk.CollectionConverters._
+    import org.apache.spark.sql.delta.implicits._
+
+    if (!spark.conf.get(DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES)) return
+
+    val startTimeNs = System.nanoTime()
+    val snapshotToUse = table.update(checkIfUpdatedSinceTs = Some(checkIfSnapshotUpdatedSinceTs))
+
+    val deletionVectorPath =
+        DeletionVectorDescriptor.urlEncodedRelativePathIfExists(
+          deletionVectorCol = col("deletionVector"),
+          tablePath = table.deltaLog.dataPath)
+
+    val isInlineDeletionVector = DeletionVectorDescriptor.isInline(col("deletionVector"))
+
+    // SnapshotToUse.tombstones returns only the tombstones within the retention period. The
+    // default tombstone retention period is 7 days. Note, that if a RemoveFile contains
+    // DeletionVectorDescriptor, it is guaranteed it is not a DV Tombstone. Furthermore, we
+    // use distinct to deduplicate the DV references. This is because we merge DVs, and as a
+    // result, several AddFiles may point to the same DV file.
+    val removeFilesWithDVs = snapshotToUse.tombstones
+      .filter(col("deletionVector").isNotNull)
+      .filter(not(isInlineDeletionVector))
+      .select(deletionVectorPath.as("path"))
+      .filter(col("path").isNotNull)
+      .distinct()
+
+    // This is a union of the DV tombstones and the regular data file tombstones without DVs (we
+    // cannot tell the difference). We use it to identify which DV tombstones are already created.
+    val filesWithoutDVs = snapshotToUse.tombstones
+      .filter(col("deletionVector").isNull)
+      .select("path")
+
+    val dvTombstonePathsToAdd = removeFilesWithDVs
+      .join(filesWithoutDVs, "path", "left_anti")
+      .as[String]
+
+    val actionsToCommit = dvTombstonePathsToAdd.toLocalIterator().asScala.map { dvPath =>
+      // Disable scala style rules to ignore warning that RemoveFile files should never be
+      // instantiated directly.
+      // scalastyle:off
+      RemoveFile(
+        path = dvPath,
+        deletionTimestamp = Some(table.deltaLog.clock.getTimeMillis()),
+        dataChange = false)
+      // scalastyle:on
+    }
+
+    // We pay some overhead here to estimate the memory required to hold the results.
+    // Above some threshold we use commitLarge. This allows to use an iterator instead of
+    // materializing results in memory. However, it comes with some disadvantages: if there is a
+    // conflict the commit is not retried.
+    // A cheaper alternative would be to use snapshot.numDeletionVectorsOpt
+    // (right before the reorg in drop feature) but this does not capture deduplication as well as
+    // any reorgs that occurred before dropping DVs.
+    // We assume 1024 bytes are required per RemoveFile.
+    val tombstonesToAddCount =
+      dvTombstonePathsToAdd.select(approx_count_distinct("path")).as[Long].first
+
+    val tombstoneCountThreshold =
+      spark.conf.get(DeltaSQLConf.FAST_DROP_FEATURE_DV_TOMBSTONE_COUNT_THRESHOLD)
+
+    if (tombstonesToAddCount > tombstoneCountThreshold) {
+      table.startTransaction(Some(snapshotToUse)).commitLarge(
+        spark,
+        nonProtocolMetadataActions = actionsToCommit,
+        op = DeltaOperations.AddDeletionVectorsTombstones,
+        newProtocolOpt = None,
+        context = Map.empty,
+        metrics = Map("dvTombstonesWithinRetentionPeriod" -> tombstonesToAddCount.toString))
+    } else {
+      table.startTransaction(Some(snapshotToUse))
+        .commit(actionsToCommit.toList, DeltaOperations.AddDeletionVectorsTombstones)
+    }
+
+    metrics.addDVTombstonesTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+    metrics.dvTombstonesWithinRetentionPeriod = tombstonesToAddCount
+  }
+
+  private def reorgTable(spark: SparkSession) = {
+    // Wrap `table` in a ResolvedTable that can be passed to DeltaReorgTableCommand. The catalog &
+    // table ID won't be used by DeltaReorgTableCommand.
+    import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+    val catalog = table.spark.sessionState.catalogManager.currentCatalog.asTableCatalog
+    val tableId = Seq(table.name()).asIdentifier
+
+    DeltaReorgTableCommand(target = ResolvedTable.create(catalog, tableId, table))(Nil)
+      .run(table.spark)
+  }
+
+  /**
+   * We first remove the table feature property to prevent any transactions from committing
+   * new DVs. This will cause any concurrent transactions tox fail. Then, we run PURGE
+   * to remove existing DVs from the latest snapshot.
+   * Note, during the protocol downgrade phase we validate whether all invariants still hold.
+   * This should detect if any concurrent txns enabled the feature and/or added DVs again.
+   *
+   * @return Returns true if it removed DV metadata property and/or DVs. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(
+      spark: SparkSession): PreDowngradeStatus = {
+    val startTimeNs = table.deltaLog.clock.nanoTime()
+
+    // Latest snapshot looks clean. No action is required. We may proceed
+    // to the protocol downgrade phase.
+    val snapshot = table.update()
+    val tracesFound = !DeletionVectorsTableFeature.validateDropInvariants(table, snapshot)
+    if (tracesFound) {
+      val properties = Seq(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
+      AlterTableUnsetPropertiesDeltaCommand(
+        table, properties, ifExists = true, fromDropFeatureCommand = true).run(spark)
+
+      reorgTable(spark)
+    }
+
+    val metrics = new DeletionVectorsRemovalMetrics(
+      numDeletionVectorsToRemove = snapshot.numDeletionVectorsOpt.getOrElse(0L),
+      numDeletionVectorRowsToRemove = snapshot.numDeletedRecordsOpt.getOrElse(0L))
+
+    reorgTable(spark)
+
+    // Even if there no DV traces in the table we check if there are missing DV tombstones.
+    // This is to protect against an edge case where all DV traces are cleaned before invoking
+    // the drop feature command.
+    generateDVTombstones(spark, startTimeNs, metrics)
+
+    metrics.downgradeTimeMs =
+      TimeUnit.NANOSECONDS.toMillis(table.deltaLog.clock.nanoTime() - startTimeNs)
+
+    recordDeltaEvent(
+      table.deltaLog,
+      opType = "delta.deletionVectorsFeatureRemovalMetrics",
+      data = metrics)
+    PreDowngradeStatus(performedChanges = tracesFound)
   }
 }
 
@@ -139,13 +349,15 @@ case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
    * @return True if it changed checkpoint policy metadata property to classic.
    *         False otherwise.
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
 
-    if (V2CheckpointTableFeature.validateRemoval(table.initialSnapshot)) return false
+    if (V2CheckpointTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
 
     val startTimeNs = System.nanoTime()
     val properties = Map(DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.Classic.name)
-    AlterTableSetPropertiesDeltaCommand(table, properties).run(table.spark)
+    AlterTableSetPropertiesDeltaCommand(table, properties).run(spark)
 
     recordDeltaEvent(
       table.deltaLog,
@@ -154,7 +366,7 @@ case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
         Map(("downgradeTimeMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)))
     )
 
-    true
+    PreDowngradeStatus.PERFORMED_CHANGES
   }
 }
 
@@ -173,7 +385,7 @@ case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
    * @return true if any change to the metadata (the three properties listed above) was made.
    *         False otherwise.
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     val startTimeNs = System.nanoTime()
     val currentMetadata = table.initialSnapshot.metadata
     val currentTableProperties = currentMetadata.configuration
@@ -211,7 +423,7 @@ case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
           ) ++ provenancePropertiesPresenceLogs
 
     )
-    traceRemovalNeeded
+    PreDowngradeStatus(performedChanges = traceRemovalNeeded)
   }
 }
 
@@ -225,7 +437,8 @@ case class VacuumProtocolCheckPreDowngradeCommand(table: DeltaTableV2)
    * For downgrading the [[VacuumProtocolCheckTableFeature]], we don't need remove any traces, we
    * just need to remove the feature from the [[Protocol]].
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = false
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus =
+    PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
 }
 
 case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
@@ -244,7 +457,7 @@ case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
    *         if there were any unbackfilled commits that were backfilled.
    *         false otherwise.
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     val startTimeNs = System.nanoTime()
 
     var traceRemovalNeeded = false
@@ -260,7 +473,7 @@ case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
           CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS,
           ifExists = true,
           fromDropFeatureCommand = true
-        ).run(table.spark)
+        ).run(spark)
       } catch {
         case NonFatal(e) =>
           exceptionOpt = Some(e)
@@ -291,7 +504,7 @@ case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
       ) ++ propertyPresenceLogs
     )
     exceptionOpt.foreach(throw _)
-    traceRemovalNeeded
+    PreDowngradeStatus(performedChanges = traceRemovalNeeded)
   }
 }
 
@@ -308,14 +521,16 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
    *
    * @return Return true if files were rewritten or metadata was removed. False otherwise.
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
-    if (TypeWideningTableFeature.validateRemoval(table.initialSnapshot)) return false
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    if (TypeWideningTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
 
     val startTimeNs = System.nanoTime()
     val properties = Seq(DeltaConfigs.ENABLE_TYPE_WIDENING.key)
     AlterTableUnsetPropertiesDeltaCommand(
-      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
-    val numFilesRewritten = rewriteFilesIfNeeded()
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(spark)
+    val numFilesRewritten = rewriteFilesIfNeeded(spark)
     val metadataRemoved = removeMetadataIfNeeded()
 
     recordDeltaEvent(
@@ -327,7 +542,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
         "metadataRemoved" -> metadataRemoved
         )
     )
-    numFilesRewritten > 0 || metadataRemoved
+    PreDowngradeStatus(performedChanges = numFilesRewritten > 0 || metadataRemoved)
   }
 
   /**
@@ -335,7 +550,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
    * schema. These are all files not added or modified after the last type change.
    * @return Return the number of files rewritten.
    */
-  private def rewriteFilesIfNeeded(): Long = {
+  private def rewriteFilesIfNeeded(spark: SparkSession): Long = {
     if (!TypeWideningMetadata.containsTypeWideningMetadata(table.initialSnapshot.schema)) {
       return 0L
     }
@@ -343,7 +558,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     // Wrap `table` in a ResolvedTable that can be passed to DeltaReorgTableCommand. The catalog &
     // table ID won't be used by DeltaReorgTableCommand.
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
-    val catalog = table.spark.sessionState.catalogManager.currentCatalog.asTableCatalog
+    val catalog = spark.sessionState.catalogManager.currentCatalog.asTableCatalog
     val tableId = Seq(table.name()).asIdentifier
 
     val reorg = DeltaReorgTableCommand(
@@ -351,7 +566,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
       reorgTableSpec = DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None)
     )(Nil)
 
-    val rows = reorg.run(table.spark)
+    val rows = reorg.run(spark)
     val metrics = rows.head.getAs[OptimizeMetrics](1)
     metrics.numFilesRemoved
   }
@@ -389,12 +604,12 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
    * @return Returns true if it removed table property and/or has rewritten the data.
    *         False otherwise.
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
-    val spark = table.spark
-
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     // Latest snapshot looks clean. No action is required. We may proceed
     // to the protocol downgrade phase.
-    if (ColumnMappingTableFeature.validateRemoval(table.initialSnapshot)) return false
+    if (ColumnMappingTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
 
     recordDeltaOperation(
       table.deltaLog,
@@ -402,7 +617,7 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
       RemoveColumnMappingCommand(table.deltaLog, table.catalogTable)
         .run(spark, removeColumnMappingTableProperty = true)
     }
-    true
+    PreDowngradeStatus.PERFORMED_CHANGES
   }
 }
 
@@ -418,9 +633,9 @@ case class CheckConstraintsPreDowngradeTableFeatureCommand(table: DeltaTableV2)
    * representation). Instead, we ask the user to explicitly drop the constraints before the table
    * feature can be dropped.
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     val checkConstraintNames = Constraints.getCheckConstraintNames(table.initialSnapshot.metadata)
-    if (checkConstraintNames.isEmpty) return false
+    if (checkConstraintNames.isEmpty) return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
     throw DeltaErrors.cannotDropCheckConstraintFeature(checkConstraintNames)
   }
 }
@@ -449,20 +664,21 @@ case class CheckpointProtectionPreDowngradeCommand(table: DeltaTableV2)
    * expiration. This allows the drop process to proceed immediately after we cleanup the history
    * prior to requireCheckpointProtectionBeforeVersion.
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     val snapshot = table.initialSnapshot
 
-    if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot)) {
+    if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot, table.catalogTable)) {
       // Add a checkpoint here to make sure we can cleanup up everything before this commit.
       // This is because metadata cleanup operations, can only clean up to the latest checkpoint.
-      createEmptyCommitAndCheckpoint(table, System.nanoTime())
+      createEmptyCommitAndCheckpoint(table, table.deltaLog.clock.nanoTime())
 
       table.deltaLog.cleanUpExpiredLogs(
         snapshot,
+        table.catalogTable,
         deltaRetentionMillisOpt = Some(truncateHistoryLogRetentionMillis(snapshot.metadata)),
         cutoffTruncationGranularity = TruncationGranularity.MINUTE)
 
-      if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot)) {
+      if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot, table.catalogTable)) {
         throw DeltaErrors.dropCheckpointProtectionWaitForRetentionPeriod(
           table.initialSnapshot.metadata)
       }
@@ -471,10 +687,120 @@ case class CheckpointProtectionPreDowngradeCommand(table: DeltaTableV2)
     // If history is truncated we do not need the property anymore.
     val property = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
     AlterTableUnsetPropertiesDeltaCommand(
-      table, Seq(property), ifExists = true, fromDropFeatureCommand = true).run(table.spark)
+      table, Seq(property), ifExists = true, fromDropFeatureCommand = true).run(spark)
 
     // We did not do any changes that require history expiration. It is ok if the removed property
     // exists in history.
-    false
+    PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+  }
+}
+
+case class RedirectWriterOnlyPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+  /**
+   * We disable the feature by removing [[DeltaConfigs.REDIRECT_WRITER_ONLY]].
+   *
+   * @return True if the property is removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    // Make sure feature data/metadata exist before proceeding.
+    if (RedirectWriterOnlyFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+
+    val properties = Seq(DeltaConfigs.REDIRECT_WRITER_ONLY.key)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = false, fromDropFeatureCommand = true).run(spark)
+    PreDowngradeStatus.PERFORMED_CHANGES
+  }
+}
+
+case class RedirectReaderWriterPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+  /**
+   * We disable the feature by removing [[DeltaConfigs.REDIRECT_READER_WRITER]].
+   *
+   * @return True if the property is removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    // Make sure feature data/metadata exist before proceeding.
+    if (RedirectReaderWriterFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+
+    val properties = Seq(DeltaConfigs.REDIRECT_READER_WRITER.key)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = false, fromDropFeatureCommand = true).run(spark)
+    PreDowngradeStatus.PERFORMED_CHANGES
+  }
+}
+
+case class RowTrackingPreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+
+  /**
+   * Disabling the feature involves the following steps:
+   *
+   *  1) Set `delta.enableRowTracking` to false so clients do not expect anymore all files
+   *     to have row IDs.
+   *  2) Set `delta.rowTrackingSuspended` to true to suspend row ID generation.
+   *  3) Unbackfill all existing row IDs.
+   *
+   *  Note, the remaining relevant properties/metadataDomains are removed at the downgrade protocol
+   *  commit.
+   *
+   * @return True if the feature traces are removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    if (RowTrackingFeature.validateDropInvariants(table, table.update())) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+
+    val propertiesToSet = Map(
+      DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
+      DeltaConfigs.ROW_TRACKING_SUSPENDED.key -> "true")
+    AlterTableSetPropertiesDeltaCommand(table, propertiesToSet).run(spark)
+
+    val commitSeq = RowTrackingUnBackfillCommand(
+      table.deltaLog,
+      nameOfTriggeringOperation = DeltaOperations.OP_DROP_FEATURE,
+      table.catalogTable).run(spark)
+
+    PreDowngradeStatus(
+      performedChanges = true,
+      commitSeq.lastOption.map(_.getLong(0)))
+  }
+}
+
+case class DomainMetadataPreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Removes domain metadata from the table. In general, each feature should be responsible
+   * for removing its own domain metadata when dropped. The cleanup process here is to make sure
+   * the domainMetadata feature can be dropped in cases where domain metadata is leaked.
+   *
+   * Note, the domainMetadata feature can only be dropped when no dependent features are present
+   * in the table. This ensures that any domain metadata found on the table are leaked metadata.
+   *
+   * @return True if the feature traces are removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    val snapshot = table.update()
+    if (DomainMetadataTableFeature.validateDropInvariants(table, snapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+
+    val actionsToCommit = snapshot
+      .domainMetadata
+      .map(_.copy(removed = true))
+
+    table
+      .startTransaction()
+      .commit(actionsToCommit, DeltaOperations.DomainMetadataCleanup(actionsToCommit.length))
+    PreDowngradeStatus.PERFORMED_CHANGES
   }
 }

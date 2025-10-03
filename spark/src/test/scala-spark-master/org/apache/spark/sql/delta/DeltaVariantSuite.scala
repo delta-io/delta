@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 
 import org.apache.spark.{SparkException, SparkThrowable}
@@ -41,11 +42,6 @@ class DeltaVariantSuite
     with TestsStatistics {
 
   import testImplicits._
-
-  private def getProtocolForTable(table: String): Protocol = {
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-    deltaLog.unsafeVolatileSnapshot.protocol
-  }
 
   private def assertVariantTypeTableFeatures(
       tableName: String,
@@ -70,7 +66,7 @@ class DeltaVariantSuite
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
       assertVariantTypeTableFeatures(
-        "tbl", expectPreviewFeature = true, expectStableFeature = false)
+        "tbl", expectPreviewFeature = false, expectStableFeature = true)
     }
   }
 
@@ -94,47 +90,22 @@ class DeltaVariantSuite
     withTable("tbl") {
       sql("CREATE TABLE tbl(s STRING) USING delta")
       assert(getProtocolForTable("tbl") == Protocol(1, 2))
-
-      // Should throw error
-      val e = intercept[SparkThrowable] {
-        sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
-      }
-      // capture the existing protocol here.
-      // we will check the error message later in this test as we need to compare the
-      // expected schema and protocol
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-      val currentProtocol = deltaLog.unsafeVolatileSnapshot.protocol
-      val currentFeatures = currentProtocol.implicitlyAndExplicitlySupportedFeatures
-        .map(_.name)
-        .toSeq
-        .sorted
-        .mkString(", ")
-
-      // add table feature
-      sql(
-        s"ALTER TABLE tbl " +
-        s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
-      )
-
       sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
-
-      // check previously thrown error message
-      checkError(
-        e,
-        "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
-        parameters = Map(
-          "unsupportedFeatures" -> VariantTypePreviewTableFeature.name,
-          "supportedFeatures" -> currentFeatures
-        )
-      )
 
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
 
+      sql("ALTER TABLE tbl ADD COLUMN v2 STRUCT<v21 VARIANT>")
+      sql("INSERT INTO tbl (SELECT 'bar', " +
+        "parse_json(cast(id + 100 as string)), struct(parse_json(cast(id + 101 as string))) " +
+        "FROM range(1))")
+      checkAnswer(spark.table("tbl").selectExpr("v::int"), Seq(Row(99), Row(100)))
+      checkAnswer(spark.table("tbl").selectExpr("v2.v21::int"), Seq(Row(null), Row(101)))
+
       assert(
         getProtocolForTable("tbl") ==
-        VariantTypePreviewTableFeature.minProtocolVersion
-          .withFeature(VariantTypePreviewTableFeature)
+        VariantTypeTableFeature.minProtocolVersion
+          .withFeature(VariantTypeTableFeature)
           .withFeature(InvariantsTableFeature)
           .withFeature(AppendOnlyTableFeature)
       )
@@ -147,14 +118,116 @@ class DeltaVariantSuite
       sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
       assertVariantTypeTableFeatures(
-        "tbl", expectPreviewFeature = true, expectStableFeature = false)
+        "tbl", expectPreviewFeature = false, expectStableFeature = true)
       sql(
         s"ALTER TABLE tbl " +
-        s"SET TBLPROPERTIES('delta.feature.variantType' = 'supported')"
+        s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
       )
       assertVariantTypeTableFeatures(
         "tbl", expectPreviewFeature = true, expectStableFeature = true)
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+    }
+  }
+
+  test("creating a new variant table uses only the stable table feature") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
+      sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+      assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+      assertVariantTypeTableFeatures(
+        "tbl", expectPreviewFeature = false, expectStableFeature = true)
+    }
+  }
+
+  test("manually adding preview table feature does not require adding stable table feature") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING) USING delta")
+      sql(
+        s"ALTER TABLE tbl " +
+        s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
+      )
+
+      sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
+
+      sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+      assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+
+      assertVariantTypeTableFeatures(
+        "tbl",
+        expectPreviewFeature = true,
+        expectStableFeature = false
+      )
+    }
+  }
+
+  test("creating table with preview feature does not add stable feature") {
+    withTable("tbl") {
+      sql(s"""CREATE TABLE tbl(v VARIANT)
+              USING delta
+              TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"""
+      )
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+      assertVariantTypeTableFeatures(
+        "tbl",
+        expectPreviewFeature = true,
+        expectStableFeature = false
+      )
+    }
+  }
+
+  test("enabling 'FORCE_USE_PREVIEW_VARIANT_FEATURE' adds preview table feature for new table") {
+    withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "true") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
+        sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+        assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+        assertVariantTypeTableFeatures(
+          "tbl", expectPreviewFeature = true, expectStableFeature = false)
+      }
+    }
+  }
+
+  test("enabling 'FORCE_USE_PREVIEW_VARIANT_FEATURE' and adding a variant column adds the " +
+    "preview table feature") {
+    withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "true") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING) USING delta")
+
+        sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
+        sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+        assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+
+        sql("ALTER TABLE tbl ADD COLUMN v2 STRUCT<v21 VARIANT>")
+        sql("INSERT INTO tbl (SELECT 'bar', " +
+          "parse_json(cast(id + 100 as string)), struct(parse_json(cast(id + 101 as string))) " +
+          "FROM range(1))")
+        checkAnswer(spark.table("tbl").selectExpr("v::int"), Seq(Row(99), Row(100)))
+        checkAnswer(spark.table("tbl").selectExpr("v2.v21::int"), Seq(Row(null), Row(101)))
+
+        assertVariantTypeTableFeatures(
+          "tbl",
+          expectPreviewFeature = true,
+          expectStableFeature = false
+        )
+      }
+    }
+  }
+
+  test("enabling 'FORCE_USE_PREVIEW_VARIANT_FEATURE' on table with stable feature does not " +
+       "require adding preview feature") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
+      sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+      assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+      assertVariantTypeTableFeatures(
+        "tbl", expectPreviewFeature = false, expectStableFeature = true)
+
+      withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "true") {
+        sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+        assert(spark.table("tbl").selectExpr("v::int").count == 2)
+        assertVariantTypeTableFeatures(
+          "tbl", expectPreviewFeature = false, expectStableFeature = true)
+      }
     }
   }
 
@@ -305,8 +378,8 @@ class DeltaVariantSuite
         .selectExpr("tableFeatures")
         .collect()(0)
         .getAs[MutableSeq[String]](0)
-      assert(tableFeatures.find(f => f == VariantTypePreviewTableFeature.name).nonEmpty)
-      assert(tableFeatures.find(f => f == VariantTypeTableFeature.name).isEmpty)
+      assert(tableFeatures.find(f => f == VariantTypePreviewTableFeature.name).isEmpty)
+      assert(tableFeatures.find(f => f == VariantTypeTableFeature.name).nonEmpty)
     }
   }
 

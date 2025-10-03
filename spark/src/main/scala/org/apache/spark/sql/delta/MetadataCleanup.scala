@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.{Calendar, TimeZone}
 
+import scala.collection.immutable.NumericRange
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
@@ -25,12 +26,15 @@ import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, MINUTE, Trun
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.functions.{col, isnull, lit, not, when}
 
 private[delta] object TruncationGranularity extends Enumeration {
   type TruncationGranularity = Value
@@ -40,6 +44,11 @@ private[delta] object TruncationGranularity extends Enumeration {
 /** Cleans up expired Delta table metadata. */
 trait MetadataCleanup extends DeltaLogging {
   self: DeltaLog =>
+
+  protected type VersionRange = NumericRange.Inclusive[Long]
+
+  protected def versionRange(start: Long, end: Long): VersionRange =
+    NumericRange.inclusive[Long](start = start, end = end, step = 1)
 
   /** Whether to clean up expired log files and checkpoints. */
   def enableExpiredLogCleanup(metadata: Metadata): Boolean =
@@ -54,20 +63,23 @@ trait MetadataCleanup extends DeltaLogging {
     DeltaConfigs.getMilliSeconds(interval)
   }
 
-  override def doLogCleanup(snapshotToCleanup: Snapshot): Unit = {
-    if (enableExpiredLogCleanup(snapshot.metadata)) {
-      cleanUpExpiredLogs(snapshotToCleanup)
+  override def doLogCleanup(
+      snapshotToCleanup: Snapshot,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    if (enableExpiredLogCleanup(unsafeVolatileSnapshot.metadata)) {
+      cleanUpExpiredLogs(snapshotToCleanup, catalogTableOpt)
     }
   }
 
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
   private[delta] def cleanUpExpiredLogs(
       snapshotToCleanup: Snapshot,
+      catalogTableOpt: Option[CatalogTable] = None,
       deltaRetentionMillisOpt: Option[Long] = None,
       cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
     recordDeltaOperation(this, "delta.log.cleanup") {
       val retentionMillis =
-        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(snapshot.metadata))
+        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(unsafeVolatileSnapshot.metadata))
       val fileCutOffTime =
         truncateDate(clock.getTimeMillis() - retentionMillis, cutoffTruncationGranularity).getTime
       val formattedDate = fileCutOffTime.toGMTString
@@ -141,8 +153,8 @@ trait MetadataCleanup extends DeltaLogging {
   }
 
   /** Helper function for getting the version of a checkpoint or a commit. */
-  def getDeltaFileOrCheckpointVersion(filePath: Path): Long = {
-    require(isCheckpointFile(filePath) || isDeltaFile(filePath))
+  def getDeltaFileChecksumOrCheckpointVersion(filePath: Path): Long = {
+    require(isCheckpointFile(filePath) || isDeltaFile(filePath) || isChecksumFile(filePath))
     getFileVersion(filePath)
   }
 
@@ -157,30 +169,131 @@ trait MetadataCleanup extends DeltaLogging {
     if (latestCheckpoint.isEmpty) return Iterator.empty
     val threshold = latestCheckpoint.get.version - 1L
     val files = store.listFrom(listingPrefix(logPath, 0), newDeltaHadoopConf())
-      .filter(f => isCheckpointFile(f) || isDeltaFile(f))
+      .filter(f => isCheckpointFile(f) || isDeltaFile(f) || isChecksumFile(f))
 
     new BufferingLogDeletionIterator(
-      files, fileCutOffTime, threshold, getDeltaFileOrCheckpointVersion)
+      files, fileCutOffTime, threshold, getDeltaFileChecksumOrCheckpointVersion)
+  }
+
+  protected def checkpointExistsAtCleanupBoundary(deltaLog: DeltaLog, version: Long): Boolean = {
+    if (spark.conf.get(DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED)) {
+      return false
+    }
+
+    val upperBoundVersion = Some(CheckpointInstance(version = version + 1))
+    deltaLog
+      .findLastCompleteCheckpointBefore(upperBoundVersion)
+      .exists(_.version == version)
   }
 
   /**
    * Validates whether the metadata cleanup adheres to the CheckpointProtectionTableFeature
-   * requirements. Metadata cleanup is only allowed if we can clean up everything before
-   * requireCheckpointProtectionBeforeVersion. The implementation below scans the history
-   * until it finds a commit that satisfies the invariant.
+   * requirements. Metadata cleanup is only allowed if we can cleanup everything before
+   * requireCheckpointProtectionBeforeVersion. If this is not possible, we can still cleanup
+   * if there is already a checkpoint at the cleanup boundary version.
+   *
+   * If none of the invariants above are satisfied, we validate whether we support all
+   * protocols in the commit range we are planning to delete. If we encounter an unsupported
+   * protocol we skip the cleanup.
    */
   private def metadataCleanupAllowed(
       snapshot: Snapshot,
       fileCutOffTime: Long): Boolean = {
+    def expandVersionRange(currentRange: VersionRange, versionToCover: Long): VersionRange =
+      versionRange(currentRange.start.min(versionToCover), currentRange.end.max(versionToCover))
+
     val checkpointProtectionVersion =
       CheckpointProtectionTableFeature.getCheckpointProtectionVersion(snapshot)
     if (checkpointProtectionVersion <= 0) return true
 
-    def versionGreaterOrEqualToThreshold(file: FileStatus): Boolean =
-      getDeltaFileOrCheckpointVersion(file.getPath) >= checkpointProtectionVersion - 1
-
     val expiredDeltaLogs = listExpiredDeltaLogs(fileCutOffTime)
-    expiredDeltaLogs.isEmpty || expiredDeltaLogs.exists(versionGreaterOrEqualToThreshold)
+    if (expiredDeltaLogs.isEmpty) return true
+
+    val deltaLog = snapshot.deltaLog
+    val toCleanVersionRange = expiredDeltaLogs
+      .filter(isDeltaFile)
+      .collect { case DeltaFile(_, version) => version }
+      // Stop early if we cannot cleanup beyond the checkpointProtectionVersion.
+      // We include equality for the CheckpointProtection invariant check below.
+      // Assumes commit versions are continuous.
+      .takeWhile { _ <= checkpointProtectionVersion - 1 }
+      .foldLeft(versionRange(Long.MaxValue, 0L))(expandVersionRange)
+
+    // CheckpointProtectionTableFeature main invariant.
+    if (toCleanVersionRange.end >= checkpointProtectionVersion - 1) return true
+    // If we cannot delete until the checkpoint protection version. Check if a checkpoint already
+    // exists at the cleanup boundary. If it does, it is safe to clean up to the boundary.
+    if (checkpointExistsAtCleanupBoundary(deltaLog, toCleanVersionRange.end + 1L)) return true
+
+    // If the CheckpointProtectionTableFeature invariants do not hold, we must support all
+    // protocols for commits that we are cleaning up. Also, we have to support the first
+    // commit that we retain, because we will be creating a new checkpoint for that commit.
+    allProtocolsSupported(
+      deltaLog,
+      versionRange(toCleanVersionRange.start, toCleanVersionRange.end + 1L))
+  }
+
+  /**
+   * Validates whether the client supports read for all the protocols in the provided checksums
+   * as well as write for `versionThatRequiresWriteSupport`.
+   *
+   * @param deltaLog The log of the delta table.
+   * @param checksumsToValidate An iterator with the checksum files we need to validate. The client
+   *                            needs read support for all the encountered protocols.
+   * @param versionThatRequiresWriteSupport The version the client needs write support. This
+   *                                        is the version we are creating a new checkpoint.
+   * @param expectedChecksumFileCount The expected number of checksum files. If the iterator
+   *                                  contains less files, the function returns false.
+   * @return Returns false if there is a non-supported or null protocol in the provided checksums.
+   *         Returns true otherwise.
+   */
+  protected[delta] def allProtocolsSupported(
+      deltaLog: DeltaLog,
+      checksumsToValidate: Iterator[FileStatus],
+      versionThatRequiresWriteSupport: Long,
+      expectedChecksumFileCount: Long): Boolean = {
+    if (!spark.conf.get(DeltaSQLConf.ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED)) {
+      return false
+    }
+
+    val schemaToUse = Action.logSchema(Set("protocol"))
+    val supportedForRead = DeltaUDF.booleanFromProtocol(_.supportedForRead())(col("protocol"))
+    val supportedForWrite = DeltaUDF.booleanFromProtocol(_.supportedForWrite())(col("protocol"))
+    val supportedForReadAndWrite = supportedForRead && supportedForWrite
+    val supported =
+      when(col("version") === lit(versionThatRequiresWriteSupport), supportedForReadAndWrite)
+      .otherwise(supportedForRead)
+
+    val fileIndexOpt =
+      DeltaLogFileIndex(DeltaLogFileIndex.CHECKSUM_FILE_FORMAT, checksumsToValidate.toSeq)
+    val fileIndexSupportedOpt = fileIndexOpt.map { index =>
+      if (index.inputFiles.length != expectedChecksumFileCount) return false
+
+      deltaLog
+        .loadIndex(index, schemaToUse)
+        // If we find any CRC with no protocol definition we need to abort.
+        .filter(isnull(col("protocol")) || not(supported))
+        .take(1)
+        .isEmpty
+    }
+    fileIndexSupportedOpt.getOrElse(true)
+  }
+
+  protected[delta] def allProtocolsSupported(
+      deltaLog: DeltaLog,
+      versionRange: VersionRange): Boolean = {
+    // We only expect back filled commits in the range.
+    val checksumsToValidate = deltaLog
+      .listFrom(versionRange.start)
+      .collect { case ChecksumFile(fileStatus, version) => (fileStatus, version) }
+      .takeWhile { case (_, version) => version <= versionRange.end }
+      .map { case (fileStatus, _) => fileStatus }
+
+    allProtocolsSupported(
+      deltaLog,
+      checksumsToValidate,
+      versionThatRequiresWriteSupport = versionRange.end,
+      expectedChecksumFileCount = versionRange.end - versionRange.start + 1)
   }
 
   /**
@@ -398,15 +511,23 @@ trait MetadataCleanup extends DeltaLogging {
       getLatestCompleteCheckpointFromList(instances).isDefined
     }
 
+    // Iterate logs files in ascending order to find the earliest reliable checkpoint, for the same
+    // version, checkpoint is always processed before commit so that we can identify the candidate
+    // checkpoint first and then verify commits since the candidate's version (inclusive)
     store.listFrom(listingPrefix(logPath, 0L), hadoopConf)
       .map(_.getPath)
       .foreach {
-        case CheckpointFile(f, checkpointVersion) if earliestCheckpointVersionOpt.isEmpty =>
-          if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
-            // If it's a different checkpoint, clear the existing one.
-            currentCheckpointFiles.clear()
-          }
-          currentCheckpointFiles += f
+        case CheckpointFile(f, checkpointVersion)
+          // Invalidate the candidate if we observe missing commits before the current checkpoint.
+          // the incoming commit will invalidate the candidate as well, but then we miss the current
+          // checkpoint, which is also a valid candidate.
+          if earliestCheckpointVersionOpt.isEmpty || checkpointVersion > prevCommitVersion + 1 =>
+            earliestCheckpointVersionOpt = None
+            if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
+              // If it's a different checkpoint, clear the existing one.
+              currentCheckpointFiles.clear()
+            }
+            currentCheckpointFiles += f
         case DeltaFile(_, deltaVersion) =>
           if (earliestCheckpointVersionOpt.isEmpty && isCurrentCheckpointComplete) {
             // We have found a complete checkpoint, but we should not stop here. If a future

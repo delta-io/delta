@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.SparkSession
+
 object DeltaTimeTravelSpecShims {
 
   /**
@@ -36,10 +38,13 @@ object DeltaTimeTravelSpecShims {
    * @param newSpecOpt: The new [[DeltaTimeTravelSpec]] to be applied to the table
    */
   def validateTimeTravelSpec(
+      spark: SparkSession,
       currSpecOpt: Option[DeltaTimeTravelSpec],
       newSpecOpt: Option[DeltaTimeTravelSpec]): Unit = (currSpecOpt, newSpecOpt) match {
     case (Some(currSpec), Some(newSpec))
-      if currSpec.version != newSpec.version || currSpec.timestamp != newSpec.timestamp =>
+      if currSpec.version != newSpec.version  ||
+        currSpec.getTimestampOpt(spark.sessionState.conf).map(_.getTime) !=
+          newSpec.getTimestampOpt(spark.sessionState.conf).map(_.getTime) =>
         throw DeltaErrors.multipleTimeTravelSyntaxUsed
     case _ =>
   }

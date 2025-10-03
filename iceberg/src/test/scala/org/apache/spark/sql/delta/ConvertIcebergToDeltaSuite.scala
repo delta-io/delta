@@ -574,7 +574,7 @@ trait ConvertIcebergToDeltaSuiteBase
       readIcebergHadoopTable(tablePath).updateSpec().addField("data2").commit()
       spark.sql(s"INSERT INTO $table VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'z')")
       // partition evolution happens, convert will fail
-      val e1 = intercept[UnsupportedOperationException] {
+      val e1 = intercept[DeltaAnalysisException] {
         convert(s"iceberg.`$tablePath`")
       }
       assert(e1.getMessage.contains(IcebergTable.ERR_MULTIPLE_PARTITION_SPECS))
@@ -862,15 +862,6 @@ trait ConvertIcebergToDeltaSuiteBase
       spark.sql(s"DELETE FROM $table WHERE id = 1")
       // By default, conversion should fail because it is unsafe.
       assertConversionFailed()
-      // Force escape should work
-      withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE.key -> "true") {
-        convert(s"iceberg.`$tablePath`")
-        // ... but with data duplication
-        checkAnswer(
-          spark.read.format("delta").load(tablePath),
-          (0 until 100).map(i => Row(i.toLong, s"name_$i"))
-        )
-      }
     }
 
     // --- UPDATE

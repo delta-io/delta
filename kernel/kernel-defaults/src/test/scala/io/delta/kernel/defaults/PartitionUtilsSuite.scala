@@ -17,9 +17,10 @@
 package io.delta.kernel.defaults
 
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.utils.PartitionUtils
+
 import org.apache.spark.sql.functions.{col => sparkCol}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -38,6 +39,29 @@ class PartitionUtilsSuite extends AnyFunSuite with TestUtils with ExpressionTest
       .save(path)
   }
 
+  Seq("name", "id").foreach { mode =>
+    test(s"withPartitionColumns - read subset of partition cols with column mapping mode = $mode") {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getCanonicalPath
+        spark.sql(
+          s"""CREATE TABLE delta.`$tablePath`(c1 long, c2 STRING, p1 STRING, p2 LONG)
+             | USING delta PARTITIONED BY (p1, p2)
+             | TBLPROPERTIES(
+             |'delta.columnMapping.mode' = '$mode')
+             |""".stripMargin)
+        Seq.range(0, 5).foreach { i =>
+          spark.sql(s"insert into delta.`$tablePath` values ($i, '$i', '$i', $i)")
+        }
+
+        checkTable(
+          tablePath,
+          expectedAnswer =
+            Seq((0L, "0"), (1L, "1"), (2L, "2"), (3L, "3"), (4L, "4")).map(TestRow.fromTuple(_)),
+          readCols = Seq("p2", "c2"))
+      }
+    }
+  }
+
   test("partitionExists - input validation") {
     withTempDirAndEngine { (path, engine) =>
       createTableWithPartCols(path)
@@ -47,8 +71,7 @@ class PartitionUtilsSuite extends AnyFunSuite with TestUtils with ExpressionTest
       {
         val badPredicate = and(
           predicate("=", col("part1"), ofInt(0)),
-          predicate("=", col("col1"), ofInt(0))
-        )
+          predicate("=", col("col1"), ofInt(0)))
         val exMsg = intercept[IllegalArgumentException] {
           PartitionUtils.partitionExists(engine, snapshot, badPredicate)
         }.getMessage

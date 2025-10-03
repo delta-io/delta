@@ -22,8 +22,11 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.*;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.defaults.engine.DefaultParquetHandler;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.engine.ParquetHandler;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
@@ -114,7 +117,7 @@ public class BenchmarkParallelCheckpointReading {
     Table table = Table.forPath(engine, testTablePath);
 
     Snapshot snapshot = table.getLatestSnapshot(engine);
-    ScanBuilder scanBuilder = snapshot.getScanBuilder(engine);
+    ScanBuilder scanBuilder = snapshot.getScanBuilder();
     Scan scan = scanBuilder.build();
 
     // Scan state is not used, but get it so that we simulate the real use case.
@@ -143,15 +146,15 @@ public class BenchmarkParallelCheckpointReading {
   }
 
   private static Engine createEngine(int numberOfParallelThreads) {
-    Configuration hadoopConf = new Configuration();
+    FileIO fileIO = new HadoopFileIO(new Configuration());
     if (numberOfParallelThreads <= 0) {
-      return DefaultEngine.create(hadoopConf);
+      return DefaultEngine.create(fileIO);
     }
 
-    return new DefaultEngine(hadoopConf) {
+    return new DefaultEngine(fileIO) {
       @Override
       public ParquetHandler getParquetHandler() {
-        return new ParallelParquetHandler(hadoopConf, numberOfParallelThreads);
+        return new ParallelParquetHandler(fileIO, numberOfParallelThreads);
       }
     };
   }
@@ -165,27 +168,27 @@ public class BenchmarkParallelCheckpointReading {
    * default implementation.
    */
   static class ParallelParquetHandler extends DefaultParquetHandler {
-    private final Configuration hadoopConf;
+    private final FileIO fileIO;
     private final int numberOfParallelThreads;
 
-    ParallelParquetHandler(Configuration hadoopConf, int numberOfParallelThreads) {
-      super(hadoopConf);
-      this.hadoopConf = hadoopConf;
+    ParallelParquetHandler(FileIO fileIO, int numberOfParallelThreads) {
+      super(fileIO);
+      this.fileIO = fileIO;
       this.numberOfParallelThreads = numberOfParallelThreads;
     }
 
     @Override
-    public CloseableIterator<ColumnarBatch> readParquetFiles(
+    public CloseableIterator<FileReadResult> readParquetFiles(
         CloseableIterator<FileStatus> fileIter,
         StructType physicalSchema,
         Optional<Predicate> predicate)
         throws IOException {
-      return new CloseableIterator<ColumnarBatch>() {
+      return new CloseableIterator<FileReadResult>() {
         // Executor service will be closed as part of the returned `CloseableIterator`'s
         // close method.
         private final ExecutorService executorService = newFixedThreadPool(numberOfParallelThreads);
-        private Iterator<Future<List<ColumnarBatch>>> futuresIter;
-        private Iterator<ColumnarBatch> currentBatchIter;
+        private Iterator<Future<List<FileReadResult>>> futuresIter;
+        private Iterator<FileReadResult> currentBatchIter;
 
         @Override
         public void close() throws IOException {
@@ -211,7 +214,7 @@ public class BenchmarkParallelCheckpointReading {
         }
 
         @Override
-        public ColumnarBatch next() {
+        public FileReadResult next() {
           return currentBatchIter.next();
         }
 
@@ -219,23 +222,23 @@ public class BenchmarkParallelCheckpointReading {
           if (futuresIter != null) {
             return;
           }
-          List<Future<List<ColumnarBatch>>> futures = new ArrayList<>();
+          List<Future<List<FileReadResult>>> futures = new ArrayList<>();
           while (fileIter.hasNext()) {
-            String path = fileIter.next().getPath();
-            futures.add(executorService.submit(() -> parquetFileReader(path, physicalSchema)));
+            futures.add(
+                executorService.submit(() -> parquetFileReader(fileIter.next(), physicalSchema)));
           }
           futuresIter = futures.iterator();
         }
       };
     }
 
-    List<ColumnarBatch> parquetFileReader(String filePath, StructType readSchema) {
-      ParquetFileReader reader = new ParquetFileReader(hadoopConf);
+    List<FileReadResult> parquetFileReader(FileStatus fileStatus, StructType readSchema) {
+      ParquetFileReader reader = new ParquetFileReader(fileIO);
       try (CloseableIterator<ColumnarBatch> batchIter =
-          reader.read(filePath, readSchema, Optional.empty())) {
-        List<ColumnarBatch> batches = new ArrayList<>();
+          reader.read(fileStatus, readSchema, Optional.empty())) {
+        List<FileReadResult> batches = new ArrayList<>();
         while (batchIter.hasNext()) {
-          batches.add(batchIter.next());
+          batches.add(new FileReadResult(batchIter.next(), fileStatus.getPath()));
         }
         return batches;
       } catch (IOException e) {

@@ -23,32 +23,40 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.IntStream;
 
 public class TransactionStateRow extends GenericRow {
   private static final StructType SCHEMA =
       new StructType()
           .add("logicalSchemaString", StringType.STRING)
+          .add("physicalSchemaString", StringType.STRING)
           .add("partitionColumns", new ArrayType(StringType.STRING, false /* containsNull */))
           .add(
               "configuration",
               new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */))
-          .add("tablePath", StringType.STRING);
+          .add("tablePath", StringType.STRING)
+          .add("maxRetries", IntegerType.INTEGER);
 
   private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
       IntStream.range(0, SCHEMA.length())
           .boxed()
           .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
-  public static TransactionStateRow of(Metadata metadata, String tablePath) {
+  public static TransactionStateRow of(Metadata metadata, String tablePath, int maxRetries) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
+    valueMap.put(
+        COL_NAME_TO_ORDINAL.get("physicalSchemaString"), metadata.getPhysicalSchema().toJson());
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("maxRetries"), maxRetries);
     return new TransactionStateRow(valueMap);
   }
 
@@ -60,13 +68,25 @@ public class TransactionStateRow extends GenericRow {
    * Get the logical schema of the table from the transaction state {@link Row} returned by {@link
    * Transaction#getTransactionState(Engine)}}
    *
-   * @param engine {@link Engine} instance to use for parsing the schema
    * @param transactionState Transaction state state {@link Row}
    * @return Logical schema of the table as {@link StructType}
    */
-  public static StructType getLogicalSchema(Engine engine, Row transactionState) {
+  public static StructType getLogicalSchema(Row transactionState) {
     String serializedSchema =
         transactionState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
+    return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
+  }
+
+  /**
+   * Get the physical schema of the table from the transaction state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return Logical schema of the table as {@link StructType}
+   */
+  public static StructType getPhysicalSchema(Row transactionState) {
+    String serializedSchema =
+        transactionState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
     return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
   }
 
@@ -95,8 +115,35 @@ public class TransactionStateRow extends GenericRow {
   }
 
   /**
-   * Get the list of partition column names from the write state {@link Row} returned by {@link
+   * Get the iceberg compatibility enabled or not from the transaction state {@link Row} returned by
+   * {@link Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return True if iceberg compatibility is enabled, false otherwise.
+   */
+  public static boolean isIcebergCompatV3Enabled(Row transactionState) {
+    return Boolean.parseBoolean(
+        getConfiguration(transactionState)
+            .getOrDefault(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey(), "false"));
+  }
+
+  /**
+   * Get the column mapping mode from the transaction state {@link Row} returned by {@link
    * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState
+   * @return ColumnMapping mode as {@link ColumnMapping.ColumnMappingMode}
+   */
+  public static ColumnMapping.ColumnMappingMode getColumnMappingMode(Row transactionState) {
+    String columnMappingModeStr =
+        getConfiguration(transactionState)
+            .getOrDefault(TableConfig.COLUMN_MAPPING_MODE.getKey(), "none");
+    return ColumnMapping.ColumnMappingMode.fromTableConfig(columnMappingModeStr);
+  }
+
+  /**
+   * Get the list of partition column names from the transaction state {@link Row} returned by
+   * {@link Transaction#getTransactionState(Engine)}
    *
    * @param transactionState Transaction state state {@link Row}
    * @return List of partition column names according to the scan state.
@@ -107,7 +154,7 @@ public class TransactionStateRow extends GenericRow {
   }
 
   /**
-   * Get the table path from scan state {@link Row} returned by {@link
+   * Get the table path from transaction state {@link Row} returned by {@link
    * Transaction#getTransactionState(Engine)}
    *
    * @param transactionState Transaction state state {@link Row}
@@ -115,5 +162,13 @@ public class TransactionStateRow extends GenericRow {
    */
   public static String getTablePath(Row transactionState) {
     return transactionState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
+  }
+
+  /**
+   * Get the maxRetries from transaction state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   */
+  public static int getMaxRetries(Row transactionState) {
+    return transactionState.getInt(COL_NAME_TO_ORDINAL.get("maxRetries"));
   }
 }

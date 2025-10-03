@@ -23,19 +23,24 @@ import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Dataset, SaveMode, SparkSession}
@@ -55,7 +60,7 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
@@ -141,6 +146,10 @@ class DeltaAnalysis(session: SparkSession)
           CatalogTableType.EXTERNAL
         }
 
+
+      // Whether we are enabling Catalog-Owned via explicit property overrides.
+      var isEnablingCatalogOwnedViaExplicitPropertyOverrides: Boolean = false
+
       val catalogTableTarget =
         // If source table is Delta format
         if (src.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)) {
@@ -150,16 +159,37 @@ class DeltaAnalysis(session: SparkSession)
           // used on the source delta table, then the corresponding fields would be set for the
           // sourceTable and needs to be removed from the targetTable's configuration. The fields
           // will then be set in the targetTable's configuration internally after.
-          // Coordinated commits configurations from the source delta table should also be left out,
-          // since CREATE LIKE is similar to CLONE, and we do not copy the commit coordinator from
-          // the source table. If users want a commit coordinator for the target table, they can
+          // Coordinated commits/Catalog-Owned configurations from the source delta table should
+          // also be left out, since CREATE LIKE is similar to CLONE, and we do not copy the
+          // commit coordinator from the source table.
+          // If users want a commit coordinator for the target table, they can
           // specify the configurations in the CREATE LIKE command explicitly.
           val sourceMetadata = deltaLogSrc.initialSnapshot.metadata
+
+          // Catalog-Owned: Specifying the table UUID in the TBLPROPERTIES clause
+          // should be blocked.
+          CatalogOwnedTableUtils.validateUCTableIdNotPresent(property = ctl.properties)
+
+          // Check whether we are trying to enable Catalog-Owned via explicit property overrides.
+          // The reason to check this is, if the source table is a Catalog-Owned table, and
+          // we are also trying to enable Catalog-Owned for the target table - We do *NOT*
+          // want to filter out [[CatalogOwnedTableFeature]] from the source table. If we do that,
+          // the resulting target table's protocol will *NOT* have CatalogOwned table feature
+          // present though we have explicitly specified it in the TBLPROPERTIES clause.
+          // This only applies to cases where source table has Catalog-Owned enabled.
+          // It works as intended if source table is a normal delta table.
+          if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
+                configs = ctl.properties).contains(CatalogOwnedTableFeature)) {
+            isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
+          }
+
           val config =
             sourceMetadata.configuration.-("delta.columnMapping.maxColumnId")
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
               .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
               .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_)).toMap
+              // Catalog-Owned: Do not copy table UUID from source table
+              .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY).toMap
 
           new CatalogTable(
             identifier = targetTableIdentifier,
@@ -196,6 +226,25 @@ class DeltaAnalysis(session: SparkSession)
         } else {
           None
         }
+      // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table
+      //                except the certain case.
+      val protocolAfterFilteringCatalogOwnedFromSource = protocol match {
+        case Some(p) if !isEnablingCatalogOwnedViaExplicitPropertyOverrides =>
+          // Only filter out [[CatalogOwnedTableFeature]] when target table is not enabling
+          // CatalogOwned.
+          // E.g.,
+          // - CREATE TABLE t1 LIKE t2
+          //   - Filter CatalogOwned table feature out since target table is not enabling
+          //     CatalogOwned explicitly.
+          // - CREATE TABLE t1 LIKE t2 TBLPROPERTIES (
+          //     'delta.feature.catalogOwned-preview' = 'supported'
+          //   )
+          //   - Do not filter CatalogOwned table feature out if target table is enabling
+          //     CatalogOwned.
+          Some(p.removeFeature(targetFeature = CatalogOwnedTableFeature))
+        case _ =>
+          protocol
+      }
       val newDeltaCatalog = new DeltaCatalog()
       val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier)
       val newTable = newDeltaCatalog
@@ -209,7 +258,7 @@ class DeltaAnalysis(session: SparkSession)
         mode = saveMode,
         query = None,
         output = ctl.output,
-        protocol = protocol,
+        protocol = protocolAfterFilteringCatalogOwnedFromSource,
         tableByPath = isTableByPath)
 
     // INSERT OVERWRITE by ordinal and df.insertInto()
@@ -265,12 +314,7 @@ class DeltaAnalysis(session: SparkSession)
       }
       DeltaDynamicPartitionOverwriteCommand(r, d, adjustedQuery, o.writeOptions, o.isByName)
 
-    // Pull out the partition filter that may be part of the FileIndex. This can happen when someone
-    // queries a Delta table such as spark.read.format("delta").load("/some/table/partition=2")
-    case l @ DeltaTable(index: TahoeLogFileIndex) if index.partitionFilters.nonEmpty =>
-      Filter(
-        index.partitionFilters.reduce(And),
-        DeltaTableUtils.replaceFileIndex(l, index.copy(partitionFilters = Nil)))
+    case ResolveDeltaTableWithPartitionFilters(plan) => plan
 
     // SQL CDC table value functions "table_changes" and "table_changes_by_path"
     case stmt: CDCStatementBase if stmt.functionArgs.forall(_.resolved) =>
@@ -301,24 +345,26 @@ class DeltaAnalysis(session: SparkSession)
           resolveCloneCommand(
             cloneStatement.target,
             CloneIcebergSource(
-              table.tableIdentifier, sparkTable = None, tableSchema = None, session),
+              metadataLocation = table.tableIdentifier.table,
+              tableNameOpt = None,
+              tablePoliciesOpt = None,
+              deltaSnapshotOpt = None,
+              session),
             cloneStatement)
 
         case DataSourceV2Relation(table, _, _, _, _)
             if table.getClass.getName.endsWith("org.apache.iceberg.spark.source.SparkTable") =>
-          val tableIdent = Try {
-            CatalystSqlParser.parseTableIdentifier(table.name())
-          } match {
-            case Success(ident) => ident
-            case Failure(_: ParseException) =>
-              // Fallback to 2-level identifier to make compatible with older Apache spark,
-              // this ident will NOT be used to look up the Iceberg tables later.
-              CatalystSqlParser.parseMultipartIdentifier(table.name()).tail.asTableIdentifier
-            case Failure(e) => throw e
-          }
+          val metadataLocation = ConvertUtils.getIcebergMetadataLocationFromSparkTable(table)
           resolveCloneCommand(
             cloneStatement.target,
-            CloneIcebergSource(tableIdent, Some(table), tableSchema = None, session),
+            CloneIcebergSource(
+              metadataLocation,
+              tableNameOpt = Some(table.name()),
+              tablePoliciesOpt =
+                None,
+              deltaSnapshotOpt = None,
+              session
+            ),
             cloneStatement)
 
         case u: UnresolvedRelation =>
@@ -388,8 +434,8 @@ class DeltaAnalysis(session: SparkSession)
               )
             case tUnstable: TemporallyUnstableInputException =>
               throw DeltaErrors.restoreTimestampGreaterThanLatestException(
-                tUnstable.userTimestamp.toString,
-                tUnstable.commitTs.toString
+                tUnstable.userTs.toString,
+                tUnstable.lastCommitTs.toString
               )
           }
           // TODO: Fetch the table version from deltaLog.update().version to guarantee freshness.
@@ -442,10 +488,7 @@ class DeltaAnalysis(session: SparkSession)
 
     case d: DescribeDeltaHistory if d.childrenResolved => d.toCommand
 
-    // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
-    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options)
-        if dsv2.getTagValue(DeltaRelation.KEEP_AS_V2_RELATION_TAG).isEmpty =>
-      DeltaRelation.fromV2Relation(d, dsv2, options)
+    case FallbackToV1DeltaRelation(v1Relation) => v1Relation
 
     case ResolvedTable(_, _, d: DeltaTableV2, _) if d.catalogTable.isEmpty && !d.tableExists =>
       // This is DDL on a path based table that doesn't exist. CREATE will not hit this path, most
@@ -579,7 +622,7 @@ class DeltaAnalysis(session: SparkSession)
       val v1TableName = child.identifier.asTableIdentifier
       namespace.foreach { ns =>
         if (v1TableName.database.exists(!resolver(_, ns.head))) {
-          throw QueryCompilationErrors.showColumnsWithConflictDatabasesError(ns, v1TableName)
+          throw DeltaThrowableHelperShims.showColumnsWithConflictDatabasesError(ns, v1TableName)
         }
       }
       ShowDeltaTableColumnsCommand(child)
@@ -698,7 +741,8 @@ class DeltaAnalysis(session: SparkSession)
     val isCreate = statement.isCreateCommand
     val ifNotExists = statement.ifNotExists
 
-    import session.sessionState.analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
+    val analyzer = session.sessionState.analyzer
+    import analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
     val targetLocation = statement.targetLocation
     val (saveMode, tableCreationMode) = resolveCreateTableMode(isCreate, isReplace, ifNotExists)
     // We don't use information in the catalog if the table is time travelled
@@ -776,7 +820,12 @@ class DeltaAnalysis(session: SparkSession)
         //             here we create a table to get the path, then overwrite it with the
         //             cloned table.
         val sourceConfig = sourceTbl.metadata.configuration.asJava
-        val newTable = catalog.createTable(ident, sourceTbl.schema, partitions, sourceConfig)
+        val newTable = catalog.createTable(
+            ident,
+            CatalogV2Util.structTypeToV2Columns(sourceTbl.schema),
+            partitions,
+            sourceConfig
+          )
         try {
           newTable match {
             case targetTable: DeltaTableV2 =>
@@ -933,7 +982,7 @@ class DeltaAnalysis(session: SparkSession)
         if s != t && sNull == tNull =>
         addCastsToArrayStructs(tblName, attr, s, t, sNull, typeWideningMode)
       case (s: AtomicType, t: AtomicType)
-        if typeWideningMode.shouldWidenType(fromType = t, toType = s) =>
+        if typeWideningMode.shouldWidenTo(fromType = t, toType = s) =>
         // Keep the type from the query, the target schema will be updated to widen the existing
         // type to match it.
         attr
@@ -965,7 +1014,8 @@ class DeltaAnalysis(session: SparkSession)
 
     if (typeWideningEnabled && schemaEvolutionEnabled) {
       TypeWideningMode.TypeEvolution(
-        uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(snapshot.metadata))
+        uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(snapshot.metadata),
+        allowAutomaticWidening = AllowAutomaticWideningMode.fromConf(conf))
     } else {
       TypeWideningMode.NoTypeWidening
     }
@@ -1105,7 +1155,7 @@ class DeltaAnalysis(session: SparkSession)
 
       case (StructField(name, sourceType: AtomicType, _, _),
             i @ TargetIndex(StructField(targetName, targetType: AtomicType, _, targetMetadata)))
-          if typeWideningMode.shouldWidenType(fromType = targetType, toType = sourceType) =>
+          if typeWideningMode.shouldWidenTo(fromType = targetType, toType = sourceType) =>
         Alias(
           GetStructField(parent, i, Option(name)),
           targetName)(explicitMetadata = Option(targetMetadata))
@@ -1443,7 +1493,7 @@ case class DeltaDynamicPartitionOverwriteCommand(
       deltaOptions,
       partitionColumns = Nil,
       deltaTable.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
-      Dataset.ofRows(sparkSession, query),
+      DataFrameUtils.ofRows(sparkSession, query),
       deltaTable.catalogTable
     ).run(sparkSession)
   }

@@ -23,12 +23,13 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
+import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
@@ -59,6 +60,12 @@ trait SnapshotDescriptor {
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
+
+  /** Whether the table has [[CatalogOwnedTableFeature]] enabled */
+  def isCatalogOwned: Boolean = {
+    version >= 0 &&
+      protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
+  }
 }
 
 /**
@@ -175,7 +182,7 @@ class Snapshot(
    * check, if we can reuse the post commit snapshot or if we need to create a new snapshot.
    * The update performs a listing and creates a new LogSegment and the criteria for
    * keeping or replacing the old snapshot is whether the old snapshot's LogSegment is equal
-   * to the LogSegment created by the update() call (see getSnapshotForLogSegmentInternal).
+   * to the LogSegment created by the update() call (see getSnapshotForLogSegment).
    *
    * If an unbackfilled commit has been backfilled before update() is called, the new LogSegment
    * would contain the backfilled version of this commit and so the old and new LogSegments are
@@ -368,7 +375,8 @@ class Snapshot(
 
   /** All unexpired tombstones. */
   def tombstones: Dataset[RemoveFile] = {
-    stateDS.where("remove IS NOT NULL").select(col("remove").as[RemoveFile])
+    // Temporary workarround for SPARK-51356.
+    stateDS.where("remove IS NOT NULL").map(_.remove)
   }
 
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
@@ -384,7 +392,7 @@ class Snapshot(
    * checksum file. If the checksum file is not present or if the protocol or metadata is missing
    * this will return None.
    */
-  protected def getProtocolMetadataAndIctFromCrc():
+  protected def getProtocolMetadataAndIctFromCrc(checksumOpt: Option[VersionChecksum]):
     Option[Array[ReconstructedProtocolMetadataAndICT]] = {
       if (!spark.sessionState.conf.getConf(
           DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED)) {
@@ -431,7 +439,7 @@ class Snapshot(
       Array[ReconstructedProtocolMetadataAndICT] = {
     import implicits._
 
-    getProtocolMetadataAndIctFromCrc().foreach { protocolMetadataAndIctFromCrc =>
+    getProtocolMetadataAndIctFromCrc(checksumOpt).foreach { protocolMetadataAndIctFromCrc =>
       return protocolMetadataAndIctFromCrc
     }
 
@@ -504,7 +512,7 @@ class Snapshot(
         .mapPartitions { iter =>
           val state: LogReplay =
             new InMemoryLogReplay(
-              localMinFileRetentionTimestamp,
+              Some(localMinFileRetentionTimestamp),
               localMinSetTransactionRetentionTimestamp)
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
@@ -601,22 +609,7 @@ class Snapshot(
 
   /** Return the set of properties of the table. */
   def getProperties: mutable.Map[String, String] = {
-    val base = new mutable.LinkedHashMap[String, String]()
-    metadata.configuration.foreach { case (k, v) =>
-      if (k != "path") {
-        base.put(k, v)
-      }
-    }
-    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
-    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
-    if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
-      val features = protocol.readerAndWriterFeatureNames.map(name =>
-        s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}$name" ->
-          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED)
-      base ++ features.toSeq.sorted
-    } else {
-      base
-    }
+    Snapshot.getProperties(metadata, protocol)
   }
 
   /** The [[CheckpointProvider]] for the underlying checkpoint */
@@ -641,7 +634,12 @@ class Snapshot(
    *   if the delta file for the current version is not found after backfilling.
    */
   def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
-    val tableCommitCoordinatorClient = getTableCommitCoordinatorForWrites.getOrElse {
+    val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
+      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(spark, catalogTableOpt, this)
+    } else {
+      getTableCommitCoordinatorForWrites
+    }
+    val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       return
     }
     val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
@@ -739,7 +737,7 @@ object Snapshot extends DeltaLogging {
     // to avoid bloating the .crc file.
     val numIndexedColsThreshold = spark.sessionState.conf
       .getConf(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_THRESHOLD_INDEXED_COLS)
-      .getOrElse(DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE)
+      .getOrElse(DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE)
     val configuredNumIndexCols =
       DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(snapshot.metadata)
     if (configuredNumIndexCols > numIndexedColsThreshold) return false
@@ -784,6 +782,40 @@ object Snapshot extends DeltaLogging {
       DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED)
     val shouldVerify = verificationConfEnabled || allFilesInCrcVerificationForceEnabled(spark)
     allFilesInCrcWritePathEnabled(spark, snapshot) && shouldVerify
+  }
+
+  /**
+   * Don't include [[AddFile]]s in CRC if this commit is modifying the schema of table in some
+   * way. This is to make sure we don't carry any DROPPED column from previous CRC to this CRC
+   * forever and can start fresh from next commit.
+   * If the oldSnapshot itself is missing, we don't incrementally compute the checksum.
+   */
+  private[delta] def shouldIncludeAddFilesInCrc(
+      spark: SparkSession, snapshot: Snapshot, metadata: Metadata): Boolean = {
+    allFilesInCrcWritePathEnabled(spark, snapshot) &&
+      (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
+  }
+
+  /**
+   * Return the set of properties for a given metadata and protocol.
+   */
+  def getProperties(metadata: Metadata, protocol: Protocol): mutable.Map[String, String] = {
+    val base = new mutable.LinkedHashMap[String, String]()
+    metadata.configuration.foreach { case (k, v) =>
+      if (k != "path") {
+        base.put(k, v)
+      }
+    }
+    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
+    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
+    if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+      val features = protocol.readerAndWriterFeatureNames.map(name =>
+        s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}$name" ->
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED)
+      base ++ features.toSeq.sorted
+    } else {
+      base
+    }
   }
 }
 

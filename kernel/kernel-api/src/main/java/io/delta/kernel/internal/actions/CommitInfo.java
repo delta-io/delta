@@ -16,15 +16,17 @@
 package io.delta.kernel.internal.actions;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.InvalidTableException;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
@@ -60,6 +62,35 @@ import org.slf4j.LoggerFactory;
  */
 public class CommitInfo {
 
+  //////////////////////////////////
+  // Static variables and methods //
+  //////////////////////////////////
+
+  public static final StructType FULL_SCHEMA =
+      new StructType()
+          .add("inCommitTimestamp", LongType.LONG, true /* nullable */)
+          .add("timestamp", LongType.LONG)
+          .add("engineInfo", StringType.STRING)
+          .add("operation", StringType.STRING)
+          .add(
+              "operationParameters",
+              new MapType(StringType.STRING, StringType.STRING, true /* nullable */))
+          .add("isBlindAppend", BooleanType.BOOLEAN, true /* nullable */)
+          .add("txnId", StringType.STRING)
+          .add(
+              "operationMetrics",
+              new MapType(StringType.STRING, StringType.STRING, true /* nullable */));
+
+  private static final StructType READ_SCHEMA =
+      new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
+
+  private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
+      IntStream.range(0, FULL_SCHEMA.length())
+          .boxed()
+          .collect(toMap(i -> FULL_SCHEMA.at(i).getName(), i -> i));
+
+  private static final Logger logger = LoggerFactory.getLogger(CommitInfo.class);
+
   public static CommitInfo fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
       return null;
@@ -85,27 +116,101 @@ public class CommitInfo {
             : VectorUtils.toJavaMap(children[7].getMap(rowId)));
   }
 
-  public static StructType FULL_SCHEMA =
-      new StructType()
-          .add("inCommitTimestamp", LongType.LONG, true /* nullable */)
-          .add("timestamp", LongType.LONG)
-          .add("engineInfo", StringType.STRING)
-          .add("operation", StringType.STRING)
-          .add(
-              "operationParameters",
-              new MapType(StringType.STRING, StringType.STRING, true /* nullable */))
-          .add("isBlindAppend", BooleanType.BOOLEAN, true /* nullable */)
-          .add("txnId", StringType.STRING)
-          .add(
-              "operationMetrics",
-              new MapType(StringType.STRING, StringType.STRING, true /* nullable */));
+  /**
+   * Returns the `inCommitTimestamp` of delta file at the requested version. Throws an exception if
+   * the delta file does not exist or does not have a commitInfo action or if the commitInfo action
+   * contains an empty `inCommitTimestamp`.
+   *
+   * <p><strong>WARNING: UNSAFE METHOD</strong> because this assumes that 00N.json is published.
+   */
+  // TODO: [delta-io/delta#5147] Can't just use the logPath & version on catalogManaged tables.
+  public static long unsafeGetRequiredIctFromPublishedDeltaFile(
+      Engine engine, Path logPath, long version) {
+    return extractRequiredIctFromCommitInfoOpt(
+        unsafeTryReadCommitInfoFromPublishedDeltaFile(engine, logPath, version), version, logPath);
+  }
 
-  private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
-      IntStream.range(0, FULL_SCHEMA.length())
-          .boxed()
-          .collect(toMap(i -> FULL_SCHEMA.at(i).getName(), i -> i));
+  /**
+   * Returns the `inCommitTimestamp` of the provided delta file. Throws an exception if the delta
+   * file does not exist or does not have a commitInfo action or if the commitInfo action contains
+   * an empty `inCommitTimestamp`. The delta file can be either a published or staged commit file.
+   */
+  public static long getRequiredIctFromDeltaFile(
+      Engine engine, Path tablePath, FileStatus deltaFileStatus, long version) {
+    checkArgument(
+        FileNames.isCommitFile(deltaFileStatus.getPath()), "Must provide a valid commit file");
+    return extractRequiredIctFromCommitInfoOpt(
+        tryReadCommitInfoFromDeltaFile(engine, deltaFileStatus), version, tablePath);
+  }
 
-  private static final Logger logger = LoggerFactory.getLogger(CommitInfo.class);
+  /**
+   * Returns the `inCommitTimestamp` of the given `commitInfoOpt` if it is defined. Throws an
+   * exception if `commitInfoOpt` is empty or contains an empty `inCommitTimestamp`.
+   */
+  // TODO: [delta-io/delta#5147] Can't just use the logPath & version on catalogManaged tables.
+  public static long extractRequiredIctFromCommitInfoOpt(
+      Optional<CommitInfo> commitInfoOpt, long version, Path dataPath) {
+    CommitInfo commitInfo =
+        commitInfoOpt.orElseThrow(
+            () -> DeltaErrors.tableWithIctMissingCommitInfo(dataPath.toString(), version));
+    return commitInfo.inCommitTimestamp.orElseThrow(
+        () -> DeltaErrors.tableWithIctMissingIct(dataPath.toString(), version));
+  }
+
+  /**
+   * Get the CommitInfo action (if available) from the delta file at the given logPath and version.
+   *
+   * <p><strong>WARNING: UNSAFE METHOD</strong> because this assumes that 00N.json is published.
+   */
+  // TODO: [delta-io/delta#5147] Can't just use the logPath & version on catalogManaged tables.
+  public static Optional<CommitInfo> unsafeTryReadCommitInfoFromPublishedDeltaFile(
+      Engine engine, Path logPath, long version) {
+    final FileStatus file =
+        FileStatus.of(
+            FileNames.deltaFile(logPath, version), /* path */
+            0, /* size */
+            0 /* modification time */);
+
+    return tryReadCommitInfoFromDeltaFile(engine, file);
+  }
+
+  /** Read the CommitInfo action (if available) from the given delta file. */
+  public static Optional<CommitInfo> tryReadCommitInfoFromDeltaFile(
+      Engine engine, FileStatus deltaFileStatus) {
+    try (CloseableIterator<ColumnarBatch> columnarBatchIter =
+        wrapEngineExceptionThrowsIO(
+            () ->
+                engine
+                    .getJsonHandler()
+                    .readJsonFiles(
+                        singletonCloseableIterator(deltaFileStatus), READ_SCHEMA, Optional.empty()),
+            "Reading the CommitInfo with schema=%s from delta file %s",
+            READ_SCHEMA,
+            deltaFileStatus.getPath())) {
+      while (columnarBatchIter.hasNext()) {
+        final ColumnarBatch columnarBatch = columnarBatchIter.next();
+        assert (columnarBatch.getSchema().equals(READ_SCHEMA));
+        final ColumnVector commitInfoVector = columnarBatch.getColumnVector(0);
+        for (int i = 0; i < commitInfoVector.getSize(); i++) {
+          if (!commitInfoVector.isNullAt(i)) {
+            CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, i);
+            if (commitInfo != null) {
+              return Optional.of(commitInfo);
+            }
+          }
+        }
+      }
+    } catch (IOException ex) {
+      throw new UncheckedIOException("Could not close iterator", ex);
+    }
+
+    logger.info("No CommitInfo found in delta file {}", deltaFileStatus.getPath());
+    return Optional.empty();
+  }
+
+  //////////////////////////////////
+  // Member variables and methods //
+  //////////////////////////////////
 
   private final long timestamp;
   private final String engineInfo;
@@ -125,22 +230,14 @@ public class CommitInfo {
       boolean isBlindAppend,
       String txnId,
       Map<String, String> operationMetrics) {
-    this.inCommitTimestamp = inCommitTimestamp;
+    this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
     this.timestamp = timestamp;
-    this.engineInfo = engineInfo;
-    this.operation = operation;
-    this.operationParameters = Collections.unmodifiableMap(operationParameters);
+    this.engineInfo = requireNonNull(engineInfo);
+    this.operation = requireNonNull(operation);
+    this.operationParameters = Collections.unmodifiableMap(requireNonNull(operationParameters));
     this.isBlindAppend = isBlindAppend;
-    this.txnId = txnId;
-    this.operationMetrics = operationMetrics;
-  }
-
-  public Optional<Long> getInCommitTimestamp() {
-    return inCommitTimestamp;
-  }
-
-  public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
-    this.inCommitTimestamp = inCommitTimestamp;
+    this.txnId = requireNonNull(txnId);
+    this.operationMetrics = Collections.unmodifiableMap(requireNonNull(operationMetrics));
   }
 
   public long getTimestamp() {
@@ -153,6 +250,30 @@ public class CommitInfo {
 
   public String getOperation() {
     return operation;
+  }
+
+  public Map<String, String> getOperationParameters() {
+    return operationParameters;
+  }
+
+  public boolean getIsBlindAppend() {
+    return isBlindAppend;
+  }
+
+  public String getTxnId() {
+    return txnId;
+  }
+
+  public Optional<Long> getInCommitTimestamp() {
+    return inCommitTimestamp;
+  }
+
+  public Map<String, String> getOperationMetrics() {
+    return operationMetrics;
+  }
+
+  public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
+    this.inCommitTimestamp = inCommitTimestamp;
   }
 
   /**
@@ -174,74 +295,5 @@ public class CommitInfo {
         COL_NAME_TO_ORDINAL.get("operationMetrics"), stringStringMapValue(operationMetrics));
 
     return new GenericRow(CommitInfo.FULL_SCHEMA, commitInfo);
-  }
-
-  /**
-   * Returns the `inCommitTimestamp` of the given `commitInfoOpt` if it is defined. Throws an
-   * exception if `commitInfoOpt` is empty or contains an empty `inCommitTimestamp`.
-   */
-  public static long getRequiredInCommitTimestamp(
-      Optional<CommitInfo> commitInfoOpt, String version, Path dataPath) {
-    CommitInfo commitInfo =
-        commitInfoOpt.orElseThrow(
-            () ->
-                new InvalidTableException(
-                    dataPath.toString(),
-                    String.format(
-                        "This table has the feature inCommitTimestamp "
-                            + "enabled which requires the presence of the CommitInfo action "
-                            + "in every commit. However, the CommitInfo action is "
-                            + "missing from commit version %s.",
-                        version)));
-    return commitInfo.inCommitTimestamp.orElseThrow(
-        () ->
-            new InvalidTableException(
-                dataPath.toString(),
-                String.format(
-                    "This table has the feature inCommitTimestamp "
-                        + "enabled which requires the presence of inCommitTimestamp in the "
-                        + "CommitInfo action. However, this field has not "
-                        + "been set in commit version %s.",
-                    version)));
-  }
-
-  /** Get the persisted commit info (if available) for the given delta file. */
-  public static Optional<CommitInfo> getCommitInfoOpt(Engine engine, Path logPath, long version) {
-    final FileStatus file =
-        FileStatus.of(
-            FileNames.deltaFile(logPath, version), /* path */
-            0, /* size */
-            0 /* modification time */);
-    final StructType COMMITINFO_READ_SCHEMA =
-        new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
-    try (CloseableIterator<ColumnarBatch> columnarBatchIter =
-        wrapEngineExceptionThrowsIO(
-            () ->
-                engine
-                    .getJsonHandler()
-                    .readJsonFiles(
-                        singletonCloseableIterator(file), COMMITINFO_READ_SCHEMA, Optional.empty()),
-            "Reading the commit info with schema=%s from delta file %s",
-            COMMITINFO_READ_SCHEMA,
-            file.getPath())) {
-      while (columnarBatchIter.hasNext()) {
-        final ColumnarBatch columnarBatch = columnarBatchIter.next();
-        assert (columnarBatch.getSchema().equals(COMMITINFO_READ_SCHEMA));
-        final ColumnVector commitInfoVector = columnarBatch.getColumnVector(0);
-        for (int i = 0; i < commitInfoVector.getSize(); i++) {
-          if (!commitInfoVector.isNullAt(i)) {
-            CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, i);
-            if (commitInfo != null) {
-              return Optional.of(commitInfo);
-            }
-          }
-        }
-      }
-    } catch (IOException ex) {
-      throw new UncheckedIOException("Could not close iterator", ex);
-    }
-
-    logger.info("No commit info found for commit of version {}", version);
-    return Optional.empty();
   }
 }

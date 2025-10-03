@@ -21,6 +21,7 @@ import java.util.Locale
 import org.apache.spark.sql.delta.actions.SetTransaction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.plans.Inner
@@ -28,47 +29,95 @@ import org.apache.spark.sql.catalyst.plans.logical.{Assignment, DeltaMergeIntoCl
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoSuiteBase
+trait MergeIntoScalaMixin extends MergeIntoSuiteBaseMixin
   with MergeIntoScalaTestUtils
-  with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
+  with DeltaDMLTestUtilsPathBased
   with DeltaTestUtilsForTempViews
   with DeltaExcludedTestMixin {
 
+  // Maps expected error classes to actual error classes. Used to handle error classes that are
+  // different when running using SQL vs. Scala.
+  override protected val mappedErrorClasses: Map[String, String] = Map(
+   "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION" -> "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+   "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION" ->
+     "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
+   "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION" ->
+     "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION"
+  )
+
+  // scalastyle:off argcount
+  override def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
+      source: String,
+      target: String,
+      update: Seq[String],
+      insert: String = null,
+      targetSchema: StructType = null,
+      sourceSchema: StructType = null,
+      result: String = null,
+      errorStrs: Seq[String] = null,
+      confs: Seq[(String, String)] = Seq.empty): Unit = {
+    // scalastyle:on argcount
+
+    require(result == null ^ errorStrs == null, "either set the result or the error strings")
+
+    val testName =
+      if (result != null) s"$namePrefix - $name" else s"$namePrefix - analysis error - $name"
+
+    test(testName) {
+      withSQLConf(confs: _*) {
+        withJsonData(source, target, targetSchema, sourceSchema) { case (sourceName, targetName) =>
+          val pathOrName = parsePath(targetName)
+          val fieldNames = readDeltaTable(pathOrName).schema.fieldNames
+          val keyName = s"`${fieldNames.head}`"
+
+          def execMerge() = {
+            val t = DeltaTestUtils.getDeltaTableForIdentifierOrPath(
+                spark,
+                DeltaTestUtils.getTableIdentifierOrPath(targetName))
+            val m = t.as("t")
+              .merge(
+                spark.table(sourceName).as("s"),
+                s"s.$keyName = t.$keyName")
+            val withUpdate = if (update == Seq("*")) {
+              m.whenMatched().updateAll()
+            } else {
+              val updateColExprMap = parseUpdate(update)
+              m.whenMatched().updateExpr(updateColExprMap)
+            }
+
+            if (insert == "*") {
+              withUpdate.whenNotMatched().insertAll().execute()
+            } else {
+              val insertExprMaps = if (insert != null) {
+                parseInsert(insert, None)
+              } else {
+                fieldNames.map { f => s"t.`$f`" -> s"s.`$f`" }.toMap
+              }
+
+              withUpdate.whenNotMatched().insertExpr(insertExprMaps).execute()
+            }
+          }
+
+          if (result != null) {
+            execMerge()
+            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
+            checkAnswer(readDeltaTable(pathOrName), expectedDf)
+          } else {
+            val e = intercept[AnalysisException] {
+              execMerge()
+            }
+            errorStrs.foreach { s => errorContains(e.getMessage, s) }
+          }
+        }
+      }
+    }
+  }
+}
+
+trait MergeIntoScalaTests extends MergeIntoScalaMixin {
+
   import testImplicits._
-
-  override def excluded: Seq[String] = super.excluded ++ Seq(
-    // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
-    // use them anyway with the Scala API.
-    // scalastyle:off line.size.limit
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: true useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: true useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: true useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: true useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: false useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: false useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: false useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: false useSqlView: false",
-    "Negative case - more operations between merge and delta target",
-    "test merge on temp view - basic - SQL TempView",
-    "test merge on temp view - basic - Dataset TempView",
-    "test merge on temp view - basic - merge condition references subset of target cols - SQL TempView",
-    "test merge on temp view - basic - merge condition references subset of target cols - Dataset TempView",
-    "test merge on temp view - subset cols - SQL TempView",
-    "test merge on temp view - subset cols - Dataset TempView",
-    "test merge on temp view - superset cols - SQL TempView",
-    "test merge on temp view - superset cols - Dataset TempView",
-    "test merge on temp view - nontrivial projection - SQL TempView",
-    "test merge on temp view - nontrivial projection - Dataset TempView",
-    "test merge on temp view - view with too many internal aliases - SQL TempView",
-    "test merge on temp view - view with too many internal aliases - Dataset TempView",
-    "test merge on temp view - view with too many internal aliases - merge condition references subset of target cols - SQL TempView",
-    "test merge on temp view - view with too many internal aliases - merge condition references subset of target cols - Dataset TempView",
-    "Update specific column works fine in temp views - SQL TempView",
-    "Update specific column works fine in temp views - Dataset TempView"
-    // scalastyle:on line.size.limit
-    )
-
 
   test("basic scala API") {
     withTable("source") {
@@ -619,73 +668,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     }
   }
 
-  // scalastyle:off argcount
-  override def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
-      source: String,
-      target: String,
-      update: Seq[String],
-      insert: String = null,
-      targetSchema: StructType = null,
-      sourceSchema: StructType = null,
-      result: String = null,
-      errorStrs: Seq[String] = null,
-      confs: Seq[(String, String)] = Seq.empty): Unit = {
-    // scalastyle:on argcount
 
-    require(result == null ^ errorStrs == null, "either set the result or the error strings")
-
-    val testName =
-      if (result != null) s"$namePrefix - $name" else s"$namePrefix - analysis error - $name"
-
-    test(testName) {
-      withSQLConf(confs: _*) {
-        withJsonData(source, target, targetSchema, sourceSchema) { case (sourceName, targetName) =>
-          val pathOrName = parsePath(targetName)
-          val fieldNames = readDeltaTable(pathOrName).schema.fieldNames
-          val keyName = s"`${fieldNames.head}`"
-
-          def execMerge() = {
-            val t = DeltaTestUtils.getDeltaTableForIdentifierOrPath(
-                spark,
-                DeltaTestUtils.getTableIdentifierOrPath(targetName))
-            val m = t.as("t")
-              .merge(
-                spark.table(sourceName).as("s"),
-                s"s.$keyName = t.$keyName")
-            val withUpdate = if (update == Seq("*")) {
-              m.whenMatched().updateAll()
-            } else {
-              val updateColExprMap = parseUpdate(update)
-              m.whenMatched().updateExpr(updateColExprMap)
-            }
-
-            if (insert == "*") {
-              withUpdate.whenNotMatched().insertAll().execute()
-            } else {
-              val insertExprMaps = if (insert != null) {
-                parseInsert(insert, None)
-              } else {
-                fieldNames.map { f => s"t.`$f`" -> s"s.`$f`" }.toMap
-              }
-
-              withUpdate.whenNotMatched().insertExpr(insertExprMaps).execute()
-            }
-          }
-
-          if (result != null) {
-            execMerge()
-            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
-            checkAnswer(readDeltaTable(pathOrName), expectedDf)
-          } else {
-            val e = intercept[AnalysisException] {
-              execMerge()
-            }
-            errorStrs.foreach { s => errorContains(e.getMessage, s) }
-          }
-        }
-      }
-    }
-  }
+  /* Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
+   * use them anyway with the Scala API.
 
   // Scala API won't hit the resolution exception.
   testWithTempView("Update specific column works fine in temp views") { isSQLTempView =>
@@ -709,6 +694,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
       )
     }
   }
+   */
 
   test("delta merge into clause with invalid data type.") {
     import org.apache.spark.sql.catalyst.dsl.expressions._

@@ -30,10 +30,19 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.ScanMetrics;
+import io.delta.kernel.internal.metrics.ScanReportImpl;
+import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.PaginationContext;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.metrics.ScanReport;
+import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -56,9 +65,12 @@ public class ScanImpl implements Scan {
   private final Metadata metadata;
   private final LogReplay logReplay;
   private final Path dataPath;
+  private final Optional<Predicate> filter;
   private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
   private final Supplier<Map<String, StructField>> partitionColToStructFieldMap;
   private boolean accessedScanFiles;
+  private final SnapshotReport snapshotReport;
+  private final ScanMetrics scanMetrics = new ScanMetrics();
 
   public ScanImpl(
       StructType snapshotSchema,
@@ -67,12 +79,14 @@ public class ScanImpl implements Scan {
       Metadata metadata,
       LogReplay logReplay,
       Optional<Predicate> filter,
-      Path dataPath) {
+      Path dataPath,
+      SnapshotReport snapshotReport) {
     this.snapshotSchema = snapshotSchema;
     this.readSchema = readSchema;
     this.protocol = protocol;
     this.metadata = metadata;
     this.logReplay = logReplay;
+    this.filter = filter;
     this.partitionAndDataFilters = splitFilters(filter);
     this.dataPath = dataPath;
     this.partitionColToStructFieldMap =
@@ -82,6 +96,7 @@ public class ScanImpl implements Scan {
               .filter(field -> partitionColNames.contains(field.getName().toLowerCase(Locale.ROOT)))
               .collect(toMap(field -> field.getName().toLowerCase(Locale.ROOT), identity()));
         };
+    this.snapshotReport = snapshotReport;
   }
 
   /**
@@ -91,7 +106,17 @@ public class ScanImpl implements Scan {
    */
   @Override
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
-    return getScanFiles(engine, false);
+    return getScanFiles(engine, false /* includeStats */);
+  }
+
+  /**
+   * Get an iterator of data files in this version of scan that survived the predicate pruning.
+   *
+   * @return data in {@link ColumnarBatch} batch format. Each row correspond to one survived file.
+   */
+  public CloseableIterator<FilteredColumnarBatch> getScanFiles(
+      Engine engine, boolean includeStats) {
+    return getScanFiles(engine, includeStats, Optional.empty() /* paginationContextOpt */);
   }
 
   /**
@@ -104,10 +129,11 @@ public class ScanImpl implements Scan {
    *
    * @param engine the {@link Engine} instance to use
    * @param includeStats whether to read and include the JSON statistics
+   * @param paginationContextOpt pagination context if present
    * @return the surviving scan files as {@link FilteredColumnarBatch}s
    */
-  public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-      Engine engine, boolean includeStats) {
+  protected CloseableIterator<FilteredColumnarBatch> getScanFiles(
+      Engine engine, boolean includeStats, Optional<PaginationContext> paginationContextOpt) {
     if (accessedScanFiles) {
       throw new IllegalStateException("Scan files are already fetched from this instance");
     }
@@ -118,67 +144,138 @@ public class ScanImpl implements Scan {
     boolean hasDataSkippingFilter = dataSkippingFilter.isPresent();
     boolean shouldReadStats = hasDataSkippingFilter || includeStats;
 
-    // Get active AddFiles via log replay
-    // If there is a partition predicate, construct a predicate to prune checkpoint files
-    // while constructing the table state.
-    CloseableIterator<FilteredColumnarBatch> scanFileIter =
-        logReplay.getAddFilesAsColumnarBatches(
-            engine,
-            shouldReadStats,
-            getPartitionsFilters()
-                .map(
-                    predicate ->
-                        rewritePartitionPredicateOnCheckpointFileSchema(
-                            predicate, partitionColToStructFieldMap.get())));
+    Timer.Timed planningDuration = scanMetrics.totalPlanningTimer.start();
+    // ScanReportReporter stores the current context and can be invoked (in the future) with
+    // `reportError` or `reportSuccess` to stop the planning duration timer and push a report to
+    // the engine
+    ScanReportReporter reportReporter =
+        (exceptionOpt, isFullyConsumed) -> {
+          planningDuration.stop();
+          ScanReport scanReport =
+              new ScanReportImpl(
+                  dataPath.toString() /* tablePath */,
+                  logReplay.getVersion() /* table version */,
+                  snapshotSchema,
+                  snapshotReport.getReportUUID(),
+                  filter,
+                  readSchema,
+                  getPartitionsFilters() /* partitionPredicate */,
+                  dataSkippingFilter.map(p -> p),
+                  isFullyConsumed,
+                  scanMetrics,
+                  exceptionOpt);
+          engine.getMetricsReporters().forEach(reporter -> reporter.report(scanReport));
+        };
 
-    // Apply partition pruning
-    scanFileIter = applyPartitionPruning(engine, scanFileIter);
+    try {
+      // Get active AddFiles via log replay
+      // If there is a partition predicate, construct a predicate to prune checkpoint files
+      // while constructing the table state.
+      CloseableIterator<FilteredColumnarBatch> scanFileIter =
+          logReplay.getAddFilesAsColumnarBatches(
+              engine,
+              shouldReadStats,
+              getPartitionsFilters()
+                  .map(
+                      predicate ->
+                          rewritePartitionPredicateOnCheckpointFileSchema(
+                              predicate, partitionColToStructFieldMap.get())),
+              scanMetrics,
+              paginationContextOpt);
 
-    // Apply data skipping
-    if (hasDataSkippingFilter) {
-      // there was a usable data skipping filter --> apply data skipping
-      scanFileIter = applyDataSkipping(engine, scanFileIter, dataSkippingFilter.get());
+      // Apply partition pruning
+      scanFileIter = applyPartitionPruning(engine, scanFileIter);
+
+      // Apply data skipping
+      if (hasDataSkippingFilter) {
+        // there was a usable data skipping filter --> apply data skipping
+        scanFileIter = applyDataSkipping(engine, scanFileIter, dataSkippingFilter.get());
+      }
+
+      // TODO when !includeStats drop the stats column if present before returning
+      return wrapWithMetricsReporting(scanFileIter, reportReporter);
+
+    } catch (Exception e) {
+      reportReporter.reportError(e);
+      throw e;
     }
-
-    // TODO when !includeStats drop the stats column if present before returning
-    return scanFileIter;
   }
 
   @Override
   public Row getScanState(Engine engine) {
-    // Physical equivalent of the logical read schema.
-    StructType physicalReadSchema =
-        ColumnMapping.convertToPhysicalSchema(
-            readSchema,
-            snapshotSchema,
-            ColumnMapping.getColumnMappingMode(metadata.getConfiguration()));
-
-    // Compute the physical data read schema, basically the list of columns to read
-    // from a Parquet data file. It should exclude partition columns and include
-    // row_index metadata columns (in case DVs are present)
-    List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
-    StructType physicalDataReadSchema =
-        PartitionUtils.physicalSchemaWithoutPartitionColumns(
-            readSchema, /* logical read schema */
-            physicalReadSchema,
-            new HashSet<>(partitionColumns));
-
-    if (protocol.getReaderFeatures().contains("deletionVectors")) {
-      physicalDataReadSchema = physicalDataReadSchema.add(StructField.METADATA_ROW_INDEX_COLUMN);
-    }
+    StructType physicalSchema = createPhysicalSchema();
 
     return ScanStateRow.of(
         metadata,
         protocol,
-        readSchema.toJson(),
-        physicalReadSchema.toJson(),
-        physicalDataReadSchema.toJson(),
+        readSchema.toJson() /* logical schema */,
+        physicalSchema.toJson(),
         dataPath.toUri().toString());
   }
 
   @Override
   public Optional<Predicate> getRemainingFilter() {
     return getDataFilters();
+  }
+
+  /**
+   * Transform the logical schema requested by the connector into a physical schema that is passed
+   * to the engine's parquet reader.
+   *
+   * <p>The logical-to-physical conversion is reversed in {@link Scan#transformPhysicalData(Engine,
+   * Row, Row, CloseableIterator)} when physical data batches returned by the parquet reader are
+   * converted into logical data batches requested by the connector.
+   *
+   * <p>The logical-to-physical conversion follows these high-level steps:
+   *
+   * <ul>
+   *   <li>Partition columns are excluded from the physical schema.
+   *   <li>Regular columns are converted based on the column mapping mode.
+   *   <li>Metadata columns are converted to their physical counterparts if applicable.
+   *   <li>Additional columns (such as the row index) are requested if necessary.
+   * </ul>
+   *
+   * @return The physical schema to read data from the data files.
+   */
+  private StructType createPhysicalSchema() {
+    ArrayList<StructField> physicalFields = new ArrayList<>();
+    ColumnMapping.ColumnMappingMode mode =
+        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
+
+    for (StructField logicalField : readSchema.fields()) {
+      if (!metadata
+          .getPartitionColNames()
+          .contains(logicalField.getName().toLowerCase(Locale.ROOT))) {
+        physicalFields.addAll(convertField(logicalField, mode));
+      }
+    }
+
+    if (protocol.getReaderFeatures().contains("deletionVectors")
+        && physicalFields.stream()
+            .map(StructField::getMetadataColumnSpec)
+            .noneMatch(MetadataColumnSpec.ROW_INDEX::equals)) {
+      // If the row index column is not already present, add it to the physical read schema
+      physicalFields.add(SchemaUtils.asInternalColumn(StructField.DEFAULT_ROW_INDEX_COLUMN));
+    }
+
+    return new StructType(physicalFields);
+  }
+
+  private List<StructField> convertField(
+      StructField logicalField, ColumnMapping.ColumnMappingMode mode) {
+    if (logicalField.isDataColumn()) {
+      return Collections.singletonList(
+          ColumnMapping.convertToPhysicalColumn(logicalField, snapshotSchema, mode));
+    }
+
+    if (RowTracking.isRowTrackingColumn(logicalField)) {
+      return MaterializedRowTrackingColumn.convertToPhysicalColumn(
+          logicalField, readSchema, metadata);
+    }
+
+    // As of now, metadata columns other than row tracking columns do not require any special
+    // handling, so we can just add them to the physical schema as is.
+    return Collections.singletonList(logicalField);
   }
 
   private Optional<Tuple2<Predicate, Predicate>> splitFilters(Optional<Predicate> filter) {
@@ -308,5 +405,90 @@ public class ScanImpl implements Scan {
           return new FilteredColumnarBatch(
               filteredScanFileBatch.getData(), Optional.of(newSelectionVector));
         });
+  }
+
+  /**
+   * Wraps a scan file iterator such that we emit {@link ScanReport} to the engine upon success and
+   * failure. Since most of our scan building code is lazily executed (since it occurs as
+   * maps/filters over an iterator) potential errors don't occur just within `getScanFile`s
+   * execution, but rather may occur as the returned iterator is consumed. Similarly, we cannot
+   * report a successful scan until the iterator has been fully consumed and the log read/filtered
+   * etc. This means we cannot report the successful scan within `getScanFiles` but rather must
+   * report after the iterator has been consumed.
+   *
+   * <p>This method wraps an inner scan file iterator with an outer iterator wrapper that reports
+   * {@link ScanReport}s as needed. It reports a failed {@link ScanReport} in the case of any
+   * exceptions originating from the inner iterator `next` and `hasNext` impl. It reports a complete
+   * or incomplete {@link ScanReport} when the iterator is closed.
+   */
+  private CloseableIterator<FilteredColumnarBatch> wrapWithMetricsReporting(
+      CloseableIterator<FilteredColumnarBatch> scanIter, ScanReportReporter reporter) {
+    return new CloseableIterator<FilteredColumnarBatch>() {
+
+      /* Whether this iterator has reported an error report */
+      private boolean errorReported = false;
+
+      @Override
+      public void close() throws IOException {
+        try {
+          // If a ScanReport has already been pushed in the case of an exception don't double report
+          if (!errorReported) {
+            if (!scanIter.hasNext()) {
+              // The entire scan file iterator has been successfully consumed report a complete Scan
+              reporter.reportCompleteScan();
+            } else {
+              // The scan file iterator has NOT been fully consumed before being closed
+              // We have no way of knowing the reason why, this could be due to an exception in the
+              // connector code, or intentional early termination such as for a LIMIT query
+              reporter.reportIncompleteScan();
+            }
+          }
+        } finally {
+          scanIter.close();
+        }
+      }
+
+      @Override
+      public boolean hasNext() {
+        return wrapWithErrorReporting(() -> scanIter.hasNext());
+      }
+
+      @Override
+      public FilteredColumnarBatch next() {
+        return wrapWithErrorReporting(() -> scanIter.next());
+      }
+
+      private <T> T wrapWithErrorReporting(Supplier<T> s) {
+        try {
+          return s.get();
+        } catch (Exception e) {
+          reporter.reportError(e);
+          errorReported = true;
+          throw e;
+        }
+      }
+    };
+  }
+
+  /**
+   * Defines methods to report {@link ScanReport} to the engine. This allows us to avoid ambiguous
+   * lambdas/anonymous classes as well as reuse the defined default methods.
+   */
+  private interface ScanReportReporter {
+
+    default void reportError(Exception e) {
+      report(Optional.of(e), false /* isFullyConsumed */);
+    }
+
+    default void reportCompleteScan() {
+      report(Optional.empty(), true /* isFullyConsumed */);
+    }
+
+    default void reportIncompleteScan() {
+      report(Optional.empty(), false /* isFullyConsumed */);
+    }
+
+    /** Given an optional exception, reports a {@link ScanReport} to the engine */
+    void report(Optional<Exception> exceptionOpt, boolean isFullyConsumed);
   }
 }

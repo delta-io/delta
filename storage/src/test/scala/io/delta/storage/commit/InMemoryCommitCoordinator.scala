@@ -121,7 +121,7 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
         tablePath)
       backfillToVersion(logStore, hadoopConf, tableDesc, commitVersion - 1, null)
     }
-    // Write new commit file in _commits directory
+    // Write new commit file in `_staged_commits` directory
     val fileStatus = CoordinatedCommitsUtils.writeUnbackfilledCommitFile(
       logStore, hadoopConf, logPath.toString, commitVersion, actions, generateUUID())
     // Do the actual commit

@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -53,7 +54,8 @@ class DeltaSuite extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with CatalogOwnedTestBaseSuite {
 
   import testImplicits._
 
@@ -200,6 +202,44 @@ class DeltaSuite extends QueryTest
     // append more
     Seq(4, 5, 6).toDF().write.format("delta").mode("append").save(tempDir.toString)
     checkAnswer(data.toDF(), Row(1) :: Row(2) :: Row(3) :: Row(4) :: Row(5) :: Row(6) :: Nil)
+  }
+
+  test("null struct with NullType field kept as null") {
+    withTempTable(createTable = false) { tableName =>
+      Seq(((null, 2), 1), (null, 2)).toDF("key", "value")
+        .write.format("delta").saveAsTable(tableName)
+
+      // Evolve the schema because tables with NullType columns cannot be read currently.
+      Seq(((10, 10), 10)).toDF("key", "value")
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .saveAsTable(tableName)
+
+      // Confirm struct value stays as null (fields are not set to null).
+      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"value" === 2)
+      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
+  }
+
+  test("null struct with NullType field, with backticks in the column name, kept as null") {
+    withTempTable(createTable = false) { tableName =>
+      Seq(((null, 2), 1), (null, 2)).toDF("key`", "val`ue")
+        .write.format("delta").saveAsTable(tableName)
+
+      // Evolve the schema because tables with NullType columns cannot be read currently.
+      Seq(((10, 10), 10)).toDF("key`", "val`ue")
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .saveAsTable(tableName)
+
+      // Confirm struct value stays as null (fields are not set to null).
+      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"`val``ue`" === 2)
+      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
   }
 
   test("partitioned append - nulls") {
@@ -1686,6 +1726,10 @@ class DeltaSuite extends QueryTest
           Seq((2, 99), (5, 99)).toDF("key", "value")
         )
 
+        if (catalogOwnedDefaultCreationEnabledInTests) {
+          cancel("VACUUM is not supported on catalog owned managed tables")
+        }
+
         // VACUUM
         withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
           spark.sql(s"VACUUM delta.`${directory.getCanonicalPath}` RETAIN 0 HOURS")
@@ -2011,7 +2055,9 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("An external write should be reflected during analysis of a path based query") {
+  // This test is only compatible w/ backfill batch size = 1.
+  testWithCatalogOwned(backfillBatchSize = 1)(
+      "An external write should be reflected during analysis of a path based query") {
     val tempDir = Utils.createTempDir().toString
     spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
     spark.range(10, 20).coalesce(1).write.format("delta").mode("append").save(tempDir)
@@ -2034,7 +2080,8 @@ class DeltaSuite extends QueryTest
 
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
-    val actions = Seq(Action.supportedProtocolVersion(), newMetadata) ++ files.map(_.remove)
+    val actions = Seq(Action.supportedProtocolVersion(
+      featuresToExclude = Seq(CatalogOwnedTableFeature)), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -2210,24 +2257,31 @@ class DeltaSuite extends QueryTest
   }
 
   test("set metadata upon write") {
-    withTempDir { inputDir =>
-      val testPath = inputDir.getCanonicalPath
-      spark.range(10)
-        .map(_.toInt)
-        .withColumn("part", $"value" % 2)
-        .write
-        .format("delta")
-        .option("delta.logRetentionDuration", "123 days")
-        .option("mergeSchema", "true")
-        .partitionBy("part")
-        .mode("append")
-        .save(testPath)
+    withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "false") {
+      withTempDir { inputDir =>
+        val testPath = inputDir.getCanonicalPath
+        spark.range(10)
+          .map(_.toInt)
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .option("delta.logRetentionDuration", "123 days")
+          .option("mergeSchema", "true")
+          .partitionBy("part")
+          .mode("append")
+          .save(testPath)
 
-      val deltaLog = DeltaLog.forTable(spark, testPath)
-      // We need to drop default properties set by subclasses to make this test pass in them
-      assert(deltaLog.snapshot.metadata.configuration
-        .filterKeys(!_.startsWith("delta.columnMapping.")).toMap ===
-        Map("delta.logRetentionDuration" -> "123 days"))
+        val deltaLog = DeltaLog.forTable(spark, testPath)
+        val metadata = deltaLog.snapshot.metadata
+        // We need to drop default properties set by subclasses to make this test pass in them
+        // We need to drop `enableDeletionVectors` property b/c it is explicitly set to false.
+        assert(
+          metadata.configuration
+            .filter { case (k, _) => !k.startsWith("delta.columnMapping.") &&
+              !k.startsWith("delta.enableDeletionVectors")} ===
+          Map("delta.logRetentionDuration" -> "123 days") ++
+            extractCatalogOwnedSpecificPropertiesIfEnabled(metadata))
+      }
     }
   }
 
@@ -2709,24 +2763,24 @@ class DeltaSuite extends QueryTest
       spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
       spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       // this should throw an exception as the txn version is automatically reset
-      val e1 = intercept[IllegalArgumentException] {
+      val e1 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (4, 0)")
       }
-      assert(e1.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
-        "Invalid options for idempotent Dataframe writes: " +
+      checkError(e1, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-        "must be specified for idempotent Delta writes")
+          "must be specified for idempotent Delta writes")
+      ))
       // this write should succeed as it's using a newer version than the latest
       spark.conf.set("spark.databricks.delta.write.txnVersion", "10")
       spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (2, 0)")
       // this should throw an exception as the txn version is automatically reset
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       }
-      assert(e2.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
-        "Invalid options for idempotent Dataframe writes: " +
+      checkError(e2, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-        "must be specified for idempotent Delta writes")
+          "must be specified for idempotent Delta writes")
+      ))
 
       val res = spark.sql(s"SELECT col1 FROM $tableName")
         .orderBy(asc("col1"))
@@ -3220,4 +3274,16 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
         insertedDF.filter(col("id") >= 6).union(otherDF))
     }
   }
+}
+
+class DeltaWithCatalogOwnedBatch1Suite extends DeltaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaWithCatalogOwnedBatch2Suite extends DeltaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaWithCatalogOwnedBatch100Suite extends DeltaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

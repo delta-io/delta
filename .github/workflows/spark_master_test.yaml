@@ -3,17 +3,17 @@ on: [push, pull_request]
 jobs:
   test:
     name: "DSM: Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.13]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       # Important: This must be the same as the length of shards in matrix
-      NUM_SHARDS: 3
+      NUM_SHARDS: 4
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4
@@ -22,6 +22,7 @@ jobs:
           PATTERNS: |
             **
             .github/workflows/**
+            !unity/**
             !kernel/**
             !connectors/**
       - name: install java
@@ -45,7 +46,7 @@ jobs:
       - name: Install Job dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
+          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
         if: steps.git-diff.outputs.diff
       - name: Run Spark Master tests

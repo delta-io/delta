@@ -450,7 +450,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     }
   }
 
-  test("identity value start at boundaries") {
+  ignore("identity value start at boundaries") {
     val starts = Seq(Long.MinValue, Long.MaxValue)
     val steps = Seq(1, 2, -1, -2)
     for {

@@ -25,7 +25,7 @@ import argparse
 # Define groups of subprojects that can be tested separately from other groups.
 # As of now, we have only defined project groups in the SBT build, so these must match
 # the group names defined in build.sbt.
-valid_project_groups = ["spark", "kernel", "spark-python"]
+valid_project_groups = ["spark", "iceberg", "kernel", "spark-python"]
 
 
 def get_args():
@@ -209,6 +209,10 @@ def run_tests_in_docker(image_tag, test_group):
     if test_parallelism is not None:
         envs = envs + "-e TEST_PARALLELISM_COUNT=%s " % test_parallelism
 
+    disable_unidoc = os.getenv("DISABLE_UNIDOC")
+    if disable_unidoc is not None:
+        envs = envs + "-e DISABLE_UNIDOC=%s " % disable_unidoc
+
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)
 
@@ -222,9 +226,48 @@ def run_tests_in_docker(image_tag, test_group):
     run_cmd(test_run_cmd, stream_output=True)
 
 
+def print_configuration(args: argparse.Namespace) -> None:
+    print("=" * 60)
+    print("DELTA LAKE TEST RUNNER CONFIGURATION")
+    print("=" * 60)
+
+    # Print parsed arguments
+    print("-" * 25)
+    print("Command Line Arguments:")
+    print("-" * 25)
+    args_dict = vars(args)
+    for key, value in args_dict.items():
+        if value is not None:
+            print(f"  {key:<12}: {value}")
+        else:
+            print(f"  {key:<12}: <not set>")
+
+    # Print relevant environment variables
+    print("-" * 25)
+    print("Environment Variables:")
+    print("-" * 22)
+    env_vars = [
+        "USE_DOCKER", "SCALA_VERSION", "DISABLE_UNIDOC", "DOCKER_REGISTRY",
+        "NUM_SHARDS", "SHARD_ID", "TEST_PARALLELISM_COUNT", "JENKINS_URL",
+        "SBT_1_5_5_MIRROR_JAR_URL", "DELTA_TESTING", "SBT_OPTS"
+    ]
+
+    for var in env_vars:
+        value = os.getenv(var)
+        if value is not None:
+            print(f"  {var:<22}: {value}")
+        else:
+            print(f"  {var:<22}: <not set>")
+
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.abspath(__file__))
     args = get_args()
+
+    print_configuration(args)
+
     if os.getenv("USE_DOCKER") is not None:
         test_env_image_tag = pull_or_build_docker_image(root_dir)
         run_tests_in_docker(test_env_image_tag, args.group)

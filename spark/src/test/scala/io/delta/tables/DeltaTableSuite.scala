@@ -17,13 +17,16 @@
 package io.delta.tables
 
 import java.io.File
+import java.sql.Timestamp
 import java.util.Locale
 
+import scala.concurrent.duration._
 import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{AppendOnlyTableFeature, DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, InvariantsTableFeature, TestReaderWriterFeature, TestRemovableReaderWriterFeature, TestRemovableWriterFeature, TestWriterFeature}
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -208,8 +211,15 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
   import testImplicits._
 
-  protected override def sparkConf =
-    super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
+  protected override def sparkConf = {
+    // The drop feature test below is targeting the drop feature with history truncation
+    // implementation. The fast drop feature implementation adds a new writer feature when dropping
+    // a feature and also does not require any waiting time. The fast drop feature implementation
+    // is tested extensively in the DeltaFastDropFeatureSuite.
+    super.sparkConf
+      .set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+      .set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
+  }
 
   /**
    * Create Hadoop file system options for `FakeFileSystem`. If Delta doesn't pick up them,
@@ -481,14 +491,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
           //
           // set the time to first file with a early time and verify the delta table can be
           // restored to it.
-          val desiredTime = "1983-01-01"
-          val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
-          val time = format.parse(desiredTime).getTime
+          val desiredTime = new Timestamp(System.currentTimeMillis() - 5.days.toMillis)
 
           val logPath = new Path(srcDir, "_delta_log")
           val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
-          assert(file.setLastModified(time))
-          srcTable.cloneAtTimestamp(desiredTime, dstDir, isShallow = true)
+          assert(file.setLastModified(desiredTime.getTime))
+          srcTable.cloneAtTimestamp(desiredTime.toString, dstDir, isShallow = true)
         }
 
         val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
@@ -588,16 +596,14 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
         // set the time to first file with a early time and verify the delta table can be restored
         // to it.
-        val desiredTime = "1996-01-12"
-        val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
-        val time = format.parse(desiredTime).getTime
+        val desiredTime = new Timestamp(System.currentTimeMillis() - 5.days.toMillis)
 
         val logPath = new Path(dir.getCanonicalPath, "_delta_log")
         val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
-        assert(file.setLastModified(time))
+        assert(file.setLastModified(desiredTime.getTime))
 
         val deltaTable2 = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
-        deltaTable2.restoreToTimestamp(desiredTime)
+        deltaTable2.restoreToTimestamp(desiredTime.toString)
 
         checkAnswer(
           spark.read.format("delta").options(fsOptions).load(path),
@@ -726,6 +732,8 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       assert(intercept[DeltaTableFeatureException] {
         table.dropFeatureSupport(TestRemovableReaderWriterFeature.name)
       }.getErrorClass === "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
+
+      table.addFeatureSupport(TestReaderWriterFeature.name)
 
       // Try to drop a non-removable feature.
       assert(intercept[DeltaTableFeatureException] {

@@ -22,6 +22,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis._
@@ -43,7 +44,7 @@ object ResolveDeltaMergeInto {
     for (a <- expr.flatMap(_.references).filterNot(_.resolved)) {
       // Note: This will throw error only on unresolved attribute issues,
       // not other resolution errors like mismatched data types.
-      val cols = "columns " + plans.flatMap(_.output).map(_.sql).mkString(", ")
+      val cols = plans.flatMap(_.output).map(_.sql).mkString(", ")
       throw new DeltaAnalysisException(
         errorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
         messageParameters = Array(a.sql, mergeClauseTypeStr, cols),
@@ -297,7 +298,8 @@ object ResolveDeltaMergeInto {
         target.collectFirst {
           case DeltaTable(index) if TypeWidening.isEnabled(index.protocol, index.metadata) =>
             TypeWideningMode.TypeEvolution(
-              uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(index.metadata))
+              uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(index.metadata),
+              allowAutomaticWidening = AllowAutomaticWideningMode.fromConf(conf))
         }.getOrElse(TypeWideningMode.NoTypeWidening)
 
       // The implicit conversions flag allows any type to be merged from source to target if Spark

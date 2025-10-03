@@ -19,9 +19,10 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{CatalogResolver, DeltaTableV2}
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
@@ -667,6 +668,42 @@ class DeltaTable private[tables](
   }
 
   /**
+   * clone used by Python implementation using java.util.HashMap for the properties argument.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.clone(
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     Map("foo" -> "bar"))
+   * }}}
+   *
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   */
+  def clone(
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: java.util.HashMap[String, String]): DeltaTable = {
+    val scalaProps = Option(properties).map(_.asScala.toMap).getOrElse(Map.empty[String, String])
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      scalaProps,
+      versionAsOf = None,
+      timestampAsOf = None)
+  }
+
+  /**
    * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
    * An example would be
@@ -743,6 +780,46 @@ class DeltaTable private[tables](
       isShallow,
       replace,
       properties,
+      versionAsOf = Some(version),
+      timestampAsOf = None)
+  }
+
+  /**
+   * cloneAtVersion used by Python implementation using java.util.HashMap for the properties
+   * argument.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     new java.util.HashMap[String, String](Map("foo" -> "bar").asJava))
+   * }}}
+   *
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   */
+  def cloneAtVersion(
+      version: Long,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: java.util.HashMap[String, String]): DeltaTable = {
+    val scalaProps = Option(properties).map(_.asScala.toMap).getOrElse(Map.empty[String, String])
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      scalaProps,
       versionAsOf = Some(version),
       timestampAsOf = None)
   }
@@ -839,6 +916,48 @@ class DeltaTable private[tables](
       versionAsOf = None,
       timestampAsOf = Some(timestamp)
     )
+  }
+
+  /**
+   * cloneAtTimestamp used by Python implementation using java.util.HashMap for the properties
+   * argument.
+   *
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata at that version.
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     new java.util.HashMap[String, String](Map("foo" -> "bar").asJava)
+   * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   */
+  def cloneAtTimestamp(
+      timestamp: String,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: java.util.HashMap[String, String]): DeltaTable = {
+    val scalaProps = Option(properties).map(_.asScala.toMap).getOrElse(Map.empty[String, String])
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      scalaProps,
+      versionAsOf = None,
+      timestampAsOf = Some(timestamp))
   }
 
   /**
@@ -1103,27 +1222,47 @@ object DeltaTable {
     forName(sparkSession, tableOrViewName)
   }
 
-  /**
-   * Instantiate a [[DeltaTable]] object using the given table name using the given
-   * SparkSession. If the given tableName is invalid (i.e. either no table exists or an
-   * existing table is not a Delta table), it throws a `not a Delta table` error. Note:
-   * Passing a view name will also result in this error as views are not supported.
-   *
-   * The given tableName can also be the absolute path of a delta datasource (i.e.
-   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
-   * the given path (consistent with the [[forPath]]).
-   */
-  def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
-    val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
-    if (DeltaTableUtils.isDeltaTable(sparkSession, tableId)) {
-      val tbl = sparkSession.sessionState.catalog.getTableMetadata(tableId)
+  // Helper to resolve a table using SessionCatalog
+  private def getDeltaTableFromSessionCatalog(
+      spark: SparkSession,
+      tableName: String): DeltaTable = {
+    val tableId = spark.sessionState.sqlParser.parseTableIdentifier(tableName)
+    if (DeltaTableUtils.isDeltaTable(spark, tableId)) {
+      val tbl = spark.sessionState.catalog.getTableMetadata(tableId)
       new DeltaTable(
-        sparkSession.table(tableName),
-        DeltaTableV2(sparkSession, new Path(tbl.location), Some(tbl), Some(tableName)))
+        spark.table(tableName),
+        DeltaTableV2(spark, new Path(tbl.location), Some(tbl), Some(tableName)))
     } else if (DeltaTableUtils.isValidPath(tableId)) {
-      forPath(sparkSession, tableId.table)
+      forPath(spark, tableId.table)
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(table = Some(tableId)))
+    }
+  }
+
+  /**
+   * Instantiate a [[DeltaTable]] object using one of the following:
+   * 1. The given tableName using the given SparkSession and SessionCatalog.
+   * 2. The tableName can also be the absolute path of a delta datasource (i.e.
+   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
+   * the given path (consistent with the [[forPath]]).
+   * 3. A fully qualified tableName is passed in the form `catalog.db.table`, If so
+   * the table is resolved through the specified catalog instead of the default *SessionCatalog*
+   *
+   * If the given tableName is invalid (i.e. either no table exists or an
+   * existing table is not a Delta table), it throws a `not a Delta table` error. Note:
+   * Passing a view name will also result in this error as views are not supported.
+   */
+  def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
+    sparkSession.sessionState.sqlParser.parseMultipartIdentifier(tableName) match {
+      case parts if parts.length == 3 =>
+        val (catalog, ident) =
+          CatalogResolver.getCatalogPluginAndIdentifier(sparkSession, parts.head, parts.tail)
+        new DeltaTable(
+          sparkSession.table(tableName),
+          CatalogResolver.getDeltaTableFromCatalog(sparkSession, catalog, ident)
+        )
+      case _ =>
+        getDeltaTableFromSessionCatalog(sparkSession, tableName)
     }
   }
 

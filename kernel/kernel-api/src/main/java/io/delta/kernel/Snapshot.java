@@ -18,24 +18,43 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
- * Represents the snapshot of a Delta table.
+ * Represents a snapshot of a Delta table at a specific version.
+ *
+ * <p>A {@code Snapshot} is a consistent view of a Delta table at a specific point in time,
+ * identified by a version number. It provides access to the table's metadata, schema, and
+ * capabilities for both reading and writing data. This interface serves as the entry point for
+ * table operations after resolving a table through a {@link SnapshotBuilder}.
+ *
+ * <p>The snapshot represents a consistent view of the table at the resolved version. All operations
+ * on this snapshot will see the same data and metadata, ensuring consistency across reads and
+ * writes within the same snapshot.
+ *
+ * <p>There are two ways to create a {@code Snapshot}:
+ *
+ * <ul>
+ *   <li><b>New API (recommended):</b> Use {@link TableManager#loadSnapshot(String)} to get a {@link
+ *       SnapshotBuilder}, which can then be configured and built into a snapshot
+ *   <li><b>Legacy API:</b> Use {@code Table.forPath(path)} followed by methods like {@code
+ *       getLatestSnapshot()}, {@code getSnapshotAtTimestamp()}, etc.
+ * </ul>
  *
  * @since 3.0.0
  */
 @Evolving
 public interface Snapshot {
 
-  /**
-   * Get the version of this snapshot in the table.
-   *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
-   * @return version of this snapshot in the Delta table
-   */
-  long getVersion(Engine engine);
+  /** @return the file system path to this table */
+  String getPath();
+
+  /** @return the version of this snapshot in the Delta table */
+  long getVersion();
 
   /**
    * Get the names of the partition columns in the Delta table at this snapshot.
@@ -43,10 +62,9 @@ public interface Snapshot {
    * <p>The partition column names are returned in the order they are defined in the Delta table
    * schema. If the table does not define any partition columns, this method returns an empty list.
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @return a list of partition column names, or an empty list if the table is not partitioned.
    */
-  List<String> getPartitionColumnNames(Engine engine);
+  List<String> getPartitionColumnNames();
 
   /**
    * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this snapshot.
@@ -56,19 +74,31 @@ public interface Snapshot {
    */
   long getTimestamp(Engine engine);
 
-  /**
-   * Get the schema of the table at this snapshot.
-   *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
-   * @return Schema of the Delta table at this snapshot.
-   */
-  StructType getSchema(Engine engine);
+  /** @return the schema of the Delta table at this snapshot */
+  StructType getSchema();
 
   /**
-   * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
+   * Returns the configuration for the provided domain if it exists in the snapshot. Returns empty
+   * if the domain is not present in the snapshot.
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
-   * @return an instance of {@link ScanBuilder}
+   * @param domain the domain to look up
+   * @return the domain configuration or empty
    */
-  ScanBuilder getScanBuilder(Engine engine);
+  Optional<String> getDomainMetadata(String domain);
+
+  /**
+   * Get all table properties for the Delta table at this snapshot.
+   *
+   * @return a {@link Map} of table properties.
+   */
+  Map<String, String> getTableProperties();
+
+  /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
+  ScanBuilder getScanBuilder();
+
+  /**
+   * @return a {@link UpdateTableTransactionBuilder} to build an update table transaction
+   * @since 3.4.0
+   */
+  UpdateTableTransactionBuilder buildUpdateTableTransaction(String engineInfo, Operation operation);
 }

@@ -19,7 +19,10 @@ package org.apache.spark.sql.delta.hooks
 // scalastyle:off import.ordering.noEmptyLine
 import java.net.URI
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -68,13 +71,8 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
 
   override val name: String = "Generate Symlink Format Manifest"
 
-  override def run(
-      spark: SparkSession,
-      txn: OptimisticTransactionImpl,
-      committedVersion: Long,
-      postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
-    generateIncrementalManifest(spark, txn, postCommitSnapshot, committedActions)
+  override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
+    generateIncrementalManifest(spark, txn, txn.postCommitSnapshot)
   }
 
   override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
@@ -92,9 +90,8 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
    */
   protected def generateIncrementalManifest(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl,
-      currentSnapshot: Snapshot,
-      actions: Seq[Action]): Unit = recordManifestGeneration(txn.deltaLog, full = false) {
+      txn: CommittedTransaction,
+      currentSnapshot: Snapshot): Unit = recordManifestGeneration(txn.deltaLog, full = false) {
 
     import org.apache.spark.sql.delta.implicits._
 
@@ -112,14 +109,18 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
 
     // Find all the manifest partitions that need to updated or deleted
     val (allFilesInUpdatedPartitions, nowEmptyPartitions) = if (partitionCols.nonEmpty) {
+      val actions = txn.committedActions
+      val (addFiles, otherActions) = actions.partition(_.isInstanceOf[AddFile])
+      val (removeFiles, _) = otherActions.partition(_.isInstanceOf[RemoveFile])
+
       // Get the partitions where files were added
-      val partitionsOfAddedFiles = actions.collect { case a: AddFile => a.partitionValues }.toSet
+      val partitionsOfAddedFiles = addFiles.collect { case a: AddFile => a.partitionValues }.toSet
 
       // Get the partitions where files were deleted
       val removedFileNames =
-        spark.createDataset(actions.collect { case r: RemoveFile => r.path }).toDF("path")
+        spark.createDataset(removeFiles.collect { case r: RemoveFile => r.path }.toSeq).toDF("path")
       val partitionValuesOfRemovedFiles =
-        txn.snapshot.allFiles.join(removedFileNames, "path").select("partitionValues").persist()
+        txn.readSnapshot.allFiles.join(removedFileNames, "path").select("partitionValues").persist()
       try {
         val partitionsOfRemovedFiles = partitionValuesOfRemovedFiles
           .as[Map[String, String]](GenerateSymlinkManifestUtils.mapEncoder).collect().toSet

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.immutable.NumericRange
 
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 import org.apache.hadoop.fs.Path
@@ -28,36 +29,16 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.util.Utils
 
-class CloneTableSQLSuite extends CloneTableSuiteBase
+class CloneTableSQLSuite
+  extends CloneTableSuiteBase
+  with CloneTableSQLTestMixin
   with DeltaColumnMappingTestUtils
-{
-  // scalastyle:off argcount
-  override protected def cloneTable(
-      source: String,
-      target: String,
-      isShallow: Boolean,
-      sourceIsTable: Boolean = false,
-      targetIsTable: Boolean = false,
-      targetLocation: Option[String] = None,
-      versionAsOf: Option[Long] = None,
-      timestampAsOf: Option[String] = None,
-      isCreate: Boolean = true,
-      isReplace: Boolean = false,
-      tableProperties: Map[String, String] = Map.empty): Unit = {
-    val commandSql = CloneTableSQLTestUtils.buildCloneSqlString(
-      source, target,
-      sourceIsTable,
-      targetIsTable,
-      "delta",
-      targetLocation,
-      versionAsOf,
-      timestampAsOf,
-      isCreate,
-      isReplace,
-      tableProperties)
-    sql(commandSql)
+  with CatalogOwnedTestBaseSuite {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    disableDeletionVectors(spark.conf)
   }
-  // scalastyle:on argcount
 
   testAllClones(s"table version as of syntax") { (_, target, isShallow) =>
     val tbl = "source"
@@ -273,6 +254,24 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
 }
 
 
+class CloneTableSQLWithCatalogOwnedBatch1Suite
+  extends CloneTableSQLSuite
+{
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class CloneTableSQLWithCatalogOwnedBatch2Suite
+  extends CloneTableSQLSuite
+{
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class CloneTableSQLWithCatalogOwnedBatch100Suite
+  extends CloneTableSQLSuite
+{
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+}
+
 class CloneTableSQLIdColumnMappingSuite
   extends CloneTableSQLSuite
     with CloneTableColumnMappingSuiteBase
@@ -346,7 +345,7 @@ object CloneTableSQLTestUtils {
 }
 
 class CloneTableScalaDeletionVectorSuite
-    extends CloneTableSQLSuite
+    extends CloneTableScalaSuite
     with DeltaSQLCommandTest
     with DeltaExcludedTestMixin
     with DeletionVectorsTestUtils {
@@ -365,16 +364,6 @@ class CloneTableScalaDeletionVectorSuite
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark.conf)
-  }
-
-  override protected def uniqueFileActionGroupBy(action: FileAction): String = {
-    val filePath = action.pathAsUri.toString
-    val dvId = action match {
-      case add: AddFile => Option(add.deletionVector).map(_.uniqueId).getOrElse("")
-      case remove: RemoveFile => Option(remove.deletionVector).map(_.uniqueId).getOrElse("")
-      case _ => ""
-    }
-    filePath + dvId
   }
 
   testAllClones("Cloning table with persistent DVs") { (source, target, isShallow) =>

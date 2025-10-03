@@ -20,10 +20,11 @@ import java.io.File
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.metering.ScanReport
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.commons.io.FileUtils
@@ -36,6 +37,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -45,9 +47,11 @@ import org.apache.spark.util.Utils
 trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShims
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with PredicateHelper
+    with DataSkippingDeltaTestsUtils
     with GivenWhenThen
-    with ScanReportHelper {
+    with ScanReportHelper
+    with CatalogOwnedTestBaseSuite
+    with DeltaSQLTestUtils {
 
   val defaultNumIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
     DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)
@@ -721,7 +725,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "TRUE",
       "FALSE",     // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-      "NOT a <=> 1"
+      "NOT a <=> 1",
+      "(a > 1) IS NULL", // This pushes down the IS NULL to both sides of GreaterThan.
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
     ),
     misses = Seq(
       // stats tell us a is always NULL, so any predicate that requires non-NULL a should skip
@@ -732,8 +739,40 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "a > 1",
       "a < 1",
       "a <> 1",
-      "a <=> 1"
+      "a <=> 1",
+      "NOT ((a > 1) IS NULL)"
     )
+  )
+
+  testSkipping(
+    "nulls - only non-null in file",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(),
+    misses = Seq(
+      "(a > 0 AND b > 1) IS NULL",
+      "(a > 0 OR b > 1) IS NULL"
+    )
+  )
+
+  testSkipping(
+    "nulls - only non-null in file with enhanced pushdown disabled",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(
+      "(a > 0 AND b > 1) IS NULL",
+      "(a > 0 OR b > 1) IS NULL"
+    ),
+    misses = Seq.empty,
+    sqlConfs = Seq((DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED.key, "false"))
   )
 
   testSkipping(
@@ -755,7 +794,12 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "TRUE",
       "FALSE",    // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-      "NOT a <=> 1"
+      "NOT a <=> 1",
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL", // Pushdown of IS NULL on OR.
+      "NOT ((a > 0) IS NULL)"
     ),
     misses = Seq(
       "a <> 1",
@@ -763,6 +807,56 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "a < 1",
       "NOT a = 1"
     )
+  )
+
+  testSkipping(
+    "nulls - non-nulls only in file",
+    """
+      {"a": 1 }
+    """,
+    schema = new StructType().add(new StructField("a", IntegerType)),
+    hits = Seq(
+      "NOT ((a > 0) IS NULL)"
+    ),
+    misses = Seq(
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    )
+  )
+
+  testSkipping(
+    "nulls - non-nulls only in file with partial column stats",
+    """
+      {"a": 1, "b": 2}
+    """,
+    hits = Seq(
+      "NOT ((a > 0) IS NULL)",
+      "(b > 0) IS NULL",
+      "(b < 0) IS NULL",
+      "(b > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(b > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    ),
+    misses = Seq(
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    ),
+    indexedCols = 1
+  )
+
+  testSkipping(
+    "nulls - non-strict null-intolerant predicate returns hits for IS NULL",
+    """
+      {"a": [3, 4]}
+    """,
+    hits = Seq(
+      "NOT (element_at(a, 3) IS NULL)",
+      "element_at(a, 3) IS NULL"
+    ),
+    misses = Seq.empty
   )
 
   test("data skipping with missing stats") {
@@ -1179,9 +1273,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
   test("data skipping with missing columns in DataFrame", tableSchemaOnlyTag) {
     // case-1: dataframe schema has less columns than the dataSkippingNumIndexedCols
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta PARTITIONED BY(b)")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) " +
+        "USING delta PARTITIONED BY(b)")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns, excluding partition column b
       setNumIndexedColumns(r.dataPath.toString, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
@@ -1213,9 +1308,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-2: dataframe schema lacks columns that are supposed to be part of the stats schema,
     // but has an additional column that should not collect stats on
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta PARTITIONED BY(b)")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) " +
+        "USING delta PARTITIONED BY(b)")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns, excluding partition column b
       setNumIndexedColumns(r.dataPath.toString, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
@@ -1295,9 +1391,9 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-4: dataframe schema does not have any columns within the first
     // dataSkippingNumIndexedCols columns of the table schema
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) USING delta")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns
       setNumIndexedColumns(r.dataPath.toString, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
@@ -1322,10 +1418,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-5: The first dataSkippingNumIndexedCols columns of the table schema has map or array
     // types, which we only collect NULL_COUNT
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Map<String, Int>, c Array<Int>, d Int, e Int)" +
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Map<String, Int>, c Array<Int>, d Int, e Int)" +
         " USING delta")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns
       setNumIndexedColumns(r.dataPath.toString, 3)
       val dataSeq = Seq((1, Map("key" -> 2), Seq(3, 3, 3), 4, 5))
@@ -1344,7 +1440,8 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         // b and c should have NULL_COUNT stats, but currently they're not SkippingEligibleColumn
         // (since they're not AtomicType), we couldn't skip for them
         "isnull(b)",
-        "c is null"
+        "c is null",
+        "ELEMENT_AT(c, 10) IS NULL" // Out-of-bounds access returns null.
       )
       val misses = Seq(
         // a has NULL_COUNT stats since it's missing from DataFrame schema
@@ -1929,57 +2026,85 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 
-  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
+  test("File skipping with non-deterministic filters") {
+    withTable("tbl") {
+      // Create the table.
+      val df = spark.range(100).toDF()
+      df.write.mode("overwrite").format("delta").saveAsTable("tbl")
 
-    // We produce a wrong filter in this case otherwise
-    if (predicate == "True") return Seq(Literal.TrueLiteral)
+      // Append 9 times to the table.
+      for (i <- 1 to 9) {
+        val df = spark.range(i * 100, (i + 1) * 100).toDF()
+        df.write.mode("append").format("delta").insertInto("tbl")
+      }
 
-    val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
-    filtered
-      .queryExecution
-      .optimizedPlan
-      .expressions
-      .flatMap(splitConjunctivePredicates)
+      val query = "SELECT count(*) FROM tbl WHERE rand(0) < 0.25"
+      val result = sql(query).collect().head.getLong(0)
+      assert(result > 150, s"Expected around 250 rows (~0.25 * 1000), got: $result")
+
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+        .update().filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty)
+    }
   }
 
-  /**
-   * Returns the number of files that should be included in a scan after applying the given
-   * predicate on a snapshot of the Delta log.
-   *
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The number of files that should be included in a scan after applying the predicate.
-   */
+  test("File skipping with non-deterministic filters on partitioned tables") {
+    withTable("tbl_partitioned") {
+      import org.apache.spark.sql.functions.col
+
+      // Create initial DataFrame and add a partition column.
+      val df = spark.range(100).toDF().withColumn("p", col("id") % 10)
+      df.write
+        .mode("overwrite")
+        .format("delta")
+        .partitionBy("p")
+        .saveAsTable("tbl_partitioned")
+
+      // Append 9 more times to the table.
+      for (i <- 1 to 9) {
+        val newDF = spark.range(i * 100, (i + 1) * 100).toDF().withColumn("p", col("id") % 10)
+        newDF.write.mode("append").format("delta").insertInto("tbl_partitioned")
+      }
+
+      // Run query with a nondeterministic filter.
+      val query = "SELECT count(*) FROM tbl_partitioned WHERE rand(0) < 0.25"
+      val result = sql(query).collect().head.getLong(0)
+      // Assert that the row count is as expected (e.g., roughly 25% of rows).
+      assert(result > 150, s"Expected a reasonable number of rows, got: $result")
+
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("tbl_partitioned"))
+        .update().filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty)
+
+      // Assert that entries are fetched from all 10 partitions
+      val distinctPartitions =
+        sql("SELECT DISTINCT p FROM tbl_partitioned WHERE rand(0) < 0.25")
+        .collect()
+        .length
+      assert(distinctPartitions == 10)
+    }
+  }
+
+  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] =
+    super.parse(spark, deltaLog, predicate)
+
   protected def filesRead(
       deltaLog: DeltaLog,
       predicate: String,
       checkEmptyUnusedFilters: Boolean = false): Int =
-    getFilesRead(deltaLog, predicate, checkEmptyUnusedFilters).size
+    super.filesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
 
-  /**
-   * Returns the files that should be included in a scan after applying the given predicate on
-   * a snapshot of the Delta log.
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The files that should be included in a scan after applying the predicate.
-   */
   protected def getFilesRead(
       deltaLog: DeltaLog,
       predicate: String,
-      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] = {
-    val parsed = parse(deltaLog, predicate)
-    val res = deltaLog.snapshot.filesForScan(parsed)
-    assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
-    assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
-    assert(res.scanned.files.get == res.files.size)
-    assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
-    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
-    res.files
-  }
+      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] =
+    super.getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
 
   protected def checkResultsWithPartitions(
     tableDir: String,
@@ -2122,9 +2247,68 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
   }
 }
 
+trait DataSkippingDeltaTestsUtils extends PredicateHelper {
+  protected def parse(
+      spark: SparkSession, deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
+
+    // We produce a wrong filter in this case otherwise
+    if (predicate == "True") return Seq(Literal.TrueLiteral)
+
+    val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
+    filtered
+      .queryExecution
+      .optimizedPlan
+      .expressions
+      .flatMap(splitConjunctivePredicates)
+  }
+
+  /**
+   * Returns the number of files that should be included in a scan after applying the given
+   * predicate on a snapshot of the Delta log.
+   *
+   * @param deltaLog Delta log for a table.
+   * @param predicate Predicate to run on the Delta table.
+   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
+   *                                the given predicate was used as data or partition filters.
+   * @return The number of files that should be included in a scan after applying the predicate.
+   */
+  protected def filesRead(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean): Int =
+    getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters).size
+
+  /**
+   * Returns the files that should be included in a scan after applying the given predicate on
+   * a snapshot of the Delta log.
+   * @param deltaLog Delta log for a table.
+   * @param predicate Predicate to run on the Delta table.
+   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
+   *                                the given predicate was used as data or partition filters.
+   * @return The files that should be included in a scan after applying the predicate.
+   */
+  protected def getFilesRead(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean): Seq[AddFile] = {
+    val parsed = parse(spark, deltaLog, predicate)
+    val res = deltaLog.snapshot.filesForScan(parsed)
+    assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
+    assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
+    assert(res.scanned.files.get == res.files.size)
+    assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
+    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
+    res.files
+  }
+}
+
+
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */
-class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
+class DataSkippingDeltaV1Suite
+  extends DataSkippingDeltaTests
 {
   import testImplicits._
 
@@ -2137,7 +2321,9 @@ class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
     val data = spark.range(10).repartition(2)
 
     Given("appending data without collecting stats")
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
+        DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "false") {
       data.write.format("delta").save(r.dataPath.toString)
       checkAnswer(rStats, Seq(Row(null, null, null), Row(null, null, null)))
     }
@@ -2222,4 +2408,16 @@ class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Sui
       )
     )
   }
+}
+
+class DataSkippingDeltaV1WithCatalogOwnedBatch1Suite extends DataSkippingDeltaV1Suite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DataSkippingDeltaV1WithCatalogOwnedBatch2Suite extends DataSkippingDeltaV1Suite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DataSkippingDeltaV1WithCatalogOwnedBatch100Suite extends DataSkippingDeltaV1Suite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

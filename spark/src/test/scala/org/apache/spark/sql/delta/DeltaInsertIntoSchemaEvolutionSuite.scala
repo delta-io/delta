@@ -139,7 +139,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           ex,
           "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
           parameters = Map(
-            "tableName" -> "`spark_catalog`.`default`.`target`",
+            "tableName" -> s"`$catalogName`.`default`.`target`",
             "tableColumns" -> "`a`, `b`",
             "dataColumns" -> "`a`, `b`, `c`"
           ))

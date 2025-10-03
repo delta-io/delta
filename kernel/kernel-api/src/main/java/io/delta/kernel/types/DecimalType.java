@@ -58,6 +58,11 @@ public final class DecimalType extends DataType {
   }
 
   @Override
+  public boolean isNested() {
+    return false;
+  }
+
+  @Override
   public String toString() {
     return String.format("Decimal(%d, %d)", precision, scale);
   }

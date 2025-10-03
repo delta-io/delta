@@ -21,14 +21,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 
 import scala.collection.JavaConverters._
+import scala.concurrent.duration._
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, BOOLEAN_DOMAIN}
+import org.apache.spark.sql.delta.cdc.CDCEnabled
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
@@ -44,14 +45,14 @@ import org.apache.spark.sql.types.{LongType, StringType, StructType}
 
 abstract class DeltaCDCSuiteBase
   extends QueryTest
+  with CDCEnabled
   with SharedSparkSession
   with CheckCDCAnswer
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with CatalogOwnedTestBaseSuite
+  with DeltaSQLTestUtils {
 
   import testImplicits._
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
 
   /** Represents path or metastore table name */
   abstract case class TblId(id: String)
@@ -107,16 +108,6 @@ abstract class DeltaCDCSuiteBase
       end: Boundary,
       schemaMode: Option[DeltaBatchCDFSchemaMode] = Some(BatchCDFSchemaLegacy),
       readerOptions: Map[String, String] = Map.empty): DataFrame
-
-  /** Modify timestamp for a delta commit, used to test timestamp querying */
-  def modifyDeltaTimestamp(deltaLog: DeltaLog, version: Long, time: Long): Unit = {
-    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
-    file.setLastModified(time)
-    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
-    if (crc.exists()) {
-      crc.setLastModified(time)
-    }
-  }
 
   /** Create table utility method */
   def ctas(srcTbl: String, dstTbl: String, disableCDC: Boolean = false): Unit = {
@@ -214,6 +205,38 @@ abstract class DeltaCDCSuiteBase
     }
   }
 
+  // Test that schema evolution on a table with CDC enabled cannot add reserved columns.
+  for (operation <- Seq("merge", "write")) {
+    test(s"schema evolution with CDC reserved column names - op = $operation") {
+      withTable("src", "dst") {
+        // Create target table with CDC enabled.
+        createTblWithThreeVersions(tblName = Some("dst"))
+        // Create the source table containing the CDC of the destination table.
+        ctas(srcTbl = "dst", dstTbl = "src", disableCDC = true)
+
+        // Write the source back to the target table.
+        val e = intercept[DeltaIllegalStateException] {
+          withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+            operation match {
+              case "merge" =>
+                spark.sql(
+                  """
+                    |MERGE INTO dst USING src
+                    |ON dst.id = src.id
+                    |WHEN MATCHED THEN UPDATE SET *
+                    |WHEN NOT MATCHED THEN INSERT *
+                    |""".stripMargin)
+              case "write" =>
+                spark.table("src").write.format("delta")
+                  .option("mergeSchema", "true").mode("append").saveAsTable("dst")
+            }
+          }
+        }
+        assert(e.getErrorClass === "RESERVED_CDC_COLUMNS_ON_WRITE")
+      }
+    }
+  }
+
   test("changes from table by name") {
     withTable("tbl") {
       createTblWithThreeVersions(tblName = Some("tbl"))
@@ -246,26 +269,26 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("changes - start and end are timestamps") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
       // modify timestamps
       // version 0
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      val tsAfterV0 = dateFormat.format(new Date(1))
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
+      modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
+      val tsAfterV0 = dateFormat.format(new Date(currentTime + 1))
 
       // version 1
-      modifyDeltaTimestamp(deltaLog, 1, 1000)
-      val tsAfterV1 = dateFormat.format(new Date(1001))
+      modifyCommitTimestamp(deltaLog, 1, currentTime + 1000)
+      val tsAfterV1 = dateFormat.format(new Date(currentTime + 2000))
 
-      modifyDeltaTimestamp(deltaLog, 2, 2000)
+      modifyCommitTimestamp(deltaLog, 2, currentTime + 3000)
 
       val readDf = cdcRead(
-        new TablePath(tempDir.getAbsolutePath),
-        StartingTimestamp(tsAfterV0), EndingTimestamp(tsAfterV1))
+        new TableName(tableName), StartingTimestamp(tsAfterV0), EndingTimestamp(tsAfterV1))
       checkCDCAnswer(
-        DeltaLog.forTable(spark, tempDir),
+        DeltaLog.forTable(spark, TableIdentifier(tableName)),
         readDf,
         spark.range(20)
           .withColumn("_change_type", lit("insert"))
@@ -274,19 +297,19 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("changes - only start is a timestamp") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 10000)
-      modifyDeltaTimestamp(deltaLog, 2, 20000)
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
+      modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
+      modifyCommitTimestamp(deltaLog, 1, currentTime + 10000)
+      modifyCommitTimestamp(deltaLog, 2, currentTime + 20000)
 
-      val ts0 = dateFormat.format(new Date(2000))
-      val readDf = cdcRead(
-        new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingVersion("1"))
+      val ts0 = dateFormat.format(new Date(currentTime + 2000))
+      val readDf = cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingVersion("1"))
       checkCDCAnswer(
-        DeltaLog.forTable(spark, tempDir),
+        DeltaLog.forTable(spark, TableIdentifier(tableName)),
         readDf,
         spark.range(10, 20)
           .withColumn("_change_type", lit("insert"))
@@ -295,19 +318,19 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("changes - only start is a timestamp - inclusive behavior") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 1000)
-      modifyDeltaTimestamp(deltaLog, 2, 2000)
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
+      modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
+      modifyCommitTimestamp(deltaLog, 1, currentTime + 1000)
+      modifyCommitTimestamp(deltaLog, 2, currentTime + 2000)
 
-      val ts0 = dateFormat.format(new Date(0))
-      val readDf = cdcRead(
-        new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingVersion("1"))
+      val ts0 = dateFormat.format(new Date(currentTime + 0))
+      val readDf = cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingVersion("1"))
       checkCDCAnswer(
-        DeltaLog.forTable(spark, tempDir),
+        DeltaLog.forTable(spark, TableIdentifier(tableName)),
         readDf,
         spark.range(20)
           .withColumn("_change_type", lit("insert"))
@@ -316,41 +339,36 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("version from timestamp - before the first version") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyDeltaTimestamp(deltaLog, 0, 4000)
-      modifyDeltaTimestamp(deltaLog, 1, 8000)
-      modifyDeltaTimestamp(deltaLog, 2, 12000)
+      modifyCommitTimestamp(deltaLog, 0, 4000)
+      modifyCommitTimestamp(deltaLog, 1, 8000)
+      modifyCommitTimestamp(deltaLog, 2, 12000)
 
       val ts0 = dateFormat.format(new Date(1000))
       val ts1 = dateFormat.format(new Date(3000))
       intercept[AnalysisException] {
-        cdcRead(
-          new TablePath(tempDir.getAbsolutePath),
-          StartingTimestamp(ts0),
-          EndingTimestamp(ts1))
-          .collect()
+        cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1)).collect()
       }.getMessage.contains("before the earliest version")
     }
   }
 
   test("version from timestamp - between two valid versions") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 4000)
-      modifyDeltaTimestamp(deltaLog, 2, 8000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 4000)
+      modifyCommitTimestamp(deltaLog, 2, 8000)
 
       val ts0 = dateFormat.format(new Date(1000))
       val ts1 = dateFormat.format(new Date(3000))
-      val readDf = cdcRead(
-        new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingTimestamp(ts1))
+      val readDf = cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
       checkCDCAnswer(
-        DeltaLog.forTable(spark, tempDir),
+        DeltaLog.forTable(spark, TableIdentifier(tableName)),
         readDf,
         spark.range(0)
           .withColumn("_change_type", lit("insert"))
@@ -359,20 +377,20 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("version from timestamp - one version in between") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 4000)
-      modifyDeltaTimestamp(deltaLog, 2, 8000)
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
+      modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
+      modifyCommitTimestamp(deltaLog, 1, currentTime + 4000)
+      modifyCommitTimestamp(deltaLog, 2, currentTime + 8000)
 
-      val ts0 = dateFormat.format(new Date(3000))
-      val ts1 = dateFormat.format(new Date(5000))
-      val readDf = cdcRead(
-        new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingTimestamp(ts1))
+      val ts0 = dateFormat.format(new Date(currentTime + 3000))
+      val ts1 = dateFormat.format(new Date(currentTime + 5000))
+      val readDf = cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
       checkCDCAnswer(
-        DeltaLog.forTable(spark, tempDir),
+        DeltaLog.forTable(spark, TableIdentifier(tableName)),
         readDf,
         spark.range(10, 20)
           .withColumn("_change_type", lit("insert"))
@@ -381,42 +399,36 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("version from timestamp - end before start") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 4000)
-      modifyDeltaTimestamp(deltaLog, 2, 8000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 4000)
+      modifyCommitTimestamp(deltaLog, 2, 8000)
 
       val ts0 = dateFormat.format(new Date(3000))
       val ts1 = dateFormat.format(new Date(1000))
       intercept[DeltaIllegalArgumentException] {
-        cdcRead(
-          new TablePath(tempDir.getAbsolutePath),
-          StartingTimestamp(ts0),
-          EndingTimestamp(ts1))
+        cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
           .collect()
       }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
     }
   }
 
   test("version from timestamp - end before start with one version in between") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 4000)
-      modifyDeltaTimestamp(deltaLog, 2, 8000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 4000)
+      modifyCommitTimestamp(deltaLog, 2, 8000)
 
       val ts0 = dateFormat.format(new Date(5000))
       val ts1 = dateFormat.format(new Date(3000))
       intercept[DeltaIllegalArgumentException] {
-        cdcRead(
-          new TablePath(tempDir.getAbsolutePath),
-          StartingTimestamp(ts0),
-          EndingTimestamp(ts1))
+        cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
           .collect()
       }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
     }
@@ -439,17 +451,25 @@ abstract class DeltaCDCSuiteBase
   }
 
   for (readWithVersionNumber <- BOOLEAN_DOMAIN)
-  test(s"CDC read respects timezone and DST - readWithVersionNumber=$readWithVersionNumber") {
+  test(
+    s"CDC read respects timezone and DST - readWithVersionNumber=$readWithVersionNumber") {
     val tblName = "tbl"
     withTable(tblName) {
       createTblWithThreeVersions(tblName = Some(tblName))
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
+      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
+      // older versions can be accessed
+      spark.sql(s"ALTER TABLE $tblName SET TBLPROPERTIES" +
+        s" ('delta.deletedFileRetentionDuration' = 'interval $largeRetentionHours HOURS'," +
+        s"'delta.logRetentionDuration' = 'interval $largeRetentionHours HOURS')")
+
 
       // Set commit time during Daylight savings time change.
       val restoreDate = "2022-11-06 01:42:44"
       val timestamp = dateFormat.parse(s"$restoreDate -0800").getTime
-      modifyDeltaTimestamp(deltaLog, 0, timestamp)
+      modifyCommitTimestamp(deltaLog, 0, timestamp)
 
       // Verify DST is respected.
       val e = intercept[Exception] {
@@ -554,19 +574,18 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("end timestamp < start timestamp") {
-    withTempDir { tempDir =>
-      createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      createTblWithThreeVersions(tblName = Some(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 1000)
-      modifyDeltaTimestamp(deltaLog, 2, 2000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 1000)
+      modifyCommitTimestamp(deltaLog, 2, 2000)
 
       val ts0 = dateFormat.format(new Date(2000))
       val ts1 = dateFormat.format(new Date(1))
       val e = intercept[IllegalArgumentException] {
-        cdcRead(
-          new TablePath(tempDir.getAbsolutePath), StartingTimestamp(ts0), EndingTimestamp(ts1))
+        cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
       }
       assert(e.getMessage.contains("End cannot be before start"))
     }
@@ -653,14 +672,13 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("aggregating non-numeric cdc data columns") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
+    withTempTable(createTable = false) { tableName =>
       spark.range(10).selectExpr("id", "'text' as text")
-          .write.format("delta").save(path)
-      val deltaTable = io.delta.tables.DeltaTable.forPath(path)
+          .write.format("delta").saveAsTable(tableName)
+      val deltaTable = io.delta.tables.DeltaTable.forName(tableName)
       deltaTable.delete("id > 5")
 
-      val cdcResult = cdcRead(new TablePath(path), StartingVersion("0"), EndingVersion("3"))
+      val cdcResult = cdcRead(new TableName(tableName), StartingVersion("0"), EndingVersion("3"))
 
       checkAnswer(
         cdcResult.selectExpr("count(distinct text)"),
@@ -675,11 +693,10 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("ending version not specified resolves to latest at execution time") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
+    withTempTable(createTable = false) { tableName =>
       spark.range(5).selectExpr("id", "'text' as text")
-        .write.format("delta").save(path)
-      val cdcResult = cdcRead(new TablePath(path), StartingVersion("0"), Unbounded)
+        .write.format("delta").saveAsTable(tableName)
+      val cdcResult = cdcRead(new TableName(tableName), StartingVersion("0"), Unbounded)
 
       checkAnswer(
         cdcResult.selectExpr("id", "_change_type", "_commit_version"),
@@ -689,7 +706,7 @@ abstract class DeltaCDCSuiteBase
 
       // The next scan of `cdcResult` should include this delete even though the DF was defined
       // before it.
-      val deltaTable = io.delta.tables.DeltaTable.forPath(path)
+      val deltaTable = io.delta.tables.DeltaTable.forName(tableName)
       deltaTable.delete("id > 2")
 
       checkAnswer(
@@ -702,12 +719,11 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("table schema changed after dataframe with ending specified") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
+    withTempTable(createTable = false) { tableName =>
       spark.range(5).selectExpr("id", "'text' as text")
-        .write.format("delta").save(path)
-      val cdcResult = cdcRead(new TablePath(path), StartingVersion("0"), EndingVersion("1"))
-      sql(s"ALTER TABLE delta.`$path` ADD COLUMN (newCol INT)")
+        .write.format("delta").saveAsTable(tableName)
+      val cdcResult = cdcRead(new TableName(tableName), StartingVersion("0"), EndingVersion("1"))
+      sql(s"ALTER TABLE $tableName ADD COLUMN (newCol INT)")
 
       checkAnswer(
         cdcResult.selectExpr("id", "_change_type", "_commit_version"),
@@ -718,13 +734,12 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("table schema changed after dataframe with ending not specified") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
+    withTempTable(createTable = false) { tableName =>
       spark.range(5).selectExpr("id", "'text' as text")
-        .write.format("delta").save(path)
-      val cdcResult = cdcRead(new TablePath(path), StartingVersion("0"), Unbounded)
-      sql(s"ALTER TABLE delta.`$path` ADD COLUMN (newCol STRING)")
-      sql(s"INSERT INTO delta.`$path` VALUES (5, 'text', 'newColVal')")
+        .write.format("delta").saveAsTable(tableName)
+      val cdcResult = cdcRead(new TableName(tableName), StartingVersion("0"), Unbounded)
+      sql(s"ALTER TABLE $tableName ADD COLUMN (newCol STRING)")
+      sql(s"INSERT INTO $tableName VALUES (5, 'text', 'newColVal')")
 
       // Just ignoring the new column is pretty weird, but it's what we do for non-CDC dataframes,
       // so we preserve the behavior rather than adding a special case.
@@ -787,30 +802,27 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("changes - start timestamp exceeding latest commit timestamp") {
-    withTempDir { tempDir =>
+    withTempTable(createTable = false) { tableName =>
       withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.key -> "true") {
-        val path = tempDir.getAbsolutePath
-        createTblWithThreeVersions(path = Some(path))
-        val deltaLog = DeltaLog.forTable(spark, path)
+        createTblWithThreeVersions(tblName = Some(tableName))
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
         // modify timestamps
         // version 0
-        modifyDeltaTimestamp(deltaLog, 0, 0)
+        modifyCommitTimestamp(deltaLog, 0, 0)
 
         // version 1
-        modifyDeltaTimestamp(deltaLog, 1, 1000)
+        modifyCommitTimestamp(deltaLog, 1, 1000)
 
         // version 2
-        modifyDeltaTimestamp(deltaLog, 2, 2000)
+        modifyCommitTimestamp(deltaLog, 2, 2000)
         val tsStart = dateFormat.format(new Date(3000))
         val tsEnd = dateFormat.format(new Date(4000))
 
         val readDf = cdcRead(
-          new TablePath(path),
-          StartingTimestamp(tsStart),
-          EndingTimestamp(tsEnd))
+          new TableName(tableName), StartingTimestamp(tsStart), EndingTimestamp(tsEnd))
         checkCDCAnswer(
-          DeltaLog.forTable(spark, tempDir),
+          DeltaLog.forTable(spark, TableIdentifier(tableName)),
           readDf,
           sqlContext.emptyDataFrame)
       }
@@ -818,29 +830,29 @@ abstract class DeltaCDCSuiteBase
   }
 
   test("changes - end timestamp exceeding latest commit timestamp") {
-    withTempDir { tempDir =>
+    withTempTable(createTable = false) { tableName =>
       withSQLConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.key -> "true") {
-        createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
-        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        createTblWithThreeVersions(tblName = Some(tableName))
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
+        val currentTime = System.currentTimeMillis() - 5.days.toMillis
         // modify timestamps
         // version 0
-        modifyDeltaTimestamp(deltaLog, 0, 0)
+        modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
 
         // version 1
-        modifyDeltaTimestamp(deltaLog, 1, 1000)
+        modifyCommitTimestamp(deltaLog, 1, currentTime + 1000)
 
         // version 2
-        modifyDeltaTimestamp(deltaLog, 2, 2000)
+        modifyCommitTimestamp(deltaLog, 2, currentTime + 2000)
 
-        val tsStart = dateFormat.format(new Date(0))
-        val tsEnd = dateFormat.format(new Date(4000))
+        val tsStart = dateFormat.format(new Date(currentTime + 0))
+        val tsEnd = dateFormat.format(new Date(currentTime + 4000))
 
         val readDf = cdcRead(
-          new TablePath(tempDir.getAbsolutePath),
-          StartingTimestamp(tsStart), EndingTimestamp(tsEnd))
+          new TableName(tableName), StartingTimestamp(tsStart), EndingTimestamp(tsEnd))
         checkCDCAnswer(
-          DeltaLog.forTable(spark, tempDir),
+          DeltaLog.forTable(spark, TableIdentifier(tableName)),
           readDf,
           spark.range(30)
             .withColumn("_change_type", lit("insert"))
@@ -853,17 +865,17 @@ abstract class DeltaCDCSuiteBase
     withSQLConf(
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
       DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key -> "true") {
-      withTempDir { tempDir =>
-        def data: DataFrame = spark.read.format("delta").load(tempDir.toString)
+      withTempTable(createTable = false) { tableName =>
+        def data: DataFrame = spark.read.format("delta").table(tableName)
 
         Seq(("a", "x"), ("b", "y"), ("c", "x")).toDF("value", "part")
           .write
           .format("delta")
           .partitionBy("part")
           .mode("append")
-          .save(tempDir.getCanonicalPath)
+          .saveAsTable(tableName)
         checkAnswer(
-          cdcRead(new TablePath(tempDir.getCanonicalPath), StartingVersion("0"), EndingVersion("0"))
+          cdcRead(new TableName(tableName), StartingVersion("0"), EndingVersion("0"))
             .drop(CDC_COMMIT_TIMESTAMP),
           Row("a", "x", "insert", 0) :: Row("b", "y", "insert", 0) ::
             Row("c", "x", "insert", 0) :: Nil
@@ -876,11 +888,11 @@ abstract class DeltaCDCSuiteBase
           .partitionBy("part")
           .mode("overwrite")
           .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
-          .save(tempDir.getCanonicalPath)
+          .saveAsTable(tableName)
         checkDatasetUnorderly(data.select("value", "part").as[(String, String)],
           ("a", "x"), ("b", "y"), ("c", "x"), ("d", "z"))
         checkAnswer(
-          cdcRead(new TablePath(tempDir.getCanonicalPath), StartingVersion("1"), EndingVersion("1"))
+          cdcRead(new TableName(tableName), StartingVersion("1"), EndingVersion("1"))
             .drop(CDC_COMMIT_TIMESTAMP),
           Row("d", "z", "insert", 1) :: Nil
         )
@@ -892,11 +904,11 @@ abstract class DeltaCDCSuiteBase
           .partitionBy("part")
           .mode("overwrite")
           .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
-          .save(tempDir.getCanonicalPath)
+          .saveAsTable(tableName)
         checkDatasetUnorderly(data.select("value", "part").as[(String, String)],
           ("a", "x"), ("b", "y"), ("d", "z"), ("e", "x"))
         checkAnswer(
-          cdcRead(new TablePath(tempDir.getCanonicalPath), StartingVersion("2"), EndingVersion("2"))
+          cdcRead(new TableName(tableName), StartingVersion("2"), EndingVersion("2"))
             .drop(CDC_COMMIT_TIMESTAMP),
           Row("a", "x", "delete", 2) :: Row("c", "x", "delete", 2) ::
             Row("a", "x", "insert", 2) :: Row("e", "x", "insert", 2) :: Nil
@@ -968,6 +980,52 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
     }
   }
 
+  private def testNullRangeBoundary(start: Boundary, end: Boundary): Unit = {
+    test(s"range boundary cannot be null - start=$start end=$end") {
+      val tblName = "tbl"
+      withTable(tblName) {
+        createTblWithThreeVersions(tblName = Some(tblName))
+
+        val expectedError = (start, end) match {
+          case (StartingVersion(null), _) => "DELTA_VERSION_INVALID"
+          case (StartingTimestamp(null), _) => "DELTA_TIMESTAMP_INVALID"
+          case (_, EndingVersion(null)) => "DELTA_VERSION_INVALID"
+          case (_, EndingTimestamp(null)) => "DELTA_TIMESTAMP_INVALID"
+        }
+        val expectedErrorParameters = expectedError match {
+          case "DELTA_VERSION_INVALID" => Map("version" -> "null")
+          case "DELTA_TIMESTAMP_INVALID" => Map("expr" -> "NULL")
+        }
+
+        checkError(
+          intercept[DeltaAnalysisException] {
+            cdcRead(new TableName(tblName), start, end)
+          },
+          expectedError,
+          parameters = expectedErrorParameters)
+      }
+    }
+  }
+
+  for {
+    start <- Seq(StartingVersion("0"), StartingTimestamp(dateFormat.format(new Date(1))))
+    end <- Seq(EndingVersion(null), EndingTimestamp(null))
+  } {
+    testNullRangeBoundary(start, end)
+  }
+
+  for {
+    start <- Seq(StartingVersion(null), StartingTimestamp(null))
+    end <- Seq(
+      Unbounded,
+      EndingVersion(null),
+      EndingTimestamp(null),
+      EndingVersion("0"),
+      EndingTimestamp(dateFormat.format(new Date(1))))
+  } {
+    testNullRangeBoundary(start, end)
+  }
+
   test("filters should be pushed down") {
     val tblName = "tbl"
     withTable(tblName) {
@@ -1023,18 +1081,22 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
   }
 
   test("non-monotonic timestamps") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
-      val deltaLog = DeltaLog.forTable(spark, path)
+    withTempTable(createTable = false) { tableName =>
+      var deltaLog: DeltaLog = null
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
       (0 to 3).foreach { i =>
-        spark.range(i * 10, (i + 1) * 10).write.format("delta").mode("append").save(path)
+        spark.range(i * 10, (i + 1) * 10).write.format("delta").mode("append")
+          .saveAsTable(tableName)
+        if (i == 0) {
+          deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        }
         val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, i).toUri)
-        file.setLastModified(300 - i)
+        file.setLastModified(currentTime + 300 - i)
       }
 
       checkCDCAnswer(
         deltaLog,
-        cdcRead(new TablePath(path), StartingVersion("0"), EndingVersion("3")),
+        cdcRead(new TableName(tableName), StartingVersion("0"), EndingVersion("3")),
         spark.range(0, 40)
           .withColumn("_change_type", lit("insert"))
           .withColumn("_commit_version", floor(col("id") / 10)))
@@ -1042,13 +1104,12 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
   }
 
   test("Repeated delete") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
-      val deltaLog = DeltaLog.forTable(spark, path)
-      spark.range(0, 5, 1, numPartitions = 1).write.format("delta").save(path)
-      sql(s"DELETE FROM delta.`$path` WHERE id = 3") // Version 1
-      sql(s"DELETE FROM delta.`$path` WHERE id = 4") // Version 2
-      sql(s"DELETE FROM delta.`$path` WHERE id IN (0, 1, 2)") // Version 3, remove the whole file
+    withTempTable(createTable = false) { tableName =>
+      spark.range(0, 5, 1, numPartitions = 1).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      sql(s"DELETE FROM $tableName WHERE id = 3") // Version 1
+      sql(s"DELETE FROM $tableName WHERE id = 4") // Version 2
+      sql(s"DELETE FROM $tableName WHERE id IN (0, 1, 2)") // Version 3, remove the whole file
 
       val allChanges: Map[Int, Seq[Row]] = Map(
         1 -> (Row(3, "delete", 1) :: Nil),
@@ -1060,9 +1121,7 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
         checkCDCAnswer(
           deltaLog,
           cdcRead(
-            new TablePath(path),
-            StartingVersion(start.toString),
-            EndingVersion(end.toString)),
+            new TableName(tableName), StartingVersion(start.toString), EndingVersion(end.toString)),
          (start to end).flatMap(v => allChanges(v)))
       }
     }
@@ -1106,24 +1165,14 @@ class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite
   }
 }
 
-class DeltaCDCScalaSuiteWithCoordinatedCommitsBatch10 extends DeltaCDCScalaSuite
-  with CoordinatedCommitsBaseSuite {
+class DeltaCDCScalaWithCatalogOwnedBatch1Suite extends DeltaCDCScalaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
 
-  /** Modify timestamp for a delta commit, used to test timestamp querying */
-  override def modifyDeltaTimestamp(deltaLog: DeltaLog, version: Long, time: Long): Unit = {
-    val fileProvider = DeltaCommitFileProvider(deltaLog.snapshot)
-    val file = new File(fileProvider.deltaFile(version).toUri)
-    InCommitTimestampTestUtils.overwriteICTInDeltaFile(
-      deltaLog,
-      new Path(file.getPath),
-      Some(time))
-    file.setLastModified(time)
-    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
-    if (crc.exists()) {
-      InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(time))
-      crc.setLastModified(time)
-    }
-  }
+class DeltaCDCScalaWithCatalogOwnedBatch2Suite extends DeltaCDCScalaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
 
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
+class DeltaCDCScalaWithCatalogOwnedBatch100Suite extends DeltaCDCScalaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

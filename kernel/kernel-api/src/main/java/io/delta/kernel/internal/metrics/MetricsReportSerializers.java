@@ -15,13 +15,22 @@
  */
 package io.delta.kernel.internal.metrics;
 
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.metrics.MetricsReport;
+import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.metrics.TransactionReport;
+import io.delta.kernel.types.StructType;
+import java.io.IOException;
 
 /** Defines JSON serializers for {@link MetricsReport} types */
 public final class MetricsReportSerializers {
@@ -40,6 +49,25 @@ public final class MetricsReportSerializers {
     return OBJECT_MAPPER.writeValueAsString(snapshotReport);
   }
 
+  /**
+   * Serializes a {@link ScanReport} to a JSON string
+   *
+   * @throws JsonProcessingException
+   */
+  public static String serializeScanReport(ScanReport scanReport) throws JsonProcessingException {
+    return OBJECT_MAPPER.writeValueAsString(scanReport);
+  }
+
+  /**
+   * Serializes a {@link TransactionReport} to a JSON string
+   *
+   * @throws JsonProcessingException
+   */
+  public static String serializeTransactionReport(TransactionReport transactionReport)
+      throws JsonProcessingException {
+    return OBJECT_MAPPER.writeValueAsString(transactionReport);
+  }
+
   /////////////////////////////////
   // Private fields and methods //
   ////////////////////////////////
@@ -48,7 +76,25 @@ public final class MetricsReportSerializers {
       new ObjectMapper()
           .registerModule(new Jdk8Module()) // To support Optional
           .registerModule( // Serialize Exception using toString()
-              new SimpleModule().addSerializer(Exception.class, new ToStringSerializer()));
+              new SimpleModule().addSerializer(Exception.class, new ToStringSerializer()))
+          .registerModule( // Serialize StructType using toString
+              new SimpleModule().addSerializer(StructType.class, new ToStringSerializer()))
+          .registerModule( // Serialize Predicate using toString
+              new SimpleModule().addSerializer(Predicate.class, new ToStringSerializer()))
+          .registerModule( // Serialize Column to exclude un-necessary fields
+              new SimpleModule().addSerializer(Column.class, new ColumnSerializer()));
+
+  private static class ColumnSerializer extends JsonSerializer<Column> {
+    @Override
+    public void serialize(Column value, JsonGenerator gen, SerializerProvider serializers)
+        throws IOException {
+      gen.writeStartArray();
+      for (String name : value.getNames()) {
+        gen.writeString(name);
+      }
+      gen.writeEndArray();
+    }
+  }
 
   private MetricsReportSerializers() {}
 }

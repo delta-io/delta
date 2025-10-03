@@ -70,6 +70,12 @@ object TypeWidening {
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
     TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType)
 
+  def isTypeChangeSupported(
+     fromType: AtomicType, toType: AtomicType, uniformIcebergCompatibleOnly: Boolean): Boolean =
+    TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType) &&
+      (!uniformIcebergCompatibleOnly ||
+        isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType))
+
   /**
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.
@@ -162,4 +168,20 @@ object TypeWidening {
       case (LongType, d: DecimalType) => d.isWiderThan(LongType)
       case _ => false
     }
+
+  /**
+   * Compares `from` and `to` and returns whether the type was widened, or, for nested types,
+   * whether one of the nested fields was widened.
+   */
+  def containsWideningTypeChanges(from: DataType, to: DataType): Boolean = (from, to) match {
+    case (from: StructType, to: StructType) =>
+      TypeWideningMetadata.collectTypeChanges(from, to).nonEmpty
+    case (from: MapType, to: MapType) =>
+      containsWideningTypeChanges(from.keyType, to.keyType) ||
+        containsWideningTypeChanges(from.valueType, to.valueType)
+    case (from: ArrayType, to: ArrayType) =>
+      containsWideningTypeChanges(from.elementType, to.elementType)
+    case (from: AtomicType, to: AtomicType) =>
+      isTypeChangeSupported(from, to)
+  }
 }

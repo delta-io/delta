@@ -19,19 +19,20 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
-import java.util.ConcurrentModificationException
+import java.util.{ConcurrentModificationException, UUID}
 
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.NoRedirectRule
+import org.apache.spark.sql.delta.redirect.RedirectSpec
 import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -74,6 +75,9 @@ trait DocsPath {
   /**
    * Get the link to the docs for the given relativePath. Validates that the error generating the
    * link is added to docsLinks.
+   * Please only use this function if SparkConf is directly available.
+   * If needed to retrieve SparkConf from SparkSession,
+   * please use more safe function [[generateDocsLinkOption]].
    *
    * @param relativePath the relative path after the base url to access.
    * @param skipValidation whether to validate that the function generating the link is
@@ -84,9 +88,18 @@ trait DocsPath {
       conf: SparkConf,
       relativePath: String,
       skipValidation: Boolean = false): String = {
+    require(conf != null)
     if (!skipValidation) assertValidCallingFunction()
     baseDocsPath(conf) + relativePath
   }
+
+  /** Safe alternative to [[generateDocsLink]] that validates sparkContext before accessing it. */
+  def generateDocsLinkOption(
+      spark: SparkSession,
+      relativePath: String,
+      skipValidation: Boolean = false): Option[String] =
+    Option(spark.sparkContext)
+      .map(context => generateDocsLink(context.getConf, relativePath, skipValidation))
 
   /**
    * List of error function names for all errors that have URLs. When adding your error to this list
@@ -116,7 +129,7 @@ trait DocsPath {
     "tableFeatureReadRequiresWriteException",
     "tableFeatureRequiresHigherReaderProtocolVersion",
     "tableFeatureRequiresHigherWriterProtocolVersion",
-    "blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges"
+    "blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges"
   )
 }
 
@@ -345,18 +358,49 @@ trait DeltaErrorsBase
     )
   }
 
-  def invalidRedirectStateTransition(
-      table: String,
-      oldState: RedirectState,
-      newState: RedirectState): Unit = {
+  def deltaRelationPathMismatch(
+      relationPath: Seq[String],
+      targetType: String,
+      targetPath: Seq[String]
+  ): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      errorClass = "DELTA_RELATION_PATH_MISMATCH",
       messageParameters = Array(
-        table, table, oldState.name, newState.name)
+        relationPath.mkString("."),
+        targetType,
+        targetPath.mkString(".")
+      )
     )
   }
 
-  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Unit = {
+  def unrecognizedRedirectSpec(spec: RedirectSpec): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_UNRECOGNIZED_REDIRECT_SPEC",
+      messageParameters = Array(spec.toString)
+    )
+  }
+
+  def invalidSetUnSetRedirectCommand(
+      table: String,
+      newProperty: String,
+      existingProperty: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_SET_UNSET_REDIRECT",
+      messageParameters = Array(table, existingProperty, newProperty)
+    )
+  }
+
+  def invalidRedirectStateTransition(
+      table: String,
+      oldState: RedirectState,
+      newState: RedirectState): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      messageParameters = Array(table, oldState.name, newState.name)
+    )
+  }
+
+  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT",
       messageParameters = Array(table, table, currentState.name)
@@ -364,7 +408,7 @@ trait DeltaErrorsBase
   }
 
   def invalidCommitIntermediateRedirectState(state: RedirectState): Throwable = {
-    throw new DeltaIllegalStateException (
+    new DeltaIllegalStateException (
       errorClass = "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE",
       messageParameters = Array(state.name)
     )
@@ -373,7 +417,7 @@ trait DeltaErrorsBase
   def noRedirectRulesViolated(
       op: DeltaOperations.Operation,
       noRedirectRules: Set[NoRedirectRule]): Throwable = {
-    throw new DeltaIllegalStateException (
+    new DeltaIllegalStateException (
       errorClass = "DELTA_NO_REDIRECT_RULES_VIOLATED",
       messageParameters =
         Array(op.name, noRedirectRules.map("\"" + _ + "\"").mkString("[", ",\n", "]"))
@@ -452,6 +496,11 @@ trait DeltaErrorsBase
       errorClass = "DELTA_DV_HISTOGRAM_DESERIALIZATON",
       messageParameters = Array.empty,
       pos = 0)
+  }
+
+  /** Throwable used when a null 'start' or 'end' is provided in CDC reads. */
+  def nullRangeBoundaryInCDCRead(): Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_CDC_READ_NULL_RANGE_BOUNDARY")
   }
 
   /**
@@ -616,6 +665,13 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
       messageParameters = Array(schemaDiff.mkString("\n"), legacyFlagMessage)
+    )
+  }
+
+  def cloneWithRowTrackingWithoutStats(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CLONE_WITH_ROW_TRACKING_WITHOUT_STATS",
+      messageParameters = Array.empty
     )
   }
 
@@ -884,7 +940,7 @@ trait DeltaErrorsBase
     )
   }
 
-  def logFileNotFoundException(
+  def truncatedTransactionLogException(
       path: Path,
       version: Long,
       metadata: Metadata): Throwable = {
@@ -899,6 +955,19 @@ trait DeltaErrorsBase
         logRetention.toString,
         DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key,
         checkpointRetention.toString)
+    )
+  }
+
+  def logFileNotFoundException(
+      path: Path,
+      version: Option[Long],
+      checkpointVersion: Long): Throwable = {
+    new DeltaFileNotFoundException(
+      errorClass = "DELTA_LOG_FILE_NOT_FOUND",
+      messageParameters = Array(
+        version.map(_.toString).getOrElse("LATEST"),
+        checkpointVersion.toString,
+        path.toString)
     )
   }
 
@@ -1044,10 +1113,19 @@ trait DeltaErrorsBase
   }
 
   def deltaVersionsNotContiguousException(
-      spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
+      spark: SparkSession,
+      deltaVersions: Seq[Long],
+      startVersion: Long,
+      endVersion: Long,
+      versionToLoad: Long): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_VERSIONS_NOT_CONTIGUOUS",
-      messageParameters = Array(deltaVersions.mkString(", "))
+      messageParameters = Array(
+        deltaVersions.mkString(", "),
+        startVersion.toString,
+        endVersion.toString,
+        versionToLoad.toString
+      )
     )
   }
 
@@ -1207,17 +1285,17 @@ trait DeltaErrorsBase
   def cannotSpecifyBothFileListAndPatternString(): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_FILE_LIST_AND_PATTERN_STRING_CONFLICT",
-      messageParameters = null)
+      messageParameters = Array.empty)
   }
 
   def cannotUpdateArrayField(table: String, field: String): Throwable = {
     new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_ARRAY_FIELD",
-      messageParameters = Array(table, field))
+      messageParameters = Array(table, field, field))
   }
 
   def cannotUpdateMapField(table: String, field: String): Throwable = {
     new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_MAP_FIELD",
-      messageParameters = Array(table, field))
+      messageParameters = Array(table, field, field, field))
   }
 
   def cannotUpdateStructField(table: String, field: String): Throwable = {
@@ -1249,8 +1327,8 @@ trait DeltaErrorsBase
   def multipleSourceRowMatchingTargetRowInMergeException(spark: SparkSession): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
-      messageParameters = Array(generateDocsLink(spark.sparkContext.getConf,
-        "/delta-update.html#upsert-into-a-table-using-merge"))
+      messageParameters = Array(generateDocsLinkOption(spark,
+        "/delta-update.html#upsert-into-a-table-using-merge").getOrElse("-"))
     )
   }
 
@@ -1258,12 +1336,17 @@ trait DeltaErrorsBase
     new DeltaRuntimeException(errorClass = "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY")
 
   def sourceNotDeterministicInMergeException(spark: SparkSession): Throwable = {
+    val docRefer =
+      generateDocsLinkOption(spark, "/delta-update.html#operation-semantics")
+        .map(link => s" Please refer to $link for more information.")
+        .getOrElse("")
     new UnsupportedOperationException(
-      s"""Cannot perform Merge because the source dataset is not deterministic. Please refer to
-         |${generateDocsLink(spark.sparkContext.getConf,
-        "/delta-update.html#operation-semantics")} for more information.""".stripMargin
+      s"Cannot perform Merge because the source dataset is not deterministic.$docRefer"
     )
   }
+
+  def mergeConcurrentOperationCachedSourceException(): Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_MERGE_SOURCE_CACHED_DURING_EXECUTION")
 
   def columnOfTargetTableNotFoundInMergeException(targetCol: String,
       colNames: String): Throwable = {
@@ -1319,8 +1402,11 @@ trait DeltaErrorsBase
       path: Path, tableName: String, spark: SparkSession): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG",
-      messageParameters = Array(tableName, path.toString,
-      generateDocsLink(spark.sparkContext.getConf, "/index.html")))
+      messageParameters = Array(
+        tableName,
+        path.toString,
+        new Path(path, "_delta_log").toString,
+        generateDocsLinkOption(spark, "/index.html").getOrElse("-")))
   }
 
   def createExternalTableWithoutSchemaException(
@@ -1328,15 +1414,15 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA",
       messageParameters = Array(tableName, path.toString,
-        generateDocsLink(spark.sparkContext.getConf, "/index.html")))
+        generateDocsLinkOption(spark, "/index.html").getOrElse("-")))
   }
 
   def createManagedTableWithoutSchemaException(
       tableName: String, spark: SparkSession): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA",
-      messageParameters = Array(tableName, s"""${generateDocsLink(spark.sparkContext.getConf,
-        "/index.html")}""".stripMargin)
+      messageParameters = Array(tableName,
+        generateDocsLinkOption(spark, "/index.html").getOrElse("-"))
     )
   }
 
@@ -1385,7 +1471,7 @@ trait DeltaErrorsBase
   }
 
   def aggsNotSupportedException(op: String, cond: Expression): Throwable = {
-    val condStr = s"(condition = ${cond.sql})."
+    val condStr = s"(condition = ${cond.sql})"
     new DeltaAnalysisException(
       errorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
       messageParameters = Array(op, condStr)
@@ -1434,13 +1520,10 @@ trait DeltaErrorsBase
          """.stripMargin)
 
   def timestampGreaterThanLatestCommit(
-      userTimestamp: java.sql.Timestamp,
-      commitTs: java.sql.Timestamp,
-      timestampString: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
-      messageParameters = Array(s"$userTimestamp", s"$commitTs", timestampString)
-    )
+      userTs: java.sql.Timestamp,
+      lastCommitTs: java.sql.Timestamp,
+      maximumTsStr: String): Throwable = {
+    TemporallyUnstableInputException(userTs, lastCommitTs, maximumTsStr)
   }
 
   def timestampInvalid(expr: Expression): Throwable = {
@@ -1450,16 +1533,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def versionInvalid(version: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_VERSION_INVALID",
+      messageParameters = Array(s"$version")
+    )
+  }
+
   case class TemporallyUnstableInputException(
-      userTimestamp: java.sql.Timestamp,
-      commitTs: java.sql.Timestamp,
-      timestampString: String,
-      commitVersion: Long) extends AnalysisException(
-    s"""The provided timestamp: $userTimestamp is after the latest commit timestamp of
-         |$commitTs. If you wish to query this version of the table, please either provide
-         |the version with "VERSION AS OF $commitVersion" or use the exact timestamp
-         |of the last commit: "TIMESTAMP AS OF '$timestampString'".
-       """.stripMargin)
+      userTs: java.sql.Timestamp,
+      lastCommitTs: java.sql.Timestamp,
+      maximumTsStr: String)
+    extends DeltaAnalysisException(
+      errorClass = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+      messageParameters = Array(s"$userTs", s"$lastCommitTs", maximumTsStr))
 
   def restoreVersionNotExistException(
       userVersion: Long,
@@ -1502,6 +1589,14 @@ trait DeltaErrorsBase
     )
   }
 
+  def timeTravelBeyondDeletedFileRetentionDurationException(
+    deletedFileRetentionDurationHours: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_BEYOND_DELETED_FILE_RETENTION_DURATION",
+      messageParameters = Array(deletedFileRetentionDurationHours)
+    )
+  }
+
   def nonExistentDeltaTable(tableId: DeltaTableIdentifier): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_TABLE_NOT_FOUND",
@@ -1523,12 +1618,12 @@ trait DeltaErrorsBase
   def noRelationTable(tableIdent: Identifier): Throwable = {
     new DeltaNoSuchTableException(
       errorClass = "DELTA_NO_RELATION_TABLE",
-      messageParameters = Array(s"${tableIdent.quoted}"))
+      errorMessageParameters = Array(s"${tableIdent.quoted}"))
   }
 
   def provideOneOfInTimeTravel: Throwable = {
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_ONEOF_IN_TIMETRAVEL", messageParameters = null)
+      errorClass = "DELTA_ONEOF_IN_TIMETRAVEL", messageParameters = Array.empty)
   }
 
   def emptyCalendarInterval: Throwable = {
@@ -1685,12 +1780,22 @@ trait DeltaErrorsBase
     ex
   }
 
-  def unsupportedGenerateModeException(modeName: String): Throwable = {
-    import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
-    val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+  private def unsupportedModeException(modeName: String, supportedModes: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_MODE_NOT_SUPPORTED",
       messageParameters = Array(modeName, supportedModes))
+  }
+
+  def unsupportedColumnMappingModeException(modeName: String): Throwable = {
+    val supportedColumnMappingModes =
+      DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
+    unsupportedModeException(modeName, supportedColumnMappingModes)
+  }
+
+  def unsupportedGenerateModeException(modeName: String): Throwable = {
+    val supportedGenerateCommandModes =
+      DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+    unsupportedModeException(modeName, supportedGenerateCommandModes)
   }
 
   def illegalUsageException(option: String, operation: String): Throwable = {
@@ -1711,7 +1816,7 @@ trait DeltaErrorsBase
 
   def metadataAbsentException(): Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_METADATA_ABSENT",
-      messageParameters = Array(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key))
+      messageParameters = Array.empty)
   }
 
   def metadataAbsentForExistingCatalogTable(tableName: String, tablePath: String): Throwable = {
@@ -1762,11 +1867,12 @@ trait DeltaErrorsBase
   }
 
   def ignoreStreamingUpdatesAndDeletesWarning(spark: SparkSession): String = {
-    val docPage = DeltaErrors.generateDocsLink(
-      spark.sparkContext.getConf,
-      "/delta-streaming.html#ignoring-updates-and-deletes")
+    val docPage =
+      generateDocsLinkOption(spark, "/delta-streaming.html#ignoring-updates-and-deletes")
+        .map(link => s" Refer to $link for details.")
+        .getOrElse("")
     s"""WARNING: The 'ignoreFileDeletion' option is deprecated. Switch to using one of
-       |'ignoreDeletes' or 'ignoreChanges'. Refer to $docPage for details.
+       |'ignoreDeletes' or 'ignoreChanges'.$docPage
          """.stripMargin
   }
 
@@ -1951,7 +2057,7 @@ trait DeltaErrorsBase
   def nonSinglePartNamespaceForCatalog(ident: String): Throwable = {
     new DeltaNoSuchTableException(
       errorClass = "DELTA_NON_SINGLE_PART_NAMESPACE_FOR_CATALOG",
-      messageParameters = Array(ident))
+      errorMessageParameters = Array(ident))
   }
 
   def indexLargerThanStruct(pos: Int, column: StructField, len: Int): Throwable = {
@@ -2101,6 +2207,12 @@ trait DeltaErrorsBase
       messageParameters = Array(oldMode, newMode))
   }
 
+  def enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists(): Throwable = {
+    new DeltaColumnMappingUnsupportedException(
+      errorClass =
+        "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS")
+  }
+
   def generateManifestWithColumnMappingNotSupported: Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")
@@ -2170,13 +2282,13 @@ trait DeltaErrorsBase
   def foundInvalidCharsInColumnNames(invalidColumnNames: Seq[String]): Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
-      messageParameters = invalidColumnNames.toArray)
+      messageParameters = Array(invalidColumnNames.mkString(", ")))
 
   def foundInvalidColumnNamesWhenRemovingColumnMapping(columnNames: Seq[String])
     : Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
-      messageParameters = columnNames.toArray)
+      messageParameters = Array(columnNames.mkString(", ")))
 
   def foundViolatingConstraintsForColumnChange(
       columnName: String,
@@ -2316,7 +2428,7 @@ trait DeltaErrorsBase
       errorClass = "DELTA_READ_FEATURE_PROTOCOL_REQUIRES_WRITE",
       messageParameters = Array(
         requiredWriterVersion.toString,
-        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+        generateDocsLinkOption(SparkSession.active, "/index.html").getOrElse("-")))
   }
 
   def tableFeatureRequiresHigherReaderProtocolVersion(
@@ -2329,7 +2441,7 @@ trait DeltaErrorsBase
         feature,
         currentVersion.toString,
         requiredVersion.toString,
-        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+        generateDocsLinkOption(SparkSession.active, "/index.html").getOrElse("-")))
   }
 
   def tableFeatureRequiresHigherWriterProtocolVersion(
@@ -2342,7 +2454,7 @@ trait DeltaErrorsBase
         feature,
         currentVersion.toString,
         requiredVersion.toString,
-        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
+        generateDocsLinkOption(SparkSession.active, "/index.html").getOrElse("-")))
   }
 
   def tableFeatureMismatchException(features: Iterable[String]): DeltaTableFeatureException = {
@@ -2440,6 +2552,12 @@ trait DeltaErrorsBase
       feature: String): DeltaTableFeatureException = {
     new DeltaTableFeatureException(
       errorClass = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
+      messageParameters = Array(feature))
+  }
+
+  def dropTableFeatureFeatureIsADeltaProperty(feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY",
       messageParameters = Array(feature))
   }
 
@@ -2639,6 +2757,19 @@ trait DeltaErrorsBase
         rowTrackingDefaultPropertyKey))
   }
 
+  def rowTrackingBackfillRunningConcurrentlyWithUnbackfill(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_BACKFILL_RUNNING_CONCURRENTLY_WITH_UNBACKFILL")
+  }
+
+  def rowTrackingIllegalPropertyCombination(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION",
+      messageParameters = Array(
+        DeltaConfigs.ROW_TRACKING_ENABLED.key,
+        DeltaConfigs.ROW_TRACKING_SUSPENDED.key))
+  }
+
   /** This is a method only used for testing Py4J exception handling. */
   def throwDeltaIllegalArgumentException(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
@@ -2742,6 +2873,13 @@ trait DeltaErrorsBase
   def deltaTableFoundInExecutor(): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_FOUND_IN_EXECUTOR",
+      messageParameters = Array.empty
+    )
+  }
+
+  def variantShreddingUnsupported(): Throwable = {
+    new DeltaSparkException(
+      errorClass = "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED",
       messageParameters = Array.empty
     )
   }
@@ -2943,7 +3081,7 @@ trait DeltaErrorsBase
     )
   }
 
-  def blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
+  def blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
       spark: SparkSession,
       readSchema: StructType,
       incompatibleSchema: StructType,
@@ -2951,10 +3089,10 @@ trait DeltaErrorsBase
     val docLink = "/versioning.html#column-mapping"
     val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)
-    new DeltaStreamingColumnMappingSchemaIncompatibleException(
+    new DeltaStreamingNonAdditiveSchemaIncompatibleException(
       readSchema,
       incompatibleSchema,
-      generateDocsLink(spark.sparkContext.getConf, docLink),
+      generateDocsLinkOption(spark, docLink).getOrElse("-"),
       enableNonAdditiveSchemaEvolution,
       additionalProperties = Map(
         "detectedDuringStreaming" -> detectedDuringStreaming.toString
@@ -3008,6 +3146,20 @@ trait DeltaErrorsBase
   def cloneReplaceNonEmptyTable: Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_UNSUPPORTED_NON_EMPTY_CLONE"
+    )
+  }
+
+  def cloneFromIcebergSourceWithPartitionEvolution(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_UNDERGONE_PARTITION_EVOLUTION",
+      messageParameters = Array()
+    )
+  }
+
+  def cloneFromIcebergSourceWithoutSpecs(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_MISSING_PARTITION_SPECS",
+      messageParameters = Array()
     )
   }
 
@@ -3105,27 +3257,38 @@ trait DeltaErrorsBase
       previousSchemaChangeVersion: Long,
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
-      allowAllMode: String,
-      opTypeSpecificAllowMode: String): Throwable = {
-    val allowAllSqlConfKey = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allowAllMode"
+      readerOptionsUnblock: Seq[String],
+      sqlConfsUnblock: Seq[String],
+      prettyColumnChangeDetails: String): Throwable = {
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
+      }.mkString("\n")
+    val unblockChangeConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
+      }.mkString("\n")
+    val unblockStreamConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf.ckpt_$checkpointHash = "always";"""
+      }.mkString("\n")
+    val unblockAllConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf = "always";"""
+      }.mkString("\n")
+
     new DeltaRuntimeException(
       errorClass = "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION",
       messageParameters = Array(
         nonAdditiveSchemaChangeOpType,
         previousSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
+        prettyColumnChangeDetails,
         currentSchemaChangeVersion.toString,
-        // Allow this stream to pass for this particular version
-        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
-        currentSchemaChangeVersion.toString,
-        // Allow this stream to pass
-        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
-        "always",
-        // Allow all streams to pass
-        allowAllSqlConfKey,
-        "always",
-        allowAllMode,
-        opTypeSpecificAllowMode
+        unblockChangeOptions,
+        unblockStreamOptions,
+        unblockChangeConfs,
+        unblockStreamConfs,
+        unblockAllConfs
       )
     )
   }
@@ -3348,6 +3511,15 @@ trait DeltaErrorsBase
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
       messageParameters = Array(version.toString, version.toString,
         dataType.typeName, schema.treeString)
+    )
+  }
+
+  def icebergCompatUnsupportedFieldException(
+      version: Int, field: StructField, schema: StructType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(version.toString, version.toString,
+        s"${field.dataType.typeName}:${field.name}", schema.treeString)
     )
   }
 
@@ -3610,6 +3782,37 @@ trait DeltaErrorsBase
     case s: StructType => s.treeString
     case other => other.simpleString
   }
+
+  def deltaCannotVacuumManagedTable(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE",
+      messageParameters = Array.empty)
+  }
+
+  def deltaCannotCreateCatalogOwnedTable(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION",
+      messageParameters = Array.empty)
+  }
+
+  def numRecordsMismatch(
+      operation: String,
+      numAddedRecords: Long,
+      numRemovedRecords: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_NUM_RECORDS_MISMATCH",
+      messageParameters = Array(operation, numAddedRecords.toString, numRemovedRecords.toString)
+    )
+  }
+
+  def commandInvariantViolationException(
+      operation: String,
+      id: UUID): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_COMMAND_INVARIANT_VIOLATION",
+      messageParameters = Array(operation, id.toString)
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -3793,6 +3996,8 @@ class DeltaColumnMappingUnsupportedException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaFileNotFoundException(
@@ -3802,6 +4007,8 @@ class DeltaFileNotFoundException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaFileAlreadyExistsException(
@@ -3811,6 +4018,8 @@ class DeltaFileAlreadyExistsException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaIOException(
@@ -3821,6 +4030,8 @@ class DeltaIOException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaIllegalStateException(
@@ -3832,10 +4043,8 @@ class DeltaIllegalStateException(
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
 
-  override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, null)
-      .zip(messageParameters).toMap.asJava
-  }
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaIndexOutOfBoundsException(
@@ -3845,6 +4054,8 @@ class DeltaIndexOutOfBoundsException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
@@ -3870,9 +4081,15 @@ case class InvalidProtocolVersionException(
 class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
   extends RuntimeException(DeltaThrowableHelper.getMessage(
     errorClass = "DELTA_INVALID_PROTOCOL_DOWNGRADE",
-    messageParameters = Array(s"(${oldProtocol.simpleString})", s"(${newProtocol.simpleString})")
+    messageParameters = Array(oldProtocol.simpleString, newProtocol.simpleString)
   )) with DeltaThrowable {
   override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getMessageParameters(
+      "DELTA_INVALID_PROTOCOL_DOWNGRADE",
+      errorSubClass = null,
+      Array(oldProtocol.simpleString, newProtocol.simpleString))
+  }
 }
 
 class DeltaTableFeatureException(
@@ -3896,9 +4113,9 @@ class DeltaRuntimeException(
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
 
-  override def getMessageParameters: java.util.Map[String, String] =
-    DeltaThrowableHelper.getParameterNames(errorClass, null)
-      .zip(messageParameters).toMap.asJava
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+  }
 }
 
 class DeltaSparkException(
@@ -3909,15 +4126,21 @@ class DeltaSparkException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaNoSuchTableException(
     errorClass: String,
-    messageParameters: Array[String] = Array.empty)
+    errorMessageParameters: Array[String] = Array.empty)
   extends AnalysisException(
-    DeltaThrowableHelper.getMessage(errorClass, messageParameters))
+    DeltaThrowableHelper.getMessage(errorClass, errorMessageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper
+      .getMessageParameters(errorClass, errorSubClass = null, errorMessageParameters)
+  }
 }
 
 class DeltaCommandUnsupportedWithDeletionVectorsException(
@@ -3960,11 +4183,11 @@ class DeltaTablePropertyValidationFailedException(
     messageParameters = subClass.messageParameters(table)))
     with DeltaThrowable {
 
-  override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(
       "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
-      subClass.tag).zip(subClass.messageParameters(table)).toMap.asJava
-  }
+      subClass.tag,
+      subClass.messageParameters(table))
 
   override def getErrorClass: String =
     "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
@@ -3987,13 +4210,13 @@ class DeltaChecksumException(
 }
 
 /**
- * Errors thrown when an operation is not supported with column mapping schema changes
- * (rename / drop column).
+ * Errors thrown when an operation is not supported with non-additive schema changes
+ * (rename / drop column, type change).
  *
  * To make compatible with existing behavior for those who accidentally has already used this
  * operation, user should always be able to use `escapeConfigName` to fall back at own risk.
  */
-class DeltaStreamingColumnMappingSchemaIncompatibleException(
+class DeltaStreamingNonAdditiveSchemaIncompatibleException(
     val readSchema: StructType,
     val incompatibleSchema: StructType,
     val docLink: String,

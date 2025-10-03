@@ -30,7 +30,8 @@ import org.apache.spark.sql.types._
  */
 class TypeWideningStreamingSinkSuite
   extends DeltaSinkImplicitCastSuiteBase
-  with TypeWideningTestMixin {
+  with TypeWideningTestMixin
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
 
@@ -43,6 +44,34 @@ class TypeWideningStreamingSinkSuite
     spark.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
     // Ensure we don't silently cast test inputs to null on overflow.
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
+  }
+
+  testSparkMasterOnly("type is widened if automatic widening set to always") {
+    withDeltaStream[Int] { stream =>
+      stream.write(17)("CAST(value AS SHORT)")
+      assert(stream.currentSchema("value").dataType === ShortType)
+      checkAnswer(stream.read(), Row(17))
+
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
+        stream.write(2)("CAST(value AS DOUBLE)")
+        assert(stream.currentSchema("value").dataType === DoubleType)
+        checkAnswer(stream.read(), Row(17.0) :: Row(2.0) :: Nil)
+      }
+    }
+  }
+
+  test("type isn't widened if automatic widening set to never") {
+    withDeltaStream[Int] { stream =>
+      stream.write(17)("CAST(value AS SHORT)")
+      assert(stream.currentSchema("value").dataType === ShortType)
+      checkAnswer(stream.read(), Row(17))
+
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
+        stream.write(100)("CAST(value AS INT)")
+        assert(stream.currentSchema("value").dataType === ShortType)
+        checkAnswer(stream.read(), Row(17) :: Row(100) :: Nil)
+      }
+    }
   }
 
   test("type isn't widened if schema evolution is disabled") {
@@ -143,8 +172,7 @@ class TypeWideningStreamingSinkSuite
 
       stream.write((12, 3456))("CAST(_1 AS INT) AS a", "CAST(_2 AS DECIMAL(10, 2)) AS b")
       assert(stream.currentSchema === new StructType()
-        .add("a", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+        .add("a", IntegerType)
         .add("b", DecimalType(10, 2)))
       checkAnswer(stream.read(), Row(17, null) :: Row(12, 3456) :: Nil)
     }
@@ -160,8 +188,7 @@ class TypeWideningStreamingSinkSuite
 
       stream.write((12, -1))("CAST(_1 AS INT) AS a")
       assert(stream.currentSchema === new StructType()
-        .add("a", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+        .add("a", IntegerType)
         .add("b", LongType))
       checkAnswer(stream.read(), Row(17, 45) :: Row(12, null) :: Nil)
     }
@@ -188,8 +215,7 @@ class TypeWideningStreamingSinkSuite
       assert(stream.currentSchema === new StructType().add("c", ShortType))
 
       stream.write((12, -1))("CAST(_1 AS INT) AS c")
-      assert(stream.currentSchema === new StructType().add("c", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 4, from = ShortType, to = IntegerType)))
+      assert(stream.currentSchema === new StructType().add("c", IntegerType))
       checkAnswer(stream.read(), Row(17) :: Row(12) :: Nil)
     }
   }
@@ -220,8 +246,7 @@ class TypeWideningStreamingSinkSuite
         val data = Seq(2, 3).toDF("value").selectExpr("CAST(value AS INT)")
         sink.addBatch(1, data)
         val df = spark.read.format("delta").load(tablePath)
-        assert(df.schema === new StructType().add("value", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+        assert(df.schema === new StructType().add("value", IntegerType))
         checkAnswer(df, Row(0) :: Row(1) :: Row(2) :: Row(3) :: Nil)
       }
     }

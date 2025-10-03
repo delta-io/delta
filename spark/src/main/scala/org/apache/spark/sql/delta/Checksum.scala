@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -139,8 +140,8 @@ trait RecordChecksum extends DeltaLogging {
    * @param deltaLog The DeltaLog
    * @param versionToCompute The version for which we want to compute the checksum
    * @param actions The actions corresponding to the version `versionToCompute`
-   * @param metadata The metadata corresponding to the version `versionToCompute`
-   * @param protocol The protocol corresponding to the version `versionToCompute`
+   * @param metadataOpt The metadata corresponding to the version `versionToCompute` (if known)
+   * @param protocolOpt The protocol corresponding to the version `versionToCompute` (if known)
    * @param operationName The operation name corresponding to the version `versionToCompute`
    * @param txnIdOpt The transaction identifier for the version `versionToCompute`
    * @param previousVersionState Contains either the versionChecksum corresponding to
@@ -156,8 +157,8 @@ trait RecordChecksum extends DeltaLogging {
       deltaLog: DeltaLog,
       versionToCompute: Long,
       actions: Seq[Action],
-      metadata: Metadata,
-      protocol: Protocol,
+      metadataOpt: Option[Metadata],
+      protocolOpt: Option[Protocol],
       operationName: String,
       txnIdOpt: Option[String],
       previousVersionState: Either[Snapshot, VersionChecksum],
@@ -213,6 +214,25 @@ trait RecordChecksum extends DeltaLogging {
     // Incrementally compute the new version checksum, if the old one is available.
     val ignoreAddFilesInOperation =
       RecordChecksum.operationNamesWhereAddFilesIgnoredForIncrementalCrc.contains(operationName)
+    val ignoreRemoveFilesInOperation =
+      RecordChecksum.operationNamesWhereRemoveFilesIgnoredForIncrementalCrc.contains(operationName)
+    // Retrieve protocol/metadata in order of precedence:
+    // 1. Use provided protocol/metadata if available
+    // 2. Look for a protocol/metadata action in the incremental set of actions to be applied
+    // 3. Use protocol/metadata from previous version's checksum
+    // 4. Return PROTOCOL_MISSING/METADATA_MISSING error if all attempts fail
+    val protocol = protocolOpt
+      .orElse(actions.collectFirst { case p: Protocol => p })
+      .orElse(Option(oldVersionChecksum.protocol))
+      .getOrElse {
+        return Left("PROTOCOL_MISSING")
+      }
+    val metadata = metadataOpt
+      .orElse(actions.collectFirst { case m: Metadata => m })
+      .orElse(Option(oldVersionChecksum.metadata))
+      .getOrElse {
+        return Left("METADATA_MISSING")
+      }
     val persistentDVsOnTableReadable =
       DeletionVectorUtils.deletionVectorsReadable(protocol, metadata)
     val persistentDVsOnTableWritable =
@@ -226,6 +246,7 @@ trait RecordChecksum extends DeltaLogging {
       oldSnapshot,
       actions,
       ignoreAddFilesInOperation,
+      ignoreRemoveFilesInOperation,
       includeAddFilesInCrc,
       persistentDVsOnTableReadable,
       persistentDVsOnTableWritable
@@ -244,6 +265,8 @@ trait RecordChecksum extends DeltaLogging {
    * @param actions used to incrementally compute new checksum.
    * @param ignoreAddFiles for transactions whose add file actions refer to already-existing files
    *                       e.g., [[DeltaOperations.ComputeStats]] transactions.
+   * @param ignoreRemoveFiles for transactions that generate RemoveFiles for auxiliary files
+   *                          e.g., [[DeltaOperations.AddDeletionVectorsTombstones]].
    * @param persistentDVsOnTableReadable Indicates whether commands modifying this table are allowed
    *                                      to read deletion vectors.
    * @param persistentDVsOnTableWritable Indicates whether commands modifying this table are allowed
@@ -260,6 +283,7 @@ trait RecordChecksum extends DeltaLogging {
       oldSnapshot: Option[Snapshot],
       actions: Seq[Action],
       ignoreAddFiles: Boolean,
+      ignoreRemoveFiles: Boolean,
       includeAllFilesInCRC: Boolean,
       persistentDVsOnTableReadable: Boolean,
       persistentDVsOnTableWritable: Boolean
@@ -318,6 +342,8 @@ trait RecordChecksum extends DeltaLogging {
         numDeletedRecordsOpt = numDeletedRecordsOpt.map(_ + dvCardinality)
         numDeletionVectorsOpt = numDeletionVectorsOpt.map(_ + dvCount)
         deletedRecordCountsHistogramOpt.foreach(_.insert(dvCardinality))
+
+      case _: RemoveFile if ignoreRemoveFiles => ()
 
       // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
       case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
@@ -415,7 +441,7 @@ trait RecordChecksum extends DeltaLogging {
           deltaLog,
           opType = "delta.allFilesInCrc.checksumMismatch.aggregated",
           data = eventData)
-        if (Utils.isTesting) {
+        if (DeltaUtils.isTesting) {
           throw new IllegalStateException("Incrementally Computed State failed checksum check" +
             s" for commit $attemptVersion [$eventData]")
         }
@@ -492,7 +518,7 @@ trait RecordChecksum extends DeltaLogging {
     // `minSetTransactionRetentionTimestamp` is set. So passing this as None here explicitly.
     // We can also ignore file retention because that only affects [[RemoveFile]] actions.
     val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = 0,
+      minFileRetentionTimestamp = None,
       minSetTransactionRetentionTimestamp = None)
 
     logReplay.append(attemptVersion - 1, oldSetTransactions.toIterator)
@@ -521,7 +547,7 @@ trait RecordChecksum extends DeltaLogging {
 
     // We only work with DomainMetadata, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = 0,
+      minFileRetentionTimestamp = None,
       minSetTransactionRetentionTimestamp = None)
 
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC)
@@ -586,7 +612,7 @@ trait RecordChecksum extends DeltaLogging {
 
     // We only work with AddFile, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = 0,
+      minFileRetentionTimestamp = None,
       minSetTransactionRetentionTimestamp = None)
 
     logReplay.append(attemptVersion - 1, oldAllFiles.map(normalizePath).toIterator)
@@ -597,13 +623,24 @@ trait RecordChecksum extends DeltaLogging {
 
 object RecordChecksum {
   // Operations where we should ignore AddFiles in the incremental checksum computation.
-  val operationNamesWhereAddFilesIgnoredForIncrementalCrc = Set(
+  private[delta] val operationNamesWhereAddFilesIgnoredForIncrementalCrc = Set(
     // The transaction that computes stats is special -- it re-adds files that already exist, in
     // order to update their min/max stats. We should not count those against the totals.
     DeltaOperations.ComputeStats(Seq.empty).name,
     // Backfill/Tagging re-adds existing AddFiles without changing the underlying data files.
     // Incremental commits should ignore backfill commits.
-    DeltaOperations.RowTrackingBackfill().name
+    DeltaOperations.RowTrackingBackfill().name,
+    // Same as Backfill.
+    DeltaOperations.RowTrackingUnBackfill().name,
+    // Dropping a feature may re-add existing AddFiles without changing the underlying data files.
+    DeltaOperations.OP_DROP_FEATURE
+  )
+
+  // Operations where we should ignore RemoveFiles in the incremental checksum computation.
+  private[delta] val operationNamesWhereRemoveFilesIgnoredForIncrementalCrc = Set(
+    // Deletion vector tombstones are only required to protect DVs from vacuum. They should be
+    // ignored in checksum calculation.
+    DeltaOperations.AddDeletionVectorsTombstones.name
   )
 }
 
@@ -793,7 +830,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
       this.deltaLog,
       opType = "delta.allFilesInCrc.checksumMismatch.differentAllFiles",
       data = eventData)
-    if (Utils.isTesting) throw new IllegalStateException(message)
+    if (DeltaUtils.isTesting) throw new IllegalStateException(message)
     false
   }
   /**

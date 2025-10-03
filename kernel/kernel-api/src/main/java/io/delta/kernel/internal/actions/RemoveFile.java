@@ -15,10 +15,15 @@
  */
 package io.delta.kernel.internal.actions;
 
+import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
+import java.util.Optional;
 
 /** Metadata about {@code remove} action in the Delta Log. */
-public class RemoveFile {
+public class RemoveFile extends RowBackedAction {
   /** Full schema of the {@code remove} action in the Delta Log. */
   public static final StructType FULL_SCHEMA =
       new StructType()
@@ -36,8 +41,124 @@ public class RemoveFile {
           .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
           .add("baseRowId", LongType.LONG, true /* nullable */)
           .add("defaultRowCommitVersion", LongType.LONG, true /* nullable */);
-  // TODO: Currently, Kernel doesn't create RemoveFile actions internally, nor provides APIs for
-  //  connectors to generate and commit them. Once we have the need for this, we should ensure
-  //  that the baseRowId and defaultRowCommitVersion fields of RemoveFile actions are correctly
-  //  populated to match the corresponding AddFile actions.
+  // TODO: Currently Kernel doesn't support RemoveFile actions when rowTracking is enabled (or have
+  //   any public API for generating RemoveFile actions). Once we
+  //   do this we need to ensure that the baseRowId and defaultRowCommitVersion fields are correctly
+  //   populated to match the corresponding AddFile actions
+
+  /** Constructs an {@link RemoveFile} action from the given 'RemoveFile' {@link Row}. */
+  public RemoveFile(Row row) {
+    super(row);
+  }
+
+  public String getPath() {
+    return row.getString(getFieldIndex("path"));
+  }
+
+  public Optional<Long> getDeletionTimestamp() {
+    return row.isNullAt(getFieldIndex("deletionTimestamp"))
+        ? Optional.empty()
+        : Optional.of(row.getLong(getFieldIndex("deletionTimestamp")));
+  }
+
+  public boolean getDataChange() {
+    return row.getBoolean(getFieldIndex("dataChange"));
+  }
+
+  public Optional<Boolean> getExtendedFileMetadata() {
+    return row.isNullAt(getFieldIndex("extendedFileMetadata"))
+        ? Optional.empty()
+        : Optional.of(row.getBoolean(getFieldIndex("extendedFileMetadata")));
+  }
+
+  public Optional<MapValue> getPartitionValues() {
+    return row.isNullAt(getFieldIndex("partitionValues"))
+        ? Optional.empty()
+        : Optional.of(row.getMap(getFieldIndex("partitionValues")));
+  }
+
+  public Optional<Long> getSize() {
+    return row.isNullAt(getFieldIndex("size"))
+        ? Optional.empty()
+        : Optional.of(row.getLong(getFieldIndex("size")));
+  }
+
+  public Optional<String> getStatsJson() {
+    return getFieldIndexOpt("stats")
+        .flatMap(
+            index -> row.isNullAt(index) ? Optional.empty() : Optional.of(row.getString(index)));
+  }
+
+  public Optional<Long> getNumRecords() {
+    return getFieldIndexOpt("stats")
+        .flatMap(
+            index ->
+                row.isNullAt(index)
+                    ? Optional.empty()
+                    : DataFileStatistics.getNumRecords(row.getString(index)));
+  }
+
+  /**
+   * Returns the file statistics parsed from the stats JSON string using the provided schema. This
+   * method deserializes the statistics JSON with full type information, ensuring that min/max
+   * values and null counts are correctly typed according to the physical schema.
+   *
+   * @param physicalSchema the physical schema of the table, used to correctly parse and type the
+   *     statistics values (min/max values and null counts)
+   * @return an {@link Optional} containing the deserialized {@link DataFileStatistics} if the stats
+   *     field is present and non-null, or {@link Optional#empty()} otherwise
+   * @throws io.delta.kernel.exceptions.KernelException if the stats JSON is malformed or if values
+   *     don't match the expected types from the schema
+   * @see DataFileStatistics#deserializeFromJson(String, StructType) for details on the
+   *     deserialization process
+   */
+  public Optional<DataFileStatistics> getStats(StructType physicalSchema) {
+    return getFieldIndexOpt("stats")
+        .flatMap(
+            index ->
+                row.isNullAt(index)
+                    ? Optional.empty()
+                    : DataFileStatistics.deserializeFromJson(row.getString(index), physicalSchema));
+  }
+
+  public Optional<MapValue> getTags() {
+    int index = getFieldIndex("tags");
+    return Optional.ofNullable(row.isNullAt(index) ? null : row.getMap(index));
+  }
+
+  public Optional<DeletionVectorDescriptor> getDeletionVector() {
+    int index = getFieldIndex("deletionVector");
+    return Optional.ofNullable(
+        row.isNullAt(index) ? null : DeletionVectorDescriptor.fromRow(row.getStruct(index)));
+  }
+
+  public Optional<Long> getBaseRowId() {
+    int index = getFieldIndex("baseRowId");
+    return Optional.ofNullable(row.isNullAt(index) ? null : row.getLong(index));
+  }
+
+  public Optional<Long> getDefaultRowCommitVersion() {
+    int index = getFieldIndex("defaultRowCommitVersion");
+    return Optional.ofNullable(row.isNullAt(index) ? null : row.getLong(index));
+  }
+
+  @Override
+  public String toString() {
+    // No specific ordering is guaranteed for partitionValues and tags in the returned string
+    StringBuilder sb = new StringBuilder();
+    sb.append("RemoveFile{");
+    sb.append("path='").append(getPath()).append('\'');
+    sb.append(", deletionTimestamp=").append(getDeletionTimestamp());
+    sb.append(", dataChange=").append(getDataChange());
+    sb.append(", extendedFileMetadata=").append(getExtendedFileMetadata());
+    sb.append(", partitionValues=").append(getPartitionValues().map(VectorUtils::toJavaMap));
+    sb.append(", size=").append(getSize());
+    sb.append(", stats=").append(getStats(null).map(d -> d.serializeAsJson(null)).orElse(""));
+    sb.append(", tags=").append(getTags().map(VectorUtils::toJavaMap));
+    sb.append(", deletionVector=").append(getDeletionVector());
+    sb.append(", baseRowId=").append(getBaseRowId());
+    sb.append(", defaultRowCommitVersion=").append(getDefaultRowCommitVersion());
+    sb.append('}');
+    return sb.toString();
+  }
 }

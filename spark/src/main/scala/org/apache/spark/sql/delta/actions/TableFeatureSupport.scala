@@ -407,6 +407,29 @@ trait TableFeatureSupport { this: Protocol =>
       // new protocol
       readerAndWriterFeatureNames.contains(feature.name)
   }
+
+  /** Returns whether this client supports writing in a table with this protocol. */
+  def supportedForWrite(): Boolean = {
+    val supportedWriterVersions = Action.supportedWriterVersionNumbers
+    val supportedWriterFeatures = Action.supportedProtocolVersion().writerFeatureNames
+    val testUnsupportedFeatures: Set[String] = TableFeature.testUnsupportedFeatures
+      .filterNot(_.isReaderWriterFeature)
+      .map(_.name)
+
+    supportedWriterVersions.contains(this.minWriterVersion) &&
+      this.writerFeatureNames.subsetOf(supportedWriterFeatures -- testUnsupportedFeatures)
+  }
+
+  /** Returns whether this client supports reading a table with this protocol. */
+  def supportedForRead(): Boolean = {
+    val supportedReaderVersions = Action.supportedReaderVersionNumbers
+    val supportedReaderFeatures = Action.supportedProtocolVersion().readerFeatureNames
+    val testUnsupportedFeatures: Set[String] = TableFeature.testUnsupportedFeatures
+      .filter(_.isReaderWriterFeature).map(_.name)
+
+    supportedReaderVersions.contains(this.minReaderVersion) &&
+      this.readerFeatureNames.subsetOf(supportedReaderFeatures -- testUnsupportedFeatures)
+  }
 }
 
 object TableFeatureProtocolUtils {
@@ -512,6 +535,9 @@ object TableFeatureProtocolUtils {
 object DropTableFeatureUtils extends DeltaLogging {
   private val MAX_CHECKPOINT_RETRIES = 3
 
+  // The number of barrier checkpoints to create before the version requiring checkpoint protection.
+  val NUMBER_OF_BARRIER_CHECKPOINTS = 3
+
   /**
    * Helper function for creating checkpoints. If checkpoint creation fails we retry up
    * to [[MAX_CHECKPOINT_RETRIES]] times.
@@ -524,14 +550,12 @@ object DropTableFeatureUtils extends DeltaLogging {
       table: DeltaTableV2,
       snapshotRefreshStartTimeTs: Long): Boolean = {
     val log = table.deltaLog
-    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs))
+    val snapshot = table.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs))
 
     def checkpointAndVerify(snapshot: Snapshot): Boolean = {
       try {
         log.checkpoint(snapshot)
-        val upperBoundVersion = Some(CheckpointInstance(version = snapshot.version + 1))
-        val lastVerifiedCheckpoint = log.findLastCompleteCheckpointBefore(upperBoundVersion)
-        lastVerifiedCheckpoint.exists(_.version == snapshot.version)
+        log.checkpointExistsAtVersion(snapshot.version)
       } catch {
         case NonFatal(e) =>
           recordDeltaEvent(
@@ -554,8 +578,8 @@ object DropTableFeatureUtils extends DeltaLogging {
       snapshotRefreshStartTs: Long,
       retryOnFailure: Boolean = false): Boolean = {
     val log = table.deltaLog
-    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
-    val emptyCommitTS = System.nanoTime()
+    val snapshot = table.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
+    val emptyCommitTS = table.deltaLog.clock.nanoTime()
     log.startTransaction(table.catalogTable, Some(snapshot))
       .commit(Nil, DeltaOperations.EmptyCommit)
 
@@ -564,7 +588,7 @@ object DropTableFeatureUtils extends DeltaLogging {
     if (retryOnFailure) {
       createCheckpointWithRetries(table, emptyCommitTS)
     } else {
-      log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+      log.checkpoint(table.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
       true
     }
   }
@@ -575,5 +599,19 @@ object DropTableFeatureUtils extends DeltaLogging {
       .fromMetaData(metadata)
 
     DeltaConfigs.getMilliSeconds(truncateHistoryLogRetention)
+  }
+
+  /**
+   * Returns new metadata without `tablePropertiesToRemoveAtDowngradeCommit` table properties.
+   */
+  def getDowngradedProtocolMetadata(
+      feature: RemovableFeature,
+      metadata: Metadata): Metadata = {
+    val propKeys = feature.tablePropertiesToRemoveAtDowngradeCommit
+    val normalizedKeys = DeltaConfigs.normalizeConfigKeys(propKeys)
+    val newConfiguration = metadata.configuration.filterNot {
+      case (key, _) => normalizedKeys.contains(key)
+    }
+    metadata.copy(configuration = newConfiguration)
   }
 }

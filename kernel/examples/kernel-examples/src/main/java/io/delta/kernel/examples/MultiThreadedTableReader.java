@@ -83,13 +83,12 @@ public class MultiThreadedTableReader
         throws TableNotFoundException {
         Table table = Table.forPath(engine, tablePath);
         Snapshot snapshot = table.getLatestSnapshot(engine);
-        StructType readSchema = pruneSchema(snapshot.getSchema(engine), columnsOpt);
+        StructType readSchema = pruneSchema(snapshot.getSchema(), columnsOpt);
 
-        ScanBuilder scanBuilder = snapshot.getScanBuilder(engine)
-            .withReadSchema(engine, readSchema);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder().withReadSchema(readSchema);
 
         if (predicate.isPresent()) {
-            scanBuilder = scanBuilder.withFilter(engine, predicate.get());
+            scanBuilder = scanBuilder.withFilter(predicate.get());
         }
 
         return new Reader(limit)
@@ -239,13 +238,13 @@ public class MultiThreadedTableReader
                     FileStatus fileStatus =
                         InternalScanFileUtils.getAddFileStatus(scanFile);
                     StructType physicalReadSchema =
-                        ScanStateRow.getPhysicalDataReadSchema(engine, scanState);
+                        ScanStateRow.getPhysicalDataReadSchema(scanState);
 
                     CloseableIterator<ColumnarBatch> physicalDataIter =
                         engine.getParquetHandler().readParquetFiles(
                             singletonCloseableIterator(fileStatus),
                             physicalReadSchema,
-                            Optional.empty());
+                            Optional.empty()).map(res -> res.getData());
 
                     try (
                         CloseableIterator<FilteredColumnarBatch> dataIter =

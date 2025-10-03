@@ -163,7 +163,8 @@ object SchemaMergingUtils {
       keepExistingType,
       typeWideningMode,
       caseSensitive,
-      allowOverride = false
+      allowOverride = false,
+      overrideMetadata = false
     ).asInstanceOf[StructType]
   }
 
@@ -184,6 +185,8 @@ object SchemaMergingUtils {
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
    *                      This should default to false for Delta, which is case insensitive.
    * @param allowOverride Whether to let incoming type override the existing type if unmatched.
+   * @param overrideMetadata Whether to let metadata of new fields override the existing
+   *                         metadata of matching fields
    */
   def mergeDataTypes(
       current: DataType,
@@ -192,7 +195,8 @@ object SchemaMergingUtils {
       keepExistingType: Boolean,
       typeWideningMode: TypeWideningMode,
       caseSensitive: Boolean,
-      allowOverride: Boolean): DataType = {
+      allowOverride: Boolean,
+      overrideMetadata: Boolean): DataType = {
     def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>
@@ -202,11 +206,14 @@ object SchemaMergingUtils {
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
                 try {
+                  val updatedCurrentFieldMetadata =
+                    if (overrideMetadata) updateField.metadata
+                    else currentField.metadata
                   StructField(
                     currentField.name,
                     merge(currentField.dataType, updateField.dataType),
                     currentField.nullable,
-                    currentField.metadata)
+                    updatedCurrentFieldMetadata)
                 } catch {
                   case NonFatal(e) =>
                     throw new DeltaAnalysisException(
@@ -242,7 +249,8 @@ object SchemaMergingUtils {
         // If type widening is enabled and the type can be widened, it takes precedence over
         // keepExistingType.
         case (current: AtomicType, update: AtomicType)
-          if typeWideningMode.shouldWidenType(fromType = current, toType = update) => update
+          if typeWideningMode.getWidenedType(fromType = current, toType = update).isDefined =>
+            typeWideningMode.getWidenedType(fromType = current, toType = update).get
 
         // Simply keeps the existing type for primitive types
         case (current, _) if keepExistingType => current

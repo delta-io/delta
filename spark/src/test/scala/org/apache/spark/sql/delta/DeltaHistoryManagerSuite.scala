@@ -29,14 +29,14 @@ import scala.language.implicitConversions
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
 import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
-import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.spark.sql.delta.util.FileNames
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -55,7 +55,7 @@ trait DeltaTimeTravelTests extends QueryTest
     with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils
-    with CoordinatedCommitsBaseSuite {
+    with CatalogOwnedTestBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -63,31 +63,6 @@ trait DeltaTimeTravelTests extends QueryTest
   protected implicit def longToTimestamp(ts: Long): Timestamp = new Timestamp(ts)
 
   protected val timeFormatter = new SimpleDateFormat("yyyyMMddHHmmssSSS")
-
-  protected def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
-    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
-    if (isICTEnabledForNewTables) {
-      InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
-      if (FileNames.isUnbackfilledDeltaFile(filePath)) {
-        // Also change the ICT in the backfilled file if it exists.
-        val backfilledFilePath = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
-        val fs = backfilledFilePath.getFileSystem(deltaLog.newDeltaHadoopConf())
-        if (fs.exists(backfilledFilePath)) {
-          InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, backfilledFilePath, Some(ts))
-        }
-      }
-      if (crc.exists()) {
-        InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(ts))
-      }
-    } else {
-      val file = new File(filePath.toUri)
-      file.setLastModified(ts)
-      if (crc.exists()) {
-        crc.setLastModified(ts)
-      }
-    }
-  }
 
   protected def versionAsOf(table: String, version: Long): String = {
     s"$table version as of $version"
@@ -267,7 +242,7 @@ trait DeltaTimeTravelTests extends QueryTest
     // scalastyle:off line.size.limit
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start + 20.minutes, start + 40.minutes)
 
       verifyLogging(2L, 0L, "timestamp", "sql") {
@@ -297,7 +272,7 @@ trait DeltaTimeTravelTests extends QueryTest
   test("as of timestamp on exact timestamp") {
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start + 20.minutes)
 
       // Simulate getting the timestamp directly from Spark SQL
@@ -331,7 +306,7 @@ trait DeltaTimeTravelTests extends QueryTest
     val tblName = s"delta_table"
     withTempDir { dir =>
       withTable(tblName, dir.toString) {
-        val start = 1540415658000L
+        val start = System.currentTimeMillis() - 5.days.toMillis
         generateCommitsAtPath(tblName, dir.toString, start, start + 20.minutes, start + 40.minutes)
         verifyLogging(2L, 0L, "version", "sql") {
           checkAnswer(
@@ -373,7 +348,7 @@ trait DeltaTimeTravelTests extends QueryTest
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        if (coordinatedCommitsBackfillBatchSize.exists(_ > 2)) {
+        if (catalogOwnedCoordinatorBackfillBatchSize.exists(_ > 2)) {
           assert(e2.getMessage.contains("No commits found at"))
         } else {
           assert(e2.getMessage.contains("No recreatable commits found at"))
@@ -393,17 +368,31 @@ trait DeltaTimeTravelTests extends QueryTest
         .select($"ts".cast("string")).as[String].collect()
         .map(i => s"'$i'")
 
-      val e1 = intercept[AnalysisException] {
+      val e1 = intercept[DeltaErrors.TemporallyUnstableInputException] {
         sql(s"select count(*) from ${timestampAsOf(tblName, ts(0))}").collect()
       }
-      assert(e1.getMessage.contains("VERSION AS OF 0"))
-      assert(e1.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
+      checkError(
+        e1,
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        sqlState = "42816",
+        parameters = Map(
+          "providedTimestamp" -> "2018-10-24 14:24:18.0",
+          "tableName" -> "2018-10-24 14:14:18.0",
+          "maximumTimestamp" -> "2018-10-24 14:14:18")
+      )
 
-      val e2 = intercept[AnalysisException] {
+      val e2 = intercept[DeltaErrors.TemporallyUnstableInputException] {
         sql(s"select count(*) from ${timestampAsOf(tblName, start + 10.minutes)}").collect()
       }
-      assert(e2.getMessage.contains("VERSION AS OF 0"))
-      assert(e2.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
+      checkError(
+        e2,
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        sqlState = "42816",
+        parameters = Map(
+          "providedTimestamp" -> "2018-10-24 14:24:18.0",
+          "tableName" -> "2018-10-24 14:14:18.0",
+          "maximumTimestamp" -> "2018-10-24 14:14:18")
+      )
 
       checkAnswer(
         sql(s"select count(*) from ${timestampAsOf(tblName, "'2018-10-24 14:14:18'")}"),
@@ -421,14 +410,14 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTables) {
+    if (isICTEnabledForNewTablesCatalogOwned) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
     }
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start - 5.seconds, start + 3.minutes)
 
       checkAnswer(
@@ -480,7 +469,7 @@ trait DeltaTimeTravelTests extends QueryTest
   test("data skipping still works with time travel") {
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start + 20.minutes)
 
       def testScan(df: DataFrame): Unit = {
@@ -584,10 +573,14 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   }
 
   test("vacuumed version") {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      cancel("VACUUM is not supported on catalog owned managed tables.")
+    }
+
     quietly {
       val tblName = "delta_table"
       withTable(tblName) {
-        val start = 1540415658000L
+        val start = System.currentTimeMillis() - 5.days.toMillis
         generateCommits(tblName, start, start + 20.minutes)
         sql(s"optimize $tblName")
 
@@ -611,7 +604,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   test("as of with table API") {
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start + 20.minutes, start + 40.minutes)
 
       assert(spark.read.format("delta").option("versionAsOf", "0").table(tblName).count() == 10)
@@ -682,7 +675,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   }
 
   test("parallel search handles empty commits in a partition correctly") {
-    if (coordinatedCommitsBackfillBatchSize.isDefined) {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
       cancel("This test is not compatible with coordinated commits backfill timestamps.")
     }
     val tblName = "delta_table"
@@ -718,14 +711,14 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
   }
 }
 
-class DeltaHistoryManagerWithCoordinatedCommitsBatch1Suite extends DeltaHistoryManagerSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+class DeltaHistoryManagerWithCatalogOwnedBatch1Suite extends DeltaHistoryManagerSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaHistoryManagerWithCoordinatedCommitsBatch2Suite extends DeltaHistoryManagerSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
+class DeltaHistoryManagerWithCatalogOwnedBatch2Suite extends DeltaHistoryManagerSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaHistoryManagerWithCoordinatedCommitsBatch100Suite extends DeltaHistoryManagerSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+class DeltaHistoryManagerWithCatalogOwnedBatch100Suite extends DeltaHistoryManagerSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

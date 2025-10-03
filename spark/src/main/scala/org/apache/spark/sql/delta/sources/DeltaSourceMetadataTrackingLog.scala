@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.InputStream
 
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.streaming.{JsonSchemaSerializer, PartitionAndDataSchema, SchemaTrackingLog}
@@ -32,7 +33,9 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 // scalastyle:on import.ordering.noEmptyLine
 
 /**
@@ -173,6 +176,11 @@ class DeltaSourceMetadataTrackingLog private(
     trackingLog.getCurrentTrackedSchema
 
   /**
+   * Get the current tracked seq num by this schema log or -1 if no schema has been tracked yet.
+   */
+  def getCurrentTrackedSeqNum: Long = trackingLog.getCurrentTrackedSeqNum
+
+  /**
    * Get the logically-previous tracked seq num by this schema log.
    * Considering the prev pointer from the latest entry if defined.
    */
@@ -240,10 +248,13 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       sparkSession: SparkSession,
       rootMetadataLocation: String,
       sourceSnapshot: SnapshotDescriptor,
-      sourceTrackingId: Option[String] = None,
+      catalogTableOpt: Option[CatalogTable],
+      parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false,
       initMetadataLogEagerly: Boolean = true): DeltaSourceMetadataTrackingLog = {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
+    val sourceTrackingId = Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
     val metadataTrackingLocation = fullMetadataTrackingLocation(
       rootMetadataLocation, sourceSnapshot.deltaLog.tableId, sourceTrackingId)
     val log = new DeltaSourceMetadataTrackingLog(
@@ -284,6 +295,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       getMergedConsecutiveMetadataChanges(
         sparkSession,
         sourceSnapshot.deltaLog,
+        catalogTableOpt,
         log.getCurrentTrackedMetadata.get
       ).foreach { mergedSchema =>
         log.writeNewMetadata(mergedSchema, replaceCurrent = true)
@@ -296,7 +308,8 @@ object DeltaSourceMetadataTrackingLog extends Logging {
     (log.getPreviousTrackedMetadata, log.getCurrentTrackedMetadata, sourceMetadataPathOpt) match {
       case (Some(prev), Some(curr), Some(metadataPath)) =>
         DeltaSourceMetadataEvolutionSupport
-          .validateIfSchemaChangeCanBeUnblockedWithSQLConf(sparkSession, metadataPath, curr, prev)
+          .validateIfSchemaChangeCanBeUnblocked(
+            sparkSession, parameters, metadataPath, curr, prev)
       case _ =>
     }
 
@@ -312,12 +325,14 @@ object DeltaSourceMetadataTrackingLog extends Logging {
   private def getMergedConsecutiveMetadataChanges(
       spark: SparkSession,
       deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
       currentMetadata: PersistedMetadata): Option[PersistedMetadata] = {
     val currentMetadataVersion = currentMetadata.deltaCommitVersion
     // We start from the currentSchemaVersion so that we can stop early in case the current
     // version still has file actions that potentially needs to be processed.
     val untilMetadataChange =
-      deltaLog.getChangeLogFiles(currentMetadataVersion).map { case (version, fileStatus) =>
+      deltaLog.getChangeLogFiles(
+          currentMetadataVersion, catalogTableOpt).map { case (version, fileStatus) =>
         var metadataAction: Option[Metadata] = None
         var protocolAction: Option[Protocol] = None
         var hasFileAction = false

@@ -20,6 +20,7 @@ import java.io.FileNotFoundException
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.defaults.utils.TestUtils
+
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -36,10 +37,9 @@ class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
     val files = fsClient.listFrom(listFrom)
     try {
       fsClient.listFrom(listFrom).forEach(f => actListOutput += f.getPath)
-    }
-    finally if (files != null) {
-      files.close()
-    }
+    } finally if (files != null) {
+        files.close()
+      }
 
     val expListOutput = Seq(basePath + "/2.json", basePath + "/3.json")
 
@@ -78,6 +78,21 @@ class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
       val dir3 = "/non-existentfileTable/sfdsd"
       assert(!fsClient.mkdirs(dir3))
       assert(!fs.exists(new Path(dir3)))
+    }
+  }
+
+  test("getFileStatus") {
+    val filePath = getTestResourceFilePath("json-files/1.json")
+    val fileStatus = fsClient.getFileStatus(filePath)
+
+    assert(fileStatus.getPath == fsClient.resolvePath(filePath))
+    assert(fileStatus.getSize > 0)
+    assert(fileStatus.getModificationTime > 0)
+  }
+
+  test("getFileStatus on non-existent file") {
+    intercept[FileNotFoundException] {
+      fsClient.getFileStatus("/non-existent-file.json")
     }
   }
 }

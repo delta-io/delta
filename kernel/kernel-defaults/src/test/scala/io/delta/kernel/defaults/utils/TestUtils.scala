@@ -19,32 +19,78 @@ import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+
 import io.delta.golden.GoldenTableUtils
-import io.delta.kernel.{Scan, Snapshot, Table}
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
+import io.delta.kernel.data._
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
+import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
+import io.delta.kernel.defaults.test.{AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
-import io.delta.kernel.internal.InternalScanFileUtils
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
+import io.delta.kernel.internal.actions.DomainMetadata
+import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.internal.util.{ColumnMapping, Utils}
+import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.stats.FileSizeHistogram
+import io.delta.kernel.internal.util.FileNames.checksumFile
+import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
+
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.{types => sparktypes}
+import org.apache.spark.sql.{types => sparktypes, SparkSession}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
-trait TestUtils extends Assertions with SQLHelper {
+trait TestUtils extends AbstractTestUtils {
+  override def getTableManagerAdapter: AbstractTableManagerAdapter = new LegacyTableManagerAdapter()
+}
+
+/**
+ * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
+ * "default" TestUtils which happens to use the legacy Kernel APIs
+ */
+trait TestUtilsWithLegacyKernelAPIs extends TestUtils
+
+trait TestUtilsWithTableManagerAPIs extends AbstractTestUtils {
+  override def getTableManagerAdapter: AbstractTableManagerAdapter = new TableManagerAdapter()
+}
+
+object TestUtilsWithTableManagerAPIs extends TestUtilsWithTableManagerAPIs
+
+trait AbstractTestUtils
+    extends Assertions
+    with SQLHelper
+    with TestCommitterUtils
+    with TestFixtures {
+
+  def getTableManagerAdapter: AbstractTableManagerAdapter
 
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
+
+  // Used in child suites to override defaultEngine
+  lazy val defaultEngineBatchSize2 = DefaultEngine.create(new Configuration() {
+    {
+      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+      set("delta.kernel.default.parquet.reader.batch-size", "2");
+      set("delta.kernel.default.json.reader.batch-size", "2");
+    }
+  })
 
   lazy val spark = SparkSession
     .builder()
@@ -52,6 +98,9 @@ trait TestUtils extends Assertions with SQLHelper {
     .config("spark.master", "local")
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    // Set this conf to empty string so that the golden tables generated
+    // using with the test-prefix (i.e. there is no DELTA_TESTING set) can still work
+    .config(DeltaSQLConf.TEST_DV_NAME_PREFIX.key, "")
     .getOrCreate()
 
   implicit class CloseableIteratorOps[T](private val iter: CloseableIterator[T]) {
@@ -117,12 +166,17 @@ trait TestUtils extends Assertions with SQLHelper {
     def toPath: String = column.getNames.mkString(".")
   }
 
+  implicit class JavaOptionalOps[T](optional: Optional[T]) {
+    def toScala: Option[T] = if (optional.isPresent) Some(optional.get()) else None
+  }
+
   implicit object ResourceLoader {
     lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
 
   def withTempDirAndEngine(
-    f: (String, Engine) => Unit, hadoopConf: Map[String, String] = Map.empty): Unit = {
+      f: (String, Engine) => Unit,
+      hadoopConf: Map[String, String] = Map.empty): Unit = {
     val engine = DefaultEngine.create(new Configuration() {
       {
         for ((key, value) <- hadoopConf) {
@@ -143,19 +197,15 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
-    Table.forPath(engine, path)
-      .getLatestSnapshot(engine)
+    getTableManagerAdapter.getSnapshotAtLatest(engine, path)
   }
 
   def tableSchema(path: String): StructType = {
-    Table.forPath(defaultEngine, path)
-      .getLatestSnapshot(defaultEngine)
-      .getSchema(defaultEngine)
+    latestSnapshot(path).getSchema()
   }
 
   def hasTableProperty(tablePath: String, propertyKey: String, expValue: String): Boolean = {
-    val table = Table.forPath(defaultEngine, tablePath)
-    val schema = table.getLatestSnapshot(defaultEngine).getSchema(defaultEngine)
+    val schema = tableSchema(tablePath)
     schema.fields().asScala.exists { field =>
       field.getMetadata.getString(propertyKey) == expValue
     }
@@ -168,8 +218,9 @@ trait TestUtils extends Assertions with SQLHelper {
         leafLevelPrimitiveColumns(
           basePath :+ field.getName,
           field.getDataType.asInstanceOf[StructType])
-      case field if !field.getDataType.isInstanceOf[ArrayType] &&
-        !field.getDataType.isInstanceOf[MapType] =>
+      case field
+          if !field.getDataType.isInstanceOf[ArrayType] &&
+            !field.getDataType.isInstanceOf[MapType] =>
         // for all primitive types
         Seq(new Column((basePath :+ field.getName).asJava.toArray(new Array[String](0))));
       case _ => Seq.empty
@@ -182,22 +233,22 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   def readSnapshot(
-    snapshot: Snapshot,
-    readSchema: StructType = null,
-    filter: Predicate = null,
-    expectedRemainingFilter: Predicate = null,
-    engine: Engine = defaultEngine): Seq[Row] = {
+      snapshot: Snapshot,
+      readSchema: StructType = null,
+      filter: Predicate = null,
+      expectedRemainingFilter: Predicate = null,
+      engine: Engine = defaultEngine): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
 
-    var scanBuilder = snapshot.getScanBuilder(engine)
+    var scanBuilder = snapshot.getScanBuilder()
 
     if (readSchema != null) {
-      scanBuilder = scanBuilder.withReadSchema(engine, readSchema)
+      scanBuilder = scanBuilder.withReadSchema(readSchema)
     }
 
     if (filter != null) {
-      scanBuilder = scanBuilder.withFilter(engine, filter)
+      scanBuilder = scanBuilder.withFilter(filter)
     }
 
     val scan = scanBuilder.build()
@@ -211,14 +262,14 @@ trait TestUtils extends Assertions with SQLHelper {
     val scanState = scan.getScanState(engine);
     val fileIter = scan.getScanFiles(engine)
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(scanState)
     fileIter.forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows().forEach { scanFileRow =>
         val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
         val physicalDataIter = engine.getParquetHandler().readParquetFiles(
           singletonCloseableIterator(fileStatus),
           physicalDataReadSchema,
-          Optional.empty())
+          Optional.empty()).map(_.getData)
         var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
         try {
           dataBatches = Scan.transformPhysicalData(
@@ -255,17 +306,16 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   def readTableUsingKernel(
-    engine: Engine,
-    tablePath: String,
-    readSchema: StructType): Seq[FilteredColumnarBatch] = {
-    val scan = Table.forPath(engine, tablePath)
-      .getLatestSnapshot(engine)
-      .getScanBuilder(engine)
-      .withReadSchema(engine, readSchema)
+      engine: Engine,
+      tablePath: String,
+      readSchema: StructType): Seq[FilteredColumnarBatch] = {
+    val scan = latestSnapshot(tablePath, engine)
+      .getScanBuilder()
+      .withReadSchema(readSchema)
       .build()
     val scanState = scan.getScanState(engine)
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(scanState)
     var result: Seq[FilteredColumnarBatch] = Nil
     scan.getScanFiles(engine).forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows.forEach { scanFile =>
@@ -276,7 +326,8 @@ trait TestUtils extends Assertions with SQLHelper {
           Optional.empty())
         var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
         try {
-          dataBatches = Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter)
+          dataBatches =
+            Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter.map(_.getData))
           dataBatches.forEach { dataBatch => result = result :+ dataBatch }
         } finally {
           Utils.closeCloseables(dataBatches)
@@ -302,30 +353,6 @@ trait TestUtils extends Assertions with SQLHelper {
     }
   }
 
-  /** All simple data type used in parameterized tests where type is one of the test dimensions. */
-  val SIMPLE_TYPES = Seq(
-    BooleanType.BOOLEAN,
-    ByteType.BYTE,
-    ShortType.SHORT,
-    IntegerType.INTEGER,
-    LongType.LONG,
-    FloatType.FLOAT,
-    DoubleType.DOUBLE,
-    DateType.DATE,
-    TimestampType.TIMESTAMP,
-    TimestampNTZType.TIMESTAMP_NTZ,
-    StringType.STRING,
-    BinaryType.BINARY,
-    new DecimalType(10, 5)
-  )
-
-  /** All types. Used in parameterized tests where type is one of the test dimensions. */
-  val ALL_TYPES = SIMPLE_TYPES ++ Seq(
-    new ArrayType(BooleanType.BOOLEAN, true),
-    new MapType(IntegerType.INTEGER, LongType.LONG, true),
-    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER)
-  )
-
   /**
    * Compares the rows in the tables latest snapshot with the expected answer and fails if they
    * do not match. The comparison is order independent. If expectedSchema is provided, checks
@@ -334,64 +361,78 @@ trait TestUtils extends Assertions with SQLHelper {
    * @param path fully qualified path of the table to check
    * @param expectedAnswer expected rows
    * @param readCols subset of columns to read; if null then all columns will be read
+   * @param metadataCols set of metadata columns to read; if null then no metadata columns will
+   *                     be read
    * @param engine engine to use to read the table
-   * @param expectedSchema expected schema to check for; if null then no check is performed
+   * @param expectedSchema expected schema to check for (ignoring metadata columns);
+   *                       if null then no check is performed
    * @param filter Filter to select a subset of rows form the table
    * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
    *                                by Kernel.
    * @param expectedVersion expected version of the latest snapshot for the table
    */
+  // scalastyle:off argcount
   def checkTable(
-    path: String,
-    expectedAnswer: Seq[TestRow],
-    readCols: Seq[String] = null,
-    engine: Engine = defaultEngine,
-    expectedSchema: StructType = null,
-    filter: Predicate = null,
-    version: Option[Long] = None,
-    timestamp: Option[Long] = None,
-    expectedRemainingFilter: Predicate = null,
-    expectedVersion: Option[Long] = None
-  ): Unit = {
+      path: String,
+      expectedAnswer: Seq[TestRow],
+      readCols: Seq[String] = null,
+      metadataCols: Seq[StructField] = null,
+      engine: Engine = defaultEngine,
+      expectedSchema: StructType = null,
+      filter: Predicate = null,
+      version: Option[Long] = None,
+      timestamp: Option[Long] = None,
+      expectedRemainingFilter: Predicate = null,
+      expectedVersion: Option[Long] = None): Unit = {
     assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
     val snapshot = if (version.isDefined) {
-      Table.forPath(engine, path)
-        .getSnapshotAsOfVersion(engine, version.get)
+      getTableManagerAdapter.getSnapshotAtVersion(engine, path, version.get)
     } else if (timestamp.isDefined) {
-      Table.forPath(engine, path)
-        .getSnapshotAsOfTimestamp(engine, timestamp.get)
+      getTableManagerAdapter.getSnapshotAtTimestamp(engine, path, timestamp.get)
     } else {
-      latestSnapshot(path, engine)
+      getTableManagerAdapter.getSnapshotAtLatest(engine, path)
     }
 
-    val readSchema = if (readCols == null) {
-      null
-    } else {
-      val schema = snapshot.getSchema(engine)
-      new StructType(readCols.map(schema.get(_)).asJava)
-    }
+    val readSchema =
+      if (readCols == null && metadataCols == null) null
+      else {
+        val schema = snapshot.getSchema()
+        val readFields = Option(readCols).map(_.map(schema.get)).getOrElse(schema.fields().asScala)
+        val metadataFields = Option(metadataCols).getOrElse(Seq())
+        new StructType((readFields ++ metadataFields).asJava)
+      }
 
     if (expectedSchema != null) {
+      // We ignore metadata columns in this check because metadata columns are not part of the
+      // public table schema.
       assert(
-        expectedSchema == snapshot.getSchema(engine),
+        expectedSchema == snapshot.getSchema(),
         s"""
            |Expected schema does not match actual schema:
            |Expected schema: $expectedSchema
-           |Actual schema: ${snapshot.getSchema(engine)}
-           |""".stripMargin
-      )
+           |Actual schema: ${snapshot.getSchema()}
+           |""".stripMargin)
     }
+
+    val actualVersion = snapshot.getVersion()
 
     expectedVersion.foreach { version =>
-      assert(version == snapshot.getVersion(defaultEngine),
-        s"Expected version $version does not match actual version" +
-          s" ${snapshot.getVersion(defaultEngine)}")
+      assert(
+        version == actualVersion,
+        s"Expected version $version does not match actual version $actualVersion}")
     }
 
-    val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, engine)
+    val result =
+      readSnapshot(
+        snapshot,
+        readSchema,
+        filter,
+        expectedRemainingFilter,
+        engine)
     checkAnswer(result, expectedAnswer)
   }
+  // scalastyle:on argcount
 
   def checkAnswer(result: => Seq[Row], expectedAnswer: Seq[TestRow]): Unit = {
     checkAnswer(result.map(TestRow(_)), expectedAnswer)
@@ -420,14 +461,14 @@ trait TestUtils extends Assertions with SQLHelper {
       case bd: java.math.BigDecimal => BigDecimal(bd)
       // Equality of WrappedArray differs for AnyVal and AnyRef in Scala 2.12.2+
       case seq: Seq[_] => seq.map {
-        case b: java.lang.Byte => b.byteValue
-        case s: java.lang.Short => s.shortValue
-        case i: java.lang.Integer => i.intValue
-        case l: java.lang.Long => l.longValue
-        case f: java.lang.Float => f.floatValue
-        case d: java.lang.Double => d.doubleValue
-        case x => x
-      }
+          case b: java.lang.Byte => b.byteValue
+          case s: java.lang.Short => s.shortValue
+          case i: java.lang.Integer => i.intValue
+          case l: java.lang.Long => l.longValue
+          case f: java.lang.Float => f.floatValue
+          case d: java.lang.Double => d.doubleValue
+          case x => x
+        }
       // Convert array to Seq for easy equality check.
       case b: Array[_] => b.toSeq
       case r: TestRow => prepareRow(r)
@@ -436,33 +477,33 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   private def compare(obj1: Any, obj2: Any): Boolean = (obj1, obj2) match {
-      case (null, null) => true
-      case (null, _) => false
-      case (_, null) => false
-      case (a: Array[_], b: Array[_]) =>
-        a.length == b.length && a.zip(b).forall { case (l, r) => compare(l, r) }
-      case (a: Map[_, _], b: Map[_, _]) =>
-        a.size == b.size && a.keys.forall { aKey =>
-          b.keys.find(bKey => compare(aKey, bKey)).exists(bKey => compare(a(aKey), b(bKey)))
-        }
-      case (a: Iterable[_], b: Iterable[_]) =>
-        a.size == b.size && a.zip(b).forall { case (l, r) => compare(l, r) }
-      case (a: Product, b: Product) =>
-        compare(a.productIterator.toSeq, b.productIterator.toSeq)
-      case (a: TestRow, b: TestRow) =>
-        compare(a.toSeq, b.toSeq)
-      // 0.0 == -0.0, turn float/double to bits before comparison, to distinguish 0.0 and -0.0.
-      case (a: Double, b: Double) =>
-        java.lang.Double.doubleToRawLongBits(a) == java.lang.Double.doubleToRawLongBits(b)
-      case (a: Float, b: Float) =>
-        java.lang.Float.floatToRawIntBits(a) == java.lang.Float.floatToRawIntBits(b)
-      case (a, b) =>
-        if (!a.equals(b)) {
-          val sds = 200;
-        }
-        a.equals(b)
-      // In scala == does not call equals for boxed numeric classes?
-    }
+    case (null, null) => true
+    case (null, _) => false
+    case (_, null) => false
+    case (a: Array[_], b: Array[_]) =>
+      a.length == b.length && a.zip(b).forall { case (l, r) => compare(l, r) }
+    case (a: Map[_, _], b: Map[_, _]) =>
+      a.size == b.size && a.keys.forall { aKey =>
+        b.keys.find(bKey => compare(aKey, bKey)).exists(bKey => compare(a(aKey), b(bKey)))
+      }
+    case (a: Iterable[_], b: Iterable[_]) =>
+      a.size == b.size && a.zip(b).forall { case (l, r) => compare(l, r) }
+    case (a: Product, b: Product) =>
+      compare(a.productIterator.toSeq, b.productIterator.toSeq)
+    case (a: TestRow, b: TestRow) =>
+      compare(a.toSeq, b.toSeq)
+    // 0.0 == -0.0, turn float/double to bits before comparison, to distinguish 0.0 and -0.0.
+    case (a: Double, b: Double) =>
+      java.lang.Double.doubleToRawLongBits(a) == java.lang.Double.doubleToRawLongBits(b)
+    case (a: Float, b: Float) =>
+      java.lang.Float.floatToRawIntBits(a) == java.lang.Float.floatToRawIntBits(b)
+    case (a, b) =>
+      if (!a.equals(b)) {
+        val sds = 200;
+      }
+      a.equals(b)
+    // In scala == does not call equals for boxed numeric classes?
+  }
 
   private def genErrorMessage(expectedAnswer: Seq[TestRow], result: Seq[TestRow]): String = {
     // TODO: improve to include schema or Java type information to help debugging
@@ -484,19 +525,21 @@ trait TestUtils extends Assertions with SQLHelper {
    */
   protected def withTempDir(f: File => Unit): Unit = {
     val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
-    try f(tempDir) finally {
+    try f(tempDir)
+    finally {
       FileUtils.deleteDirectory(tempDir)
     }
   }
 
   /**
-   * Drops table `tableName` after calling `f`.
+   * Create a unique table name and drops it after completing `f`
    */
-  protected def withTable(tableNames: String*)(f: => Unit): Unit = {
-    try f finally {
-      tableNames.foreach { name =>
-        spark.sql(s"DROP TABLE IF EXISTS $name")
-      }
+  protected def withTempTable[T](f: String => T): T = {
+    val tableName = s"temp_table_${UUID.randomUUID().toString.replace("-", "_")}"
+    try {
+      f(tableName)
+    } finally {
+      spark.sql(s"DROP TABLE IF EXISTS $tableName")
     }
   }
 
@@ -541,41 +584,60 @@ trait TestUtils extends Assertions with SQLHelper {
    * The row values are determined by [[testColumnValue(dataType, rowId)]].
    */
   def testColumnVector(size: Int, dataType: DataType): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = dataType
+    dataType match {
+      // Build a DefaultStructVector and recursively
+      // build child vectors for each field.
+      case structType: StructType =>
+        val memberVectors: Array[ColumnVector] =
+          structType.fields().asScala.map { field =>
+            testColumnVector(size, field.getDataType)
+          }.toArray
 
-      override def getSize: Int = size
+        new DefaultStructVector(
+          size,
+          structType,
+          Optional.empty(),
+          memberVectors)
 
-      override def close(): Unit = {}
+      case _ =>
+        new ColumnVector {
+          override def getDataType: DataType = dataType
 
-      override def isNullAt(rowId: Int): Boolean = testIsNullValue(dataType, rowId)
+          override def getSize: Int = size
 
-      override def getBoolean(rowId: Int): Boolean =
-        testColumnValue(dataType, rowId).asInstanceOf[Boolean]
+          override def close(): Unit = {}
 
-      override def getByte(rowId: Int): Byte = testColumnValue(dataType, rowId).asInstanceOf[Byte]
+          override def isNullAt(rowId: Int): Boolean = testIsNullValue(dataType, rowId)
 
-      override def getShort(rowId: Int): Short =
-        testColumnValue(dataType, rowId).asInstanceOf[Short]
+          override def getBoolean(rowId: Int): Boolean =
+            testColumnValue(dataType, rowId).asInstanceOf[Boolean]
 
-      override def getInt(rowId: Int): Int = testColumnValue(dataType, rowId).asInstanceOf[Int]
+          override def getByte(rowId: Int): Byte =
+            testColumnValue(dataType, rowId).asInstanceOf[Byte]
 
-      override def getLong(rowId: Int): Long = testColumnValue(dataType, rowId).asInstanceOf[Long]
+          override def getShort(rowId: Int): Short =
+            testColumnValue(dataType, rowId).asInstanceOf[Short]
 
-      override def getFloat(rowId: Int): Float =
-        testColumnValue(dataType, rowId).asInstanceOf[Float]
+          override def getInt(rowId: Int): Int = testColumnValue(dataType, rowId).asInstanceOf[Int]
 
-      override def getDouble(rowId: Int): Double =
-        testColumnValue(dataType, rowId).asInstanceOf[Double]
+          override def getLong(rowId: Int): Long =
+            testColumnValue(dataType, rowId).asInstanceOf[Long]
 
-      override def getBinary(rowId: Int): Array[Byte] =
-        testColumnValue(dataType, rowId).asInstanceOf[Array[Byte]]
+          override def getFloat(rowId: Int): Float =
+            testColumnValue(dataType, rowId).asInstanceOf[Float]
 
-      override def getString(rowId: Int): String =
-        testColumnValue(dataType, rowId).asInstanceOf[String]
+          override def getDouble(rowId: Int): Double =
+            testColumnValue(dataType, rowId).asInstanceOf[Double]
 
-      override def getDecimal(rowId: Int): BigDecimalJ =
-        testColumnValue(dataType, rowId).asInstanceOf[BigDecimalJ]
+          override def getBinary(rowId: Int): Array[Byte] =
+            testColumnValue(dataType, rowId).asInstanceOf[Array[Byte]]
+
+          override def getString(rowId: Int): String =
+            testColumnValue(dataType, rowId).asInstanceOf[String]
+
+          override def getDecimal(rowId: Int): BigDecimalJ =
+            testColumnValue(dataType, rowId).asInstanceOf[BigDecimalJ]
+        }
     }
   }
 
@@ -618,6 +680,18 @@ trait TestUtils extends Assertions with SQLHelper {
       case _ =>
         if (dataType.isInstanceOf[DecimalType]) new BigDecimalJ(rowId * 22342.23)
         else throw new UnsupportedOperationException(s"$dataType is not supported")
+    }
+  }
+
+  /**
+   * Utility method to replicate the behavior of individual values when they are converted from
+   * Row to TestRow.
+   */
+  def testColumnNullableValue(dataType: DataType, rowId: Int): Any = {
+    if (testIsNullValue(dataType, rowId)) {
+      null
+    } else {
+      testColumnValue(dataType, rowId)
     }
   }
 
@@ -698,8 +772,7 @@ trait TestUtils extends Assertions with SQLHelper {
           sparktypes.StructField(
             field.getName,
             toSparkType(field.getDataType),
-            field.isNullable
-          )
+            field.isNullable)
         })
     }
   }
@@ -713,5 +786,135 @@ trait TestUtils extends Assertions with SQLHelper {
       throw new FileNotFoundException("resource not found")
     }
     resource.getFile
+  }
+
+  def checkpointFileExistsForTable(tablePath: String, versions: Int): Boolean =
+    Files.exists(
+      new File(FileNames.checkpointFileSingular(
+        new Path(s"$tablePath/_delta_log"),
+        versions).toString).toPath)
+
+  def deleteChecksumFileForTable(tablePath: String, versions: Seq[Int]): Unit =
+    versions.foreach(v =>
+      Files.deleteIfExists(
+        new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath))
+
+  def deleteChecksumFileForTableUsingHadoopFs(tablePath: String, versions: Seq[Int]): Unit =
+    versions.foreach(v =>
+      defaultEngine.getFileSystemClient.delete(FileNames.checksumFile(
+        new Path(s"$tablePath/_delta_log"),
+        v).toString))
+
+  def rewriteChecksumFileToExcludeDomainMetadata(
+      engine: Engine,
+      tablePath: String,
+      version: Long): Unit = {
+    val logPath = new KernelPath(s"$tablePath/_delta_log");
+    val crcInfo = ChecksumReader.getCRCInfo(
+      engine,
+      FileStatus.of(checksumFile(
+        logPath,
+        version).toString)).get()
+    // Delete it in hdfs.
+    engine.getFileSystemClient.delete(FileNames.checksumFile(
+      new Path(s"$tablePath/_delta_log"),
+      version).toString)
+    val crcWriter = new ChecksumWriter(logPath)
+    crcWriter.writeCheckSum(
+      engine,
+      new CRCInfo(
+        crcInfo.getVersion,
+        crcInfo.getMetadata,
+        crcInfo.getProtocol,
+        crcInfo.getTableSizeBytes,
+        crcInfo.getNumFiles,
+        crcInfo.getTxnId,
+        /* domainMetadata */ Optional.empty(),
+        crcInfo.getFileSizeHistogram))
+  }
+
+  def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
+    result.getPostCommitHooks
+      .stream()
+      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .forEach(hook => hook.threadSafeInvoke(engine))
+    result
+  }
+
+  def verifyClusteringDomainMetadata(
+      snapshot: SnapshotImpl,
+      expectedDomainMetadata: DomainMetadata): Unit = {
+    assert(snapshot.getActiveDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
+      == expectedDomainMetadata)
+  }
+
+  /**
+   * Verify checksum data matches the expected values in the snapshot.
+   * @param snapshot Snapshot to verify the checksum against
+   */
+  protected def verifyChecksumForSnapshot(
+      snapshot: Snapshot,
+      expectEmptyTable: Boolean = false): Unit = {
+    val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
+    val crcInfoOpt = ChecksumReader.getCRCInfo(
+      defaultEngine,
+      FileStatus.of(checksumFile(
+        logPath,
+        snapshot.getVersion).toString))
+    assert(
+      crcInfoOpt.isPresent,
+      s"CRC information should be present for version ${snapshot.getVersion}")
+    crcInfoOpt.toScala.foreach { crcInfo =>
+      // TODO: check file size.
+      assert(crcInfo.getProtocol === snapshot.asInstanceOf[SnapshotImpl].getProtocol)
+      assert(crcInfo.getMetadata.getSchema === snapshot.getSchema)
+      assert(
+        crcInfo.getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
+        "Number of files in checksum should match snapshot")
+      if (expectEmptyTable) {
+        assert(crcInfo.getTableSizeBytes == 0)
+        crcInfo.getFileSizeHistogram.toScala.foreach { fileSizeHistogram =>
+          assert(fileSizeHistogram == FileSizeHistogram.createDefaultHistogram)
+        }
+      }
+      assert(
+        crcInfo.getDomainMetadata === Optional.of(
+          snapshot.asInstanceOf[SnapshotImpl].getActiveDomainMetadataMap.values().asScala
+            .toSet
+            .asJava),
+        "Domain metadata in checksum should match snapshot")
+    }
+  }
+
+  /**
+   * Ensure checksum is readable by CRC reader, matches snapshot data, and can be regenerated.
+   * This test verifies:
+   * 1. The initial checksum exists and is correct
+   * 2. After deleting the checksum file, it can be regenerated with the same content
+   */
+  def verifyChecksum(tablePath: String, expectEmptyTable: Boolean = false): Unit = {
+    val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
+    val checksumVersion = currentSnapshot.getVersion
+
+    // Step 1: Verify initial checksum
+    verifyChecksumForSnapshot(currentSnapshot)
+
+    // Step 2: Delete and regenerate the checksum
+    defaultEngine.getFileSystemClient.delete(buildCrcPath(tablePath, checksumVersion).toString)
+    Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, checksumVersion)
+
+    // Step 3: Verify regenerated checksum
+    verifyChecksumForSnapshot(currentSnapshot)
+  }
+
+  protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
+    new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
+  }
+
+  protected def optionToJava[T](option: Option[T]): Optional[T] = {
+    option match {
+      case Some(value) => Optional.of(value)
+      case None => Optional.empty()
+    }
   }
 }

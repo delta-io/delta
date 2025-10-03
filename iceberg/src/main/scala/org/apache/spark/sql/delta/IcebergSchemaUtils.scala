@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands.convert
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.iceberg.Schema
-import org.apache.iceberg.spark.SparkSchemaUtil
+import org.apache.iceberg.types.TypeUtil
 
 import org.apache.spark.sql.types.{MetadataBuilder, StructType}
 
@@ -29,12 +29,17 @@ object IcebergSchemaUtils {
    * Given an iceberg schema, convert it to a Spark schema. This conversion will keep the Iceberg
    * column IDs (used to read Parquet files) in the field metadata
    *
-   * @param icebergSchema
-   * @return StructType for the converted schema
+   * @param icebergSchema Iceberg schema
+   * @param castTimeType  cast Iceberg TIME type to Spark Long
+   * @return              Spark schema converted from Iceberg schema
    */
-  def convertIcebergSchemaToSpark(icebergSchema: Schema): StructType = {
+  def convertIcebergSchemaToSpark(icebergSchema: Schema,
+      castTimeType: Boolean = false): StructType = {
     // Convert from Iceberg schema to Spark schema but without the column IDs
-    val baseConvertedSchema = SparkSchemaUtil.convert(icebergSchema)
+    val baseConvertedSchema =
+      TypeUtil.visit(
+        icebergSchema, new TypeToSparkTypeWithCustomCast(castTimeType)
+      ).asInstanceOf[StructType]
 
     // For each field, find the column ID (fieldId) and add to the StructField metadata
     SchemaMergingUtils.transformColumns(baseConvertedSchema) { (path, field, _) =>

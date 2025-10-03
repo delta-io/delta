@@ -15,16 +15,18 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import scala.collection.JavaConverters._
+
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
+import io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.createPredicate
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.expressions._
 import io.delta.kernel.types._
 
-import scala.collection.JavaConverters._
-
 trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
+
   /** create a columnar batch of given `size` with zero columns in it. */
   protected def zeroColumnBatch(rowCount: Int): ColumnarBatch = {
     new DefaultColumnarBatch(rowCount, new StructType(), new Array[ColumnVector](0))
@@ -40,15 +42,17 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
 
   protected def substring(expr: Expression, pos: Int, len: Option[Int] = None): ScalarExpression = {
     var children = List(expr, Literal.ofInt(pos))
-    if(len.isDefined) {
-     children = children :+ Literal.ofInt(len.get)
+    if (len.isDefined) {
+      children = children :+ Literal.ofInt(len.get)
     }
     new ScalarExpression("substring", children.asJava)
   }
 
   protected def like(
-      left: Expression, right: Expression, escape: Option[Character] = None): Predicate = {
-    if (escape.isDefined && escape.get!=null) {
+      left: Expression,
+      right: Expression,
+      escape: Option[Character] = None): Predicate = {
+    if (escape.isDefined && escape.get != null) {
       like(List(left, right, Literal.ofString(escape.get.toString)))
     } else like(List(left, right))
   }
@@ -57,12 +61,37 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     new Predicate("like", children.asJava)
   }
 
-  protected def startsWith(left: Expression, right: Expression): Predicate = {
-    new Predicate("starts_with", left, right)
+  protected def startsWith(
+      left: Expression,
+      right: Expression,
+      collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
+    createPredicate(
+      "starts_with",
+      List(left, right).asJava,
+      optionToJava(collationIdentifier))
   }
 
-  protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
-    new Predicate(symbol, left, right)
+  protected def comparator(
+      symbol: String,
+      left: Expression,
+      right: Expression,
+      collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
+    createPredicate(symbol, List(left, right).asJava, optionToJava(collationIdentifier))
+  }
+
+  protected def in(value: Expression, inList: Expression*): In = {
+    new In(value, inList.toList.asJava)
+  }
+
+  protected def in(
+      value: Expression,
+      collationIdentifier: Option[CollationIdentifier],
+      inList: Expression*): In = {
+    if (collationIdentifier.isDefined) {
+      new In(value, inList.toList.asJava, collationIdentifier.get)
+    } else {
+      new In(value, inList.toList.asJava)
+    }
   }
 
   protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
@@ -73,8 +102,19 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
       if (!actual.isNullAt(rowId)) {
         assert(
           actual.getBoolean(rowId) === expected.getBoolean(rowId),
-          s"unexpected value at $rowId"
-        )
+          s"unexpected value at $rowId")
+      }
+    }
+  }
+
+  protected def checkLongVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getDataType === expected.getDataType)
+    assert(actual.getSize === expected.getSize)
+    Seq.range(0, actual.getSize).foreach { rowId =>
+      if (expected.isNullAt(rowId)) {
+        assert(actual.isNullAt(rowId), s"Expected null at row $rowId")
+      } else {
+        assert(actual.getLong(rowId) === expected.getLong(rowId), s"Unexpected value at row $rowId")
       }
     }
   }
@@ -103,8 +143,7 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
           actual.getString(rowId) === expected.getString(rowId),
           s"unexpected value at $rowId: " +
             s"expected: ${expected.getString(rowId)} " +
-            s"actual: ${actual.getString(rowId)} "
-        )
+            s"actual: ${actual.getString(rowId)} ")
       }
     }
   }

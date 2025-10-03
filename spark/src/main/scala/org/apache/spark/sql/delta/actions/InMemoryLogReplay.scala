@@ -24,7 +24,8 @@ import java.net.URI
  * of the table. The protocol for resolution is as follows:
  *  - The most recent [[AddFile]] and accompanying metadata for any `(path, dv id)` tuple wins.
  *  - [[RemoveFile]] deletes a corresponding [[AddFile]] and is retained as a
- *    tombstone until `minFileRetentionTimestamp` has passed.
+ *    tombstone until `minFileRetentionTimestamp` has passed. If `minFileRetentionTimestamp` is
+ *    None, all [[RemoveFile]] actions are retained.
  *    A [[RemoveFile]] "corresponds" to the [[AddFile]] that matches both the parquet file URI
  *    *and* the deletion vector's URI (if any).
  *  - The most recent version for any `appId` in a [[SetTransaction]] wins.
@@ -36,7 +37,7 @@ import java.net.URI
  * This class is not thread safe.
  */
 class InMemoryLogReplay(
-    minFileRetentionTimestamp: Long,
+    minFileRetentionTimestamp: Option[Long],
     minSetTransactionRetentionTimestamp: Option[Long]) extends LogReplay {
 
   import InMemoryLogReplay._
@@ -47,7 +48,12 @@ class InMemoryLogReplay(
   private val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
   private val domainMetadatas = collection.mutable.Map.empty[String, DomainMetadata]
   private val activeFiles = new scala.collection.mutable.HashMap[UniqueFileActionTuple, AddFile]()
-  private val tombstones = new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
+  // RemoveFiles that had cancelled AddFile during replay
+  private val cancelledRemoveFiles =
+    new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
+  // RemoveFiles that had NOT cancelled any AddFile during replay
+  private val activeRemoveFiles =
+    new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
 
   override def append(version: Long, actions: Iterator[Action]): Unit = {
     assert(currentVersion == -1 || version == currentVersion + 1,
@@ -69,11 +75,15 @@ class InMemoryLogReplay(
         val uniquePath = UniqueFileActionTuple(add.pathAsUri, add.getDeletionVectorUniqueId)
         activeFiles(uniquePath) = add.copy(dataChange = false)
         // Remove the tombstone to make sure we only output one `FileAction`.
-        tombstones.remove(uniquePath)
+        cancelledRemoveFiles.remove(uniquePath)
+        // Remove from activeRemoveFiles to handle commits that add a previously-removed file
+        activeRemoveFiles.remove(uniquePath)
       case remove: RemoveFile =>
         val uniquePath = UniqueFileActionTuple(remove.pathAsUri, remove.getDeletionVectorUniqueId)
-        activeFiles.remove(uniquePath)
-        tombstones(uniquePath) = remove.copy(dataChange = false)
+        activeFiles.remove(uniquePath) match {
+          case Some(_) => cancelledRemoveFiles(uniquePath) = remove
+          case None => activeRemoveFiles(uniquePath) = remove
+        }
       case _: CommitInfo => // do nothing
       case _: AddCDCFile => // do nothing
       case null => // Some crazy future feature. Ignore
@@ -81,16 +91,19 @@ class InMemoryLogReplay(
   }
 
   private def getTombstones: Iterable[FileAction] = {
-    tombstones.values.filter(_.delTimestamp > minFileRetentionTimestamp)
+    val allRemovedFiles = cancelledRemoveFiles.values ++ activeRemoveFiles.values
+    val filteredRemovedFiles = minFileRetentionTimestamp match {
+      case None => allRemovedFiles
+      case Some(timestamp) => allRemovedFiles.filter(_.delTimestamp > timestamp)
+    }
+    filteredRemovedFiles.map(_.copy(dataChange = false))
   }
 
   private[delta] def getTransactions: Iterable[SetTransaction] = {
-    if (minSetTransactionRetentionTimestamp.isEmpty) {
-      transactions.values
-    } else {
-      transactions.values.filter { txn =>
-        txn.lastUpdated.exists(_ > minSetTransactionRetentionTimestamp.get)
-      }
+    minSetTransactionRetentionTimestamp match {
+      case None => transactions.values
+      case Some(timestamp) =>
+        transactions.values.filter { txn => txn.lastUpdated.exists(_ > timestamp) }
     }
   }
 
