@@ -1,3 +1,19 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.delta.kernel.defaults.benchmarks;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -51,7 +67,7 @@ public class WorkloadOutputFormat implements OutputFormat {
     @JsonProperty("benchmark_suite")
     private final String benchmark_suite;
 
-    public ReportMetadata(
+    ReportMetadata(
         String generated_at, String jmh_version, String report_version, String benchmark_suite) {
       this.generated_at = generated_at;
       this.jmh_version = jmh_version;
@@ -61,7 +77,8 @@ public class WorkloadOutputFormat implements OutputFormat {
 
     public String toString() {
       return String.format(
-          "ReportMetadata{generated_at='%s', jmh_version='%s', report_version='%s', benchmark_suite='%s'}",
+          "ReportMetadata{generated_at='%s', jmh_version='%s',"
+              + " report_version='%s', benchmark_suite='%s'}",
           generated_at, jmh_version, report_version, benchmark_suite);
     }
   }
@@ -116,7 +133,9 @@ public class WorkloadOutputFormat implements OutputFormat {
 
     public String toString() {
       return String.format(
-          "ExecutionEnvironment{jvm='%s', heapSizeMB='%s', jdk_version='%s', vm_name='%s', vm_version='%s', cpuModel='%s', cpuArch='%s', cpuCores=%d, osName='%s', osVersion='%s'}",
+          "ExecutionEnvironment{jvm='%s', heapSizeMB='%s', jdk_version='%s',"
+              + " vm_name='%s', vm_version='%s', cpuModel='%s', cpuArch='%s',"
+              + " cpuCores=%d, osName='%s', osVersion='%s'}",
           jvm,
           heapSizeMB,
           jdk_version,
@@ -143,7 +162,7 @@ public class WorkloadOutputFormat implements OutputFormat {
     @JsonProperty("secondary_metrics")
     private HashMap<String, Object> secondary_metrics;
 
-    public BenchmarkDetails(
+    BenchmarkDetails(
         WorkloadSpec spec,
         HashMap<String, String> additionalParams,
         TimingMetric time,
@@ -174,7 +193,7 @@ public class WorkloadOutputFormat implements OutputFormat {
     @JsonProperty("benchmarks")
     private HashMap<String, BenchmarkDetails> benchmarks;
 
-    public BenchmarkReport(
+    BenchmarkReport(
         ReportMetadata reportMetadata,
         ExecutionEnvironment executionEnvironment,
         HashMap<String, String> benchmarkConfiguration,
@@ -187,7 +206,8 @@ public class WorkloadOutputFormat implements OutputFormat {
 
     public String toString() {
       return String.format(
-          "BenchmarkReport{reportMetadata=%s, executionEnvironment=%s, benchmarkConfiguration=%s, benchmarks=%s}",
+          "BenchmarkReport{reportMetadata=%s, executionEnvironment=%s,"
+              + " benchmarkConfiguration=%s, benchmarks=%s}",
           reportMetadata.toString(),
           executionEnvironment.toString(),
           benchmarkConfiguration.toString(),
@@ -214,7 +234,7 @@ public class WorkloadOutputFormat implements OutputFormat {
     @JsonProperty("percentiles")
     private final HashMap<String, Double> percentiles;
 
-    public TimingMetric(
+    TimingMetric(
         double score,
         String score_unit,
         double score_error,
@@ -247,7 +267,8 @@ public class WorkloadOutputFormat implements OutputFormat {
 
     public String toString() {
       return String.format(
-          "TimingMetric{score=%f, score_unit='%s', score_error=%f, score_confidence=[%s], sample_count=%d, percentiles=%s}",
+          "TimingMetric{score=%f, score_unit='%s', score_error=%f,"
+              + " score_confidence=[%s], sample_count=%d, percentiles=%s}",
           score,
           score_unit,
           score_error,

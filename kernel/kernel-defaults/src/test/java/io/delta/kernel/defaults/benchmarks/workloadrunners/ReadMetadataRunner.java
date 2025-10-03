@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks.workloadRunners;
+package io.delta.kernel.defaults.benchmarks.workloadrunners;
 
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;

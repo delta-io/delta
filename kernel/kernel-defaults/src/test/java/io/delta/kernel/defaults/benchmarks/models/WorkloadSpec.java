@@ -18,7 +18,7 @@ package io.delta.kernel.defaults.benchmarks.models;
 
 import com.fasterxml.jackson.annotation.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
+import io.delta.kernel.defaults.benchmarks.workloadrunners.WorkloadRunner;
 import io.delta.kernel.engine.Engine;
 import java.io.File;
 import java.io.IOException;

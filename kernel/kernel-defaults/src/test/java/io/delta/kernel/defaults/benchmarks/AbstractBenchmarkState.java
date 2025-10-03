@@ -17,7 +17,7 @@
 package io.delta.kernel.defaults.benchmarks;
 
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
-import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
+import io.delta.kernel.defaults.benchmarks.workloadrunners.WorkloadRunner;
 import io.delta.kernel.engine.*;
 import org.openjdk.jmh.annotations.*;
 
