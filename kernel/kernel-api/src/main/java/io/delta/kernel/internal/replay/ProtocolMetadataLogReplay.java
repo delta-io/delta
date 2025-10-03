@@ -49,12 +49,12 @@ public class ProtocolMetadataLogReplay {
   public static class Result {
     public final Protocol protocol;
     public final Metadata metadata;
-    private final long logFilesRead;
+    private final long numDeltaFilesRead;
 
-    public Result(Protocol protocol, Metadata metadata, long logFilesRead) {
+    public Result(Protocol protocol, Metadata metadata, long numDeltaFilesRead) {
       this.protocol = protocol;
       this.metadata = metadata;
-      this.logFilesRead = logFilesRead;
+      this.numDeltaFilesRead = numDeltaFilesRead;
     }
   }
 
@@ -88,7 +88,7 @@ public class ProtocolMetadataLogReplay {
         dataPath,
         snapshotMetrics.loadProtocolMetadataTotalDurationTimer.totalDurationMs(),
         logSegment.getVersion(),
-        result.logFilesRead);
+        result.numDeltaFilesRead);
 
     return result;
   }
@@ -104,6 +104,8 @@ public class ProtocolMetadataLogReplay {
     if (crcVersionOpt.isPresent() && crcVersionOpt.get() == snapshotVersion) {
       final Optional<CRCInfo> crcInfo = lazyCrcInfo.get();
       if (crcInfo.isPresent()) {
+        validateCrcInfoMatchesExpectedVersion(crcInfo.get(), crcVersionOpt.get());
+
         final Protocol protocol = crcInfo.get().getProtocol();
         final Metadata metadata = crcInfo.get().getMetadata();
         return new Result(protocol, metadata, 0 /* logFilesRead */);
@@ -113,7 +115,7 @@ public class ProtocolMetadataLogReplay {
     // Otherwise, we need to read log files. The CRC (if present) might still be useful to avoid
     // reading older files.
 
-    long logReadCount = 0;
+    long numDeltaFilesRead = 0;
     Protocol protocol = null;
     Metadata metadata = null;
 
@@ -126,7 +128,7 @@ public class ProtocolMetadataLogReplay {
       while (reverseIter.hasNext()) {
         final ActionWrapper nextElem = reverseIter.next();
         final long version = nextElem.getVersion();
-        logReadCount++;
+        numDeltaFilesRead++;
         // Load this lazily (as needed). We may be able to just use the CRC.
         ColumnarBatch columnarBatch = null;
 
@@ -142,7 +144,7 @@ public class ProtocolMetadataLogReplay {
 
               if (metadata != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                return new Result(protocol, metadata, logReadCount);
+                return new Result(protocol, metadata, numDeltaFilesRead);
               }
 
               break; // We just found the protocol, exit this for-loop
@@ -163,7 +165,7 @@ public class ProtocolMetadataLogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                return new Result(protocol, metadata, logReadCount);
+                return new Result(protocol, metadata, numDeltaFilesRead);
               }
 
               break; // We just found the metadata, exit this for-loop
@@ -177,6 +179,8 @@ public class ProtocolMetadataLogReplay {
         if (crcVersionOpt.isPresent() && version == crcVersionOpt.get() + 1) {
           final Optional<CRCInfo> crcInfo = lazyCrcInfo.get();
           if (crcInfo.isPresent()) {
+            validateCrcInfoMatchesExpectedVersion(crcInfo.get(), crcVersionOpt.get());
+
             if (protocol == null) {
               protocol = crcInfo.get().getProtocol();
             }
@@ -184,7 +188,7 @@ public class ProtocolMetadataLogReplay {
               metadata = crcInfo.get().getMetadata();
             }
 
-            return new Result(protocol, metadata, logReadCount);
+            return new Result(protocol, metadata, numDeltaFilesRead);
           }
         }
       }
@@ -202,6 +206,15 @@ public class ProtocolMetadataLogReplay {
           String.format("No metadata found at version %s", logSegment.getVersion()));
     }
 
-    return new Result(protocol, metadata, logReadCount);
+    return new Result(protocol, metadata, numDeltaFilesRead);
+  }
+
+  private static void validateCrcInfoMatchesExpectedVersion(CRCInfo crcInfo, long expectedVersion) {
+    if (crcInfo.getVersion() != expectedVersion) {
+      throw new IllegalStateException(
+          String.format(
+              "Expected a CRC at version %d but got one at version %d",
+              expectedVersion, crcInfo.getVersion()));
+    }
   }
 }
