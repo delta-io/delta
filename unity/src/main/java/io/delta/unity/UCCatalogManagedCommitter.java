@@ -194,12 +194,24 @@ public class UCCatalogManagedCommitter implements Committer {
     } catch (java.nio.file.FileAlreadyExistsException e) {
       // File already exists - this is okay, it means this version was already published
       logger.info("[{}] Version {} already published", ucTableId, commitVersion);
-    } catch (IOException e) {
+    } catch (Throwable t) {
+      if (isFatal(t)) {
+        if (t instanceof Error) {
+          throw (Error) t;
+        }
+        if (t instanceof RuntimeException) {
+          throw (RuntimeException) t;
+        }
+        // For checked fatal exceptions (e.g., InterruptedException), wrap in RuntimeException
+        throw new RuntimeException("Fatal exception during publish", t);
+      }
+
+      // Non-fatal exception (e.g., IOException) - wrap in PublishFailedException
       throw new PublishFailedException(
           String.format(
               "Failed to publish version %d from %s to %s: %s",
-              commitVersion, sourcePath, targetPath, e.getMessage()),
-          e);
+              commitVersion, sourcePath, targetPath, t.getMessage()),
+          t);
     }
   }
 
@@ -346,5 +358,21 @@ public class UCCatalogManagedCommitter implements Committer {
         storageCFE.getConflict(),
         storageCFE.getMessage(),
         storageCFE.getCause());
+  }
+
+  /**
+   * Returns true if the provided Throwable is to be considered fatal, or false if it is to be
+   * considered non-fatal
+   */
+  private static boolean isFatal(Throwable t) {
+    // VirtualMachineError includes OutOfMemoryError and other fatal errors
+    if (t instanceof VirtualMachineError
+        || t instanceof ThreadDeath
+        || t instanceof InterruptedException
+        || t instanceof LinkageError) {
+      return true;
+    }
+
+    return false;
   }
 }

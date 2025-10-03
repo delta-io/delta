@@ -17,8 +17,7 @@
 package io.delta.unity
 
 import java.io.IOException
-import java.nio.file.Files
-import java.util.{Optional, UUID}
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -29,14 +28,12 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
-import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 import io.delta.unity.InMemoryUCClient.TableData
 
-import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.scalatest.funsuite.AnyFunSuite
 
 class UCCatalogManagedCommitterSuite
@@ -282,7 +279,7 @@ class UCCatalogManagedCommitterSuite
 
       // Verify the file is in the correct location
       val expectedPattern =
-        s"^$tablePath/_delta_log/_staged_commits/00000000000000000001\\.[^.]+\\.json$$"
+        s"^file:$tablePath/_delta_log/_staged_commits/00000000000000000001\\.[^.]+\\.json$$"
       assert(stagedCommitFilePath.matches(expectedPattern))
 
       // Verify UC client was invoked and table was updated.
@@ -428,7 +425,7 @@ class UCCatalogManagedCommitterSuite
       val publishedDeltaFilePath = response.getCommitLogData.getFileStatus.getPath
 
       // Verify the published delta file exists and is version 0
-      val expectedFilePath = s"$logPath/00000000000000000000.json"
+      val expectedFilePath = s"file:$logPath/00000000000000000000.json"
       assert(publishedDeltaFilePath == expectedFilePath)
 
       val file = new java.io.File(new java.net.URI(publishedDeltaFilePath))

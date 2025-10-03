@@ -158,39 +158,6 @@ class UCPublishingSuite
     }
   }
 
-  test("publish throws PublishFailedException on IOException") {
-    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
-      // ===== GIVEN =====
-      val catalogCommit = createStagedCommitFile(logPath, 1, "TEST_PUBLISH_ERROR")
-
-      // Create a mock engine that throws IOException during copyFileAtomically
-      val throwingEngine = mockEngine(fileSystemClient = new BaseMockFileSystemClient {
-        override def copyFileAtomically(
-            srcPath: String,
-            destPath: String,
-            overwrite: Boolean): Unit = {
-          throw new IOException("Network failure during copy")
-        }
-      })
-
-      val committer = createCommitter(tablePath)
-      val publishMetadata = createPublishMetadata(
-        snapshotVersion = 1,
-        logPath = logPath,
-        catalogCommits = List(catalogCommit))
-
-      // ===== WHEN =====
-      val ex = intercept[PublishFailedException] {
-        committer.publish(throwingEngine, publishMetadata)
-      }
-
-      // ===== THEN =====
-      assert(ex.getMessage.contains("Failed to publish version 1"))
-      assert(ex.getMessage.contains("Network failure during copy"))
-      assert(ex.getCause.isInstanceOf[IOException])
-    }
-  }
-
   test("publish creates published file at correct location with identical content") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
@@ -217,6 +184,63 @@ class UCPublishingSuite
 
       // Verify content was copied correctly
       assert(readFile(stagedPath) === readFile(publishedPath))
+    }
+  }
+
+  case class PublishExceptionTestCase(
+      testName: String,
+      throwException: Throwable,
+      verifyException: Throwable => Unit)
+
+  Seq(
+    PublishExceptionTestCase(
+      "publish throws PublishFailedException on IOException",
+      new IOException("Network failure during copy"),
+      ex => {
+        assert(ex.isInstanceOf[PublishFailedException])
+        assert(ex.getMessage.contains("Failed to publish version 1"))
+        assert(ex.getMessage.contains("Network failure during copy"))
+        assert(ex.getCause.isInstanceOf[IOException])
+      }),
+    PublishExceptionTestCase(
+      "publish rethrows fatal exceptions like OutOfMemoryError",
+      new OutOfMemoryError("Fatal OOM during copy"),
+      ex => {
+        assert(ex.isInstanceOf[OutOfMemoryError])
+        assert(ex.getMessage.contains("Fatal OOM during copy"))
+      }),
+    PublishExceptionTestCase(
+      "publish rethrows InterruptedException wrapped in RuntimeException",
+      new InterruptedException("Thread was interrupted"),
+      ex => {
+        assert(ex.isInstanceOf[RuntimeException])
+        assert(ex.getMessage.contains("Fatal exception during publish"))
+        assert(ex.getCause.isInstanceOf[InterruptedException])
+        assert(ex.getCause.getMessage.contains("Thread was interrupted"))
+      })).foreach { testCase =>
+    test(testCase.testName) {
+      withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+        val catalogCommit = createStagedCommitFile(logPath, 1, "TEST_EXCEPTION")
+        val throwingEngine = mockEngine(fileSystemClient = new BaseMockFileSystemClient {
+          override def copyFileAtomically(
+              srcPath: String,
+              destPath: String,
+              overwrite: Boolean): Unit = {
+            throw testCase.throwException
+          }
+        })
+        val committer = createCommitter(tablePath)
+        val publishMetadata = createPublishMetadata(
+          snapshotVersion = 1,
+          logPath = logPath,
+          catalogCommits = List(catalogCommit))
+
+        val ex = intercept[Throwable] {
+          committer.publish(throwingEngine, publishMetadata)
+        }
+
+        testCase.verifyException(ex)
+      }
     }
   }
 }
