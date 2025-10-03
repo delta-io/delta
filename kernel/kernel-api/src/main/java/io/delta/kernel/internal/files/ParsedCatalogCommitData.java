@@ -57,4 +57,6 @@ public final class ParsedCatalogCommitData extends ParsedDeltaData {
   public Class<? extends ParsedLogData> getGroupByCategoryClass() {
     return ParsedCatalogCommitData.class;
   }
+
+  // TODO: String getPublishedDeltaFilePath(); Requires forInlineData to take in logPath
 }
