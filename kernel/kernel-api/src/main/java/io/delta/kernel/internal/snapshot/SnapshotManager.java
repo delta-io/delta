@@ -27,11 +27,7 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
-import io.delta.kernel.internal.files.ParsedCheckpointData;
-import io.delta.kernel.internal.files.ParsedChecksumData;
-import io.delta.kernel.internal.files.ParsedDeltaData;
-import io.delta.kernel.internal.files.ParsedLogCompactionData;
-import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
@@ -301,13 +297,14 @@ public class SnapshotManager {
             .map(ParsedLogData::forFileStatus)
             .collect(
                 Collectors.groupingBy(
-                    ParsedLogData::getParentCategoryClass,
+                    ParsedLogData::getGroupByCategoryClass,
                     LinkedHashMap::new, // Ensure order is maintained
                     Collectors.toList()));
 
-    final List<ParsedDeltaData> allPublishedDeltas =
-        partitionedFiles.getOrDefault(ParsedDeltaData.class, Collections.emptyList()).stream()
-            .map(ParsedDeltaData.class::cast)
+    final List<ParsedPublishedDeltaData> allPublishedDeltas =
+        partitionedFiles.getOrDefault(ParsedPublishedDeltaData.class, Collections.emptyList())
+            .stream()
+            .map(ParsedPublishedDeltaData.class::cast)
             .collect(Collectors.toList());
 
     final List<FileStatus> listedCheckpointFileStatuses =
@@ -409,7 +406,7 @@ public class SnapshotManager {
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
-    final Lazy<Optional<ParsedDeltaData>> lazyDeltaAtCheckpointVersionOpt =
+    final Lazy<Optional<ParsedPublishedDeltaData>> lazyDeltaAtCheckpointVersionOpt =
         new Lazy<>(
             () ->
                 allPublishedDeltas.stream()
@@ -555,20 +552,20 @@ public class SnapshotManager {
    * <ul>
    *   <li>Assumes that {@code allPublishedDeltas} is sorted and contiguous.
    *   <li>Assumes that {@code parsedLogDatas} is sorted and contiguous.
-   *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link ParsedDeltaData}
-   *       (written to file).
+   *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link
+   *       ParsedCatalogCommitData} (written to file).
    *   <li>If there is both a published Delta and a ratified staged commit for the same version,
    *       prioritizes the ratified staged commit
    * </ul>
    */
   private List<ParsedDeltaData> getAllDeltasAfterCheckpointWithCatalogPriority(
-      List<ParsedDeltaData> allPublishedDeltas,
+      List<ParsedPublishedDeltaData> allPublishedDeltas,
       List<ParsedLogData> parsedLogDatas,
       long latestCompleteCheckpointVersion,
       long versionToLoad) {
     final List<ParsedDeltaData> allPublishedDeltasAfterCheckpoint =
         allPublishedDeltas.stream()
-            .filter(x -> x.isFile())
+            .filter(ParsedLogData::isFile)
             .filter(
                 x ->
                     latestCompleteCheckpointVersion < x.getVersion()
@@ -581,12 +578,12 @@ public class SnapshotManager {
 
     final List<ParsedDeltaData> allRatifiedCommitsAfterCheckpoint =
         parsedLogDatas.stream()
-            .filter(x -> x instanceof ParsedDeltaData && x.isFile())
+            .filter(x -> x instanceof ParsedCatalogCommitData && x.isFile())
             .filter(
                 x ->
                     latestCompleteCheckpointVersion < x.getVersion()
                         && x.getVersion() <= versionToLoad)
-            .map(ParsedDeltaData.class::cast)
+            .map(ParsedCatalogCommitData.class::cast)
             .collect(Collectors.toList());
 
     if (allRatifiedCommitsAfterCheckpoint.isEmpty()) {

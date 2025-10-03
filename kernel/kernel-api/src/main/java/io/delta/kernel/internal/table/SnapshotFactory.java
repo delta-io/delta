@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal.table;
 
-import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
@@ -26,7 +25,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
-import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -66,26 +65,10 @@ public class SnapshotFactory {
       SnapshotImpl latestSnapshot,
       long millisSinceEpochUTC,
       List<ParsedLogData> logDatas) {
-
-    // DeltaHistoryManager only supports ratified staged commits, which is currently what is
-    // supported in SnapshotBuilderImpl. Validate this is true and cast to ParsedDeltaData.
-    List<ParsedDeltaData> parsedDeltaDatas =
+    List<ParsedCatalogCommitData> parsedCatalogCommits =
         logDatas.stream()
-            .map(
-                logData -> {
-                  checkState(
-                      logData instanceof ParsedDeltaData,
-                      String.format(
-                          "SnapshotBuilderImpl only supports ParsedDeltaData but found: %s",
-                          logData));
-                  ParsedDeltaData deltaData = (ParsedDeltaData) logData;
-                  checkState(
-                      deltaData.isFile() && deltaData.isRatifiedCommit(),
-                      String.format(
-                          "SnapshotBuilderImpl only supports ratified staged commits but found: %s",
-                          deltaData));
-                  return deltaData;
-                })
+            .filter(logData -> logData instanceof ParsedCatalogCommitData && logData.isFile())
+            .map(catalogCommit -> (ParsedCatalogCommitData) catalogCommit)
             .collect(Collectors.toList());
 
     final long resolvedVersionToLoad =
@@ -102,7 +85,7 @@ public class SnapshotFactory {
                             true /* mustBeRecreatable */,
                             false /* canReturnLastCommit */,
                             false /* canReturnEarliestCommit */,
-                            parsedDeltaDatas)
+                            parsedCatalogCommits)
                         .getVersion());
 
     snapshotQueryCtx.setResolvedVersion(resolvedVersionToLoad);

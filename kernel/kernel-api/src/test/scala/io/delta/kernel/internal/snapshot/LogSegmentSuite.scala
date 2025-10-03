@@ -20,7 +20,7 @@ import java.util.{Collections, List => JList, Optional}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.internal.files.ParsedDeltaData
+import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.utils.FileStatus
@@ -454,8 +454,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       version = 10,
       checkpoints = checkpointFs10List)
 
-    val additionalDeltas = List(ParsedDeltaData.forFileStatus(stagedCommitFile(11))).asJava
-    val updated = baseSegment.newWithAddedDeltas(additionalDeltas)
+    val updated = baseSegment.newWithAddedDeltas(parsedRatifiedCommits11To12List.subList(0, 1))
 
     assert(updated.getVersion === 11)
     assert(updated.getDeltas.size() === 1)
@@ -512,9 +511,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       version = 10,
       checkpoints = checkpointFs10List)
 
-    // Create inline ParsedDeltaData (not file-based)
-    val inlineDelta = ParsedDeltaData.forInlineData(11, emptyColumnarBatch)
-    val inlineDeltas = List(inlineDelta).asJava
+    val inlineDelta = ParsedCatalogCommitData.forInlineData(11, emptyColumnarBatch)
+    val inlineDeltas = List[ParsedDeltaData](inlineDelta).asJava
 
     val exMsg = intercept[IllegalArgumentException] {
       baseSegment.newWithAddedDeltas(inlineDeltas)
@@ -546,7 +544,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
   }
 
   test("fromSingleDelta -- inline delta fails") {
-    val inlineDelta = ParsedDeltaData.forInlineData(0, emptyColumnarBatch)
+    val inlineDelta = ParsedCatalogCommitData.forInlineData(0, emptyColumnarBatch)
     val exMsg = intercept[IllegalArgumentException] {
       LogSegment.createForNewTable(logPath, inlineDelta)
     }.getMessage

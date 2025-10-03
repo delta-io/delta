@@ -27,7 +27,7 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Tuple2;
@@ -121,7 +121,8 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     validateVersionAndTimestampMutuallyExclusive();
     validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
-    validateLogDataContainsOnlyRatifiedCommits(); // TODO: delta-io/delta#4765 support other types
+    // TODO: delta-io/delta#4765 support other types
+    validateLogDataContainsOnlyStagedRatifiedCommits();
     validateLogDataIsSortedContiguous();
   }
 
@@ -171,10 +172,10 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
   }
 
-  private void validateLogDataContainsOnlyRatifiedCommits() {
+  private void validateLogDataContainsOnlyStagedRatifiedCommits() {
     for (ParsedLogData logData : ctx.logDatas) {
       checkArgument(
-          logData instanceof ParsedDeltaData && logData.isFile(),
+          logData instanceof ParsedCatalogCommitData && logData.isFile(),
           "Only staged ratified commits are supported, but found: " + logData);
     }
   }

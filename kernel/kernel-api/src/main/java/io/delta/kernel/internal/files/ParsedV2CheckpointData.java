@@ -41,10 +41,6 @@ public final class ParsedV2CheckpointData extends ParsedCheckpointData {
     return new ParsedV2CheckpointData(version, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedV2CheckpointData forInlineData(long version, ColumnarBatch inlineData) {
-    return new ParsedV2CheckpointData(version, Optional.empty(), Optional.of(inlineData));
-  }
-
   private ParsedV2CheckpointData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);

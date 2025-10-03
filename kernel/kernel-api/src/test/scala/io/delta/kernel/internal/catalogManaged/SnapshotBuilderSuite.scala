@@ -27,7 +27,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
-import io.delta.kernel.internal.files.{ParsedDeltaData, ParsedLogData}
+import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData, ParsedPublishedDeltaData}
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, MockSnapshotUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
@@ -221,9 +221,10 @@ class SnapshotBuilderSuite extends AnyFunSuite
   }
 
   Seq(
-    ParsedDeltaData.forInlineData(1, emptyColumnarBatch),
+    ParsedCatalogCommitData.forInlineData(1, emptyColumnarBatch),
+    ParsedPublishedDeltaData.forFileStatus(deltaFileStatus(1, logPath)),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
-    val suffix = s"- type=${parsedLogData.getParentCategoryName}"
+    val suffix = s"- type=${parsedLogData.getClass.getSimpleName}"
     test(s"withLogData: non-staged-ratified-commit throws IllegalArgumentException $suffix") {
       val builder = TableManager
         .loadSnapshot(dataPath.toString)

@@ -26,7 +26,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
-import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
@@ -145,7 +145,7 @@ public final class DeltaHistoryManager {
    *     provided timestamp is after the latest commit
    * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
    *     provided timestamp is before the earliest commit
-   * @param parsedDeltaDatas parsed log Deltas to use
+   * @param parsedCatalogCommits parsed log Deltas to use
    * @throws KernelException if the provided timestamp is before the earliest commit and
    *     canReturnEarliestCommit is false
    * @throws KernelException if the provided timestamp is after the latest commit and
@@ -160,20 +160,18 @@ public final class DeltaHistoryManager {
       boolean mustBeRecreatable,
       boolean canReturnLastCommit,
       boolean canReturnEarliestCommit,
-      List<ParsedDeltaData> parsedDeltaDatas)
+      List<ParsedCatalogCommitData> parsedCatalogCommits)
       throws TableNotFoundException {
-
-    // For now, we only accept ratified staged commits
+    // For now, we only accept *staged* ratified  commits (not inline)
     checkArgument(
-        parsedDeltaDatas.stream()
-            .allMatch(deltaData -> deltaData.isFile() && deltaData.isRatifiedCommit()),
+        parsedCatalogCommits.stream().allMatch(ParsedCatalogCommitData::isFile),
         "Currently getActiveCommitAtTimestamp only accepts ratified staged file commits");
 
     // Create a mapper for delta version -> file status that takes into account ratified commits
     Function<Long, FileStatus> versionToFileStatusFunction =
-        getVersionToFileStatusFunction(parsedDeltaDatas, logPath);
+        getVersionToFileStatusFunction(parsedCatalogCommits, logPath);
     Optional<Long> earliestRatifiedCommitVersion =
-        parsedDeltaDatas.stream().map(ParsedLogData::getVersion).min(Long::compare);
+        parsedCatalogCommits.stream().map(ParsedLogData::getVersion).min(Long::compare);
 
     long earliestVersion =
         (mustBeRecreatable)
@@ -609,10 +607,10 @@ public final class DeltaHistoryManager {
    * exist either in the list of ratified commits provided by the catalog or on the file-system.
    */
   private static Function<Long, FileStatus> getVersionToFileStatusFunction(
-      List<ParsedDeltaData> parsedDeltaDatas, Path logPath) {
+      List<ParsedCatalogCommitData> parsedCatalogCommits, Path logPath) {
     Map<Long, FileStatus> versionToFileStatusMap = new HashMap<>();
-    for (ParsedDeltaData parsedDeltaData : parsedDeltaDatas) {
-      versionToFileStatusMap.put(parsedDeltaData.getVersion(), parsedDeltaData.getFileStatus());
+    for (ParsedCatalogCommitData catalogCommit : parsedCatalogCommits) {
+      versionToFileStatusMap.put(catalogCommit.getVersion(), catalogCommit.getFileStatus());
     }
     return version -> {
       if (versionToFileStatusMap.containsKey(version)) {
