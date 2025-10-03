@@ -23,6 +23,6 @@ object MergeIntoMaterializeSourceShims {
   /** In Spark 4.0+ we could check on error class, which is more stable. */
   def mergeMaterializedSourceRddBlockLostError(e: SparkException, rddId: Int): Boolean = {
     e.getErrorClass == "CHECKPOINT_RDD_BLOCK_ID_NOT_FOUND" &&
-      e.getMessageParameters.get("rddId").contains(s"rdd_${rddId}")
+      e.getMessageParameters.get("rddBlockId").contains(s"rdd_${rddId}")
   }
 }
