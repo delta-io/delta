@@ -19,7 +19,7 @@ package io.delta.kernel.defaults.benchmarks;
 import static io.delta.kernel.defaults.benchmarks.BenchmarkUtils.*;
 
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
-import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
+import io.delta.kernel.defaults.benchmarks.workloadrunners.WorkloadRunner;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.*;
 import java.io.IOException;
