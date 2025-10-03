@@ -163,8 +163,7 @@ public final class DeltaHistoryManager {
       boolean canReturnEarliestCommit,
       List<ParsedCatalogCommitData> parsedCatalogCommits)
       throws TableNotFoundException {
-
-    // For now, we only accept ratified staged commits
+    // For now, we only accept *staged* ratified  commits (not inline)
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(parsedCatalogCommits);
 
     // Create a mapper for delta version -> file status that takes into account ratified commits

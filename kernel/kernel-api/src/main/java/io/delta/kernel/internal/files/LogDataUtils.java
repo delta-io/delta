@@ -23,7 +23,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-// TODO: update after https://github.com/delta-io/delta/pull/5279 is merged
 public final class LogDataUtils {
   public static void validateLogDataContainsOnlyRatifiedStagedCommits(
       List<? extends ParsedLogData> logDatas) {
