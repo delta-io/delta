@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-package com.databricks.sql.transaction.tahoe.commands.merge
+package org.apache.spark.sql.delta.commands.merge
+
+import org.apache.spark.SparkException
 
 object MergeIntoMaterializeSourceShims {
 

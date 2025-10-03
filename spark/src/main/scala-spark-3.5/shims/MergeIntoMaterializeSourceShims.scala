@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-package com.databricks.sql.transaction.tahoe.commands.merge
+package org.apache.spark.sql.delta.commands.merge
+
+import org.apache.spark.SparkException
 
 object MergeIntoMaterializeSourceShims {
 
   /** In Spark 3.5 we can only check for the error message :( */
   def mergeMaterializedSourceRddBlockLostError(e: SparkException, rddId: Int): Boolean = {
-    s.getMessage.matches(s"(?s).*Checkpoint block rdd_${rddId}_[0-9]+ not found!.*")
+    e.getMessage.matches(s"(?s).*Checkpoint block rdd_${rddId}_[0-9]+ not found!.*")
   }
 }
