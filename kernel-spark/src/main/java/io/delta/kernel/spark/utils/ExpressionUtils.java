@@ -27,7 +27,13 @@ import io.delta.kernel.internal.util.InternalUtils;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.*;
+import org.apache.spark.sql.catalyst.expressions.BoundReference;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.connector.expressions.LiteralValue;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.sources.*;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.collection.JavaConverters;
 
@@ -368,7 +374,7 @@ public final class ExpressionUtils {
   public static FilterClassificationResult classifyFilter(
       Filter filter, Set<String> partitionColumnSet) {
     // try to convert Spark filter to Kernel Predicate
-    ExpressionUtils.ConvertedPredicate convertedPredicate =
+    ConvertedPredicate convertedPredicate =
         ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
 
     boolean isKernelSupported = convertedPredicate.isPresent();
@@ -386,6 +392,309 @@ public final class ExpressionUtils {
 
     return new FilterClassificationResult(
         isKernelSupported, isPartialConversion, isDataFilter, kernelPredicate);
+  }
+
+  /**
+   * Converts a Spark DataSourceV2 Predicate to a Catalyst Expression.
+   *
+   * <p>This method translates supported DSV2 predicates into their equivalent Catalyst expressions,
+   * using the provided schema for column resolution. Unsupported predicates, or those referencing
+   * unknown columns, will result in an empty Optional.
+   *
+   * <p>Supported predicates include:
+   *
+   * <ul>
+   *   <li>Null tests: IS_NULL, IS_NOT_NULL
+   *   <li>String functions: STARTS_WITH, ENDS_WITH, CONTAINS
+   *   <li>IN operator
+   *   <li>Comparison: =, >, >=, <, <=
+   *   <li>Null-safe comparison: <=>
+   *   <li>Logical operators: AND, OR, NOT
+   *   <li>Constant predicates: ALWAYS_TRUE, ALWAYS_FALSE
+   * </ul>
+   *
+   * @param predicate the DSV2 Predicate to convert
+   * @param schema the schema used for resolving column references
+   * @return Catalyst Expression representing the converted predicate, or empty if the predicate is
+   *     unsupported or references unknown columns
+   */
+  public static Optional<Expression> dsv2PredicateToCatalystExpression(
+      org.apache.spark.sql.connector.expressions.filter.Predicate predicate, StructType schema) {
+    String predicateName = predicate.name();
+    org.apache.spark.sql.connector.expressions.Expression[] children = predicate.children();
+
+    switch (predicateName) {
+      case "IS_NULL":
+        if (children.length == 1) {
+          Optional<Expression> expressionOpt =
+              dsv2ExpressionToCatalystExpression(children[0], schema);
+          if (expressionOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.IsNull(expressionOpt.get()));
+          }
+        }
+        break;
+
+      case "IS_NOT_NULL":
+        if (children.length == 1) {
+          Optional<Expression> expressionOpt =
+              dsv2ExpressionToCatalystExpression(children[0], schema);
+          if (expressionOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.IsNotNull(expressionOpt.get()));
+          }
+        }
+        break;
+
+      case "STARTS_WITH":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.StartsWith(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "ENDS_WITH":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.EndsWith(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "CONTAINS":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.Contains(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "IN":
+        if (children.length >= 2) {
+          Optional<Expression> firstOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          if (firstOpt.isPresent()) {
+            List<Expression> values = new ArrayList<>();
+            for (int i = 1; i < children.length; i++) {
+              Optional<Expression> valueOpt =
+                  dsv2ExpressionToCatalystExpression(children[i], schema);
+              if (valueOpt.isPresent()) {
+                values.add(valueOpt.get());
+              } else {
+                // if any value in the IN list cannot be converted, return empty
+                return Optional.empty();
+              }
+            }
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.In(
+                    firstOpt.get(), JavaConverters.asScalaBuffer(values).toSeq()));
+          }
+        }
+        break;
+
+      case "=":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.EqualTo(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "<>":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.Not(
+                    new org.apache.spark.sql.catalyst.expressions.EqualTo(
+                        leftOpt.get(), rightOpt.get())));
+          }
+        }
+        break;
+
+      case "<=>":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.EqualNullSafe(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "<":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.LessThan(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "<=":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.LessThanOrEqual(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case ">":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.GreaterThan(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case ">=":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "AND":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema);
+          Optional<Expression> rightOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[1],
+                  schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.And(leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "OR":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema);
+          Optional<Expression> rightOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[1],
+                  schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.Or(leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "NOT":
+        if (children.length == 1) {
+          Optional<Expression> childOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema);
+          if (childOpt.isPresent()) {
+            return Optional.of(new org.apache.spark.sql.catalyst.expressions.Not(childOpt.get()));
+          }
+        }
+        break;
+
+      case "ALWAYS_TRUE":
+        if (children.length == 0) {
+          return Optional.of(
+              org.apache.spark.sql.catalyst.expressions.Literal.create(
+                  true, org.apache.spark.sql.types.DataTypes.BooleanType));
+        }
+        break;
+
+      case "ALWAYS_FALSE":
+        if (children.length == 0) {
+          return Optional.of(
+              org.apache.spark.sql.catalyst.expressions.Literal.create(
+                  false, org.apache.spark.sql.types.DataTypes.BooleanType));
+        }
+        break;
+    }
+
+    return Optional.empty();
+  }
+
+  /**
+   * Resolves a DSV2 Expression to a Catalyst Expression using the provided schema.
+   *
+   * <p>This method handles NamedReference and LiteralValue expressions. NamedReferences are
+   * resolved to BoundReferences based on the schema, while LiteralValues are converted to Catalyst
+   * Literals. Unsupported expression types or references to unknown columns will result in an empty
+   * Optional.
+   *
+   * @param expr the DSV2 Expression to resolve
+   * @param schema the schema used for resolving column references
+   * @return Catalyst Expression representing the resolved expression, or empty if the expression is
+   *     unsupported or references unknown columns
+   */
+  private static Optional<Expression> dsv2ExpressionToCatalystExpression(
+      org.apache.spark.sql.connector.expressions.Expression expr, StructType schema) {
+    if (expr instanceof NamedReference) {
+      NamedReference ref = (NamedReference) expr;
+      String columnName = ref.fieldNames()[0];
+      try {
+        int index = schema.fieldIndex(columnName);
+        StructField field = schema.fields()[index];
+        return Optional.of(new BoundReference(index, field.dataType(), field.nullable()));
+      } catch (IllegalArgumentException e) {
+        // schema.fieldIndex(columnName) throws IllegalArgumentException if a field with the given
+        // name does not exist
+        return Optional.empty();
+      }
+    } else if (expr instanceof LiteralValue) {
+      LiteralValue<?> literal = (LiteralValue<?>) expr;
+      return Optional.of(
+          org.apache.spark.sql.catalyst.expressions.Literal.create(
+              literal.value(), literal.dataType()));
+    } else {
+      return Optional.empty();
+    }
   }
 
   private ExpressionUtils() {}
