@@ -163,8 +163,8 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     // SparkCoreErrors.checkpointRDDBlockIdNotFoundError from LocalCheckpointRDD.compute.
     case s: SparkException
       if materializedSourceRDD.nonEmpty &&
-        s.getMessage.matches(
-          mergeMaterializedSourceRddBlockLostErrorRegex(materializedSourceRDD.get.id)) =>
+        MergeIntoMaterializeSourceShims.mergeMaterializedSourceRddBlockLostError(
+          materializedSourceRDD.get.id)) =>
       log.warn("Materialized Merge source RDD block lost. Merge needs to be restarted. " +
         s"This was attempt number $attempt.")
       if (!isLastAttempt) {
@@ -400,10 +400,6 @@ object MergeIntoMaterializeSource {
     assert(!isMaterialized ||
       MergeIntoMaterializeSourceReason.MATERIALIZED_REASONS.contains(materializeReason))
   }
-
-  // This depends on SparkCoreErrors.checkpointRDDBlockIdNotFoundError msg
-  def mergeMaterializedSourceRddBlockLostErrorRegex(rddId: Int): String =
-    s"(?s).*Checkpoint block rdd_${rddId}_[0-9]+ not found!.*"
 
   /**
    * @return The columns of the source plan that are used in this MERGE
