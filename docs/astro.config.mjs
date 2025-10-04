@@ -163,6 +163,9 @@ export default defineConfig({
           slug: "delta-trino-integration",
         },
         {
+          slug: "delta-starburst-integration",
+        },
+        {
           slug: "delta-presto-integration",
         },
         {
