@@ -126,7 +126,7 @@ public class ChecksumUtils {
     Optional<CRCInfo> lastSeenCrcInfo =
         logSegmentAtVersion
             .getLastSeenChecksum()
-            .flatMap(file -> ChecksumReader.getCRCInfo(engine, file));
+            .flatMap(file -> ChecksumReader.tryReadChecksumFile(engine, file));
     // Try to build CRC incrementally if possible
     Optional<CRCInfo> incrementallyBuiltCrc =
         lastSeenCrcInfo.isPresent()

@@ -810,7 +810,7 @@ trait AbstractTestUtils
       tablePath: String,
       version: Long): Unit = {
     val logPath = new KernelPath(s"$tablePath/_delta_log");
-    val crcInfo = ChecksumReader.getCRCInfo(
+    val crcInfo = ChecksumReader.tryReadChecksumFile(
       engine,
       FileStatus.of(checksumFile(
         logPath,
@@ -856,7 +856,7 @@ trait AbstractTestUtils
       snapshot: Snapshot,
       expectEmptyTable: Boolean = false): Unit = {
     val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
-    val crcInfoOpt = ChecksumReader.getCRCInfo(
+    val crcInfoOpt = ChecksumReader.tryReadChecksumFile(
       defaultEngine,
       FileStatus.of(checksumFile(
         logPath,

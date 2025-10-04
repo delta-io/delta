@@ -63,6 +63,7 @@ public class SnapshotImpl implements Snapshot {
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
+  // TODO: Do not take in LogReplay as a constructor argument.
   public SnapshotImpl(
       Path dataPath,
       long version,

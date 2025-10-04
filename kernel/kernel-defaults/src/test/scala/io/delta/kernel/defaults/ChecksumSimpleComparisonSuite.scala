@@ -155,7 +155,7 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
 
   private def readCrcInfo(engine: Engine, path: String, version: Long): CRCInfo = {
     ChecksumReader
-      .getCRCInfo(
+      .tryReadChecksumFile(
         engine,
         FileStatus.of(checksumFile(new Path(f"$path/_delta_log/"), version).toString))
       .orElseThrow(() => new IllegalStateException(s"CRC info not found for version $version"))
