@@ -106,4 +106,19 @@ public class CommitRangeImpl implements CommitRange {
     return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
         engine, dataPath.toString(), deltaFiles, actionSet);
   }
+
+  @Override
+  public CloseableIterator<io.delta.kernel.CommitActions> getCommits(
+      Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    requireNonNull(engine, "engine cannot be null");
+    requireNonNull(startSnapshot, "startSnapshot cannot be null");
+    requireNonNull(actionSet, "actionSet cannot be null");
+    checkArgument(
+        startSnapshot.getVersion() == startVersion,
+        "startSnapshot must have version = startVersion");
+
+    // Use DeltaLogActionUtils to get commits with protocol validation
+    return DeltaLogActionUtils.getCommitsFromCommitFilesWithProtocolValidation(
+        engine, dataPath.toString(), deltaFiles, actionSet);
+  }
 }
