@@ -24,6 +24,9 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public final class LogDataUtils {
+
+  private LogDataUtils() {}
+
   public static void validateLogDataContainsOnlyRatifiedStagedCommits(
       List<? extends ParsedLogData> logDatas) {
     for (ParsedLogData logData : logDatas) {
