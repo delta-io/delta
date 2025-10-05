@@ -27,54 +27,10 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import io.delta.kernel.types.CollationIdentifier;
-import java.math.BigDecimal;
 import java.util.*;
-import java.util.function.BiFunction;
 
 /** Utility methods to evaluate {@code IN} expression. */
 public class InExpressionEvaluator {
-
-  private static final Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>>
-      COMPARATORS = createComparatorMap();
-
-  private static Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>>
-      createComparatorMap() {
-    Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>> map = new HashMap<>();
-    map.put(BooleanType.class, (v1, v2) -> Boolean.compare((Boolean) v1, (Boolean) v2));
-    map.put(
-        ByteType.class,
-        (v1, v2) -> Byte.compare(((Number) v1).byteValue(), ((Number) v2).byteValue()));
-    map.put(
-        ShortType.class,
-        (v1, v2) -> Short.compare(((Number) v1).shortValue(), ((Number) v2).shortValue()));
-    map.put(
-        IntegerType.class,
-        (v1, v2) -> Integer.compare(((Number) v1).intValue(), ((Number) v2).intValue()));
-    map.put(
-        DateType.class,
-        (v1, v2) -> Integer.compare(((Number) v1).intValue(), ((Number) v2).intValue()));
-    map.put(
-        LongType.class,
-        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
-    map.put(
-        TimestampType.class,
-        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
-    map.put(
-        TimestampNTZType.class,
-        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
-    map.put(
-        FloatType.class,
-        (v1, v2) -> Float.compare(((Number) v1).floatValue(), ((Number) v2).floatValue()));
-    map.put(
-        DoubleType.class,
-        (v1, v2) -> Double.compare(((Number) v1).doubleValue(), ((Number) v2).doubleValue()));
-    map.put(
-        DecimalType.class,
-        (v1, v2) -> BIGDECIMAL_COMPARATOR.compare((BigDecimal) v1, (BigDecimal) v2));
-    map.put(StringType.class, (v1, v2) -> STRING_COMPARATOR.compare((String) v1, (String) v2));
-    map.put(BinaryType.class, (v1, v2) -> BINARY_COMPARTOR.compare((byte[]) v1, (byte[]) v2));
-    return Collections.unmodifiableMap(map);
-  }
 
   /** Validates and transforms the {@code IN} expression. */
   static In validateAndTransform(
@@ -92,8 +48,8 @@ public class InExpressionEvaluator {
     List<Expression> transformedList =
         applyListCasts(inListExpressions, inListDataTypes, commonType);
 
-    validateCollation(in, commonType, transformedList,
-        Collections.nCopies(transformedList.size(), commonType));
+    validateCollation(
+        in, commonType, transformedList, Collections.nCopies(transformedList.size(), commonType));
 
     if (in.getCollationIdentifier().isPresent()) {
       return new In(transformedValue, transformedList, in.getCollationIdentifier().get());
@@ -136,9 +92,7 @@ public class InExpressionEvaluator {
     }
   }
 
-  /**
-   * Resolves the common type for all operands in the IN expression using implicit cast rules.
-   */
+  /** Resolves the common type for all operands in the IN expression using implicit cast rules. */
   private static DataType resolveCommonType(
       In in, DataType valueDataType, List<DataType> inListDataTypes) {
     // Check for nested types which are not supported
@@ -151,8 +105,8 @@ public class InExpressionEvaluator {
       DataType listElementType = inListDataTypes.get(i);
       if (listElementType.isNested()) {
         throw unsupportedExpressionException(
-            in, String.format(
-                "IN expression does not support nested types at position %d.", i + 1));
+            in,
+            String.format("IN expression does not support nested types at position %d.", i + 1));
       }
     }
 
@@ -162,9 +116,9 @@ public class InExpressionEvaluator {
       // Enhance error message with position information
       for (int i = 0; i < inListDataTypes.size(); i++) {
         DataType listElementType = inListDataTypes.get(i);
-        if (!valueDataType.equivalent(listElementType) &&
-            !TypeResolver.isNumericType(valueDataType) &&
-            !TypeResolver.isNumericType(listElementType)) {
+        if (!valueDataType.equivalent(listElementType)
+            && !TypeResolver.isNumericType(valueDataType)
+            && !TypeResolver.isNumericType(listElementType)) {
           throw unsupportedExpressionException(
               in,
               String.format(
@@ -179,9 +133,7 @@ public class InExpressionEvaluator {
     }
   }
 
-  /**
-   * Applies an implicit cast to the given expression if needed.
-   */
+  /** Applies an implicit cast to the given expression if needed. */
   private static Expression applyCastIfNeeded(
       Expression expression, DataType fromType, DataType toType) {
     if (fromType.equivalent(toType)) {
@@ -190,9 +142,7 @@ public class InExpressionEvaluator {
     return new ImplicitCastExpression(expression, toType);
   }
 
-  /**
-   * Applies implicit casts to all expressions in the list if needed.
-   */
+  /** Applies implicit casts to all expressions in the list if needed. */
   private static List<Expression> applyListCasts(
       List<Expression> expressions, List<DataType> fromTypes, DataType toType) {
     List<Expression> transformedExpressions = new ArrayList<>();
@@ -252,21 +202,13 @@ public class InExpressionEvaluator {
     }
   }
 
-  private static boolean compareValues(Object value1, Object value2, DataType valueType) {
-    Preconditions.checkArgument(value1 != null || value2 != null);
-    if (value1 == null || value2 == null) {
-      return false;
-    }
-    return getComparator(valueType).apply(value1, value2) == 0;
-  }
-
-  private static BiFunction<Object, Object, Integer> getComparator(DataType dataType) {
-    BiFunction<Object, Object, Integer> comparator = COMPARATORS.get(dataType.getClass());
-    if (comparator == null) {
-      throw new UnsupportedOperationException(
-          "No comparator available for data type: " + dataType.getClass().getSimpleName());
-    }
-    return comparator;
+  /**
+   * Compares two values for equality after implicit casting has been applied. Since all values have
+   * been cast to the same type, we can use simple equality comparison.
+   */
+  private static boolean compareValues(Object value1, Object value2) {
+    // After implicit casting, both values are of the same type, so we can use Objects.equals
+    return Objects.equals(value1, value2);
   }
 
   /** Column vector implementation for IN expression evaluation. */
@@ -342,7 +284,7 @@ public class InExpressionEvaluator {
         } else {
           Object inListValue =
               VectorUtils.getValueAsObject(inListVector, inListVector.getDataType(), rowId);
-          if (compareValues(valueToFind, inListValue, valueVector.getDataType())) {
+          if (compareValues(valueToFind, inListValue)) {
             return Optional.of(true);
           }
         }
