@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.spark.read;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,7 +22,6 @@ import io.delta.golden.GoldenTableUtils$;
 import java.io.File;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.sources.*;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -75,7 +73,7 @@ public class DataTypeReaderTest {
   }
 
   @Test
-  public void testUnsupportedDataTypeValidation() {
+  public void testVariantUnsupportedDataType() {
     String tablePath = goldenTablePath("spark-variant-checkpoint");
 
     RuntimeException exception =
@@ -90,6 +88,24 @@ public class DataTypeReaderTest {
 
     assertTrue(errorMessage.contains("Unsupported data type"));
     assertTrue(errorMessage.contains("variant"));
+  }
+
+  @Test
+  public void testTimestampUnsupportedDataType() {
+    String tablePath = goldenTablePath("kernel-timestamp-PST");
+
+    RuntimeException exception =
+        assertThrows(
+            RuntimeException.class,
+            () -> {
+              spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`").collect();
+            });
+
+    Throwable rootCause = getRootCause(exception);
+    String errorMessage = rootCause.getMessage();
+
+    assertTrue(errorMessage.contains("Unsupported data type"));
+    assertTrue(errorMessage.contains("timestamp"));
   }
 
   private Throwable getRootCause(Throwable throwable) {
