@@ -75,7 +75,11 @@ final class TypeResolver {
     if (!isNumericType(type1) || !isNumericType(type2)) {
       throw new IllegalArgumentException(
           String.format(
-              "Cannot find common type between non-numeric types: %s and %s", type1, type2));
+              "Cannot find common type between non-numeric types: %s and %s. "
+                  + "Implicit casting is only supported within numeric types "
+                  + "(byte, short, integer, long, float, double). "
+                  + "Non-numeric types must be exactly equivalent.",
+              type1, type2));
     }
 
     // Find the wider type based on precedence
@@ -95,7 +99,11 @@ final class TypeResolver {
     }
 
     throw new IllegalArgumentException(
-        String.format("Cannot find common type between %s and %s", type1, type2));
+        String.format(
+            "Cannot find common type between %s and %s. "
+                + "Although both are numeric types, no valid implicit cast path exists. "
+                + "This may indicate a precision or range compatibility issue.",
+            type1, type2));
   }
 
   /**
@@ -120,7 +128,10 @@ final class TypeResolver {
     String typeString = type.toString();
     int precedence = NUMERIC_TYPE_PRECEDENCE.indexOf(typeString);
     if (precedence == -1) {
-      throw new IllegalArgumentException("Unsupported numeric type: " + typeString);
+      throw new IllegalArgumentException(
+          String.format(
+              "Unsupported numeric type: %s. " + "Supported numeric types for implicit casting: %s",
+              typeString, NUMERIC_TYPE_PRECEDENCE));
     }
     return precedence;
   }

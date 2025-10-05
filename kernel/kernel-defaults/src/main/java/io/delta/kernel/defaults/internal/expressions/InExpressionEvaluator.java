@@ -73,7 +73,8 @@ public class InExpressionEvaluator {
       throw unsupportedExpressionException(
           in,
           "IN expression requires at least 1 element in the IN list. "
-              + "Example usage: column IN (value1, value2, ...)");
+              + "Example usage: column IN (value1, value2, ...). "
+              + "Empty IN lists are not supported.");
     }
   }
 
@@ -86,7 +87,8 @@ public class InExpressionEvaluator {
             String.format(
                 "IN expression requires all list elements to be literals. "
                     + "Non-literal expression found at position %d: %s. "
-                    + "Only constant values are currently supported in IN lists.",
+                    + "Only constant values are currently supported in IN lists. "
+                    + "Consider using subqueries or other expressions for dynamic values.",
                 i + 1, child.getClass().getSimpleName()));
       }
     }
@@ -98,7 +100,12 @@ public class InExpressionEvaluator {
     // Check for nested types which are not supported
     if (valueDataType.isNested()) {
       throw unsupportedExpressionException(
-          in, String.format("IN expression does not support nested types.", valueDataType));
+          in,
+          String.format(
+              "IN expression does not support nested types. Value type: %s. "
+                  + "Only primitive types (numeric, string, boolean, date, timestamp, binary) "
+                  + "are supported.",
+              valueDataType));
     }
 
     for (int i = 0; i < inListDataTypes.size(); i++) {
@@ -106,31 +113,90 @@ public class InExpressionEvaluator {
       if (listElementType.isNested()) {
         throw unsupportedExpressionException(
             in,
-            String.format("IN expression does not support nested types at position %d.", i + 1));
+            String.format(
+                "IN expression does not support nested types at position %d. Element type: %s. "
+                    + "Only primitive types (numeric, string, boolean, date, timestamp, binary) "
+                    + "are supported.",
+                i + 1, listElementType));
       }
     }
 
     try {
       return TypeResolver.findCommonType(valueDataType, inListDataTypes);
     } catch (IllegalArgumentException e) {
-      // Enhance error message with position information
-      for (int i = 0; i < inListDataTypes.size(); i++) {
-        DataType listElementType = inListDataTypes.get(i);
-        if (!valueDataType.equivalent(listElementType)
-            && !TypeResolver.isNumericType(valueDataType)
-            && !TypeResolver.isNumericType(listElementType)) {
-          throw unsupportedExpressionException(
+      // Provide enhanced error messages with specific guidance
+      throw createTypeCompatibilityError(in, valueDataType, inListDataTypes, e);
+    }
+  }
+
+  /**
+   * Creates a detailed error message for type compatibility issues in IN expressions. Provides
+   * specific guidance about implicit casting and supported type combinations.
+   */
+  private static UnsupportedOperationException createTypeCompatibilityError(
+      In in,
+      DataType valueDataType,
+      List<DataType> inListDataTypes,
+      IllegalArgumentException originalError) {
+
+    // Find the first incompatible type to provide specific guidance
+    for (int i = 0; i < inListDataTypes.size(); i++) {
+      DataType listElementType = inListDataTypes.get(i);
+
+      if (!valueDataType.equivalent(listElementType)) {
+        // Check if both are numeric types
+        if (TypeResolver.isNumericType(valueDataType)
+            && TypeResolver.isNumericType(listElementType)) {
+          // This should not happen as numeric types should be compatible, but provide guidance
+          return unsupportedExpressionException(
+              in,
+              String.format(
+                  "Cannot find common numeric type for IN expression. "
+                      + "Value type: %s, incompatible element at position %d: %s. "
+                      + "This may indicate a precision or range compatibility issue. "
+                      + "Supported numeric type hierarchy: "
+                      + "byte → short → integer → long → float → double.",
+                  valueDataType, i + 1, listElementType));
+        }
+
+        // Check if one is numeric and the other is not
+        if (TypeResolver.isNumericType(valueDataType)
+            || TypeResolver.isNumericType(listElementType)) {
+          return unsupportedExpressionException(
               in,
               String.format(
                   "Cannot find common type for IN expression. "
                       + "Value type: %s, incompatible element at position %d: %s. "
-                      + "No implicit cast available between these types.",
+                      + "No implicit cast available between numeric and non-numeric types. "
+                      + "Consider using explicit casting or ensuring all operands are "
+                      + "of compatible types.",
                   valueDataType, i + 1, listElementType));
         }
+
+        // Both are non-numeric types
+        return unsupportedExpressionException(
+            in,
+            String.format(
+                "Cannot find common type for IN expression. "
+                    + "Value type: %s, incompatible element at position %d: %s. "
+                    + "Non-numeric types must be exactly equivalent "
+                    + "(no implicit casting available). "
+                    + "Supported type families: numeric (byte, short, integer, long, "
+                    + "float, double), string, boolean, date, timestamp, binary.",
+                valueDataType, i + 1, listElementType));
       }
-      // Re-throw original exception if we couldn't provide a better message
-      throw unsupportedExpressionException(in, e.getMessage());
     }
+
+    // Fallback to original error message if we couldn't identify the specific issue
+    return unsupportedExpressionException(
+        in,
+        String.format(
+            "Cannot find common type for IN expression. %s "
+                + "Ensure all operands are of compatible types. "
+                + "Implicit casting is supported within numeric types "
+                + "(byte → short → integer → long → float → double). "
+                + "Other types must be exactly equivalent.",
+            originalError.getMessage()));
   }
 
   /** Applies an implicit cast to the given expression if needed. */
@@ -191,14 +257,21 @@ public class InExpressionEvaluator {
           in,
           String.format(
               "Unsupported collation: \"%s\". "
-                  + "Default Engine supports just \"SPARK.UTF8_BINARY\" collation.",
+                  + "Default Engine supports only \"SPARK.UTF8_BINARY\" collation "
+                  + "for IN expressions. "
+                  + "Please use UTF8_BINARY collation or remove collation specification.",
               collationIdentifier));
     }
   }
 
   private static void checkIsStringType(DataType dataType, In in, String message) {
     if (!(dataType instanceof StringType)) {
-      throw unsupportedExpressionException(in, message);
+      throw unsupportedExpressionException(
+          in,
+          String.format(
+              "%s Found type: %s. "
+                  + "Collation can only be applied to STRING types in IN expressions.",
+              message, dataType));
     }
   }
 

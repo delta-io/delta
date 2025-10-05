@@ -63,7 +63,7 @@ class InExpressionEvaluatorSuite extends AnyFunSuite {
     val listExprs: List[Expression] = List(Literal.ofInt(1), Literal.ofInt(2))
     val in = new In(valueExpr, listExprs.asJava)
 
-    assertThrows[RuntimeException] {
+    assertThrows[UnsupportedOperationException] {
       InExpressionEvaluator.validateAndTransform(
         in,
         valueExpr,
