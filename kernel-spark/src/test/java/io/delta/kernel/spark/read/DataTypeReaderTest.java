@@ -75,69 +75,6 @@ public class DataTypeReaderTest {
   }
 
   @Test
-  public void testnew() {
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.latestOffset());
-    assertEquals("latestOffset is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testLatestOffset_throwsUnsupportedOperationException() {
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.latestOffset());
-    assertEquals("latestOffset is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testPlanInputPartitions_throwsUnsupportedOperationException() {
-    Offset start = null;
-    Offset end = null;
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> microBatchStream.planInputPartitions(start, end));
-    assertEquals("planInputPartitions is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testCreateReaderFactory_throwsUnsupportedOperationException() {
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class, () -> microBatchStream.createReaderFactory());
-    assertEquals("createReaderFactory is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testInitialOffset_throwsUnsupportedOperationException() {
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.initialOffset());
-    assertEquals("initialOffset is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testDeserializeOffset_throwsUnsupportedOperationException() {
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class, () -> microBatchStream.deserializeOffset("{}"));
-    assertEquals("deserializeOffset is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testCommit_throwsUnsupportedOperationException() {
-    Offset end = null;
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.commit(end));
-    assertEquals("commit is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testStop_throwsUnsupportedOperationException() {
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.stop());
-    assertEquals("stop is not supported", exception.getMessage());
-  }
-
-  @Test
   public void testUnsupportedDataTypeValidation() {
     String tablePath = goldenTablePath("spark-variant-checkpoint");
 
