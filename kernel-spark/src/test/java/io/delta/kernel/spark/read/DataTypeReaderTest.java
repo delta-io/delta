@@ -17,13 +17,11 @@ package io.delta.kernel.spark.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.golden.GoldenTableUtils$;
 import java.io.File;
-import java.util.List;
 import org.apache.spark.SparkConf;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.sources.*;
@@ -141,74 +139,27 @@ public class DataTypeReaderTest {
 
   @Test
   public void testUnsupportedDataTypeValidation() {
-    // Test the real-world scenario: table created with unsupported mock data type
-    // then accessed via kernel-spark connector (should detect unsupported type)
+    String tablePath = goldenTablePath("spark-variant-checkpoint");
 
-    String tablePath = goldenTablePath("kernel-spark-unsupported-datatype-validation");
+    RuntimeException exception =
+        assertThrows(
+            RuntimeException.class,
+            () -> {
+              spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`").collect();
+            });
 
-    try {
-      // First, try to describe the table to see its schema
-      Dataset<Row> describeResult = spark.sql("DESCRIBE TABLE `dsv2`.`delta`.`" + tablePath + "`");
-      List<Row> schemaRows = describeResult.collectAsList();
+    Throwable rootCause = getRootCause(exception);
+    String errorMessage = rootCause.getMessage();
 
-      System.out.println("Golden table schema:");
-      for (Row row : schemaRows) {
-        System.out.println("  " + row.getString(0) + " : " + row.getString(1));
-      }
+    assertTrue(errorMessage.contains("Unsupported data type"));
+    assertTrue(errorMessage.contains("variant"));
+  }
 
-      // Check for unsupported mock columns in the described schema
-      boolean hasUnsupportedColumn =
-          schemaRows.stream()
-              .anyMatch(
-                  row ->
-                      "unsupported_column".equals(row.getString(0))
-                          && (row.getString(1).toLowerCase().contains("unsupported")
-                              || row.getString(1).toLowerCase().contains("mock")));
-
-      if (hasUnsupportedColumn) {
-        System.out.println("✓ Golden table contains unsupported mock data type column");
-        System.out.println(
-            "  Testing file path access (should trigger UnsupportedDataTypeException)...");
-
-        try {
-          // This should go through our kernel-spark connector and trigger validation
-          Dataset<Row> result = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
-          List<Row> data = result.collectAsList();
-
-          System.out.println("  WARNING: Query succeeded - validation may not have been triggered");
-          System.out.println("  Returned " + data.size() + " rows");
-
-        } catch (Exception queryException) {
-          System.out.println("  ✓ Query failed as expected: " + queryException.getMessage());
-          if (queryException.getMessage() != null
-              && (queryException.getMessage().toLowerCase().contains("unsupported")
-                  || queryException.getMessage().toLowerCase().contains("mock"))) {
-            System.out.println(
-                "  ✓ Failure message indicates unsupported data type validation working");
-          }
-        }
-
-      } else {
-        assert (false);
-        System.out.println("  Golden table created without unsupported column");
-        System.out.println(
-            "  This means the unsupported mock data type was rejected during golden table creation");
-
-        // Try to query the table anyway to make sure it works for supported types
-        Dataset<Row> result = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
-        List<Row> data = result.collectAsList();
-        System.out.println("  ✓ Successfully queried fallback table with " + data.size() + " rows");
-      }
-
-    } catch (Exception e) {
-      System.out.println(
-          "Golden table test failed: " + e.getClass().getSimpleName() + " - " + e.getMessage());
-
-      // This might happen if golden table doesn't exist
-      if (!new File(tablePath).exists()) {
-        System.out.println("  Golden table directory does not exist: " + tablePath);
-        System.out.println("  You may need to run: ./build/sbt \"goldenTables/test\"");
-      }
+  private Throwable getRootCause(Throwable throwable) {
+    Throwable cause = throwable;
+    while (cause.getCause() != null) {
+      cause = cause.getCause();
     }
+    return cause;
   }
 }
