@@ -92,8 +92,8 @@ public class InExpressionEvaluator {
     List<Expression> transformedList =
         applyListCasts(inListExpressions, inListDataTypes, commonType);
 
-    validateCollation(
-        in, commonType, transformedList, Collections.nCopies(transformedList.size(), commonType));
+    validateCollation(in, commonType, transformedList,
+        Collections.nCopies(transformedList.size(), commonType));
 
     if (in.getCollationIdentifier().isPresent()) {
       return new In(transformedValue, transformedList, in.getCollationIdentifier().get());
@@ -136,7 +136,9 @@ public class InExpressionEvaluator {
     }
   }
 
-  /** Resolves the common type for all operands in the IN expression using implicit cast rules. */
+  /**
+   * Resolves the common type for all operands in the IN expression using implicit cast rules.
+   */
   private static DataType resolveCommonType(
       In in, DataType valueDataType, List<DataType> inListDataTypes) {
     // Check for nested types which are not supported
@@ -149,8 +151,8 @@ public class InExpressionEvaluator {
       DataType listElementType = inListDataTypes.get(i);
       if (listElementType.isNested()) {
         throw unsupportedExpressionException(
-            in,
-            String.format("IN expression does not support nested types at position %d.", i + 1));
+            in, String.format(
+                "IN expression does not support nested types at position %d.", i + 1));
       }
     }
 
@@ -160,9 +162,9 @@ public class InExpressionEvaluator {
       // Enhance error message with position information
       for (int i = 0; i < inListDataTypes.size(); i++) {
         DataType listElementType = inListDataTypes.get(i);
-        if (!valueDataType.equivalent(listElementType)
-            && !TypeResolver.isNumericType(valueDataType)
-            && !TypeResolver.isNumericType(listElementType)) {
+        if (!valueDataType.equivalent(listElementType) &&
+            !TypeResolver.isNumericType(valueDataType) &&
+            !TypeResolver.isNumericType(listElementType)) {
           throw unsupportedExpressionException(
               in,
               String.format(
@@ -177,7 +179,9 @@ public class InExpressionEvaluator {
     }
   }
 
-  /** Applies an implicit cast to the given expression if needed. */
+  /**
+   * Applies an implicit cast to the given expression if needed.
+   */
   private static Expression applyCastIfNeeded(
       Expression expression, DataType fromType, DataType toType) {
     if (fromType.equivalent(toType)) {
@@ -186,7 +190,9 @@ public class InExpressionEvaluator {
     return new ImplicitCastExpression(expression, toType);
   }
 
-  /** Applies implicit casts to all expressions in the list if needed. */
+  /**
+   * Applies implicit casts to all expressions in the list if needed.
+   */
   private static List<Expression> applyListCasts(
       List<Expression> expressions, List<DataType> fromTypes, DataType toType) {
     List<Expression> transformedExpressions = new ArrayList<>();
