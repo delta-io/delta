@@ -83,15 +83,22 @@ public class InExpressionEvaluator {
       DataType valueDataType,
       List<Expression> inListExpressions,
       List<DataType> inListDataTypes) {
-    // TODO: [delta-io/delta#5227] Try to reuse Implicit cast and simplify comparison logic
     validateArgumentCount(in, inListExpressions);
     validateInListElementsAreLiterals(in, inListExpressions);
-    validateTypeCompatibility(in, valueDataType, inListDataTypes);
-    validateCollation(in, valueDataType, inListExpressions, inListDataTypes);
+
+    // Use implicit casting for type compatibility
+    DataType commonType = resolveCommonType(in, valueDataType, inListDataTypes);
+    Expression transformedValue = applyCastIfNeeded(valueExpression, valueDataType, commonType);
+    List<Expression> transformedList =
+        applyListCasts(inListExpressions, inListDataTypes, commonType);
+
+    validateCollation(
+        in, commonType, transformedList, Collections.nCopies(transformedList.size(), commonType));
+
     if (in.getCollationIdentifier().isPresent()) {
-      return new In(valueExpression, inListExpressions, in.getCollationIdentifier().get());
+      return new In(transformedValue, transformedList, in.getCollationIdentifier().get());
     } else {
-      return new In(valueExpression, inListExpressions);
+      return new In(transformedValue, transformedList);
     }
   }
 
@@ -129,7 +136,8 @@ public class InExpressionEvaluator {
     }
   }
 
-  private static void validateTypeCompatibility(
+  /** Resolves the common type for all operands in the IN expression using implicit cast rules. */
+  private static DataType resolveCommonType(
       In in, DataType valueDataType, List<DataType> inListDataTypes) {
     // Check for nested types which are not supported
     if (valueDataType.isNested()) {
@@ -139,16 +147,54 @@ public class InExpressionEvaluator {
 
     for (int i = 0; i < inListDataTypes.size(); i++) {
       DataType listElementType = inListDataTypes.get(i);
-      if (!valueDataType.equivalent(listElementType)) {
+      if (listElementType.isNested()) {
         throw unsupportedExpressionException(
             in,
-            String.format(
-                "IN expression requires all list elements to match the value type. "
-                    + "Value type: %s, but found incompatible element type at position %d: %s. "
-                    + "Consider casting the incompatible element to the value type.",
-                valueDataType, i + 1, listElementType));
+            String.format("IN expression does not support nested types at position %d.", i + 1));
       }
     }
+
+    try {
+      return TypeResolver.findCommonType(valueDataType, inListDataTypes);
+    } catch (IllegalArgumentException e) {
+      // Enhance error message with position information
+      for (int i = 0; i < inListDataTypes.size(); i++) {
+        DataType listElementType = inListDataTypes.get(i);
+        if (!valueDataType.equivalent(listElementType)
+            && !TypeResolver.isNumericType(valueDataType)
+            && !TypeResolver.isNumericType(listElementType)) {
+          throw unsupportedExpressionException(
+              in,
+              String.format(
+                  "Cannot find common type for IN expression. "
+                      + "Value type: %s, incompatible element at position %d: %s. "
+                      + "No implicit cast available between these types.",
+                  valueDataType, i + 1, listElementType));
+        }
+      }
+      // Re-throw original exception if we couldn't provide a better message
+      throw unsupportedExpressionException(in, e.getMessage());
+    }
+  }
+
+  /** Applies an implicit cast to the given expression if needed. */
+  private static Expression applyCastIfNeeded(
+      Expression expression, DataType fromType, DataType toType) {
+    if (fromType.equivalent(toType)) {
+      return expression;
+    }
+    return new ImplicitCastExpression(expression, toType);
+  }
+
+  /** Applies implicit casts to all expressions in the list if needed. */
+  private static List<Expression> applyListCasts(
+      List<Expression> expressions, List<DataType> fromTypes, DataType toType) {
+    List<Expression> transformedExpressions = new ArrayList<>();
+    for (int i = 0; i < expressions.size(); i++) {
+      Expression transformed = applyCastIfNeeded(expressions.get(i), fromTypes.get(i), toType);
+      transformedExpressions.add(transformed);
+    }
+    return transformedExpressions;
   }
 
   /** Validates that collation is only used with string types and the collation is UTF8Binary. */
