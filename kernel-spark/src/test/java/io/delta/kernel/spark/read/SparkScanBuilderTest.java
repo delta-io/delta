@@ -43,53 +43,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 public class SparkScanBuilderTest extends SparkDsv2TestBase {
 
-  //    @Test
-  //    public void testUnsupportedType(@TempDir File tempDir) {
-  //        String path = tempDir.getAbsolutePath();
-  //        String tableName = "scan_builder_test";
-  //        spark.sql(
-  //            String.format(
-  //                    "CREATE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED
-  // BY (dep_id) LOCATION '%s'",
-  //                    tableName, path));
-  //        Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
-  //        StructType dataSchema =
-  //                DataTypes.createStructType(
-  //                        new StructField[] {
-  //                                DataTypes.createStructField("id", DataTypes.IntegerType, true),
-  //                                DataTypes.createStructField("name", DataTypes.StringType, true),
-  //                                DataTypes.createStructField("dep_id", DataTypes.IntegerType,
-  // true)
-  //                        });
-  //        StructType partitionSchema =
-  //                DataTypes.createStructType(
-  //                        new StructField[] {DataTypes.createStructField("dep_id",
-  // DataTypes.IntegerType, true)});
-  //        SparkScanBuilder builder =
-  //                new SparkScanBuilder(
-  //                        tableName,
-  //                        path,
-  //                        dataSchema,
-  //                        partitionSchema,
-  //                        (SnapshotImpl) snapshot,
-  //                        CaseInsensitiveStringMap.empty());
-  //
-  //        StructType expectedSparkSchema =
-  //                DataTypes.createStructType(
-  //                        new StructField[] {
-  //                                DataTypes.createStructField("id", DataTypes.IntegerType, true
-  // /*nullable*/),
-  //                                DataTypes.createStructField("dep_id", DataTypes.IntegerType,
-  // true)
-  //                        });
-  //
-  //        builder.pruneColumns(expectedSparkSchema);
-  //        Scan scan = builder.build();
-  //
-  //        assertTrue(scan instanceof SparkScan);
-  //        assertEquals(expectedSparkSchema, scan.readSchema());
-  //    }
-
   @Test
   public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();

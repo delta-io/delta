@@ -2,7 +2,7 @@ This file contains the code used to generate this golden table "spark-variant-ch
 
 Using delta-spark 4.0, run the following scala script:
 
-val tableName = "./connectors/golden-tables/src/main/resources/golden/spark-variant-checkpoint"
+val tableName = "<REPLACE WITH THE TABLE NAME OR PATH>"
 val query = """
   with jsonStrings as (
     select
