@@ -1096,7 +1096,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           BooleanType.BOOLEAN).eval(valueInput)
       }
       assert(
-        e.getMessage.contains("Consider using explicit casting or ensuring all operands are of compatible types."))
+        e.getMessage.contains(
+          "Consider using explicit casting or ensuring all operands are of compatible types."))
     }
 
     // Test incompatible type combinations
