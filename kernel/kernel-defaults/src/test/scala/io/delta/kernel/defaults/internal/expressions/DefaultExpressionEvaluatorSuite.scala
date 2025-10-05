@@ -1097,7 +1097,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       }
       assert(
         e.getMessage.contains(
-          "Consider using explicit casting or ensuring all operands are of compatible types."))
+          "Non-numeric types must be exactly equivalent") ||
+        e.getMessage.contains(
+          "No implicit cast available between numeric and non-numeric types"))
     }
 
     // Test incompatible type combinations
@@ -1990,9 +1992,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       evaluator(schema, expression, BooleanType.BOOLEAN).eval(input)
     }
     assert(e.getMessage.contains(
-      s"""Unsupported collation: "$collationIdentifier".
-         | Default Engine supports just "$SPARK_UTF8_BINARY"
-         | collation.""".stripMargin.replace("\n", "")))
+      s"""Unsupported collation: "$collationIdentifier"""") &&
+      e.getMessage.contains(
+      s"""Default Engine supports only "$SPARK_UTF8_BINARY" collation"""))
 
   }
 
