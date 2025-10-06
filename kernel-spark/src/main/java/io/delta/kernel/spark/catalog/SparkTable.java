@@ -26,6 +26,7 @@ import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.ByteType;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DateType;
 import io.delta.kernel.types.DecimalType;
 import io.delta.kernel.types.DoubleType;
 import io.delta.kernel.types.FloatType;
@@ -34,6 +35,9 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.ShortType;
 import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.TimestampNTZType;
+import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.types.VariantType;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
@@ -114,26 +118,24 @@ public class SparkTable implements Table, SupportsRead {
    * @return true if the data type is allowed, false otherwise
    */
   private static boolean isAllowedKernelType(DataType dataType) {
-    // allowed data types in scala-2.12
+    // allowed kernel data types
     return dataType instanceof ArrayType
         || dataType instanceof BinaryType
         || dataType instanceof BooleanType
         || dataType instanceof ByteType
-        || dataType instanceof DataType
         || dataType instanceof DateType
         || dataType instanceof DecimalType
         || dataType instanceof DoubleType
-        || dataType instanceof FieldMetadata
         || dataType instanceof FloatType
         || dataType instanceof IntegerType
         || dataType instanceof LongType
         || dataType instanceof MapType
-        || dataType instanceof NullType
         || dataType instanceof ShortType
         || dataType instanceof StringType
-        || dataType instanceof StructField
-        || dataType instanceof StructType
-        || dataType instanceof TimestampType;
+        || dataType instanceof io.delta.kernel.types.StructType
+        || dataType instanceof TimestampType
+        || dataType instanceof TimestampNTZType
+        || dataType instanceof VariantType;
   }
 
   /**
