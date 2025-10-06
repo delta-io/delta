@@ -69,9 +69,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This class is directly copied from iceberg 1.8.0; The only change made is to
- * accept metadataUpdates in constructor and pass to HiveTableOperations
- * to support using schema/partitionSpec with field ids assigned by Delta lake
+ * This class is directly copied from iceberg 1.8.0; The only change made is
+ * 1.
+ *  accept metadataUpdates in constructor and pass to HiveTableOperations
+ *  to support using schema/partitionSpec with field ids assigned by Delta lake
+ * 2.
+ *  Validate metadataLocation for validating table as Iceberg in tableExists
  */
 public class HiveCatalog extends BaseMetastoreViewCatalog
         implements SupportsNamespaces, Configurable {
