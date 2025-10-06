@@ -16,14 +16,13 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package delta.icebergShaded.src.main.java.org.apache.iceberg.hive;
+package org.apache.iceberg.hive;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf;
