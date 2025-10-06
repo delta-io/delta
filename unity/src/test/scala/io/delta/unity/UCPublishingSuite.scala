@@ -62,16 +62,15 @@ class UCPublishingSuite
       version: Long,
       content: String): ParsedCatalogCommitData = {
     val stagedPath = FileNames.stagedCommitFile(logPath, version)
-    val rowIter = getSingleElementRowIter(content)
     defaultEngine.getJsonHandler.writeJsonFileAtomically(
       stagedPath,
-      rowIter,
+      getSingleElementRowIter(content),
       true /* overwrite */ )
     val fileStatus = defaultEngine.getFileSystemClient.getFileStatus(stagedPath)
     ParsedCatalogCommitData.forFileStatus(fileStatus)
   }
 
-  test("publish throws on null inputs") {
+  test("publish: throws on null inputs") {
     val committer = createCommitter(baseTestTablePath)
     val publishMetadata = createPublishMetadata(
       snapshotVersion = 1,
@@ -87,7 +86,7 @@ class UCPublishingSuite
     }
   }
 
-  test("publish throws UnsupportedOperationException for inline commits") {
+  test("publish: throws UnsupportedOperationException for inline commits") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val inlineCatalogCommit = ParsedCatalogCommitData.forInlineData(
@@ -109,7 +108,7 @@ class UCPublishingSuite
     }
   }
 
-  test("publish multiple catalog commits successfully") {
+  test("publish: multiple catalog commits successfully") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val catalogCommits = List(
@@ -132,7 +131,7 @@ class UCPublishingSuite
     }
   }
 
-  test("publish does not overwrite existing published files") {
+  test("publish: does not overwrite existing published files") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val catalogCommit = createStagedCommitFile(logPath, 1, "TEST_IDEMPOTENT_PUBLISH")
@@ -158,7 +157,7 @@ class UCPublishingSuite
     }
   }
 
-  test("publish creates published file at correct location with identical content") {
+  test("publish: creates published file at correct location with identical content") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val catalogCommit = createStagedCommitFile(logPath, 1, "VERSION_1")
