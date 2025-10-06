@@ -257,9 +257,7 @@ public class InExpressionEvaluator {
           in,
           String.format(
               "Unsupported collation: \"%s\". "
-                  + "Default Engine supports only \"SPARK.UTF8_BINARY\" collation "
-                  + "for IN expressions. "
-                  + "Please use UTF8_BINARY collation or remove collation specification.",
+                  + "Default Engine supports just \"SPARK.UTF8_BINARY\" collation.",
               collationIdentifier));
     }
   }

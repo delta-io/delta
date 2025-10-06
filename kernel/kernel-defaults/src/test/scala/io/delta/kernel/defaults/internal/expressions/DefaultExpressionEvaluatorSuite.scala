@@ -1992,9 +1992,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       evaluator(schema, expression, BooleanType.BOOLEAN).eval(input)
     }
     assert(e.getMessage.contains(
-      s"""Unsupported collation: "$collationIdentifier"""") &&
-      e.getMessage.contains(
-        s"""Default Engine supports only "$SPARK_UTF8_BINARY" collation"""))
+      s"""Unsupported collation: "$collationIdentifier".
+         | Default Engine supports just "$SPARK_UTF8_BINARY"
+         | collation.""".stripMargin.replace("\n", "")))
 
   }
 
