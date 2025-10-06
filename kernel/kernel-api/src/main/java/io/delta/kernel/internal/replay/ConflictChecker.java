@@ -176,7 +176,7 @@ public class ConflictChecker {
     }
 
     Optional<CRCInfo> updatedCrcInfo =
-        ChecksumReader.getCRCInfo(
+        ChecksumReader.tryReadChecksumFile(
             engine,
             FileStatus.of(checksumFile(transaction.getLogPath(), lastWinningVersion).toString()));
 
