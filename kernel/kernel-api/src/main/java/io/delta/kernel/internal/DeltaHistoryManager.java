@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
+import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
@@ -163,9 +164,7 @@ public final class DeltaHistoryManager {
       List<ParsedCatalogCommitData> parsedCatalogCommits)
       throws TableNotFoundException {
     // For now, we only accept *staged* ratified  commits (not inline)
-    checkArgument(
-        parsedCatalogCommits.stream().allMatch(ParsedCatalogCommitData::isFile),
-        "Currently getActiveCommitAtTimestamp only accepts ratified staged file commits");
+    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(parsedCatalogCommits);
 
     // Create a mapper for delta version -> file status that takes into account ratified commits
     Function<Long, FileStatus> versionToFileStatusFunction =

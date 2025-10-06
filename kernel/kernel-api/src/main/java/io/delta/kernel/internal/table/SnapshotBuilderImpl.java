@@ -27,7 +27,7 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Tuple2;
@@ -122,8 +122,8 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
     // TODO: delta-io/delta#4765 support other types
-    validateLogDataContainsOnlyStagedRatifiedCommits();
-    validateLogDataIsSortedContiguous();
+    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
+    LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
   }
 
   private void validateVersionNonNegative() {
@@ -170,26 +170,5 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   private void validateProtocolRead() {
     ctx.protocolAndMetadataOpt.ifPresent(
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
-  }
-
-  private void validateLogDataContainsOnlyStagedRatifiedCommits() {
-    for (ParsedLogData logData : ctx.logDatas) {
-      checkArgument(
-          logData instanceof ParsedCatalogCommitData && logData.isFile(),
-          "Only staged ratified commits are supported, but found: " + logData);
-    }
-  }
-
-  private void validateLogDataIsSortedContiguous() {
-    if (ctx.logDatas.size() > 1) {
-      for (int i = 1; i < ctx.logDatas.size(); i++) {
-        final ParsedLogData prev = ctx.logDatas.get(i - 1);
-        final ParsedLogData curr = ctx.logDatas.get(i);
-        checkArgument(
-            prev.getVersion() + 1 == curr.getVersion(),
-            String.format(
-                "Log data must be sorted and contiguous, but found: %s and %s", prev, curr));
-      }
-    }
   }
 }

@@ -41,9 +41,7 @@ import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
 import java.util.*;
-import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -593,23 +591,8 @@ public class SnapshotManager {
             .map(ParsedCatalogCommitData.class::cast)
             .collect(Collectors.toList());
 
-    if (allRatifiedCommitsAfterCheckpoint.isEmpty()) {
-      return allPublishedDeltasAfterCheckpoint;
-    }
-
-    if (allPublishedDeltasAfterCheckpoint.isEmpty()) {
-      return allRatifiedCommitsAfterCheckpoint;
-    }
-
-    final long firstRatified = allRatifiedCommitsAfterCheckpoint.get(0).getVersion();
-    final long lastRatified = ListUtils.getLast(allRatifiedCommitsAfterCheckpoint).getVersion();
-
-    return Stream.of(
-            allPublishedDeltasAfterCheckpoint.stream().filter(x -> x.getVersion() < firstRatified),
-            allRatifiedCommitsAfterCheckpoint.stream(),
-            allPublishedDeltasAfterCheckpoint.stream().filter(x -> x.getVersion() > lastRatified))
-        .flatMap(Function.identity())
-        .collect(Collectors.toList());
+    return LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
+        allPublishedDeltasAfterCheckpoint, allRatifiedCommitsAfterCheckpoint);
   }
 
   /**
