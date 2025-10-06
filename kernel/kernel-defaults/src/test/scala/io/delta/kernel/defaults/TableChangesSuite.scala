@@ -26,7 +26,6 @@ import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
-import io.delta.kernel.defaults.utils.DeltaSparkTestUtils.OptimisticTxnTestHelper
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
 import io.delta.kernel.expressions.Literal
@@ -326,7 +325,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
 
         val add1 = SparkAddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
         val txn1 = log.startTransaction()
-        txn1.commitManuallyForTest(metadata, add1)
+        txn1.commitManuallyWithValidation(metadata, add1)
 
         val addCDC2 = SparkAddCDCFile(
           "fake/path/2",
@@ -335,12 +334,12 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
           Map("tag_foo" -> "tag_bar"))
         val remove2 = SparkRemoveFile("fake/path/1", Some(100), dataChange = true)
         val txn2 = log.startTransaction()
-        txn2.commitManuallyForTest(addCDC2, remove2)
+        txn2.commitManuallyWithValidation(addCDC2, remove2)
 
         val setTransaction3 = SparkSetTransaction("fakeAppId", 3L, Some(200))
         val txn3 = log.startTransaction()
         val latestTableProtocol = log.snapshot.protocol
-        txn3.commitManuallyForTest(latestTableProtocol, setTransaction3)
+        txn3.commitManuallyWithValidation(latestTableProtocol, setTransaction3)
 
         // request subset of actions
         testGetChangesVsSpark(

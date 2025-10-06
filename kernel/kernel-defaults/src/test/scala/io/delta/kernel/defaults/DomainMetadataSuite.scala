@@ -22,7 +22,6 @@ import io.delta.kernel._
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV1Builders, WriteUtilsWithV2Builders}
-import io.delta.kernel.defaults.utils.DeltaSparkTestUtils.OptimisticTxnTestHelper
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
@@ -439,7 +438,7 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
         val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
         deltaLog
           .startTransaction()
-          .commitManuallyForTest(
+          .commitManuallyWithValidation(
             SparkDomainMetadata("testDomain1", "{\"key1\":\"1\"}", removed = false),
             SparkDomainMetadata("testDomain2", "", removed = false),
             SparkDomainMetadata("testDomain3", "", removed = false))
@@ -450,7 +449,7 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
         // Manually commit domain metadata actions. This will create 04.json
         deltaLog
           .startTransaction()
-          .commitManuallyForTest(
+          .commitManuallyWithValidation(
             SparkDomainMetadata("testDomain1", "{\"key1\":\"10\"}", removed = false),
             SparkDomainMetadata("testDomain2", "", removed = true))
 

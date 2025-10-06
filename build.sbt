@@ -750,7 +750,8 @@ lazy val kernelSpark = (project in file("kernel-spark"))
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )

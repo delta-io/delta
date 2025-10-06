@@ -19,7 +19,6 @@ import scala.jdk.CollectionConverters.seqAsJavaListConverter
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.DeltaSparkTestUtils.OptimisticTxnTestHelper
 import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
@@ -155,7 +154,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
-        .commitManuallyForTest(
+        .commitManuallyWithValidation(
           CommitInfo(
             time = 12345,
             operation = "MANUAL UPDATE",
@@ -193,7 +192,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
-        .commitManuallyForTest(
+        .commitManuallyWithValidation(
           CommitInfo(
             time = 12345,
             operation = "REPLACE TABLE",
@@ -280,7 +279,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
-        .commitManuallyForTest(
+        .commitManuallyWithValidation(
           deltaLog.getSnapshotAt(11).allFiles.head().remove.wrap.unwrap,
           CommitInfo(
             time = 12345,
@@ -317,7 +316,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
-        .commitManuallyForTest(
+        .commitManuallyWithValidation(
           deltaLog.getSnapshotAt(11).allFiles.head().remove.wrap.unwrap)
       // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(

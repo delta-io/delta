@@ -21,7 +21,6 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{AbstractTestUtils, ExpressionTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
-import io.delta.kernel.defaults.utils.DeltaSparkTestUtils.OptimisticTxnTestHelper
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
@@ -196,7 +195,7 @@ trait AbstractCheckpointV2ReadSuite extends AnyFunSuite with ExpressionTestUtils
       val protocol = Protocol(3, 7, Some(Set("v2Checkpoint")), Some(supportedFeatures))
       val add = AddFile(new Path("addfile").toUri.toString, Map.empty, 100L, 10L, dataChange = true)
 
-      log.startTransaction().commitManuallyForTest(metadata, add)
+      log.startTransaction().commitManuallyWithValidation(metadata, add)
       log.upgradeProtocol(None, log.update(), protocol)
       log.checkpoint(log.update())
 
