@@ -101,10 +101,13 @@ case class DeltaFormatSharingSource(
       deltaSharingTableMetadata,
       customTablePathWithUUIDSuffix
     )
+    // Delta sharing delta log doesn't have catalog table and `localDeltaLog` is not binded to
+    // catalog table.
     val schemaTrackingLogOpt =
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
         spark,
         snapshotDescriptor,
+        catalogTableOpt = None,
         parameters,
         // Pass in the metadata path opt so we can use it for validation
         sourceMetadataPathOpt = Some(metadataPath)

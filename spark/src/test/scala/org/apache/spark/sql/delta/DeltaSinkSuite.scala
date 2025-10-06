@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 

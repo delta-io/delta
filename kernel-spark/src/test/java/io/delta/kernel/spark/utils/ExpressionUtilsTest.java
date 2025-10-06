@@ -25,6 +25,9 @@ import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
+import org.apache.spark.sql.connector.expressions.FieldReference;
+import org.apache.spark.sql.connector.expressions.LiteralValue;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.sources.*;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
@@ -52,9 +55,11 @@ public class ExpressionUtilsTest {
   public void testComparisonFilters(
       String filterName, Supplier<Filter> filterSupplier, String expectedOperator) {
     Filter filter = filterSupplier.get();
-    Optional<Predicate> result = ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
 
     assertTrue(result.isPresent(), filterName + " filter should be converted");
+    assertFalse(result.isPartial(), filterName + " filter should be fully converted");
     assertEquals(expectedOperator, result.get().getName());
     assertEquals(2, result.get().getChildren().size());
   }
@@ -71,9 +76,11 @@ public class ExpressionUtilsTest {
   public void testNullFilters(
       String filterName, Supplier<Filter> filterSupplier, String expectedOperator) {
     Filter filter = filterSupplier.get();
-    Optional<Predicate> result = ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
 
     assertTrue(result.isPresent(), filterName + " filter should be converted");
+    assertFalse(result.isPartial(), filterName + " filter should be fully converted");
     assertEquals(expectedOperator, result.get().getName());
     assertEquals(1, result.get().getChildren().size());
   }
@@ -83,19 +90,21 @@ public class ExpressionUtilsTest {
     // Test EqualNullSafe with null value - converted to IS_NULL
     // Cannot use IS NOT DISTINCT FROM because kernel requires typed null literals
     EqualNullSafe nullFilter = new EqualNullSafe("name", null);
-    Optional<Predicate> nullResult =
+    ExpressionUtils.ConvertedPredicate nullResult =
         ExpressionUtils.convertSparkFilterToKernelPredicate(nullFilter);
 
     assertTrue(nullResult.isPresent(), "EqualNullSafe with null should be converted");
+    assertFalse(nullResult.isPartial(), "EqualNullSafe with null should be fully converted");
     assertEquals("IS_NULL", nullResult.get().getName());
     assertEquals(1, nullResult.get().getChildren().size());
 
     // Test EqualNullSafe with non-null value - uses "=" operator
     EqualNullSafe nonNullFilter = new EqualNullSafe("id", 42);
-    Optional<Predicate> nonNullResult =
+    ExpressionUtils.ConvertedPredicate nonNullResult =
         ExpressionUtils.convertSparkFilterToKernelPredicate(nonNullFilter);
 
     assertTrue(nonNullResult.isPresent(), "EqualNullSafe with value should be converted");
+    assertFalse(nonNullResult.isPartial(), "EqualNullSafe with value should be fully converted");
     assertEquals("=", nonNullResult.get().getName());
     assertEquals(2, nonNullResult.get().getChildren().size());
   }
@@ -135,9 +144,10 @@ public class ExpressionUtilsTest {
     // Create an unsupported filter (StringContains is not implemented in our conversion method)
     Filter unsupportedFilter = new StringContains("col1", "test");
 
-    Optional<Predicate> result =
+    ExpressionUtils.ConvertedPredicate result =
         ExpressionUtils.convertSparkFilterToKernelPredicate(unsupportedFilter);
     assertFalse(result.isPresent(), "Unsupported filters should return empty Optional");
+    assertFalse(result.isPartial(), "Unsupported filters should not be marked as partial");
   }
 
   @Test
@@ -147,9 +157,11 @@ public class ExpressionUtilsTest {
     org.apache.spark.sql.sources.And andFilter =
         new org.apache.spark.sql.sources.And(leftFilter, rightFilter);
 
-    Optional<Predicate> andResult = ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+    ExpressionUtils.ConvertedPredicate andResult =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
 
     assertTrue(andResult.isPresent(), "And filter should be converted");
+    assertFalse(andResult.isPartial(), "And filter should be fully converted");
     assertTrue(
         andResult.get() instanceof io.delta.kernel.expressions.And,
         "Result should be And predicate");
@@ -166,18 +178,22 @@ public class ExpressionUtilsTest {
         new org.apache.spark.sql.sources.And(leftFilter, unsupportedRightFilter);
 
     // Without partial pushdown - should return empty
-    Optional<Predicate> resultWithoutPartial =
+    ExpressionUtils.ConvertedPredicate resultWithoutPartial =
         ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, false);
     assertFalse(
         resultWithoutPartial.isPresent(),
         "AND filter with unconvertible operand should return empty without partial pushdown");
+    assertFalse(resultWithoutPartial.isPartial(), "Empty result should not be marked as partial");
 
     // With partial pushdown - should return the convertible part
-    Optional<Predicate> resultWithPartial =
+    ExpressionUtils.ConvertedPredicate resultWithPartial =
         ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, true);
     assertTrue(
         resultWithPartial.isPresent(),
         "AND filter with partial pushdown should return the convertible operand");
+    assertTrue(
+        resultWithPartial.isPartial(),
+        "AND filter with partial pushdown should be marked as partial");
     assertEquals("=", resultWithPartial.get().getName());
     assertEquals(2, resultWithPartial.get().getChildren().size());
   }
@@ -191,18 +207,20 @@ public class ExpressionUtilsTest {
         new org.apache.spark.sql.sources.And(unsupportedLeftFilter, rightFilter);
 
     // With partial pushdown - should return the convertible part (right side)
-    Optional<Predicate> resultWithPartial =
+    ExpressionUtils.ConvertedPredicate resultWithPartial =
         ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, true);
     assertTrue(resultWithPartial.isPresent(), "AND filter should return the convertible operand");
+    assertTrue(resultWithPartial.isPartial(), "AND filter should be marked as partial");
     assertEquals(">", resultWithPartial.get().getName());
     assertEquals(2, resultWithPartial.get().getChildren().size());
 
     // Without partial pushdown - should return empty
-    Optional<Predicate> resultWithoutPartial =
+    ExpressionUtils.ConvertedPredicate resultWithoutPartial =
         ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, false);
     assertFalse(
         resultWithoutPartial.isPresent(),
         "AND filter should return empty without partial pushdown");
+    assertFalse(resultWithoutPartial.isPartial(), "Empty result should not be marked as partial");
   }
 
   @Test
@@ -213,11 +231,12 @@ public class ExpressionUtilsTest {
     org.apache.spark.sql.sources.And andFilter =
         new org.apache.spark.sql.sources.And(unsupportedLeftFilter, unsupportedRightFilter);
 
-    Optional<Predicate> resultWithPartial =
+    ExpressionUtils.ConvertedPredicate resultWithPartial =
         ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
     assertFalse(
         resultWithPartial.isPresent(),
         "AND filter should return empty if both operands are unconvertible");
+    assertFalse(resultWithPartial.isPartial(), "Empty result should not be marked as partial");
   }
 
   @Test
@@ -229,11 +248,12 @@ public class ExpressionUtilsTest {
     org.apache.spark.sql.sources.Or orFilter =
         new org.apache.spark.sql.sources.Or(leftFilter, unsupportedRightFilter);
 
-    Optional<Predicate> resultWithPartial =
+    ExpressionUtils.ConvertedPredicate resultWithPartial =
         ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter);
     assertFalse(
         resultWithPartial.isPresent(),
         "OR filter with unconvertible operand should return empty even with partial pushdown");
+    assertFalse(resultWithPartial.isPartial(), "Empty result should not be marked as partial");
   }
 
   @Test
@@ -241,9 +261,11 @@ public class ExpressionUtilsTest {
     EqualTo leftFilter = new EqualTo("id", 1);
     Not notFilter = new Not(leftFilter);
 
-    Optional<Predicate> notResult = ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
+    ExpressionUtils.ConvertedPredicate notResult =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
 
     assertTrue(notResult.isPresent(), "Not filter should be converted");
+    assertFalse(notResult.isPartial(), "Not filter should be fully converted");
     assertEquals("NOT", notResult.get().getName());
     assertEquals(1, notResult.get().getChildren().size());
   }
@@ -256,11 +278,12 @@ public class ExpressionUtilsTest {
     Not notFilter = new Not(unsupportedFilter);
 
     // NOT requires child to be convertible.
-    Optional<Predicate> resultWithoutPartial =
+    ExpressionUtils.ConvertedPredicate resultWithoutPartial =
         ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
     assertFalse(
         resultWithoutPartial.isPresent(),
         "NOT filter with unconvertible child should return empty");
+    assertFalse(resultWithoutPartial.isPartial(), "Empty result should not be marked as partial");
 
     // Create NOT(A AND B) where A is convertible but B is not
     // This tests that NOT disables partial pushdown for semantic correctness
@@ -270,12 +293,13 @@ public class ExpressionUtilsTest {
 
     // Now verify that NOT(AND) returns empty because NOT disables partial pushdown
     Not notAndFilter = new Not(andFilter);
-    Optional<Predicate> notResult =
+    ExpressionUtils.ConvertedPredicate notResult =
         ExpressionUtils.convertSparkFilterToKernelPredicate(notAndFilter);
     assertFalse(
         notResult.isPresent(),
         "NOT(A AND B) should return empty when B is unconvertible, even with partial pushdown enabled"
             + " - this preserves semantic correctness as NOT(A AND B) != NOT(A)");
+    assertFalse(notResult.isPartial(), "Empty result should not be marked as partial");
   }
 
   @ParameterizedTest(name = "convertValueToKernelLiteral should support {0}")
@@ -313,10 +337,11 @@ public class ExpressionUtilsTest {
   public void testNestedFieldParsing() {
     EqualTo nestedFieldFilter = new EqualTo("user.profile.name", "John");
 
-    Optional<Predicate> result =
+    ExpressionUtils.ConvertedPredicate result =
         ExpressionUtils.convertSparkFilterToKernelPredicate(nestedFieldFilter);
 
     assertTrue(result.isPresent(), "Nested field filter should be convertible");
+    assertFalse(result.isPartial(), "Nested field filter should be fully convertible");
     Predicate predicate = result.get();
     io.delta.kernel.expressions.Column column =
         (io.delta.kernel.expressions.Column) predicate.getChildren().get(0);
@@ -330,10 +355,11 @@ public class ExpressionUtilsTest {
   public void testSingleColumnNameWithDots() {
     EqualTo singleColumnFilter = new EqualTo("`user.profile.name`", "value");
 
-    Optional<Predicate> result =
+    ExpressionUtils.ConvertedPredicate result =
         ExpressionUtils.convertSparkFilterToKernelPredicate(singleColumnFilter);
 
     assertTrue(result.isPresent(), "Single column filter should be convertible");
+    assertFalse(result.isPartial(), "Single column filter should be fully convertible");
     Predicate predicate = result.get();
     io.delta.kernel.expressions.Column column =
         (io.delta.kernel.expressions.Column) predicate.getChildren().get(0);
@@ -341,5 +367,253 @@ public class ExpressionUtilsTest {
         new String[] {"user.profile.name"},
         column.getNames(),
         "Single column name with dots should be preserved as-is");
+  }
+
+  // Tests for dsv2PredicateToCatalystExpression
+
+  private final org.apache.spark.sql.types.StructType testSchema =
+      new org.apache.spark.sql.types.StructType()
+          .add("id", org.apache.spark.sql.types.DataTypes.IntegerType, false)
+          .add("name", org.apache.spark.sql.types.DataTypes.StringType, true)
+          .add("age", org.apache.spark.sql.types.DataTypes.IntegerType, true);
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_IsNull() {
+    NamedReference nameRef = FieldReference.apply("name");
+    org.apache.spark.sql.connector.expressions.filter.Predicate isNullPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "IS_NULL", new org.apache.spark.sql.connector.expressions.Expression[] {nameRef});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(isNullPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.IsNull,
+        "Result should be IsNull expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_IsNotNull() {
+    NamedReference nameRef = FieldReference.apply("name");
+    org.apache.spark.sql.connector.expressions.filter.Predicate isNotNullPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "IS_NOT_NULL", new org.apache.spark.sql.connector.expressions.Expression[] {nameRef});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(isNotNullPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.IsNotNull,
+        "Result should be IsNotNull expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_EqualTo() {
+    NamedReference idRef = FieldReference.apply("id");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(42, org.apache.spark.sql.types.DataTypes.IntegerType);
+    org.apache.spark.sql.connector.expressions.filter.Predicate equalToPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "=", new org.apache.spark.sql.connector.expressions.Expression[] {idRef, value});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(equalToPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.EqualTo,
+        "Result should be EqualTo expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_LessThan() {
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(30, org.apache.spark.sql.types.DataTypes.IntegerType);
+    org.apache.spark.sql.connector.expressions.filter.Predicate lessThanPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "<", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(lessThanPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.LessThan,
+        "Result should be LessThan expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_GreaterThanOrEqual() {
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(18, org.apache.spark.sql.types.DataTypes.IntegerType);
+    org.apache.spark.sql.connector.expressions.filter.Predicate greaterThanOrEqualPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            ">=", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(greaterThanOrEqualPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual,
+        "Result should be GreaterThanOrEqual expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_In() {
+    NamedReference idRef = FieldReference.apply("id");
+    LiteralValue<Integer> val1 =
+        LiteralValue.apply(1, org.apache.spark.sql.types.DataTypes.IntegerType);
+    LiteralValue<Integer> val2 =
+        LiteralValue.apply(2, org.apache.spark.sql.types.DataTypes.IntegerType);
+    LiteralValue<Integer> val3 =
+        LiteralValue.apply(3, org.apache.spark.sql.types.DataTypes.IntegerType);
+    org.apache.spark.sql.connector.expressions.filter.Predicate inPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "IN",
+            new org.apache.spark.sql.connector.expressions.Expression[] {idRef, val1, val2, val3});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(inPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.In,
+        "Result should be In expression");
+    org.apache.spark.sql.catalyst.expressions.In inExpr =
+        (org.apache.spark.sql.catalyst.expressions.In) result.get();
+    assertEquals(3, inExpr.list().size(), "IN expression should have 3 values");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_And() {
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value1 =
+        LiteralValue.apply(18, org.apache.spark.sql.types.DataTypes.IntegerType);
+    LiteralValue<Integer> value2 =
+        LiteralValue.apply(65, org.apache.spark.sql.types.DataTypes.IntegerType);
+
+    org.apache.spark.sql.connector.expressions.filter.Predicate leftPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            ">", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value1});
+    org.apache.spark.sql.connector.expressions.filter.Predicate rightPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "<", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value2});
+    org.apache.spark.sql.connector.expressions.filter.Predicate andPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "AND",
+            new org.apache.spark.sql.connector.expressions.Expression[] {
+              leftPredicate, rightPredicate
+            });
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(andPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.And,
+        "Result should be And expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_Or() {
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value1 =
+        LiteralValue.apply(18, org.apache.spark.sql.types.DataTypes.IntegerType);
+    LiteralValue<Integer> value2 =
+        LiteralValue.apply(65, org.apache.spark.sql.types.DataTypes.IntegerType);
+
+    org.apache.spark.sql.connector.expressions.filter.Predicate leftPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "<", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value1});
+    org.apache.spark.sql.connector.expressions.filter.Predicate rightPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            ">", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value2});
+    org.apache.spark.sql.connector.expressions.filter.Predicate orPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "OR",
+            new org.apache.spark.sql.connector.expressions.Expression[] {
+              leftPredicate, rightPredicate
+            });
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(orPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.Or,
+        "Result should be Or expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_Not() {
+    NamedReference ageRef = FieldReference.apply("age");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(18, org.apache.spark.sql.types.DataTypes.IntegerType);
+
+    org.apache.spark.sql.connector.expressions.filter.Predicate childPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "<", new org.apache.spark.sql.connector.expressions.Expression[] {ageRef, value});
+    org.apache.spark.sql.connector.expressions.filter.Predicate notPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "NOT", new org.apache.spark.sql.connector.expressions.Expression[] {childPredicate});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(notPredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.Not,
+        "Result should be Not expression");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_AlwaysTrue() {
+    org.apache.spark.sql.connector.expressions.filter.Predicate alwaysTruePredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "ALWAYS_TRUE", new org.apache.spark.sql.connector.expressions.Expression[] {});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(alwaysTruePredicate, testSchema);
+
+    assertTrue(result.isPresent(), "Result should be present");
+    assertTrue(
+        result.get() instanceof org.apache.spark.sql.catalyst.expressions.Literal,
+        "Result should be Literal expression");
+    org.apache.spark.sql.catalyst.expressions.Literal literal =
+        (org.apache.spark.sql.catalyst.expressions.Literal) result.get();
+    assertEquals(true, literal.value(), "ALWAYS_TRUE should return literal true");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_UnsupportedPredicate() {
+    org.apache.spark.sql.connector.expressions.filter.Predicate unsupportedPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "UNSUPPORTED_OPERATOR", new org.apache.spark.sql.connector.expressions.Expression[] {});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(unsupportedPredicate, testSchema);
+
+    assertFalse(result.isPresent(), "Unsupported predicates should return empty Optional");
+  }
+
+  @Test
+  public void testDsv2PredicateToCatalystExpression_ColumnNotFound() {
+    NamedReference invalidRef = FieldReference.apply("nonexistent_column");
+    LiteralValue<Integer> value =
+        LiteralValue.apply(42, org.apache.spark.sql.types.DataTypes.IntegerType);
+    org.apache.spark.sql.connector.expressions.filter.Predicate predicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "=", new org.apache.spark.sql.connector.expressions.Expression[] {invalidRef, value});
+
+    Optional<org.apache.spark.sql.catalyst.expressions.Expression> result =
+        ExpressionUtils.dsv2PredicateToCatalystExpression(predicate, testSchema);
+
+    assertFalse(
+        result.isPresent(), "Should return empty Optional when column is not found in schema");
   }
 }

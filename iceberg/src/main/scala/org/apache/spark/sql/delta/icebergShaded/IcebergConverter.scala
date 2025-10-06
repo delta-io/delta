@@ -353,7 +353,8 @@ class IcebergConverter(spark: SparkSession)
           spark = spark,
           deltaLog = log,
           startVersion = prevSnapshot.version + 1,
-          endVersion = snapshotToConvert.version)
+          endVersion = snapshotToConvert.version,
+          catalogTableOpt = Some(catalogTable))
 
         recordDeltaEvent(
           snapshotToConvert.deltaLog,

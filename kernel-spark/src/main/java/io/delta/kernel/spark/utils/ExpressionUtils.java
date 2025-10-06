@@ -27,7 +27,13 @@ import io.delta.kernel.internal.util.InternalUtils;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.*;
+import org.apache.spark.sql.catalyst.expressions.BoundReference;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.connector.expressions.LiteralValue;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.sources.*;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.collection.JavaConverters;
 
@@ -54,10 +60,10 @@ public final class ExpressionUtils {
    * </ul>
    *
    * @param filter the Spark SQL filter to convert
-   * @return Optional containing the converted Kernel predicate, or empty if conversion is not
-   *     supported
+   * @return ConvertedPredicate containing the converted Kernel predicate, or empty if conversion is
+   *     not supported, along with a boolean indicating whether the conversion was partial
    */
-  public static Optional<Predicate> convertSparkFilterToKernelPredicate(Filter filter) {
+  public static ConvertedPredicate convertSparkFilterToKernelPredicate(Filter filter) {
     return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/);
   }
 
@@ -66,78 +72,90 @@ public final class ExpressionUtils {
    * canPartialPushDown is true, AND filters can be partially converted if at least one operand can
    * be converted. OR filters always require both operands to be convertible. NOT filters disable
    * partial pushdown for their child to preserve semantic correctness.
+   *
+   * <p>Return a ConvertedPredicate object, which contains: - Optional<Predicate>: the converted
+   * Kernel predicate, or empty if conversion is not supported - boolean isPartial: indicates
+   * whether the conversion was partial
    */
   @VisibleForTesting
-  static Optional<Predicate> convertSparkFilterToKernelPredicate(
+  static ConvertedPredicate convertSparkFilterToKernelPredicate(
       Filter filter, boolean canPartialPushDown) {
     if (filter instanceof EqualTo) {
       EqualTo f = (EqualTo) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("=", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate("=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof EqualNullSafe) {
       EqualNullSafe f = (EqualNullSafe) filter;
       // EqualNullSafe with null value should be translated to IS_NULL
       // For non-null values, we use "=" operator.
-      return f.value() == null
-          ? Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())))
-          : convertValueToKernelLiteral(f.value())
-              .map(l -> new Predicate("=", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          f.value() == null
+              ? Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())))
+              : convertValueToKernelLiteral(f.value())
+                  .map(l -> new Predicate("=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof GreaterThan) {
       GreaterThan f = (GreaterThan) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate(">", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate(">", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof GreaterThanOrEqual) {
       GreaterThanOrEqual f = (GreaterThanOrEqual) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate(">=", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate(">=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof LessThan) {
       LessThan f = (LessThan) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("<", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate("<", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof LessThanOrEqual) {
       LessThanOrEqual f = (LessThanOrEqual) filter;
-      return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("<=", kernelColumn(f.attribute()), l));
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate("<=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof IsNull) {
       IsNull f = (IsNull) filter;
-      return Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())));
+      return new ConvertedPredicate(
+          Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute()))));
     }
     if (filter instanceof IsNotNull) {
       IsNotNull f = (IsNotNull) filter;
-      return Optional.of(new Predicate("IS_NOT_NULL", kernelColumn(f.attribute())));
+      return new ConvertedPredicate(
+          Optional.of(new Predicate("IS_NOT_NULL", kernelColumn(f.attribute()))));
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
-      Optional<Predicate> left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
-      Optional<Predicate> right =
-          convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
+      ConvertedPredicate left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
+      ConvertedPredicate right = convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
+      boolean isPartial = left.isPartial() || right.isPartial();
       if (left.isPresent() && right.isPresent()) {
-        return Optional.of(new And(left.get(), right.get()));
+        return new ConvertedPredicate(Optional.of(new And(left.get(), right.get())), isPartial);
       }
       if (canPartialPushDown && left.isPresent()) {
-        return left;
+        return new ConvertedPredicate(left.getConvertedPredicate(), true);
       }
       if (canPartialPushDown && right.isPresent()) {
-        return right;
+        return new ConvertedPredicate(right.getConvertedPredicate(), true);
       }
-      return Optional.empty();
+      return new ConvertedPredicate(Optional.empty(), isPartial);
     }
     if (filter instanceof org.apache.spark.sql.sources.Or) {
       org.apache.spark.sql.sources.Or f = (org.apache.spark.sql.sources.Or) filter;
-      Optional<Predicate> left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
-      Optional<Predicate> right =
-          convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
+      ConvertedPredicate left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
+      ConvertedPredicate right = convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
       // OR requires both operands to be convertible for correctness
+      boolean isPartial = left.isPartial() || right.isPartial();
       if (!left.isPresent() || !right.isPresent()) {
-        return Optional.empty();
+        return new ConvertedPredicate(Optional.empty(), isPartial);
       }
-      return Optional.of(new Or(left.get(), right.get()));
+      return new ConvertedPredicate(Optional.of(new Or(left.get(), right.get())), isPartial);
     }
     if (filter instanceof Not) {
       Not f = (Not) filter;
@@ -159,12 +177,13 @@ public final class ExpressionUtils {
       //
       // NOT(age < 30) = NOT(true) = false → system excludes both row
       // We will return incorrect result, then.
-      Optional<Predicate> child =
+      ConvertedPredicate child =
           convertSparkFilterToKernelPredicate(f.child(), false /*canPartialPushDown*/);
-      return child.map(c -> new Predicate("NOT", c));
+      return new ConvertedPredicate(
+          child.getConvertedPredicate().map(c -> new Predicate("NOT", c)), child.isPartial());
     }
 
-    return Optional.empty();
+    return new ConvertedPredicate(Optional.empty());
   }
 
   /**
@@ -278,6 +297,404 @@ public final class ExpressionUtils {
 
     // Unsupported type - return empty Optional to skip the conversion.
     return Optional.empty();
+  }
+
+  /*
+   * Wrapper class to hold the result of converting a Spark Filter to a Kernel Predicate,
+   * including a boolean indicator for whether the conversion was partial.
+   */
+  public static final class ConvertedPredicate {
+    private final Optional<Predicate> convertedPredicate;
+    private final boolean isPartial;
+
+    public ConvertedPredicate(Optional<Predicate> convertedPredicate) {
+      this.convertedPredicate = convertedPredicate;
+      this.isPartial = false;
+    }
+
+    public ConvertedPredicate(Optional<Predicate> convertedPredicate, boolean isPartial) {
+      this.convertedPredicate = convertedPredicate;
+      this.isPartial = isPartial;
+    }
+
+    public Optional<Predicate> getConvertedPredicate() {
+      return convertedPredicate;
+    }
+
+    public boolean isPartial() {
+      return isPartial;
+    }
+
+    public boolean isPresent() {
+      return convertedPredicate.isPresent();
+    }
+
+    public Predicate get() {
+      assert convertedPredicate.isPresent();
+      return convertedPredicate.get();
+    }
+  }
+
+  /*
+   * Helper class to hold the classification result of a Filter
+   */
+  public static class FilterClassificationResult {
+    public final Boolean isKernelSupported;
+    public final Boolean isPartialConversion;
+    public final Boolean isDataFilter;
+    public final Optional<Predicate> kernelPredicate;
+
+    public FilterClassificationResult(
+        Boolean isKernelSupported,
+        Boolean isPartialConversion,
+        Boolean isDataFilter,
+        Optional<Predicate> kernelPredicate) {
+      this.isKernelSupported = isKernelSupported;
+      this.isPartialConversion = isPartialConversion;
+      this.isDataFilter = isDataFilter;
+      this.kernelPredicate = kernelPredicate;
+    }
+  }
+
+  /**
+   * Classifies a Spark Filter based on its convertibility to a Kernel Predicate and whether it is a
+   * data filter (i.e., references non-partition columns).
+   *
+   * @param filter the Spark Filter to classify
+   * @param partitionColumnSet a set of partition column names (in lower case) for identifying data
+   *     filters
+   * @return FilterClassificationResult containing:
+   *     <ul>
+   *       <li>isKernelSupported: true if the filter can be converted to a Kernel Predicate
+   *       <li>isPartialConversion: true if the conversion was partial (for AND filters)
+   *       <li>isDataFilter: true if the filter references at least one non-partition column
+   *       <li>kernelPredicate: Optional containing the converted Kernel Predicate, if any
+   *     </ul>
+   */
+  public static FilterClassificationResult classifyFilter(
+      Filter filter, Set<String> partitionColumnSet) {
+    // try to convert Spark filter to Kernel Predicate
+    ConvertedPredicate convertedPredicate =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    boolean isKernelSupported = convertedPredicate.isPresent();
+    boolean isPartialConversion = convertedPredicate.isPartial();
+    Optional<Predicate> kernelPredicate = convertedPredicate.getConvertedPredicate();
+
+    // check if the filter is a data filter
+    // A data filter is a filter that references at least one non-partition column.
+    String[] refs = filter.references();
+    boolean isDataFilter =
+        refs != null
+            && refs.length > 0
+            && Arrays.stream(refs)
+                .anyMatch((col -> !partitionColumnSet.contains(col.toLowerCase(Locale.ROOT))));
+
+    return new FilterClassificationResult(
+        isKernelSupported, isPartialConversion, isDataFilter, kernelPredicate);
+  }
+
+  /**
+   * Converts a Spark DataSourceV2 Predicate to a Catalyst Expression.
+   *
+   * <p>This method translates supported DSV2 predicates into their equivalent Catalyst expressions,
+   * using the provided schema for column resolution. Unsupported predicates, or those referencing
+   * unknown columns, will result in an empty Optional.
+   *
+   * <p>Supported predicates include:
+   *
+   * <ul>
+   *   <li>Null tests: IS_NULL, IS_NOT_NULL
+   *   <li>String functions: STARTS_WITH, ENDS_WITH, CONTAINS
+   *   <li>IN operator
+   *   <li>Comparison: =, >, >=, <, <=
+   *   <li>Null-safe comparison: <=>
+   *   <li>Logical operators: AND, OR, NOT
+   *   <li>Constant predicates: ALWAYS_TRUE, ALWAYS_FALSE
+   * </ul>
+   *
+   * @param predicate the DSV2 Predicate to convert
+   * @param schema the schema used for resolving column references
+   * @return Catalyst Expression representing the converted predicate, or empty if the predicate is
+   *     unsupported or references unknown columns
+   */
+  public static Optional<Expression> dsv2PredicateToCatalystExpression(
+      org.apache.spark.sql.connector.expressions.filter.Predicate predicate, StructType schema) {
+    String predicateName = predicate.name();
+    org.apache.spark.sql.connector.expressions.Expression[] children = predicate.children();
+
+    switch (predicateName) {
+      case "IS_NULL":
+        if (children.length == 1) {
+          Optional<Expression> expressionOpt =
+              dsv2ExpressionToCatalystExpression(children[0], schema);
+          if (expressionOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.IsNull(expressionOpt.get()));
+          }
+        }
+        break;
+
+      case "IS_NOT_NULL":
+        if (children.length == 1) {
+          Optional<Expression> expressionOpt =
+              dsv2ExpressionToCatalystExpression(children[0], schema);
+          if (expressionOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.IsNotNull(expressionOpt.get()));
+          }
+        }
+        break;
+
+      case "STARTS_WITH":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.StartsWith(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "ENDS_WITH":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.EndsWith(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "CONTAINS":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.Contains(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "IN":
+        if (children.length >= 2) {
+          Optional<Expression> firstOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          if (firstOpt.isPresent()) {
+            List<Expression> values = new ArrayList<>();
+            for (int i = 1; i < children.length; i++) {
+              Optional<Expression> valueOpt =
+                  dsv2ExpressionToCatalystExpression(children[i], schema);
+              if (valueOpt.isPresent()) {
+                values.add(valueOpt.get());
+              } else {
+                // if any value in the IN list cannot be converted, return empty
+                return Optional.empty();
+              }
+            }
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.In(
+                    firstOpt.get(), JavaConverters.asScalaBuffer(values).toSeq()));
+          }
+        }
+        break;
+
+      case "=":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.EqualTo(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "<>":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.Not(
+                    new org.apache.spark.sql.catalyst.expressions.EqualTo(
+                        leftOpt.get(), rightOpt.get())));
+          }
+        }
+        break;
+
+      case "<=>":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.EqualNullSafe(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "<":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.LessThan(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "<=":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.LessThanOrEqual(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case ">":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.GreaterThan(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case ">=":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt = dsv2ExpressionToCatalystExpression(children[0], schema);
+          Optional<Expression> rightOpt = dsv2ExpressionToCatalystExpression(children[1], schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.GreaterThanOrEqual(
+                    leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "AND":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema);
+          Optional<Expression> rightOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[1],
+                  schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.And(leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "OR":
+        if (children.length == 2) {
+          Optional<Expression> leftOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema);
+          Optional<Expression> rightOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[1],
+                  schema);
+          if (leftOpt.isPresent() && rightOpt.isPresent()) {
+            return Optional.of(
+                new org.apache.spark.sql.catalyst.expressions.Or(leftOpt.get(), rightOpt.get()));
+          }
+        }
+        break;
+
+      case "NOT":
+        if (children.length == 1) {
+          Optional<Expression> childOpt =
+              dsv2PredicateToCatalystExpression(
+                  (org.apache.spark.sql.connector.expressions.filter.Predicate)
+                      predicate.children()[0],
+                  schema);
+          if (childOpt.isPresent()) {
+            return Optional.of(new org.apache.spark.sql.catalyst.expressions.Not(childOpt.get()));
+          }
+        }
+        break;
+
+      case "ALWAYS_TRUE":
+        if (children.length == 0) {
+          return Optional.of(
+              org.apache.spark.sql.catalyst.expressions.Literal.create(
+                  true, org.apache.spark.sql.types.DataTypes.BooleanType));
+        }
+        break;
+
+      case "ALWAYS_FALSE":
+        if (children.length == 0) {
+          return Optional.of(
+              org.apache.spark.sql.catalyst.expressions.Literal.create(
+                  false, org.apache.spark.sql.types.DataTypes.BooleanType));
+        }
+        break;
+    }
+
+    return Optional.empty();
+  }
+
+  /**
+   * Resolves a DSV2 Expression to a Catalyst Expression using the provided schema.
+   *
+   * <p>This method handles NamedReference and LiteralValue expressions. NamedReferences are
+   * resolved to BoundReferences based on the schema, while LiteralValues are converted to Catalyst
+   * Literals. Unsupported expression types or references to unknown columns will result in an empty
+   * Optional.
+   *
+   * @param expr the DSV2 Expression to resolve
+   * @param schema the schema used for resolving column references
+   * @return Catalyst Expression representing the resolved expression, or empty if the expression is
+   *     unsupported or references unknown columns
+   */
+  private static Optional<Expression> dsv2ExpressionToCatalystExpression(
+      org.apache.spark.sql.connector.expressions.Expression expr, StructType schema) {
+    if (expr instanceof NamedReference) {
+      NamedReference ref = (NamedReference) expr;
+      String columnName = ref.fieldNames()[0];
+      try {
+        int index = schema.fieldIndex(columnName);
+        StructField field = schema.fields()[index];
+        return Optional.of(new BoundReference(index, field.dataType(), field.nullable()));
+      } catch (IllegalArgumentException e) {
+        // schema.fieldIndex(columnName) throws IllegalArgumentException if a field with the given
+        // name does not exist
+        return Optional.empty();
+      }
+    } else if (expr instanceof LiteralValue) {
+      LiteralValue<?> literal = (LiteralValue<?>) expr;
+      return Optional.of(
+          org.apache.spark.sql.catalyst.expressions.Literal.create(
+              literal.value(), literal.dataType()));
+    } else {
+      return Optional.empty();
+    }
   }
 
   private ExpressionUtils() {}

@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.TimestampNTZType
 
@@ -261,7 +262,7 @@ sealed trait RemovableFeature { self: TableFeature =>
 
     // Check if commits between 0 version and toVersion contain any traces of the feature.
     val allHistoricalDeltaFiles = deltaLog
-      .getChangeLogFiles(0)
+      .getChangeLogFiles(startVersion = 0, catalogTableOpt = table.catalogTable)
       .takeWhile { case (version, _) => version <= toVersion }
       .map { case (_, file) => file }
       .filter(FileNames.isDeltaFile)
@@ -1243,15 +1244,24 @@ object CheckpointProtectionTableFeature
   }
 
   /** Verify whether any deltas exist between version 0 to toVersion (inclusive). */
-  private def deltasUpToVersionAreTruncated(deltaLog: DeltaLog, toVersion: Long): Boolean = {
+  private def deltasUpToVersionAreTruncated(
+      deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
+      toVersion: Long): Boolean = {
     deltaLog
-      .getChangeLogFiles(startVersion = 0, endVersion = toVersion, failOnDataLoss = false)
+      .getChangeLogFiles(
+        startVersion = 0,
+        endVersion = toVersion,
+        catalogTableOpt = catalogTableOpt,
+        failOnDataLoss = false)
       .map { case (_, file) => file }
       .filter(FileNames.isDeltaFile)
       .take(1).isEmpty
   }
 
-  def historyPriorToCheckpointProtectionVersionIsTruncated(snapshot: Snapshot): Boolean = {
+  def historyPriorToCheckpointProtectionVersionIsTruncated(
+      snapshot: Snapshot,
+      catalogTableOpt: Option[CatalogTable]): Boolean = {
     val checkpointProtectionVersion = getCheckpointProtectionVersion(snapshot)
     if (checkpointProtectionVersion <= 0) return true
 
@@ -1260,7 +1270,7 @@ object CheckpointProtectionTableFeature
     // not true for new tables that were never cleaned up. Furthermore, if there is no checkpoint it
     // means history is not truncated.
     deltaLog.findEarliestReliableCheckpoint.exists(_ >= checkpointProtectionVersion) &&
-      deltasUpToVersionAreTruncated(deltaLog, checkpointProtectionVersion - 1)
+      deltasUpToVersionAreTruncated(deltaLog, catalogTableOpt, checkpointProtectionVersion - 1)
   }
 
   /**

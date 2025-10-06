@@ -16,6 +16,7 @@
 
 package io.delta.unity;
 
+import static io.delta.kernel.commit.CatalogCommitterUtils.CATALOG_MANAGED_ENABLEMENT_KEY;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.unity.utils.OperationTimer.timeUncheckedOperation;
 
@@ -23,6 +24,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedDeltaData;
@@ -52,19 +54,10 @@ import org.slf4j.LoggerFactory;
 public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
-  /**
-   * Table property key to enable the catalogManaged table feature. This is a signal to Kernel to
-   * add this table feature to Kernel's protocol. This property won't be written to the delta
-   * metadata.
-   */
-  private static final String CATALOG_MANAGED_ENABLEMENT_KEY =
-      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
-          + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName();
-
   /** Key for identifying Unity Catalog table ID. */
-  private static final String UC_TABLE_ID_KEY = "ucTableId";
+  public static final String UC_TABLE_ID_KEY = "ucTableId";
 
-  private final UCClient ucClient;
+  protected final UCClient ucClient;
 
   public UCCatalogManagedClient(UCClient ucClient) {
     this.ucClient = Objects.requireNonNull(ucClient, "ucClient is null");
@@ -83,17 +76,34 @@ public class UCCatalogManagedClient {
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
    * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
    * @param tablePath The path to the Delta table in the underlying storage system.
-   * @param versionOpt The optional version of the table to load.
+   * @param versionOpt The optional version to time-travel to when loading the table. This must be
+   *     mutually exclusive with timestampOpt.
+   * @param timestampOpt The optional timestamp to time-travel to when loading the table. This must
+   *     be mutually exclusive with versionOpt.
+   * @throws IllegalArgumentException if a negative version or timestamp is provided
+   * @throws IllegalArgumentException if both versionOpt and timestampOpt are defined
    */
   public Snapshot loadSnapshot(
-      Engine engine, String ucTableId, String tablePath, Optional<Long> versionOpt) {
+      Engine engine,
+      String ucTableId,
+      String tablePath,
+      Optional<Long> versionOpt,
+      Optional<Long> timestampOpt) {
     Objects.requireNonNull(engine, "engine is null");
     Objects.requireNonNull(ucTableId, "ucTableId is null");
     Objects.requireNonNull(tablePath, "tablePath is null");
     Objects.requireNonNull(versionOpt, "versionOpt is null");
+    Objects.requireNonNull(timestampOpt, "timestampOpt is null");
     versionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
+    timestampOpt.ifPresent(t -> checkArgument(t >= 0, "timestamp must be non-negative"));
+    checkArgument(
+        !timestampOpt.isPresent() || !versionOpt.isPresent(),
+        "cannot provide both timestamp and version");
 
-    logger.info("[{}] Loading Snapshot at version {}", ucTableId, getVersionString(versionOpt));
+    logger.info(
+        "[{}] Loading Snapshot at {}",
+        ucTableId,
+        getVersionOrTimestampString(versionOpt, timestampOpt));
     final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, versionOpt);
     final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
     versionOpt.ifPresent(
@@ -112,8 +122,17 @@ public class UCCatalogManagedClient {
             snapshotBuilder = snapshotBuilder.atVersion(versionOpt.get());
           }
 
+          if (timestampOpt.isPresent()) {
+            // If timestampOpt is present, we know versionOpt is not ==> logData was not requested
+            // with an endVersion and thus can be re-used to load the latest snapshot
+            Snapshot latestSnapshot =
+                loadLatestSnapshotForTimestampTimeTravelQuery(
+                    engine, ucTableId, tablePath, logData);
+            snapshotBuilder = snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
+          }
+
           return snapshotBuilder
-              .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
               .withLogData(logData)
               .build(engine);
         });
@@ -143,8 +162,22 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(engineInfo, "engineInfo is null");
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
-        .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+        .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
+  }
+
+  /////////////////////////////////////////
+  // Protected Methods for Extensibility //
+  /////////////////////////////////////////
+
+  /**
+   * Creates a UC committer instance for the specified table.
+   *
+   * <p>This method allows subclasses to provide custom committer implementations for specialized
+   * use cases.
+   */
+  protected Committer createUCCommitter(UCClient ucClient, String ucTableId, String tablePath) {
+    return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
   }
 
   ////////////////////
@@ -153,6 +186,17 @@ public class UCCatalogManagedClient {
 
   private String getVersionString(Optional<Long> versionOpt) {
     return versionOpt.map(String::valueOf).orElse("latest");
+  }
+
+  private String getVersionOrTimestampString(
+      Optional<Long> versionOpt, Optional<Long> timestampOpt) {
+    if (versionOpt.isPresent()) {
+      return "version=" + versionOpt.get();
+    } else if (timestampOpt.isPresent()) {
+      return "timestamp=" + timestampOpt.get();
+    } else {
+      return "latest";
+    }
   }
 
   private GetCommitsResponse getRatifiedCommitsFromUC(
@@ -255,5 +299,24 @@ public class UCCatalogManagedClient {
       org.apache.hadoop.fs.FileStatus hadoopFS) {
     return io.delta.kernel.utils.FileStatus.of(
         hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
+  }
+
+  /**
+   * Helper method to load the latest snapshot and time the operation. This is used to load the
+   * latest snapshot for timestamp-based time-travel queries. Reuses existing logData that has
+   * already been queried from the catalog (it is required that this includes the latest commits
+   * from the catalog and were not queried with an endVersion).
+   */
+  private Snapshot loadLatestSnapshotForTimestampTimeTravelQuery(
+      Engine engine, String ucTableId, String tablePath, List<ParsedLogData> logData) {
+    return timeUncheckedOperation(
+        logger,
+        "TableManager.loadSnapshot at latest for time-travel query",
+        ucTableId,
+        () ->
+            TableManager.loadSnapshot(tablePath)
+                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                .withLogData(logData)
+                .build(engine));
   }
 }

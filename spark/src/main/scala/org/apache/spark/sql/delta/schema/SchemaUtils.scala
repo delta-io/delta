@@ -42,7 +42,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Exp
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumnsUtils}
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
-import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -140,19 +140,22 @@ object SchemaUtils extends DeltaLogging {
             Some(generateSelectExpr(f, nameStack :+ sf.name))
           }
         }
-        struct(nested: _*).alias(sf.name)
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
+        when(col(colName).isNull, null)
+          .otherwise(struct(nested: _*))
+          .alias(sf.name)
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "NullType"))
       case _ =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         col(colName).alias(sf.name)
     }
 

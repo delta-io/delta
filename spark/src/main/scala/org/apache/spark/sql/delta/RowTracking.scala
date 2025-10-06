@@ -90,16 +90,14 @@ object RowTracking {
       metadata: Metadata,
       nullableConstantFields: Boolean,
       nullableGeneratedFields: Boolean): Iterable[StructField] = {
-    val needSetRowTrackingFieldIdForUniform =
-      IcebergCompat.isGeqEnabled(metadata, requiredVersion = 3)
-
+    val shouldSetIcebergReservedFieldId = false
     RowId.createRowIdField(
-      protocol, metadata, nullableGeneratedFields, needSetRowTrackingFieldIdForUniform) ++
+      protocol, metadata, nullableGeneratedFields, shouldSetIcebergReservedFieldId) ++
       RowId.createBaseRowIdField(protocol, metadata, nullableConstantFields) ++
       DefaultRowCommitVersion.createDefaultRowCommitVersionField(
         protocol, metadata, nullableConstantFields) ++
       RowCommitVersion.createMetadataStructField(
-        protocol, metadata, nullableGeneratedFields, needSetRowTrackingFieldIdForUniform)
+        protocol, metadata, nullableGeneratedFields, shouldSetIcebergReservedFieldId)
   }
 
   /**

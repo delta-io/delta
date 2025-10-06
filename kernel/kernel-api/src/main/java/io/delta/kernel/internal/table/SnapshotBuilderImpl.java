@@ -118,7 +118,6 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     validateVersionNonNegative();
     validateTimestampNonNegative();
     validateTimestampNotGreaterThanLatestSnapshot(engine);
-    validateLogDatasEmptyIfTimeTravelByTimestamp();
     validateVersionAndTimestampMutuallyExclusive();
     validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
@@ -153,13 +152,6 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
                 latestSnapshotVersion);
           }
         });
-  }
-
-  private void validateLogDatasEmptyIfTimeTravelByTimestamp() {
-    if (ctx.timestampQueryContextOpt.isPresent() && !ctx.logDatas.isEmpty()) {
-      throw new UnsupportedOperationException(
-          "Time travel by timestamp with logDatas is not yet implemented");
-    }
   }
 
   private void validateVersionAndTimestampMutuallyExclusive() {

@@ -21,6 +21,7 @@ import java.io.{File, FileNotFoundException, PrintWriter}
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.GeneratedAlways
 import org.apache.spark.sql.delta.actions.RemoveFile
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}

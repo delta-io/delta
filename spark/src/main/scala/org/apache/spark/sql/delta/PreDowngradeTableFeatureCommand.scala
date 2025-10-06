@@ -667,7 +667,7 @@ case class CheckpointProtectionPreDowngradeCommand(table: DeltaTableV2)
   override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     val snapshot = table.initialSnapshot
 
-    if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot)) {
+    if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot, table.catalogTable)) {
       // Add a checkpoint here to make sure we can cleanup up everything before this commit.
       // This is because metadata cleanup operations, can only clean up to the latest checkpoint.
       createEmptyCommitAndCheckpoint(table, table.deltaLog.clock.nanoTime())
@@ -678,7 +678,7 @@ case class CheckpointProtectionPreDowngradeCommand(table: DeltaTableV2)
         deltaRetentionMillisOpt = Some(truncateHistoryLogRetentionMillis(snapshot.metadata)),
         cutoffTruncationGranularity = TruncationGranularity.MINUTE)
 
-      if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot)) {
+      if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot, table.catalogTable)) {
         throw DeltaErrors.dropCheckpointProtectionWaitForRetentionPeriod(
           table.initialSnapshot.metadata)
       }

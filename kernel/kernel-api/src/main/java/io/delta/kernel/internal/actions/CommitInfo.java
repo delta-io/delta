@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.actions;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Objects.requireNonNull;
@@ -127,6 +128,19 @@ public class CommitInfo {
       Engine engine, Path logPath, long version) {
     return extractRequiredIctFromCommitInfoOpt(
         unsafeTryReadCommitInfoFromPublishedDeltaFile(engine, logPath, version), version, logPath);
+  }
+
+  /**
+   * Returns the `inCommitTimestamp` of the provided delta file. Throws an exception if the delta
+   * file does not exist or does not have a commitInfo action or if the commitInfo action contains
+   * an empty `inCommitTimestamp`. The delta file can be either a published or staged commit file.
+   */
+  public static long getRequiredIctFromDeltaFile(
+      Engine engine, Path tablePath, FileStatus deltaFileStatus, long version) {
+    checkArgument(
+        FileNames.isCommitFile(deltaFileStatus.getPath()), "Must provide a valid commit file");
+    return extractRequiredIctFromCommitInfoOpt(
+        tryReadCommitInfoFromDeltaFile(engine, deltaFileStatus), version, tablePath);
   }
 
   /**
