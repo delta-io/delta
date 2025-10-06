@@ -742,6 +742,11 @@ lazy val kernelSpark = (project in file("kernel-spark"))
       // Using released delta-spark JAR instead of module dependency to break circular dependency
       "io.delta" %% "delta-spark" % "3.3.2" % "test",
 
+      // Spark test dependencies for QueryTest and other test utilities
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
