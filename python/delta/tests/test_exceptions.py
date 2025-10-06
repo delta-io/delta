@@ -17,7 +17,7 @@
 from typing import Any, Callable, TYPE_CHECKING
 import unittest
 
-import delta.exceptions.captured as exceptions
+import delta.exceptions as exceptions
 
 from delta.testing.utils import DeltaTestCase
 from pyspark.sql.utils import AnalysisException, IllegalArgumentException

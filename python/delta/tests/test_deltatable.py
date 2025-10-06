@@ -14,7 +14,9 @@
 # limitations under the License.
 #
 
-# mypy: disable-error-code="union-attr, attr-defined"
+# mypy: disable-error-code="union-attr"
+# mypy: disable-error-code="attr-defined"
+# type: ignore[union-attr]
 
 import unittest
 import os
@@ -158,7 +160,7 @@ class DeltaTableTestsMixin:
             .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
             .execute()
         self.__checkAnswer(merge_output,
-                           ([Row(6,  # type: ignore[call-overload]
+                           ([Row(6,  # affected rows
                                  4,  # updated rows (a and b in WHEN MATCHED
                                      # and c and d in WHEN NOT MATCHED BY SOURCE)
                                  0,  # deleted rows
@@ -172,7 +174,7 @@ class DeltaTableTestsMixin:
 
         # Column expressions in merge condition and dicts
         reset_table()
-        merge_output = dt.merge(source, expr("key = k")) \
+        dt.merge(source, expr("key = k")) \
             .whenMatchedUpdate(set={"value": col("v") + 0}) \
             .whenNotMatchedInsert(values={"key": "k", "value": col("v") + 0}) \
             .whenNotMatchedBySourceUpdate(set={"value": col("value") + 0}) \
@@ -501,7 +503,7 @@ class DeltaTableTestsMixin:
         target_path = os.path.join(self.tempFile, "target")
         spark = self.spark
 
-        def f(spark):  # type: ignore[no-untyped-def]
+        def f(spark):
             spark.range(20) \
                 .withColumn("x", col("id")) \
                 .withColumn("y", col("id")) \
@@ -541,7 +543,7 @@ class DeltaTableTestsMixin:
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
 
-    def test_cdc(self) -> None:
+    def test_cdc(self):
         self.spark.range(0, 5).write.format("delta").save(self.tempFile)
         deltaTable = DeltaTable.forPath(self.spark, self.tempFile)
         # Enable Change Data Feed
@@ -980,7 +982,7 @@ class DeltaTableTestsMixin:
             from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
         except ImportError:
             # Spark 4
-            from pyspark.sql.classic.column import _to_seq  # type: ignore
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[attr-defined]
 
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
@@ -1083,11 +1085,7 @@ class DeltaTableTestsMixin:
                 "int",
                 generatedAlwaysAs=IdentityGenerator()
             )  # type: ignore[arg-type]
-            # exception is thrown in builder.execute() for delta connect
-            builder.execute()
 
-        # reset the builder
-        builder = DeltaTable.create(self.spark).location(self.tempFile)
         # bad generatedAlwaysAs - step can't be 0
         with self.assertRaises(ValueError):
             builder.addColumn(
@@ -1110,8 +1108,8 @@ class DeltaTableTestsMixin:
             builder.addColumn(
                 "a",
                 "bigint",
-                generatedByDefaultAs=""  # type: ignore[arg-type]
-            )
+                generatedByDefaultAs=""
+            )  # type: ignore[arg-type]
 
         # bad generatedByDefaultAs - identity column data type must be Long
         with self.assertRaises(UnsupportedOperationException):
@@ -1120,11 +1118,6 @@ class DeltaTableTestsMixin:
                 "int",
                 generatedByDefaultAs=IdentityGenerator()
             )  # type: ignore[arg-type]
-            # exception is thrown in builder.execute() for delta connect
-            builder.execute()
-
-        # reset the builder
-        builder = DeltaTable.create(self.spark).location(self.tempFile)
 
         # bad generatedByDefaultAs - step can't be 0
         with self.assertRaises(ValueError):
@@ -1218,7 +1211,7 @@ class DeltaTableTestsMixin:
         dt = self.__create_df_for_feature_tests()
 
         # bad args
-        with self.assertRaisesRegex(Exception, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
+        with self.assertRaisesRegex(Py4JJavaError, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
             dt.addFeatureSupport("abc")
         with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
             dt.addFeatureSupport(12345)  # type: ignore[arg-type]
@@ -1500,79 +1493,6 @@ class DeltaTableTestsMixin:
         self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
         self.assertEqual('all', metrics.zOrderStats.strategyName)
         self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
-
-        def test_clone(self) -> None:  # type: ignore[no-untyped-def]
-            df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
-            df2 = self.spark.createDataFrame([('d', 4), ('e', 5), ('f', 6)], ["key", "value"])
-            df.write.format("delta").save(self.tempFile)
-            df2.write.format("delta").mode("overwrite").save(self.tempFile)
-            # source
-            dt = DeltaTable.forPath(self.spark, self.tempFile)
-            tempFile2 = self.tempFile + "_2"
-            tempFile3 = self.tempFile + "_3"
-
-            dt.clone(tempFile2, True, False, {"foo": "bar"})
-            props = self.spark.sql('''SHOW TBLPROPERTIES delta.`{}`("foo")
-            '''.format(tempFile2))
-            self.__checkAnswer(props, [("foo", "bar")])
-
-            self.__checkAnswer(
-                self.spark.read.format("delta").load(tempFile2),
-                [('d', 4), ('e', 5), ('f', 6)])
-
-            dt.cloneAtVersion(0, tempFile3, True)
-            self.__checkAnswer(
-                self.spark.read.format("delta").load(tempFile3),
-                [('a', 1), ('b', 2), ('c', 3)])
-
-            # clone over tempFile3 with source at current version
-            dt.clone(tempFile3, True, True)
-            self.__checkAnswer(
-                self.spark.read.format("delta").load(tempFile3),
-                [('d', 4), ('e', 5), ('f', 6)])
-
-        def test_clone_invalid_inputs(self) -> None:  # type: ignore[no-untyped-def]
-            df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
-            df.write.format("delta").save(self.tempFile)
-            # source
-            dt = DeltaTable.forPath(self.spark, self.tempFile)
-            tempFile2 = self.tempFile + "_2"
-
-            def incorrectTarget() -> "DeltaTable":
-                return dt.clone(10)
-
-            self.__intercept(incorrectTarget, "target needs to be a string but got int")
-
-            def incorrectShallow() -> "DeltaTable":
-                return dt.clone(tempFile2, isShallow=10)
-
-            self.__intercept(incorrectShallow, "isShallow needs to be a boolean but got int")
-
-            def incorrectReplace() -> "DeltaTable":
-                return dt.clone(tempFile2, False, replace=10)
-
-            self.__intercept(incorrectReplace, "replace needs to be a boolean but got int")
-
-            def incorrectProperties() -> "DeltaTable":
-                return dt.clone(tempFile2, False, False, properties=10)
-
-            self.__intercept(incorrectProperties, "properties needs to be a dict but got int")
-
-            def incorrectPropertyValue() -> "DeltaTable":
-                return dt.clone(tempFile2, False, False, properties={"key": 10})
-
-            self.__intercept(incorrectPropertyValue, "All property values including 10"
-                                                     " needs to be a str but got int")
-
-            def incorrectVersion() -> "DeltaTable":
-                return dt.cloneAtVersion("0", tempFile2, False, False)
-
-            self.__intercept(incorrectVersion, "version needs to be an int but got string")
-
-            def incorrectTimestamp() -> "DeltaTable":
-                return dt.cloneAtTimestamp(10, tempFile2, False, False)
-
-            self.__intercept(incorrectTimestamp, "timestamp needs to be a string but got int")
 
     def test_create_table_with_cluster_by(self) -> None:
         with self.table("test"):

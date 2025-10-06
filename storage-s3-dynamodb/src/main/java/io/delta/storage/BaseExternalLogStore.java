@@ -21,7 +21,6 @@ import java.io.InterruptedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -129,19 +128,14 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
         final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
+        final Path tablePath = getTablePath(resolvedPath);
+        final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
 
-        // VACUUM operations may use this LogStore::listFrom API. We don't need to attempt to
-        // perform a fix/recovery during such operations that are not listing the _delta_log.
-        if (isDeltaLogPath(resolvedPath)) {
-            final Path tablePath = getTablePath(resolvedPath);
-            final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
-
-            if (entry.isPresent() && !entry.get().complete) {
-                // Note: `fixDeltaLog` will apply per-JVM mutual exclusion via a lock to help reduce
-                // the chance of many reader threads in a single JVM doing duplicate copies of
-                // T(N) -> N.json.
-                fixDeltaLog(fs, entry.get());
-            }
+        if (entry.isPresent() && !entry.get().complete) {
+            // Note: `fixDeltaLog` will apply per-JVM mutual exclusion via a lock to help reduce
+            // the chance of many reader threads in a single JVM doing duplicate copies of
+            // T(N) -> N.json.
+            fixDeltaLog(fs, entry.get());
         }
 
         // This is predicated on the storage system providing consistent listing
@@ -476,15 +470,5 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             // IllegalArgumentException somewhere else. Instead, catch and wrap it here.
             throw new IllegalArgumentException(e);
         }
-    }
-
-    /** Returns true if this path is contained within a _delta_log folder. */
-    @VisibleForTesting
-    protected boolean isDeltaLogPath(Path normalizedPath) {
-        return Arrays.stream(normalizedPath
-            .toUri()
-            .toString()
-            .split(Path.SEPARATOR)
-        ).anyMatch("_delta_log"::equals);
     }
 }

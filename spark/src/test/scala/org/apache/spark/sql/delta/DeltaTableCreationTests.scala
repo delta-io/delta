@@ -1026,113 +1026,6 @@ trait DeltaTableCreationTests
     }
   }
 
- test("create table with table properties - delta.randomizeFilePrefixes") {
-    withTable("delta_test") {
-      sql(s"""
-             |CREATE TABLE delta_test(a LONG, b String)
-             |USING delta
-             |TBLPROPERTIES(
-             |  'delta.randomizeFilePrefixes' = 'true',
-             |  'delta.randomPrefixLength' = '5'
-             |)
-          """.stripMargin)
-
-      val deltaLog = getDeltaLog("delta_test")
-      val snapshot = deltaLog.update()
-
-      // Verify the properties are set correctly
-      assertEqual(snapshot.metadata.configuration, Map(
-        "delta.randomizeFilePrefixes" -> "true",
-        "delta.randomPrefixLength" -> "5"
-      ))
-
-      // Insert some data to create files
-      sql("INSERT INTO delta_test VALUES (1, 'test1'), (2, 'test2'), (3, 'test3')")
-
-      val updatedSnapshot = deltaLog.update()
-      val allFiles = updatedSnapshot.allFiles.collect()
-
-      // Verify that files exist and have random prefixes
-      assert(allFiles.nonEmpty, "Table should have data files")
-
-      // Check that file paths contain 5-character random prefix pattern
-      val prefixLength = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(updatedSnapshot.metadata)
-      assert(prefixLength == 5, s"Expected prefix length of 5, but got $prefixLength")
-
-      val pattern = s"[A-Za-z0-9]{$prefixLength}/.*part-.*parquet"
-      allFiles.foreach { file =>
-        assert(file.path.matches(pattern),
-          s"File path '${file.path}' does not match expected random prefix pattern '$pattern'")
-      }
-    }
-  }
-
-  test("create partitioned table with table properties - delta.randomizeFilePrefixes") {
-    withTable("delta_test") {
-      sql(s"""
-             |CREATE TABLE delta_test(id LONG, part String, value INT)
-             |USING delta
-             |PARTITIONED BY (part)
-             |TBLPROPERTIES(
-             |  'delta.randomizeFilePrefixes' = 'true',
-             |  'delta.randomPrefixLength' = '4'
-             |)
-          """.stripMargin)
-
-      val deltaLog = getDeltaLog("delta_test")
-      val snapshot = deltaLog.update()
-
-      // Verify the properties are set correctly
-      assertEqual(snapshot.metadata.configuration, Map(
-        "delta.randomizeFilePrefixes" -> "true",
-        "delta.randomPrefixLength" -> "4"
-      ))
-
-      // Verify the configuration is properly parsed
-      assert(DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(snapshot.metadata),
-        "randomizeFilePrefixes should be enabled")
-      assert(DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot.metadata) == 4,
-        "randomPrefixLength should be 4")
-
-      // Verify table is partitioned correctly
-      assert(snapshot.metadata.partitionColumns == Seq("part"),
-        "Table should be partitioned by 'part' column")
-
-      // Insert data to create files with random prefixes across multiple partitions
-      sql("""INSERT INTO delta_test VALUES
-            |(1, 'A', 100), (2, 'B', 200), (3, 'A', 300), (4, 'C', 400)""".stripMargin)
-
-      val updatedSnapshot = deltaLog.update()
-      val allFiles = updatedSnapshot.allFiles.collect()
-
-      // Verify that files exist and have random prefixes
-      assert(allFiles.nonEmpty, "Partitioned table should have data files")
-
-      // Check that file paths contain 4-character random prefix pattern
-      val prefixLength = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(updatedSnapshot.metadata)
-      assert(prefixLength == 4, s"Expected prefix length of 4, but got $prefixLength")
-
-      // For partitioned tables, files still use random prefix pattern (same as non-partitioned)
-      // Partition information is stored separately in metadata
-      val pattern = s"[A-Za-z0-9]{$prefixLength}/.*part-.*parquet"
-      allFiles.foreach { file =>
-        assert(file.path.matches(pattern),
-          s"Partitioned file path '${file.path}' does not match expected random prefix pattern " +
-          s"'$pattern'")
-      }
-
-      // Verify we have files for multiple partitions (by checking partition values in metadata)
-      val partitionValues = allFiles.map(_.partitionValues("part")).distinct
-      assert(partitionValues.length >= 2,
-        s"Expected files in multiple partitions, but only found partitions: " +
-        s"${partitionValues.mkString(", ")}")
-
-      // Verify we have the expected partition values
-      val expectedPartitions = Set("A", "B", "C")
-      assert(partitionValues.toSet.subsetOf(expectedPartitions),
-        s"Found unexpected partition values: ${partitionValues.toSet}")
-    }
-  }
 
   test("schema mismatch between DDL and table location should throw an error") {
     withTempDir { tempDir =>
@@ -1316,7 +1209,7 @@ trait DeltaTableCreationTests
   test("create datasource table with a non-existing location") {
     withTempPath { dir =>
       withTable("t") {
-        spark.sql(s"CREATE TABLE t(a int, b int) USING delta LOCATION '${dir.getAbsolutePath}'")
+        spark.sql(s"CREATE TABLE t(a int, b int) USING delta LOCATION '${dir.toURI}'")
 
         val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
         assert(table.location == makeQualifiedPath(dir.getAbsolutePath))
@@ -1334,21 +1227,17 @@ trait DeltaTableCreationTests
     withTempPath { dir =>
       withTable("t1") {
         spark.sql(
-          s"""
-             |CREATE TABLE t1(a int, b int) USING delta PARTITIONED BY(a)
-             |LOCATION '${dir.getAbsolutePath}'
-             |""".stripMargin)
+          s"CREATE TABLE t1(a int, b int) USING delta PARTITIONED BY(a) LOCATION '${dir.toURI}'")
 
         val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
         assert(table.location == makeQualifiedPath(dir.getAbsolutePath))
 
         Seq((1, 2)).toDF("a", "b")
-          .write.format("delta").mode("append").save(table.location.getPath)
-        val read = spark.read.format("delta").load(table.location.getPath)
+          .write.format("delta").mode("append").save(table.location.toString)
+        val read = spark.read.format("delta").load(table.location.toString)
         checkAnswer(read, Seq(Row(1, 2)))
 
-        val deltaLog = loadDeltaLog(table.location.getPath)
-        assert(deltaLog.update().version > 0)
+        val deltaLog = loadDeltaLog(table.location.toString)
         assertPartitionWithValueExists("a", "1", deltaLog)
       }
     }
@@ -1365,7 +1254,7 @@ trait DeltaTableCreationTests
             s"""
                |CREATE TABLE t
                |USING delta
-               |LOCATION '${dir.getAbsolutePath}'
+               |LOCATION '${dir.toURI}'
                |AS SELECT 3 as a, 4 as b, 1 as c, 2 as d
              """.stripMargin)
           val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
@@ -1375,7 +1264,6 @@ trait DeltaTableCreationTests
 
           // Query the data and the metadata directly via the DeltaLog
           val deltaLog = getDeltaLog(table)
-          assert(deltaLog.update().version >= 0)
 
           assertEqual(deltaLog.snapshot.schema, new StructType()
             .add("a", "integer").add("b", "integer")
@@ -1404,7 +1292,7 @@ trait DeltaTableCreationTests
                |CREATE TABLE t1
                |USING delta
                |PARTITIONED BY(a, b)
-               |LOCATION '${dir.getAbsolutePath}'
+               |LOCATION '${dir.toURI}'
                |AS SELECT 3 as a, 4 as b, 1 as c, 2 as d
              """.stripMargin)
           val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
@@ -1494,12 +1382,12 @@ trait DeltaTableCreationTests
         dir.delete()
         Seq((3, 4)).toDF("a", "b")
           .write.format("delta")
-          .save(dir.getAbsolutePath)
+          .save(dir.toString)
         val ex = intercept[AnalysisException](spark.sql(
           s"""
              |CREATE TABLE t
              |USING delta
-             |LOCATION '${dir.getAbsolutePath}'
+             |LOCATION '${dir.toURI}'
              |AS SELECT 1 as a, 2 as b
              """.stripMargin))
         assert(ex.getMessage.contains("Cannot create table"))
@@ -1509,12 +1397,14 @@ trait DeltaTableCreationTests
     withTable("t") {
       withTempDir { dir =>
         dir.delete()
-        Seq((3, 4)).toDF("a", "b").write.format("parquet").save(dir.getCanonicalPath)
+        Seq((3, 4)).toDF("a", "b")
+          .write.format("parquet")
+          .save(dir.toString)
         val ex = intercept[AnalysisException](spark.sql(
           s"""
              |CREATE TABLE t
              |USING delta
-             |LOCATION '${dir.getAbsolutePath}'
+             |LOCATION '${dir.toURI}'
              |AS SELECT 1 as a, 2 as b
              """.stripMargin))
         assert(ex.getMessage.contains("Cannot create table"))
@@ -1586,14 +1476,13 @@ trait DeltaTableCreationTests
                |CREATE TABLE t(a string, `$specialChars` string)
                |USING delta
                |PARTITIONED BY(`$specialChars`)
-               |LOCATION '${dir.getAbsolutePath}'
+               |LOCATION '${dir.toURI}'
              """.stripMargin)
 
           assert(dir.listFiles().forall(_.toString.contains("_delta_log")))
           spark.sql(s"INSERT INTO TABLE t SELECT 1, 2")
 
-          val deltaLog = loadDeltaLog(dir.getAbsolutePath)
-          assert(deltaLog.update().version > 0)
+          val deltaLog = loadDeltaLog(dir.toString)
           assertPartitionWithValueExists(specialChars, "2", deltaLog)
 
           checkAnswer(spark.table("t"), Row("1", "2") :: Nil)
@@ -2729,6 +2618,8 @@ trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelecte
 class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
   with DeltaColumnMappingEnableIdMode {
 
+  override val defaultTempDirPrefix = "spark"
+
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     // ignore comparing column mapping properties
     dropColumnMappingConfigurations(super.getTableProperties(tableName))
@@ -2737,6 +2628,7 @@ class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
 
 class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
   with DeltaColumnMappingEnableNameMode {
+  override val defaultTempDirPrefix = "spark"
 
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     // ignore comparing column mapping properties

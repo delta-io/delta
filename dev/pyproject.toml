@@ -1,5 +1,5 @@
 #
-# Copyright (2024) The Delta Lake Project Authors.
+# Copyright (2021) The Delta Lake Project Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 [tool.black]
 # When changing the version, we have to update
 # GitHub workflow version
-required-version = "23.12.1"
+required-version = "23.9.1"
 line-length = 100
 target-version = ['py38']
 include = '\.pyi?$'
