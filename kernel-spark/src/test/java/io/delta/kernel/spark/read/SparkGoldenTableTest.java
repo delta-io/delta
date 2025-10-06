@@ -534,24 +534,6 @@ public class SparkGoldenTableTest extends QueryTest {
     assertTrue(errorMessage.contains("variant"));
   }
 
-  @Test
-  public void testTimestampUnsupportedDataType() {
-    String tablePath = goldenTablePath("kernel-timestamp-PST");
-
-    RuntimeException exception =
-        assertThrows(
-            RuntimeException.class,
-            () -> {
-              spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`").collect();
-            });
-
-    Throwable rootCause = getRootCause(exception);
-    String errorMessage = rootCause.getMessage();
-
-    assertTrue(errorMessage.contains("Unsupported data type"));
-    assertTrue(errorMessage.contains("timestamp"));
-  }
-
   private Throwable getRootCause(Throwable throwable) {
     Throwable cause = throwable;
     while (cause.getCause() != null) {

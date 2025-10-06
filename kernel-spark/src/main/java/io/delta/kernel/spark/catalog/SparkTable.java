@@ -114,21 +114,26 @@ public class SparkTable implements Table, SupportsRead {
    * @return true if the data type is allowed, false otherwise
    */
   private static boolean isAllowedKernelType(DataType dataType) {
-    return dataType instanceof ByteType
-        || dataType instanceof ShortType
-        || dataType instanceof IntegerType
-        || dataType instanceof LongType
-        || dataType instanceof FloatType
-        || dataType instanceof DoubleType
-        || dataType instanceof DecimalType
-        || dataType instanceof StringType
+    // allowed data types in scala-2.12
+    return dataType instanceof ArrayType
         || dataType instanceof BinaryType
         || dataType instanceof BooleanType
-        ||
-        // Allow complex types but validate their nested types
-        dataType instanceof io.delta.kernel.types.StructType
-        || dataType instanceof ArrayType
-        || dataType instanceof MapType;
+        || dataType instanceof ByteType
+        || dataType instanceof DataType
+        || dataType instanceof DateType
+        || dataType instanceof DecimalType
+        || dataType instanceof DoubleType
+        || dataType instanceof FieldMetadata
+        || dataType instanceof FloatType
+        || dataType instanceof IntegerType
+        || dataType instanceof LongType
+        || dataType instanceof MapType
+        || dataType instanceof NullType
+        || dataType instanceof ShortType
+        || dataType instanceof StringType
+        || dataType instanceof StructField
+        || dataType instanceof StructType
+        || dataType instanceof TimestampType;
   }
 
   /**
