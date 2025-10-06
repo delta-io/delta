@@ -74,7 +74,7 @@ import org.slf4j.LoggerFactory;
  *  accept metadataUpdates in constructor and pass to HiveTableOperations
  *  to support using schema/partitionSpec with field ids assigned by Delta lake
  * 2.
- *  Validate metadataLocation for validating table as Iceberg in tableExists
+ *  Validate metadataLocation for validating table as Iceberg in tableExists!
  */
 public class HiveCatalog extends BaseMetastoreViewCatalog
         implements SupportsNamespaces, Configurable {
