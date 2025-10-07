@@ -150,7 +150,11 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
    * file statuses.
    */
   def listFromProvider(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
-    files.filter(_.getPath.compareTo(filePath) >= 0).sortBy(_.getPath)
+    val parentPath = new Path(filePath).getParent
+    files
+      .filter(fs => new Path(fs.getPath).getParent == parentPath)
+      .filter(_.getPath.compareTo(filePath) >= 0)
+      .sortBy(_.getPath)
   }
 
   /**

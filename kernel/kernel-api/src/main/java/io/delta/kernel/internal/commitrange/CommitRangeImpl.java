@@ -26,12 +26,14 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /** Implementation of {@link CommitRange}. */
 public class CommitRangeImpl implements CommitRange {
@@ -42,9 +44,7 @@ public class CommitRangeImpl implements CommitRange {
 
   private final long startVersion;
   private final long endVersion;
-  // TODO: update contents of this class for CCV2 tables
-  //  (include ratified commits? store a LogSegment?)
-  private final List<FileStatus> deltaFiles;
+  private final List<ParsedDeltaData> deltas;
 
   public CommitRangeImpl(
       Path dataPath,
@@ -52,17 +52,16 @@ public class CommitRangeImpl implements CommitRange {
       Optional<CommitRangeBuilder.CommitBoundary> endBoundaryOpt,
       long startVersion,
       long endVersion,
-      List<FileStatus> deltaFiles) {
+      List<ParsedDeltaData> deltas) {
     checkArgument(startVersion <= endVersion, "must have startVersion <= endVersion");
     checkArgument(
-        deltaFiles.size() == endVersion - startVersion + 1,
-        "deltaFiles size must match size of range");
+        deltas.size() == endVersion - startVersion + 1, "deltaFiles size must match size of range");
     this.dataPath = requireNonNull(dataPath, "dataPath cannot be null");
     this.startBoundaryOpt = requireNonNull(startBoundaryOpt, "startSpecOpt cannot be null");
     this.endBoundaryOpt = requireNonNull(endBoundaryOpt, "endSpecOpt cannot be null");
     this.startVersion = startVersion;
     this.endVersion = endVersion;
-    this.deltaFiles = requireNonNull(deltaFiles, "deltaFiles cannot be null");
+    this.deltas = requireNonNull(deltas, "deltas cannot be null");
   }
 
   ////////////////////////////////////////
@@ -91,7 +90,7 @@ public class CommitRangeImpl implements CommitRange {
 
   @VisibleForTesting
   public List<FileStatus> getDeltaFiles() {
-    return deltaFiles;
+    return deltas.stream().map(ParsedDeltaData::getFileStatus).collect(Collectors.toList());
   }
 
   @Override
@@ -104,6 +103,6 @@ public class CommitRangeImpl implements CommitRange {
         startSnapshot.getVersion() == startVersion,
         "startSnapshot must have version = startVersion");
     return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
-        engine, dataPath.toString(), deltaFiles, actionSet);
+        engine, dataPath.toString(), getDeltaFiles(), actionSet);
   }
 }
