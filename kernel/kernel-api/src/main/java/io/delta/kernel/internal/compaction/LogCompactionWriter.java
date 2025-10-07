@@ -104,7 +104,8 @@ public class LogCompactionWriter {
             Collections.emptyList(),
             Collections.emptyList(),
             getLast(deltas),
-            Optional.empty());
+            Optional.empty() /* lastSeemChecksum */,
+            Optional.empty() /* maxPublishedDeltaVersion */);
     CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);
     wrapEngineExceptionThrowsIO(

@@ -60,7 +60,14 @@ public class LogSegment {
     final List<FileStatus> compactions = Collections.emptyList();
 
     return new LogSegment(
-        logPath, 0 /* version */, deltas, compactions, checkpoints, deltaFile, Optional.empty());
+        logPath,
+        0 /* version */,
+        deltas,
+        compactions,
+        checkpoints,
+        deltaFile,
+        Optional.empty() /* lastSeenChecksum */,
+        Optional.empty() /* maxPublishedDeltaVersion */);
   }
 
   private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
@@ -77,6 +84,7 @@ public class LogSegment {
   private final FileStatus deltaAtEndVersion;
   private final Optional<Long> checkpointVersionOpt;
   private final Optional<FileStatus> lastSeenChecksum;
+  private final Optional<Long> maxPublishedDeltaVersion;
   private final List<FileStatus> deltasAndCheckpoints;
   private final Lazy<List<FileStatus>> deltasAndCheckpointsReversed;
   private final Lazy<List<FileStatus>> compactionsReversed;
@@ -107,6 +115,10 @@ public class LogSegment {
    *     that checkpoint version.
    * @param lastSeenChecksum The most recent checksum file encountered during log directory listing,
    *     if available.
+   * @param maxPublishedDeltaVersion The maximum version among all published delta files seen during
+   *     log segment construction, if available. Note that the Published Delta file for this version
+   *     may not be included as a Delta in this LogSegment, if there was a catalog commit that took
+   *     priority over it.
    */
   public LogSegment(
       Path logPath,
@@ -115,7 +127,8 @@ public class LogSegment {
       List<FileStatus> compactions,
       List<FileStatus> checkpoints,
       FileStatus deltaAtEndVersion,
-      Optional<FileStatus> lastSeenChecksum) {
+      Optional<FileStatus> lastSeenChecksum,
+      Optional<Long> maxPublishedDeltaVersion) {
 
     ///////////////////////
     // Input validations //
@@ -177,6 +190,7 @@ public class LogSegment {
     this.checkpoints = checkpoints;
     this.deltaAtEndVersion = deltaAtEndVersion;
     this.lastSeenChecksum = lastSeenChecksum;
+    this.maxPublishedDeltaVersion = maxPublishedDeltaVersion;
     this.deltasAndCheckpoints =
         Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList());
 
@@ -238,6 +252,14 @@ public class LogSegment {
    */
   public Optional<FileStatus> getLastSeenChecksum() {
     return lastSeenChecksum;
+  }
+
+  /**
+   * Returns the maximum version among all published delta files that were seen during log segment
+   * construction, if available.
+   */
+  public Optional<Long> getMaxPublishedDeltaVersion() {
+    return maxPublishedDeltaVersion;
   }
 
   /**
@@ -317,7 +339,8 @@ public class LogSegment {
         compactions, // Keep existing compactions
         checkpoints, // Keep existing checkpoints
         lastAddedDelta.getFileStatus(),
-        lastSeenChecksum); // Keep existing lastSeenChecksum
+        lastSeenChecksum, // Keep existing lastSeenChecksum
+        maxPublishedDeltaVersion); // Keep existing maxPublishedDeltaVersion
   }
 
   @Override
