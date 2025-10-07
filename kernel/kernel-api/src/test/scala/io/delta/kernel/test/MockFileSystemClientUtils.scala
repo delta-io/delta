@@ -152,6 +152,7 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   def listFromProvider(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
     val parentPath = new Path(filePath).getParent
     files
+      // This currently excludes listing nested directories, we can fix this if needed
       .filter(fs => new Path(fs.getPath).getParent == parentPath)
       .filter(_.getPath.compareTo(filePath) >= 0)
       .sortBy(_.getPath)
