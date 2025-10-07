@@ -106,4 +106,19 @@ public interface FileIO {
    * @return If no such value is present, an {@link Optional#empty()} is returned.
    */
   Optional<String> getConf(String confKey);
+
+  /**
+   * Atomically copy a file from source path to destination path. The copy operation should be
+   * atomic to ensure that the destination file is either fully copied or not present at all.
+   *
+   * @param srcPath Fully qualified path to the source file to copy
+   * @param destPath Fully qualified path to the destination where the file will be copied
+   * @param overwrite If true, overwrite the destination file if it already exists. If false, throw
+   *     an exception if the destination exists.
+   * @throws java.nio.file.FileAlreadyExistsException if the destination file already exists and
+   *     {@code overwrite} is false.
+   * @throws FileNotFoundException if the source file does not exist
+   * @throws IOException for any other IO error
+   */
+  void copyFileAtomically(String srcPath, String destPath, boolean overwrite) throws IOException;
 }

@@ -17,16 +17,16 @@
 package io.delta.kernel.commit;
 
 import io.delta.kernel.annotation.Experimental;
-import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 
 /** Response container for the result of a commit operation. */
 @Experimental
 public class CommitResponse {
 
   // TODO: Create a DeltaLogData extends ParsedLogData that includes commit timestamp information.
-  private final ParsedLogData commitLogData;
+  private final ParsedDeltaData commitLogData;
 
-  public CommitResponse(ParsedLogData commitLogData) {
+  public CommitResponse(ParsedDeltaData commitLogData) {
     this.commitLogData = commitLogData;
   }
 
@@ -36,7 +36,7 @@ public class CommitResponse {
    * file that the {@link Committer} implementation decided to publish after committing to the
    * managing catalog.
    */
-  public ParsedLogData getCommitLogData() {
+  public ParsedDeltaData getCommitLogData() {
     return commitLogData;
   }
 }

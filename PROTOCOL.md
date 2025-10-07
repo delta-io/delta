@@ -2133,6 +2133,7 @@ It is highly recommended that modern writers adjust the timestamp to UTC and sto
 ## Schema Serialization Format
 
 Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
+All column names must be unique regardless of casing.
 A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
 
 ### Primitive Types

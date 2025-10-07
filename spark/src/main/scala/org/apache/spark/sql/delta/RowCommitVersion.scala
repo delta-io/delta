@@ -36,12 +36,10 @@ object RowCommitVersion {
   def createMetadataStructField(
       protocol: Protocol,
       metadata: Metadata,
-      nullable: Boolean = false): Option[StructField] =
+      nullable: Boolean = false,
+      shouldSetIcebergReservedFieldId: Boolean): Option[StructField] =
     MaterializedRowCommitVersion.getMaterializedColumnName(protocol, metadata)
-      // Use column name instead of field ID when accessing the materialized row commit version
-      // column. This handles cases where field IDs are not available in the Parquet file,
-      // such as with legacy materialized columns created before column mapping enabled.
-      .map(MetadataStructField(_, nullable, shouldSetIcebergReservedFieldId = false))
+      .map(MetadataStructField(_, nullable, shouldSetIcebergReservedFieldId))
 
   /**
    * Add a new column to `dataFrame` that has the name of the materialized Row Commit Version column

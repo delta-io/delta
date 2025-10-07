@@ -16,15 +16,13 @@
 
 package io.delta.kernel.defaults.catalogManaged
 
-import java.util.Optional
-
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.{SnapshotBuilder, TableManager}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.DeltaHistoryManager
-import io.delta.kernel.internal.files.{ParsedDeltaData, ParsedLogData}
+import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, IN_COMMIT_TIMESTAMP_W_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
@@ -100,9 +98,9 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       val logPath = new Path(tablePath, "_delta_log")
 
-      val parsedDeltaData = parsedLogData
-        .filter(_.isInstanceOf[ParsedDeltaData])
-        .map(_.asInstanceOf[ParsedDeltaData])
+      val parsedRatifiedCatalogCommits = parsedLogData
+        .filter(_.isInstanceOf[ParsedCatalogCommitData])
+        .map(_.asInstanceOf[ParsedCatalogCommitData])
 
       val latestSnapshot = TableManager
         .loadSnapshot(tablePath)
@@ -123,7 +121,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
           true, /* mustBeRecreatable */
           canReturnLastCommit,
           canReturnEarliestCommit,
-          parsedDeltaData.asJava)
+          parsedRatifiedCatalogCommits.asJava)
         assert(activeCommit.getVersion == expectedVersion)
       }
 
@@ -164,6 +162,51 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
       // Query a timestamp after V2 with canReturnLastCommit = true
       checkGetActiveCommitAtTimestamp(v2Ts + 1, 2, canReturnLastCommit = true)
 
+    }
+  }
+
+  test("time-travel by ts read of catalogOwned-preview table with ratified commits") {
+    withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
+      val v0Ts = 1749830855993L // published commit
+      val v1Ts = 1749830871085L // ratified staged commit
+      val v2Ts = 1749830881799L // ratified staged commit
+
+      val latestSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .asInstanceOf[SnapshotBuilderImpl]
+        .withLogData(parsedLogData.asJava)
+        .build(defaultEngine)
+
+      def checkTimeTravelByTimestamp(
+          timestamp: Long,
+          expectedVersion: Long,
+          expectedSnapshotTimestamp: Long): Unit = {
+        val snapshot = TableManager
+          .loadSnapshot(tablePath)
+          .atTimestamp(timestamp, latestSnapshot)
+          .withLogData(parsedLogData.asJava)
+          .build(defaultEngine)
+        assert(snapshot.getVersion == expectedVersion)
+        assert(snapshot.getTimestamp(defaultEngine) == expectedSnapshotTimestamp)
+      }
+
+      // Between v0 and v1 should return v0 (between published & ratified)
+      checkTimeTravelByTimestamp(v0Ts + 1, 0, v0Ts)
+
+      // Exactly v1 should return v1
+      checkTimeTravelByTimestamp(v1Ts, 1, v1Ts)
+
+      // Between v1 and v2 should return v1 (between 2 ratified commits)
+      checkTimeTravelByTimestamp(v1Ts + 1, 1, v1Ts)
+
+      // Exactly v2 should return v2
+      checkTimeTravelByTimestamp(v2Ts, 2, v2Ts)
+
+      // After v2 should fail
+      val e = intercept[KernelException] {
+        checkTimeTravelByTimestamp(v2Ts + 1, 2, v2Ts)
+      }
+      assert(e.getMessage.contains("is after the latest available version"))
     }
   }
 }

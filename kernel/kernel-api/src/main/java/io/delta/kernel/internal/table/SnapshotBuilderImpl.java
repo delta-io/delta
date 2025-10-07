@@ -27,7 +27,7 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Tuple2;
@@ -118,12 +118,12 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     validateVersionNonNegative();
     validateTimestampNonNegative();
     validateTimestampNotGreaterThanLatestSnapshot(engine);
-    validateLogDatasEmptyIfTimeTravelByTimestamp();
     validateVersionAndTimestampMutuallyExclusive();
     validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
-    validateLogDataContainsOnlyRatifiedCommits(); // TODO: delta-io/delta#4765 support other types
-    validateLogDataIsSortedContiguous();
+    // TODO: delta-io/delta#4765 support other types
+    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
+    LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
   }
 
   private void validateVersionNonNegative() {
@@ -155,13 +155,6 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
         });
   }
 
-  private void validateLogDatasEmptyIfTimeTravelByTimestamp() {
-    if (ctx.timestampQueryContextOpt.isPresent() && !ctx.logDatas.isEmpty()) {
-      throw new UnsupportedOperationException(
-          "Time travel by timestamp with logDatas is not yet implemented");
-    }
-  }
-
   private void validateVersionAndTimestampMutuallyExclusive() {
     checkArgument(
         !ctx.timestampQueryContextOpt.isPresent() || !ctx.versionOpt.isPresent(),
@@ -177,26 +170,5 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   private void validateProtocolRead() {
     ctx.protocolAndMetadataOpt.ifPresent(
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
-  }
-
-  private void validateLogDataContainsOnlyRatifiedCommits() {
-    for (ParsedLogData logData : ctx.logDatas) {
-      checkArgument(
-          logData instanceof ParsedDeltaData && logData.isFile(),
-          "Only staged ratified commits are supported, but found: " + logData);
-    }
-  }
-
-  private void validateLogDataIsSortedContiguous() {
-    if (ctx.logDatas.size() > 1) {
-      for (int i = 1; i < ctx.logDatas.size(); i++) {
-        final ParsedLogData prev = ctx.logDatas.get(i - 1);
-        final ParsedLogData curr = ctx.logDatas.get(i);
-        checkArgument(
-            prev.getVersion() + 1 == curr.getVersion(),
-            String.format(
-                "Log data must be sorted and contiguous, but found: %s and %s", prev, curr));
-      }
-    }
   }
 }

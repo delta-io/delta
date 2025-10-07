@@ -16,28 +16,38 @@
 
 package io.delta.kernel.internal.files;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
-/** Base class for Delta types that represent atomic changes to a table. */
-public abstract class ParsedDeltaData extends ParsedLogData {
+/**
+ * A published Delta commit file represent an atomic change to a table.
+ *
+ * <p>Example: {@code _delta_log/00000000000000000001.json}
+ */
+public final class ParsedPublishedDeltaData extends ParsedDeltaData {
 
-  public static ParsedDeltaData forFileStatus(FileStatus fileStatus) {
+  public static ParsedPublishedDeltaData forFileStatus(FileStatus fileStatus) {
+    checkArgument(
+        FileNames.isPublishedDeltaFile(fileStatus.getPath()),
+        "Expected a published Delta file but got %s",
+        fileStatus.getPath());
+
     final String path = fileStatus.getPath();
-
-    if (FileNames.isPublishedDeltaFile(path)) {
-      return ParsedPublishedDeltaData.forFileStatus(fileStatus);
-    } else if (FileNames.isStagedDeltaFile(path)) {
-      return ParsedCatalogCommitData.forFileStatus(fileStatus);
-    } else {
-      throw new IllegalArgumentException("Unknown delta file type: " + path);
-    }
+    final long version = FileNames.deltaVersion(path);
+    return new ParsedPublishedDeltaData(version, Optional.of(fileStatus), Optional.empty());
   }
 
-  protected ParsedDeltaData(
+  private ParsedPublishedDeltaData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);
+  }
+
+  @Override
+  public Class<? extends ParsedLogData> getGroupByCategoryClass() {
+    return ParsedPublishedDeltaData.class;
   }
 }

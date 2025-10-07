@@ -46,11 +46,6 @@ public final class ParsedLogCompactionData extends ParsedLogData {
         startEnd._1, startEnd._2, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedLogCompactionData forInlineData(
-      int start, int end, ColumnarBatch inlineData) {
-    return new ParsedLogCompactionData(start, end, Optional.empty(), Optional.of(inlineData));
-  }
-
   public final long startVersion;
   public final long endVersion;
 
@@ -68,12 +63,7 @@ public final class ParsedLogCompactionData extends ParsedLogData {
   }
 
   @Override
-  public String getParentCategoryName() {
-    return "LogCompaction";
-  }
-
-  @Override
-  public Class<? extends ParsedLogData> getParentCategoryClass() {
+  public Class<? extends ParsedLogData> getGroupByCategoryClass() {
     return ParsedLogCompactionData.class;
   }
 

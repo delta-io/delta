@@ -26,43 +26,31 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
-import io.delta.kernel.internal.files.ParsedCheckpointData;
-import io.delta.kernel.internal.files.ParsedChecksumData;
-import io.delta.kernel.internal.files.ParsedDeltaData;
-import io.delta.kernel.internal.files.ParsedLogCompactionData;
-import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay;
 import io.delta.kernel.internal.table.SnapshotFactory;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class SnapshotManager {
 
-  /**
-   * The latest {@link SnapshotHint} for this table. The initial value inside the AtomicReference is
-   * `null`.
-   */
-  private final AtomicReference<SnapshotHint> latestSnapshotHint;
-
   private final Path tablePath;
   private final Path logPath;
 
   public SnapshotManager(Path tablePath) {
-    this.latestSnapshotHint = new AtomicReference<>();
     this.tablePath = tablePath;
     this.logPath = new Path(tablePath, "_delta_log");
   }
@@ -137,7 +125,11 @@ public class SnapshotManager {
       throws TableNotFoundException {
     final long versionToLoad =
         SnapshotFactory.resolveTimestampToSnapshotVersion(
-            engine, snapshotContext, latestSnapshot, millisSinceEpochUTC);
+            engine,
+            snapshotContext,
+            latestSnapshot,
+            millisSinceEpochUTC,
+            Collections.emptyList() /* logDatas */);
 
     return getSnapshotAt(engine, versionToLoad, snapshotContext);
   }
@@ -162,50 +154,31 @@ public class SnapshotManager {
     }
   }
 
-  /**
-   * Updates the current `latestSnapshotHint` with the `newHint` if and only if the newHint is newer
-   * (i.e. has a later table version).
-   *
-   * <p>Must be thread-safe.
-   */
-  private void registerHint(SnapshotHint newHint) {
-    latestSnapshotHint.updateAndGet(
-        currHint -> {
-          if (currHint == null) return newHint; // the initial reference value is null
-          if (newHint.getVersion() > currHint.getVersion()) return newHint;
-          return currHint;
-        });
-  }
-
   private SnapshotImpl createSnapshot(
       LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
-    // Note: LogReplay now loads the protocol and metadata (P & M) only when invoked (as opposed to
-    //       eagerly in its constructor). Nonetheless, we invoke it right away, so SnapshotImpl is
-    //       still constructed with an "eagerly"-loaded P & M.
+    final Lazy<LogSegment> lazyLogSegment = new Lazy<>(() -> initSegment);
 
-    final LogReplay logReplay =
-        new LogReplay(
-            tablePath,
-            engine,
-            new Lazy<>(() -> initSegment),
-            Optional.ofNullable(latestSnapshotHint.get()),
-            snapshotContext.getSnapshotMetrics());
+    final Lazy<Optional<CRCInfo>> lazyCrcInfo =
+        SnapshotFactory.createLazyChecksumFileLoaderWithMetrics(
+            engine, lazyLogSegment, snapshotContext.getSnapshotMetrics());
+
+    final ProtocolMetadataLogReplay.Result protocolMetadataResult =
+        ProtocolMetadataLogReplay.loadProtocolAndMetadata(
+            engine, tablePath, initSegment, lazyCrcInfo, snapshotContext.getSnapshotMetrics());
+
+    // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
+    final LogReplay logReplay = new LogReplay(engine, tablePath, lazyLogSegment, lazyCrcInfo);
 
     final SnapshotImpl snapshot =
         new SnapshotImpl(
             tablePath,
             initSegment.getVersion(),
-            new Lazy<>(() -> initSegment),
+            lazyLogSegment,
             logReplay,
-            logReplay.getProtocol(),
-            logReplay.getMetadata(),
+            protocolMetadataResult.protocol,
+            protocolMetadataResult.metadata,
             DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
             snapshotContext);
-
-    final SnapshotHint hint =
-        new SnapshotHint(snapshot.getVersion(), snapshot.getProtocol(), snapshot.getMetadata());
-
-    registerHint(hint);
 
     return snapshot;
   }
@@ -329,13 +302,14 @@ public class SnapshotManager {
             .map(ParsedLogData::forFileStatus)
             .collect(
                 Collectors.groupingBy(
-                    ParsedLogData::getParentCategoryClass,
+                    ParsedLogData::getGroupByCategoryClass,
                     LinkedHashMap::new, // Ensure order is maintained
                     Collectors.toList()));
 
-    final List<ParsedDeltaData> allPublishedDeltas =
-        partitionedFiles.getOrDefault(ParsedDeltaData.class, Collections.emptyList()).stream()
-            .map(ParsedDeltaData.class::cast)
+    final List<ParsedPublishedDeltaData> allPublishedDeltas =
+        partitionedFiles.getOrDefault(ParsedPublishedDeltaData.class, Collections.emptyList())
+            .stream()
+            .map(ParsedPublishedDeltaData.class::cast)
             .collect(Collectors.toList());
 
     final List<FileStatus> listedCheckpointFileStatuses =
@@ -437,7 +411,7 @@ public class SnapshotManager {
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
-    final Lazy<Optional<ParsedDeltaData>> lazyDeltaAtCheckpointVersionOpt =
+    final Lazy<Optional<ParsedPublishedDeltaData>> lazyDeltaAtCheckpointVersionOpt =
         new Lazy<>(
             () ->
                 allPublishedDeltas.stream()
@@ -583,20 +557,20 @@ public class SnapshotManager {
    * <ul>
    *   <li>Assumes that {@code allPublishedDeltas} is sorted and contiguous.
    *   <li>Assumes that {@code parsedLogDatas} is sorted and contiguous.
-   *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link ParsedDeltaData}
-   *       (written to file).
+   *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link
+   *       ParsedCatalogCommitData} (written to file).
    *   <li>If there is both a published Delta and a ratified staged commit for the same version,
    *       prioritizes the ratified staged commit
    * </ul>
    */
   private List<ParsedDeltaData> getAllDeltasAfterCheckpointWithCatalogPriority(
-      List<ParsedDeltaData> allPublishedDeltas,
+      List<ParsedPublishedDeltaData> allPublishedDeltas,
       List<ParsedLogData> parsedLogDatas,
       long latestCompleteCheckpointVersion,
       long versionToLoad) {
     final List<ParsedDeltaData> allPublishedDeltasAfterCheckpoint =
         allPublishedDeltas.stream()
-            .filter(x -> x.isFile())
+            .filter(ParsedLogData::isFile)
             .filter(
                 x ->
                     latestCompleteCheckpointVersion < x.getVersion()
@@ -609,31 +583,16 @@ public class SnapshotManager {
 
     final List<ParsedDeltaData> allRatifiedCommitsAfterCheckpoint =
         parsedLogDatas.stream()
-            .filter(x -> x instanceof ParsedDeltaData && x.isFile())
+            .filter(x -> x instanceof ParsedCatalogCommitData && x.isFile())
             .filter(
                 x ->
                     latestCompleteCheckpointVersion < x.getVersion()
                         && x.getVersion() <= versionToLoad)
-            .map(ParsedDeltaData.class::cast)
+            .map(ParsedCatalogCommitData.class::cast)
             .collect(Collectors.toList());
 
-    if (allRatifiedCommitsAfterCheckpoint.isEmpty()) {
-      return allPublishedDeltasAfterCheckpoint;
-    }
-
-    if (allPublishedDeltasAfterCheckpoint.isEmpty()) {
-      return allRatifiedCommitsAfterCheckpoint;
-    }
-
-    final long firstRatified = allRatifiedCommitsAfterCheckpoint.get(0).getVersion();
-    final long lastRatified = ListUtils.getLast(allRatifiedCommitsAfterCheckpoint).getVersion();
-
-    return Stream.of(
-            allPublishedDeltasAfterCheckpoint.stream().filter(x -> x.getVersion() < firstRatified),
-            allRatifiedCommitsAfterCheckpoint.stream(),
-            allPublishedDeltasAfterCheckpoint.stream().filter(x -> x.getVersion() > lastRatified))
-        .flatMap(Function.identity())
-        .collect(Collectors.toList());
+    return LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
+        allPublishedDeltasAfterCheckpoint, allRatifiedCommitsAfterCheckpoint);
   }
 
   /**
