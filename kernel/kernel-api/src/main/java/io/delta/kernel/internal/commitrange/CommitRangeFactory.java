@@ -16,13 +16,13 @@
 package io.delta.kernel.internal.commitrange;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.DeltaErrorsInternal.*;
 import static io.delta.kernel.internal.DeltaLogActionUtils.listDeltaLogFilesAsIter;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.LogDataUtils;
@@ -72,7 +72,7 @@ class CommitRangeFactory {
         tablePath, ctx.startBoundaryOpt, ctx.endBoundaryOpt, startVersion, endVersion, deltas);
   }
 
-  private long resolveStartVersion(Engine engine, List<ParsedCatalogCommitData> parsedDeltas) {
+  private long resolveStartVersion(Engine engine, List<ParsedCatalogCommitData> catalogCommits) {
     if (!ctx.startBoundaryOpt.isPresent()) {
       // Default to version 0 if no start boundary is provided
       return 0L;
@@ -91,7 +91,7 @@ class CommitRangeFactory {
           logPath,
           startBoundary.getTimestamp(),
           (SnapshotImpl) startBoundary.getLatestSnapshot(),
-          parsedDeltas);
+          catalogCommits);
     }
   }
 
@@ -102,7 +102,7 @@ class CommitRangeFactory {
    * cannot be resolved until later after we have performed any listing.
    */
   private Optional<Long> resolveEndVersionIfSpecified(
-      Engine engine, List<ParsedCatalogCommitData> parsedDeltas) {
+      Engine engine, List<ParsedCatalogCommitData> catalogCommits) {
     if (!ctx.endBoundaryOpt.isPresent()) {
       // When endBoundary is not provided, we default to the latest version. We cannot resolve the
       // latest version until later after we have performed any listing.
@@ -123,7 +123,7 @@ class CommitRangeFactory {
               logPath,
               endBoundary.getTimestamp(),
               (SnapshotImpl) endBoundary.getLatestSnapshot(),
-              parsedDeltas);
+              catalogCommits);
       return Optional.of(resolvedVersion);
     }
   }
@@ -162,12 +162,12 @@ class CommitRangeFactory {
   }
 
   /**
-   * Lists the _delta_log and combines the found published deltas with the catalog ratified deltas
-   * to compile a single contiguous list of deltas. Catalog commits take priority over published
-   * deltas when both are present for the same commit version. Returned deltas are guaranteed to
-   * start with startVersion, end with endVersion if endVersionOpt is non-empty, and are contiguous.
-   * Throws an exception if no deltas are found in the version range, or if startVersion or
-   * endVersion cannot be found.
+   * Lists the _delta_log and combines the found published deltas with the catalog commits to
+   * compile a single contiguous list of deltas. Catalog commits take priority over published deltas
+   * when both are present for the same commit version. Returned deltas are guaranteed to start with
+   * startVersion, end with endVersion if endVersionOpt is non-empty, and are contiguous. Throws an
+   * exception if no deltas are found in the version range, or if startVersion or endVersion cannot
+   * be found.
    */
   private List<ParsedDeltaData> getDeltasForVersionRangeWithCatalogPriority(
       Engine engine,
@@ -221,13 +221,11 @@ class CommitRangeFactory {
         final ParsedLogData prev = publishedDeltas.get(i - 1);
         final ParsedLogData curr = publishedDeltas.get(i);
         if (prev.getVersion() + 1 != curr.getVersion()) {
-          throw new InvalidTableException(
+          throw publishedDeltasNotContiguous(
               tablePath.toString(),
-              String.format(
-                  "Missing delta files: versions are not contiguous: (%s)",
-                  publishedDeltas.stream()
-                      .map(ParsedDeltaData::getVersion)
-                      .collect(Collectors.toList())));
+              publishedDeltas.stream()
+                  .map(ParsedDeltaData::getVersion)
+                  .collect(Collectors.toList()));
         }
       }
     }
@@ -245,31 +243,19 @@ class CommitRangeFactory {
       // We cannot have ratifiedDeltas.head.version < publishedDeltas.head.version
       // Example: P2, P3 + R1, R2, R3 is invalid
       if (earliestRatifiedVersion < earliestPublishedVersion) {
-        throw new InvalidTableException(
+        throw catalogCommitsPrecedePublishedDeltas(
             tablePath.toString(),
-            String.format(
-                "Missing delta file: found staged ratified commit for version %s but no published "
-                    + "delta file. Found published deltas for versions: %s",
-                earliestRatifiedVersion,
-                publishedDeltas.stream()
-                    .map(ParsedDeltaData::getVersion)
-                    .collect(Collectors.toList())));
+            earliestRatifiedVersion,
+            publishedDeltas.stream().map(ParsedDeltaData::getVersion).collect(Collectors.toList()));
       }
       long lastPublishedVersion = ListUtils.getLast(publishedDeltas).getVersion();
       // We must have publishedDeltas + ratifiedDeltas be contiguous
       // Example: P0, P1 + R3, R4 is invalid
       if (lastPublishedVersion + 1 < earliestRatifiedVersion) {
-        throw new InvalidTableException(
+        throw publishedDeltasAndCatalogCommitsNotContiguous(
             tablePath.toString(),
-            String.format(
-                "Missing delta files: found published delta files for versions %s and staged "
-                    + "ratified commits for versions %s",
-                publishedDeltas.stream()
-                    .map(ParsedDeltaData::getVersion)
-                    .collect(Collectors.toList()),
-                ratifiedDeltas.stream()
-                    .map(ParsedDeltaData::getVersion)
-                    .collect(Collectors.toList())));
+            publishedDeltas.stream().map(ParsedDeltaData::getVersion).collect(Collectors.toList()),
+            ratifiedDeltas.stream().map(ParsedDeltaData::getVersion).collect(Collectors.toList()));
       }
     }
   }
