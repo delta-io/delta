@@ -51,6 +51,7 @@ import java.util.Optional;
 
 /** Implementation of {@link Snapshot}. */
 public class SnapshotImpl implements Snapshot {
+
   private final Path logPath;
   private final Path dataPath;
   private final long version;
@@ -72,7 +73,8 @@ public class SnapshotImpl implements Snapshot {
       Protocol protocol,
       Metadata metadata,
       Committer committer,
-      SnapshotQueryContext snapshotContext) {
+      SnapshotQueryContext snapshotContext,
+      Optional<Long> inCommitTimestampOpt) {
     checkArgument(version >= 0, "A snapshot cannot have version < 0");
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
@@ -82,7 +84,7 @@ public class SnapshotImpl implements Snapshot {
     this.protocol = requireNonNull(protocol);
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
-    this.inCommitTimestampOpt = Optional.empty();
+    this.inCommitTimestampOpt = inCommitTimestampOpt;
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
     // constructor because some Snapshot metrics, like {@link

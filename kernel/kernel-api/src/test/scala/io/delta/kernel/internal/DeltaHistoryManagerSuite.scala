@@ -995,7 +995,8 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       new Protocol(1, 2),
       malformedMetadata,
       DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
-      SnapshotQueryContext.forLatestSnapshot(dataPath.toString))
+      SnapshotQueryContext.forLatestSnapshot(dataPath.toString),
+      Optional.empty() /* inCommitTimestampOpt */ )
 
     intercept[IllegalStateException] {
       getActiveCommitAtTimestamp(

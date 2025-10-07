@@ -20,9 +20,11 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.hook.PostCommitHook;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Contains the result of a successful transaction commit. Returned by {@link
@@ -35,12 +37,17 @@ public class TransactionCommitResult {
   private final long version;
   private final List<PostCommitHook> postCommitHooks;
   private final TransactionReport transactionReport;
+  private final Optional<SnapshotImpl> postCommitSnapshotOpt;
 
   public TransactionCommitResult(
-      long version, List<PostCommitHook> postCommitHooks, TransactionReport transactionReport) {
+      long version,
+      List<PostCommitHook> postCommitHooks,
+      TransactionReport transactionReport,
+      Optional<SnapshotImpl> postCommitSnapshotOpt) {
     this.version = version;
     this.postCommitHooks = requireNonNull(postCommitHooks);
     this.transactionReport = requireNonNull(transactionReport);
+    this.postCommitSnapshotOpt = requireNonNull(postCommitSnapshotOpt);
   }
 
   /**
@@ -72,5 +79,13 @@ public class TransactionCommitResult {
   /** @return the report and metrics for this transaction */
   public TransactionReport getTransactionReport() {
     return transactionReport;
+  }
+
+  /**
+   * @return the snapshot at the committed version. Currently, Kernel does not support getting the
+   *     post-commit snapshot for transactions that experienced conflicts.
+   */
+  public Optional<Snapshot> getPostCommitSnapshot() {
+    return postCommitSnapshotOpt.map(s -> s); // Need to upcast
   }
 }
