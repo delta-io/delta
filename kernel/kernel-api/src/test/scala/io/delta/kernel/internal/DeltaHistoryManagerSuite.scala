@@ -29,7 +29,7 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
-import io.delta.kernel.internal.files.ParsedDeltaData
+import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedPublishedDeltaData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.lang.Lazy
 import io.delta.kernel.internal.metrics.SnapshotQueryContext
@@ -1104,7 +1104,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
 
   private def checkGetActiveCommitAtTimestampWithParsedLogData(
       fileList: Seq[FileStatus],
-      catalogCommits: Seq[ParsedDeltaData],
+      catalogCommits: Seq[ParsedCatalogCommitData],
       versionToICT: Map[Long, Long],
       timestampToQuery: Long,
       expectedVersion: Long,
@@ -1152,7 +1152,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Published commits: _
     // Ratified commits: V0
     val catalogCommitFiles = Seq(stagedCommitFile(0L))
-    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
     val versionToICT = Map(0L -> 180L)
 
     // Query the exact timestamp
@@ -1206,7 +1206,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Published commits: _
     // Ratified commits: V0, V1
     val catalogCommits = Seq(stagedCommitFile(0L), stagedCommitFile(1L))
-    val parsedLogData = catalogCommits.map(ParsedDeltaData.forFileStatus(_))
+    val parsedLogData = catalogCommits.map(ParsedCatalogCommitData.forFileStatus(_))
     val versionToICT = Map(0L -> 180L, 1L -> 280L)
 
     // Query the exact timestamp of V0
@@ -1242,7 +1242,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       deltaFileStatus(0),
       deltaFileStatus(1)) ++ catalogCommitFiles
     val versionToICT = Map(0L -> 180L, 1L -> 280L, 2L -> 380L, 3L -> 480L)
-    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
 
     // Query the exact timestamp of V1
     checkGetActiveCommitAtTimestampWithParsedLogData(
@@ -1290,7 +1290,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Published commits: V0
     // Ratified commits: V0
     val catalogCommitFiles = Seq(stagedCommitFile(0L))
-    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
     val fileList = Seq(deltaFileStatus(0)) ++ catalogCommitFiles
     val versionToICT = Map(0L -> 200L)
     // If we read from the published file, we should get ICT=200
@@ -1318,7 +1318,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Published commits: V10, V11
     // Ratified commits: V11, V12
     val catalogCommitFiles = Seq(stagedCommitFile(11), stagedCommitFile(12))
-    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
     val fileList = Seq(
       classicCheckpointFileStatus(10),
       deltaFileStatus(10),
@@ -1377,7 +1377,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Published commits: V0, V1, V2
     // Ratified commits: V0, V2
     val catalogCommitFiles = Seq(stagedCommitFile(0), stagedCommitFile(2))
-    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
     val fileList = Seq(
       deltaFileStatus(0),
       deltaFileStatus(1),
@@ -1446,7 +1446,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Published commits: V0 (non-ICT), V1 (enables ICT)
     // Ratified commits: V2
     val catalogCommitFiles = Seq(stagedCommitFile(2))
-    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
     val fileList = Seq(
       deltaFileStatus(0),
       deltaFileStatus(1)) ++ catalogCommitFiles
@@ -1519,7 +1519,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Published commits: v10
     // Ratified commits: V11
     val catalogCommitFiles = Seq(stagedCommitFile(11))
-    val parsedLogData = catalogCommitFiles.map(ParsedDeltaData.forFileStatus(_))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
     val fileList = Seq(
       classicCheckpointFileStatus(10),
       deltaFileStatus(10)) ++ catalogCommitFiles
@@ -1562,9 +1562,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       override def getColumnVector(ordinal: Int): ColumnVector = null
       override def getSize: Int = 1
     }
-    val inlineCommit = ParsedDeltaData.forInlineData(
-      1L,
-      mockColumnarBatch)
+    val inlineCommit = ParsedCatalogCommitData.forInlineData(1L, mockColumnarBatch)
     val inlineData = Seq(inlineCommit).asJava
 
     assertThrows[IllegalArgumentException] {
@@ -1578,23 +1576,6 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         false,
         false,
         inlineData)
-    }
-
-    // Test 2: Published deltas in ParsedLogData should be rejected (only staged commits allowed)
-    val publishedDelta = ParsedDeltaData.forFileStatus(deltaFileStatus(1))
-    val publishedData = Seq(publishedDelta).asJava
-
-    assertThrows[IllegalArgumentException] {
-      // Args don't matter as validation should fail immediately
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
-        createMockFSListFromEngine(fileList),
-        getMockSnapshot(dataPath, latestVersion = 0),
-        logPath,
-        10,
-        false,
-        false,
-        false,
-        publishedData)
     }
   }
 }

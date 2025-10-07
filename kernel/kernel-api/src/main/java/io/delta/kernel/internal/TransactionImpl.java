@@ -70,11 +70,44 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class TransactionImpl implements Transaction {
-  /////////////////////////
-  ///// Static fields /////
-  /////////////////////////
-  private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
 
+  ///////////////////////////////
+  // Static methods and fields //
+  ///////////////////////////////
+
+  /** Get the part of the schema of the table that needs the statistics to be collected per file. */
+  public static List<Column> getStatisticsColumns(Row transactionState) {
+    int numIndexedCols =
+        TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetadata(
+            TransactionStateRow.getConfiguration(transactionState));
+
+    // Get the list of partition columns to exclude
+    Set<String> partitionColumns =
+        new HashSet<>(TransactionStateRow.getPartitionColumnsList(transactionState));
+
+    // Collect the leaf-level columns for statistics calculation.
+    // This call selects only the first 'numIndexedCols' leaf columns from the logical schema,
+    // excluding any column whose top-level name appears in 'partitionColumns'.
+    // NOTE: Nested columns (i.e. each leaf within a StructType) count individually toward the
+    // numIndexedCols limit (not Map/ArrayTypes - they're not stats compatible types).
+    //
+    // For example, given the following schema:
+    //   root
+    //     ├─ col1 (int)
+    //     ├─ col2 (string)
+    //     └─ col3 (struct)
+    //           ├─ a (int)
+    //           └─ b (double)
+    //
+    // And if 'numIndexedCols' is set to 2 with no partition columns to exclude, then the returned
+    // stats columns
+    // would be: [col1, col2]. If 'col1' were a partition column, the returned list would be:
+    // [col2, col3.a] (assuming col3.a is encountered before col3.b).
+    return SchemaUtils.collectLeafColumns(
+        TransactionStateRow.getPhysicalSchema(transactionState), partitionColumns, numIndexedCols);
+  }
+
+  private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
   public static final int DEFAULT_READ_VERSION = 1;
   public static final int DEFAULT_WRITE_VERSION = 2;
   /**
@@ -84,9 +117,10 @@ public class TransactionImpl implements Transaction {
    */
   private static final int DEFAULT_MAX_RETRIES = 200;
 
-  ///////////////////////////
-  ///// Instance fields /////
-  ///////////////////////////
+  /////////////////////
+  // Instance fields //
+  /////////////////////
+
   private final UUID txnId = UUID.randomUUID();
 
   /** If the transaction is defining a new table from scratch (i.e. create table, replace table) */
@@ -164,6 +198,10 @@ public class TransactionImpl implements Transaction {
     this.currentCrcInfo = readSnapshotOpt.flatMap(SnapshotImpl::getCurrentCrcInfo);
   }
 
+  ////////////////
+  // Public API //
+  ////////////////
+
   @Override
   public Row getTransactionState(Engine engine) {
     return TransactionStateRow.of(metadata, dataPath.toString(), maxRetries);
@@ -189,18 +227,9 @@ public class TransactionImpl implements Transaction {
     return readSnapshotOpt.map(SnapshotImpl::getVersion).orElse(-1L);
   }
 
-  public Optional<SetTransaction> getSetTxnOpt() {
-    return setTxnOpt;
-  }
-
   @Override
   public void withCommitterProperties(Supplier<Map<String, String>> committerProperties) {
     this.committerProperties = requireNonNull(committerProperties, "committerProperties is null");
-  }
-
-  @VisibleForTesting
-  public void addDomainMetadataInternal(String domain, String config) {
-    domainMetadataState.addDomain(domain, config);
   }
 
   @Override
@@ -221,11 +250,6 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  @VisibleForTesting
-  public void removeDomainMetadataInternal(String domain) {
-    domainMetadataState.removeDomain(domain);
-  }
-
   @Override
   public void removeDomainMetadata(String domain) {
     checkState(
@@ -235,33 +259,6 @@ public class TransactionImpl implements Transaction {
         DomainMetadata.isUserControlledDomain(domain),
         "Removing a system-controlled domain is not allowed: " + domain);
     domainMetadataState.removeDomain(domain);
-  }
-
-  public Protocol getProtocol() {
-    return protocol;
-  }
-
-  public Optional<List<Column>> getEffectiveClusteringColumns() {
-    if (isCreateOrReplace) {
-      // if isCreateOrReplace return the columns set in this txn
-      return newClusteringColumnsOpt;
-    } else { // since !isCreateOrReplace must be an update to an existing table
-      if (newClusteringColumnsOpt.isPresent()) {
-        // if the clustering columns are being updated in this txn return those
-        return newClusteringColumnsOpt;
-      } else {
-        // else, return the current existing clustering columns (readSnapshotOpt must be present)
-        return readSnapshotOpt.flatMap(SnapshotImpl::getPhysicalClusteringColumns);
-      }
-    }
-  }
-
-  public Path getDataPath() {
-    return dataPath;
-  }
-
-  public Path getLogPath() {
-    return logPath;
   }
 
   @Override
@@ -304,6 +301,102 @@ public class TransactionImpl implements Transaction {
       throw e;
     }
   }
+
+  //////////////////
+  // Internal API //
+  //////////////////
+
+  @VisibleForTesting
+  public void addDomainMetadataInternal(String domain, String config) {
+    domainMetadataState.addDomain(domain, config);
+  }
+
+  @VisibleForTesting
+  public void removeDomainMetadataInternal(String domain) {
+    domainMetadataState.removeDomain(domain);
+  }
+
+  public Path getDataPath() {
+    return dataPath;
+  }
+
+  public Path getLogPath() {
+    return logPath;
+  }
+
+  public Protocol getProtocol() {
+    return protocol;
+  }
+
+  public Optional<SetTransaction> getSetTxnOpt() {
+    return setTxnOpt;
+  }
+
+  public Optional<List<Column>> getEffectiveClusteringColumns() {
+    if (isCreateOrReplace) {
+      // if isCreateOrReplace return the columns set in this txn
+      return newClusteringColumnsOpt;
+    } else { // since !isCreateOrReplace must be an update to an existing table
+      if (newClusteringColumnsOpt.isPresent()) {
+        // if the clustering columns are being updated in this txn return those
+        return newClusteringColumnsOpt;
+      } else {
+        // else, return the current existing clustering columns (readSnapshotOpt must be present)
+        return readSnapshotOpt.flatMap(SnapshotImpl::getPhysicalClusteringColumns);
+      }
+    }
+  }
+
+  ///////////////////////////////
+  // Other getters and setters //
+  ///////////////////////////////
+
+  private boolean isReplaceTable() {
+    return isCreateOrReplace && readSnapshotOpt.isPresent();
+  }
+
+  /**
+   * Returns the maximum number of commit attempts, including the first attempt.
+   *
+   * <p>This is explicitly a method instead of a constant as the maxRetries variable is itself
+   * mutable, and can for example be set to 0 when the rowIdHighWatermark is explicitly provided.
+   */
+  private int getMaxCommitAttempts() {
+    return maxRetries + 1; // +1 because the first attempt is a try, not a retry.
+  }
+
+  private boolean isBlindAppend() {
+    // TODO: for now we hard code this to false to avoid erroneously setting this to true for a
+    //  non-blind-append operation. We should revisit how to safely set this to true for actual
+    //  blind appends.
+    return false;
+  }
+
+  private void updateMetadata(Metadata metadata) {
+    logger.info(
+        "Updated metadata from {} to {}", shouldUpdateMetadata ? this.metadata : "-", metadata);
+    this.metadata = metadata;
+    this.shouldUpdateMetadata = true;
+  }
+
+  private void handleSystemDomainMetadata(String domain, String config) {
+    if (domain.equals(RowTrackingMetadataDomain.DOMAIN_NAME)) {
+      if (!TableFeatures.isRowTrackingSupported(protocol)) {
+        throw DeltaErrors.rowTrackingRequiredForRowIdHighWatermark(dataPath.toString(), config);
+      }
+      long providedHighWaterMark =
+          RowTrackingMetadataDomain.fromJsonConfiguration(config).getRowIdHighWaterMark();
+      checkArgument(providedHighWaterMark >= 0, "rowIdHighWatermark must be >= 0");
+      this.providedRowIdHighWatermark = Optional.of(providedHighWaterMark);
+      // Conflict resolution is disabled when providedRowIdHighWatermark is set,
+      // because it must be updated according to the latest table state.
+      maxRetries = 0;
+    }
+  }
+
+  //////////////////////////////////
+  // Commit Execution (Main Flow) //
+  //////////////////////////////////
 
   private long commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
@@ -415,70 +508,6 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  private TransactionRebaseState resolveConflicts(
-      Engine engine,
-      long commitAsVersion,
-      CommitInfo attemptCommitInfo,
-      int attempt,
-      CloseableIterable<Row> dataActions) {
-    logger.info(
-        "[{}] Trying to resolve conflicts and retry commit. Attempt {}/{}.",
-        dataPath,
-        attempt,
-        getMaxCommitAttempts());
-    TransactionRebaseState rebaseState =
-        ConflictChecker.resolveConflicts(
-            engine,
-            readSnapshotOpt,
-            commitAsVersion,
-            this,
-            domainMetadataState.getComputedDomainMetadatasToCommit(),
-            dataActions);
-    long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
-    checkArgument(
-        commitAsVersion < newCommitAsVersion,
-        "New commit version %d should be greater than the previous commit attempt version %d.",
-        newCommitAsVersion,
-        commitAsVersion);
-    Optional<Long> updatedInCommitTimestamp =
-        getUpdatedInCommitTimestampAfterConflict(
-            rebaseState.getLatestCommitTimestamp(), attemptCommitInfo.getInCommitTimestamp());
-    updateMetadataWithICTIfRequired(
-        engine, updatedInCommitTimestamp, rebaseState.getLatestVersion());
-    attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
-    return rebaseState;
-  }
-
-  private void updateMetadata(Metadata metadata) {
-    logger.info(
-        "Updated metadata from {} to {}", shouldUpdateMetadata ? this.metadata : "-", metadata);
-    this.metadata = metadata;
-    this.shouldUpdateMetadata = true;
-  }
-
-  private void updateMetadataWithICTIfRequired(
-      Engine engine, Optional<Long> inCommitTimestampOpt, long lastCommitVersion) {
-    // If ICT is enabled for the current transaction, update the metadata with the ICT
-    // enablement info.
-    inCommitTimestampOpt.ifPresent(
-        inCommitTimestamp -> {
-          Optional<Metadata> metadataWithICTInfo =
-              InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-                  engine, inCommitTimestamp, readSnapshotOpt, metadata, lastCommitVersion + 1L);
-          metadataWithICTInfo.ifPresent(this::updateMetadata);
-        });
-  }
-
-  private Optional<Long> getUpdatedInCommitTimestampAfterConflict(
-      long winningCommitTimestamp, Optional<Long> attemptInCommitTimestamp) {
-    if (attemptInCommitTimestamp.isPresent()) {
-      long updatedInCommitTimestamp =
-          Math.max(attemptInCommitTimestamp.get(), winningCommitTimestamp + 1);
-      return Optional.of(updatedInCommitTimestamp);
-    }
-    return attemptInCommitTimestamp;
-  }
-
   private long doCommit(
       Engine engine,
       long commitAsVersion,
@@ -558,6 +587,66 @@ public class TransactionImpl implements Transaction {
     }
   }
 
+  ////////////////////////////////
+  // Commit Execution (Helpers) //
+  ////////////////////////////////
+
+  private CommitInfo generateCommitAction(Engine engine) {
+    long commitAttemptStartTime = clock.getTimeMillis();
+    return new CommitInfo(
+        generateInCommitTimestampForFirstCommitAttempt(engine, commitAttemptStartTime),
+        commitAttemptStartTime, /* timestamp */
+        "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
+        operation.getDescription(), /* description */
+        getOperationParameters(), /* operationParameters */
+        isBlindAppend(), /* isBlindAppend */
+        txnId.toString(), /* txnId */
+        emptyMap() /* operationMetrics */);
+  }
+
+  /**
+   * Generates a timestamp which is greater than the commit timestamp of the readSnapshotOpt. This
+   * can result in an additional file read and that this will only happen if ICT is enabled.
+   */
+  private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
+      Engine engine, long currentTimestamp) {
+    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+      if (readSnapshotOpt.isPresent()) {
+        long lastCommitTimestamp = readSnapshotOpt.get().getTimestamp(engine);
+        return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
+      } else { // For a new table this is just the current timestamp
+        return Optional.of(currentTimestamp);
+      }
+    } else {
+      return Optional.empty();
+    }
+  }
+
+  private Map<String, String> getOperationParameters() {
+    if (isCreateOrReplace) {
+      List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
+      String partitionBy =
+          partitionCols.stream()
+              .map(col -> "\"" + col + "\"")
+              .collect(Collectors.joining(",", "[", "]"));
+      return Collections.singletonMap("partitionBy", partitionBy);
+    }
+    return emptyMap();
+  }
+
+  private void updateMetadataWithICTIfRequired(
+      Engine engine, Optional<Long> inCommitTimestampOpt, long lastCommitVersion) {
+    // If ICT is enabled for the current transaction, update the metadata with the ICT
+    // enablement info.
+    inCommitTimestampOpt.ifPresent(
+        inCommitTimestamp -> {
+          Optional<Metadata> metadataWithICTInfo =
+              InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+                  engine, inCommitTimestamp, readSnapshotOpt, metadata, lastCommitVersion + 1L);
+          metadataWithICTInfo.ifPresent(this::updateMetadata);
+        });
+  }
+
   private void incrementMetricsForFileActionRow(TransactionMetrics txnMetrics, Row fileActionRow) {
     txnMetrics.totalActionsCounter.increment();
     if (!fileActionRow.isNullAt(ADD_FILE_ORDINAL)) {
@@ -570,12 +659,74 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  public boolean isBlindAppend() {
-    // TODO: for now we hard code this to false to avoid erroneously setting this to true for a
-    //  non-blind-append operation. We should revisit how to safely set this to true for actual
-    //  blind appends.
-    return false;
+  /**
+   * Returns the remove file rows needed to remove every active add file in the table. These rows
+   * are already formatted as {@link SingleAction} rows and are ready to be committed.
+   */
+  private CloseableIterator<Row> getRemoveActionsForReplace(Engine engine) {
+    checkArgument(
+        readSnapshotOpt.isPresent(), "Cannot generate removes for a snapshot with version < 0");
+    Scan scan = readSnapshotOpt.get().getScanBuilder().build();
+    return Utils.intoRows(scan.getScanFiles(engine))
+        .map(
+            scanRow -> {
+              AddFile add = new AddFile(scanRow.getStruct(InternalScanFileUtils.ADD_FILE_ORDINAL));
+              return SingleAction.createRemoveFileSingleAction(
+                  add.toRemoveFileRow(true /* dataChange */, Optional.empty()));
+            });
   }
+
+  /////////////////////////
+  // Conflict Resolution //
+  /////////////////////////
+
+  private TransactionRebaseState resolveConflicts(
+      Engine engine,
+      long commitAsVersion,
+      CommitInfo attemptCommitInfo,
+      int attempt,
+      CloseableIterable<Row> dataActions) {
+    logger.info(
+        "[{}] Trying to resolve conflicts and retry commit. Attempt {}/{}.",
+        dataPath,
+        attempt,
+        getMaxCommitAttempts());
+    TransactionRebaseState rebaseState =
+        ConflictChecker.resolveConflicts(
+            engine,
+            readSnapshotOpt,
+            commitAsVersion,
+            this,
+            domainMetadataState.getComputedDomainMetadatasToCommit(),
+            dataActions);
+    long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
+    checkArgument(
+        commitAsVersion < newCommitAsVersion,
+        "New commit version %d should be greater than the previous commit attempt version %d.",
+        newCommitAsVersion,
+        commitAsVersion);
+    Optional<Long> updatedInCommitTimestamp =
+        getUpdatedInCommitTimestampAfterConflict(
+            rebaseState.getLatestCommitTimestamp(), attemptCommitInfo.getInCommitTimestamp());
+    updateMetadataWithICTIfRequired(
+        engine, updatedInCommitTimestamp, rebaseState.getLatestVersion());
+    attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
+    return rebaseState;
+  }
+
+  private Optional<Long> getUpdatedInCommitTimestampAfterConflict(
+      long winningCommitTimestamp, Optional<Long> attemptInCommitTimestamp) {
+    if (attemptInCommitTimestamp.isPresent()) {
+      long updatedInCommitTimestamp =
+          Math.max(attemptInCommitTimestamp.get(), winningCommitTimestamp + 1);
+      return Optional.of(updatedInCommitTimestamp);
+    }
+    return attemptInCommitTimestamp;
+  }
+
+  ////////////////////////////
+  // Post-Commit Processing //
+  ////////////////////////////
 
   private List<PostCommitHook> generatePostCommitHooks(
       long committedVersion, TransactionMetricsResult txnMetrics) {
@@ -606,73 +757,9 @@ public class TransactionImpl implements Transaction {
     return postCommitHooks;
   }
 
-  /**
-   * Generates a timestamp which is greater than the commit timestamp of the readSnapshotOpt. This
-   * can result in an additional file read and that this will only happen if ICT is enabled.
-   */
-  private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
-      Engine engine, long currentTimestamp) {
-    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
-      if (readSnapshotOpt.isPresent()) {
-        long lastCommitTimestamp = readSnapshotOpt.get().getTimestamp(engine);
-        return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
-      } else { // For a new table this is just the current timestamp
-        return Optional.of(currentTimestamp);
-      }
-    } else {
-      return Optional.empty();
-    }
-  }
-
-  private CommitInfo generateCommitAction(Engine engine) {
-    long commitAttemptStartTime = clock.getTimeMillis();
-    return new CommitInfo(
-        generateInCommitTimestampForFirstCommitAttempt(engine, commitAttemptStartTime),
-        commitAttemptStartTime, /* timestamp */
-        "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
-        operation.getDescription(), /* description */
-        getOperationParameters(), /* operationParameters */
-        isBlindAppend(), /* isBlindAppend */
-        txnId.toString(), /* txnId */
-        emptyMap() /* operationMetrics */);
-  }
-
   private boolean isReadyForCheckpoint(long newVersion) {
     int checkpointInterval = CHECKPOINT_INTERVAL.fromMetadata(metadata);
     return newVersion > 0 && newVersion % checkpointInterval == 0;
-  }
-
-  private Map<String, String> getOperationParameters() {
-    if (isCreateOrReplace) {
-      List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
-      String partitionBy =
-          partitionCols.stream()
-              .map(col -> "\"" + col + "\"")
-              .collect(Collectors.joining(",", "[", "]"));
-      return Collections.singletonMap("partitionBy", partitionBy);
-    }
-    return emptyMap();
-  }
-
-  private TransactionReport recordTransactionReport(
-      Engine engine,
-      Optional<Long> committedVersion,
-      Optional<List<Column>> clusteringColumnsOpt,
-      TransactionMetrics transactionMetrics,
-      Optional<Exception> exception) {
-    TransactionReport transactionReport =
-        new TransactionReportImpl(
-            dataPath.toString() /* tablePath */,
-            operation.toString(),
-            engineInfo,
-            committedVersion,
-            clusteringColumnsOpt,
-            transactionMetrics,
-            readSnapshotOpt.map(SnapshotImpl::getSnapshotReport),
-            exception);
-    engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
-
-    return transactionReport;
   }
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
@@ -716,42 +803,54 @@ public class TransactionImpl implements Transaction {
                         .map(FileSizeHistogram::fromFileSizeHistogramResult)));
   }
 
-  /**
-   * Get the part of the schema of the table that needs the statistics to be collected per file.
-   *
-   * @param transactionState State of the transaction.
-   * @return
-   */
-  public static List<Column> getStatisticsColumns(Row transactionState) {
-    int numIndexedCols =
-        TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetadata(
-            TransactionStateRow.getConfiguration(transactionState));
+  private TransactionReport recordTransactionReport(
+      Engine engine,
+      Optional<Long> committedVersion,
+      Optional<List<Column>> clusteringColumnsOpt,
+      TransactionMetrics transactionMetrics,
+      Optional<Exception> exception) {
+    TransactionReport transactionReport =
+        new TransactionReportImpl(
+            dataPath.toString() /* tablePath */,
+            operation.toString(),
+            engineInfo,
+            committedVersion,
+            clusteringColumnsOpt,
+            transactionMetrics,
+            readSnapshotOpt.map(SnapshotImpl::getSnapshotReport),
+            exception);
+    engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
 
-    // Get the list of partition columns to exclude
-    Set<String> partitionColumns =
-        new HashSet<>(TransactionStateRow.getPartitionColumnsList(transactionState));
-
-    // Collect the leaf-level columns for statistics calculation.
-    // This call selects only the first 'numIndexedCols' leaf columns from the logical schema,
-    // excluding any column whose top-level name appears in 'partitionColumns'.
-    // NOTE: Nested columns (i.e. each leaf within a StructType) count individually toward the
-    // numIndexedCols limit (not Map/ArrayTypes - they're not stats compatible types).
-    //
-    // For example, given the following schema:
-    //   root
-    //     ├─ col1 (int)
-    //     ├─ col2 (string)
-    //     └─ col3 (struct)
-    //           ├─ a (int)
-    //           └─ b (double)
-    //
-    // And if 'numIndexedCols' is set to 2 with no partition columns to exclude, then the returned
-    // stats columns
-    // would be: [col1, col2]. If 'col1' were a partition column, the returned list would be:
-    // [col2, col3.a] (assuming col3.a is encountered before col3.b).
-    return SchemaUtils.collectLeafColumns(
-        TransactionStateRow.getPhysicalSchema(transactionState), partitionColumns, numIndexedCols);
+    return transactionReport;
   }
+
+  /////////////////////
+  // Logging Helpers //
+  /////////////////////
+
+  private void printLogForRetryableNonConflictException(
+      int attempt, long commitAsVersion, CommitFailedException cfe) {
+    logger.warn(
+        "Commit attempt {} for table version {} failed with a retryable exception and without "
+            + "conflict. Skipping conflict resolution and trying again. Exception: {}",
+        attempt,
+        commitAsVersion,
+        cfe);
+  }
+
+  private void printLogForRetryableWithConflictException(
+      int attempt, long commitAsVersion, CommitFailedException cfe) {
+    logger.warn(
+        "Commit attempt {} for version {} failed with a retryable exception due to a physical "
+            + "conflict. Performing conflict resolution and trying again. Exception: {}",
+        attempt,
+        commitAsVersion,
+        cfe);
+  }
+
+  ////////////////////
+  // Helper Classes //
+  ////////////////////
 
   /** Encapsulates the state of domain metadata within a transaction. */
   private class DomainMetadataState {
@@ -914,71 +1013,5 @@ public class TransactionImpl implements Transaction {
             emptyClusteringDomainMetadata.getConfiguration());
       }
     }
-  }
-
-  /**
-   * Returns the remove file rows needed to remove every active add file in the table. These rows
-   * are already formatted as {@link SingleAction} rows and are ready to be committed.
-   */
-  private CloseableIterator<Row> getRemoveActionsForReplace(Engine engine) {
-    checkArgument(
-        readSnapshotOpt.isPresent(), "Cannot generate removes for a snapshot with version < 0");
-    Scan scan = readSnapshotOpt.get().getScanBuilder().build();
-    return Utils.intoRows(scan.getScanFiles(engine))
-        .map(
-            scanRow -> {
-              AddFile add = new AddFile(scanRow.getStruct(InternalScanFileUtils.ADD_FILE_ORDINAL));
-              return SingleAction.createRemoveFileSingleAction(
-                  add.toRemoveFileRow(true /* dataChange */, Optional.empty()));
-            });
-  }
-
-  private void handleSystemDomainMetadata(String domain, String config) {
-    if (domain.equals(RowTrackingMetadataDomain.DOMAIN_NAME)) {
-      if (!TableFeatures.isRowTrackingSupported(protocol)) {
-        throw DeltaErrors.rowTrackingRequiredForRowIdHighWatermark(dataPath.toString(), config);
-      }
-      long providedHighWaterMark =
-          RowTrackingMetadataDomain.fromJsonConfiguration(config).getRowIdHighWaterMark();
-      checkArgument(providedHighWaterMark >= 0, "rowIdHighWatermark must be >= 0");
-      this.providedRowIdHighWatermark = Optional.of(providedHighWaterMark);
-      // Conflict resolution is disabled when providedRowIdHighWatermark is set,
-      // because it must be updated according to the latest table state.
-      maxRetries = 0;
-    }
-  }
-
-  private boolean isReplaceTable() {
-    return isCreateOrReplace && readSnapshotOpt.isPresent();
-  }
-
-  /**
-   * Returns the maximum number of commit attempts, including the first attempt.
-   *
-   * <p>This is explicitly a method instead of a constant as the maxRetries variable is itself
-   * mutable, and can for example be set to 0 when the rowIdHighWatermark is explicitly provided.
-   */
-  private int getMaxCommitAttempts() {
-    return maxRetries + 1; // +1 because the first attempt is a try, not a retry.
-  }
-
-  private void printLogForRetryableNonConflictException(
-      int attempt, long commitAsVersion, CommitFailedException cfe) {
-    logger.warn(
-        "Commit attempt {} for table version {} failed with a retryable exception and without "
-            + "conflict. Skipping conflict resolution and trying again. Exception: {}",
-        attempt,
-        commitAsVersion,
-        cfe);
-  }
-
-  private void printLogForRetryableWithConflictException(
-      int attempt, long commitAsVersion, CommitFailedException cfe) {
-    logger.warn(
-        "Commit attempt {} for version {} failed with a retryable exception due to a physical "
-            + "conflict. Performing conflict resolution and trying again. Exception: {}",
-        attempt,
-        commitAsVersion,
-        cfe);
   }
 }

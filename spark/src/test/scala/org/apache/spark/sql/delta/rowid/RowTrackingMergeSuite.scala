@@ -168,12 +168,21 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
         if (cdfEnabled && targetTablePostSetupAction.isEmpty) {
           assert(deltaLog.update().version === 1, "Table has been modified more than once.")
 
+          // The tableIdentifier will be overridden as a path identifier if a class/trait also mixes
+          // in DeltaDMLTestUtilsPathBased. So we need a check to ensure it's a name identifier
+          // before using it to get the catalog table.
+          val catalogTableOpt = if (DeltaTableIdentifier.isDeltaPath(spark, tableIdentifier)) {
+            None
+          } else {
+            Some(spark.sessionState.catalog.getTableMetadata(tableIdentifier))
+          }
           // Only read CDF from version 1 (the version after the MERGE)
           val cdfResult = CDCReader.changesToBatchDF(
               deltaLog,
               start = 1,
               end = 1,
               spark,
+              catalogTableOpt,
               useCoarseGrainedCDC = true)
               .select("stored_id",
                 "key",

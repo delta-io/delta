@@ -63,6 +63,7 @@ public class SnapshotImpl implements Snapshot {
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
+  // TODO: Do not take in LogReplay as a constructor argument.
   public SnapshotImpl(
       Path dataPath,
       long version,
@@ -230,7 +231,7 @@ public class SnapshotImpl implements Snapshot {
 
   /** Returns the crc info for the current snapshot if the checksum file is read */
   public Optional<CRCInfo> getCurrentCrcInfo() {
-    return logReplay.getCurrentCrcInfo();
+    return logReplay.getCrcInfoAtSnapshotVersion();
   }
 
   public Metadata getMetadata() {

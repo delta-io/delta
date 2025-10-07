@@ -19,7 +19,7 @@ package io.delta.kernel.defaults.utils
 import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.files.ParsedLogData
+import io.delta.kernel.internal.files.ParsedPublishedDeltaData
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -34,7 +34,7 @@ trait TestCommitterUtils {
       engine
         .getJsonHandler
         .writeJsonFileAtomically(filePath, finalizedActions, false)
-      new CommitResponse(ParsedLogData.forFileStatus(FileStatus.of(filePath)))
+      new CommitResponse(ParsedPublishedDeltaData.forFileStatus(FileStatus.of(filePath)))
     }
   }
 }

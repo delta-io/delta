@@ -44,12 +44,6 @@ public final class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
         version, partInfo._1, partInfo._2, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedMultiPartCheckpointData forInlineData(
-      long version, int part, int numParts, ColumnarBatch inlineData) {
-    return new ParsedMultiPartCheckpointData(
-        version, part, numParts, Optional.empty(), Optional.of(inlineData));
-  }
-
   public final int part;
   public final int numParts;
 

@@ -26,7 +26,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
@@ -82,7 +82,8 @@ public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
     }
 
     // TODO: [delta-io/delta#5021] Use FileSystemClient::getFileStatus API instead
-    return new CommitResponse(ParsedLogData.forFileStatus(FileStatus.of(jsonCommitFile)));
+    return new CommitResponse(
+        ParsedPublishedDeltaData.forFileStatus(FileStatus.of(jsonCommitFile)));
   }
 
   private void validateProtocol(Protocol protocol) {
