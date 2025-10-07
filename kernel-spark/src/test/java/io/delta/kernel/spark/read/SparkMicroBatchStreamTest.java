@@ -307,7 +307,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     boolean isInitialSnapshot = false;
     scala.Option<DeltaSourceOffset> endOffset = scala.Option.empty();
 
-    // Test DSv1 DeltaSource - should throw exception when encountering REMOVE 
+    // Test DSv1 DeltaSource - should throw exception when encountering REMOVE
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
         createDeltaSource(deltaLog, testTablePath);
