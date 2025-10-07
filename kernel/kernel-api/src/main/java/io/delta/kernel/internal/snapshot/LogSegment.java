@@ -353,7 +353,8 @@ public class LogSegment {
             + "  checkpoints=[%s\n  ],\n"
             + "  deltaAtEndVersion=%s,\n"
             + "  lastSeenChecksum=%s,\n"
-            + "  checkpointVersion=%s\n"
+            + "  checkpointVersion=%s,\n"
+            + "  maxPublishedDeltaVersion=%s\n"
             + "}",
         logPath,
         version,
@@ -361,7 +362,8 @@ public class LogSegment {
         formatList(checkpoints),
         deltaAtEndVersion,
         lastSeenChecksum.map(FileStatus::toString).orElse("None"),
-        checkpointVersionOpt.map(String::valueOf).orElse("None"));
+        checkpointVersionOpt.map(String::valueOf).orElse("None"),
+        maxPublishedDeltaVersion.map(String::valueOf).orElse("None"));
   }
 
   @Override
