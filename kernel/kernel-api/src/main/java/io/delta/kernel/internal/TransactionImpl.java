@@ -392,6 +392,7 @@ public class TransactionImpl implements Transaction {
   // Commit Execution (Main Flow) //
   //////////////////////////////////
 
+  /** Returns (commitDeltaData, inCommitTimestamp). */
   private Tuple2<ParsedDeltaData, Optional<Long>> commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
@@ -502,6 +503,7 @@ public class TransactionImpl implements Transaction {
     }
   }
 
+  /** Returns (commitDeltaData, inCommitTimestamp). */
   private Tuple2<ParsedDeltaData, Optional<Long>> doCommit(
       Engine engine,
       long commitAsVersion,

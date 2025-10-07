@@ -65,6 +65,7 @@ public class SnapshotImpl implements Snapshot {
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
   // TODO: Do not take in LogReplay as a constructor argument.
+  // TODO: Also take in clustering columns for post-commit snapshot
   public SnapshotImpl(
       Path dataPath,
       long version,

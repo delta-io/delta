@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.kernel.defaults
 
 import scala.collection.immutable.Seq
@@ -22,6 +23,7 @@ import io.delta.kernel.defaults.utils.{TestRow, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig}
+import io.delta.kernel.test.MockEngineUtils
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 
@@ -32,7 +34,10 @@ import org.scalatest.funsuite.AnyFunSuite
  *
  * Note that we use "PCS" in our test names for brevity.
  */
-class PostCommitSnapshotSuite extends AnyFunSuite with WriteUtilsWithV2Builders {
+class PostCommitSnapshotSuite
+    extends AnyFunSuite
+    with WriteUtilsWithV2Builders
+    with MockEngineUtils {
 
   //////////////////
   // Test Helpers //
@@ -152,6 +157,35 @@ class PostCommitSnapshotSuite extends AnyFunSuite with WriteUtilsWithV2Builders 
       assert(!result.getPostCommitSnapshot.isPresent)
     }
   }
+
+  ////////////////////////////////////////////////////////////
+  // PostCommitSnapshot has certain fields pre-loaded tests //
+  ////////////////////////////////////////////////////////////
+
+  test("PCS has ICT pre-loaded") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
+
+      val result = appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1)
+      val postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+
+      val failingEngine = mockEngine()
+
+      // should *not* use the engine to try and read ICT from delta file
+      postCommitSnapshot.getTimestamp(failingEngine)
+    }
+  }
+
+  // TODO: Test CRC is also pre-loaded. Requires
+  //       (1) SnapshotImpl::getCurrentCrcInfo to take in an engine param
+  //       (2) LogReplay to *not* be injected into SnapshotImpl constructor
+  //       (3) CRC to be injected into SnapshotImpl constructor
+
+  // TODO: Test clusteringColumns are pre-loaded (when txn sets new clustering columns)
 
   ///////////////////////////
   // Metadata change tests //
