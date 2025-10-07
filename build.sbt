@@ -727,7 +727,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 lazy val kernelSpark = (project in file("kernel-spark"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
-  .dependsOn(spark % "test->test")
+  .dependsOn(spark % "compile->compile;test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "kernel-spark",

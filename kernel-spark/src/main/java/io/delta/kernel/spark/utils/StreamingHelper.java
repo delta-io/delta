@@ -17,10 +17,16 @@ package io.delta.kernel.spark.utils;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.RemoveFile;
+import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
@@ -138,5 +144,51 @@ public class StreamingHelper {
     if (version < earliest || ((version > latest) && !allowOutOfRange)) {
       throw new VersionNotFoundException(version, earliest, latest);
     }
+  }
+
+  /**
+   * Get the version from a batch. Assumes all rows in the batch have the same version, so it reads
+   * from the first row (rowId=0).
+   */
+  public static long getVersion(ColumnarBatch batch) {
+    assert batch.getSize() > 0;
+    int versionColIdx = batch.getSchema().indexOf("version");
+    return batch.getColumnVector(versionColIdx).getLong(0);
+  }
+
+  /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
+  public static Optional<AddFile> getDataChangeAdd(ColumnarBatch batch, int rowId) {
+    int addIdx = batch.getSchema().indexOf("add");
+    ColumnVector addVector = batch.getColumnVector(addIdx);
+    if (addVector.isNullAt(rowId)) {
+      return Optional.empty();
+    }
+
+    Row addFileRow = StructRow.fromStructVector(addVector, rowId);
+    if (addFileRow == null) {
+      return Optional.empty();
+    }
+
+    AddFile addFile = new AddFile(addFileRow);
+    return addFile.getDataChange() ? Optional.of(addFile) : Optional.empty();
+  }
+
+  /**
+   * Get RemoveFile action from a batch at the specified row, if present and has dataChange=true.
+   */
+  public static Optional<RemoveFile> getDataChangeRemove(ColumnarBatch batch, int rowId) {
+    int removeIdx = batch.getSchema().indexOf("remove");
+    ColumnVector removeVector = batch.getColumnVector(removeIdx);
+    if (removeVector.isNullAt(rowId)) {
+      return Optional.empty();
+    }
+
+    Row removeFileRow = StructRow.fromStructVector(removeVector, rowId);
+    if (removeFileRow == null) {
+      return Optional.empty();
+    }
+
+    RemoveFile removeFile = new RemoveFile(removeFileRow);
+    return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();
   }
 }
