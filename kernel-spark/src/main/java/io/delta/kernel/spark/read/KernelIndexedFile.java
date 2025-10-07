@@ -20,8 +20,9 @@ import io.delta.kernel.internal.actions.AddFile;
 /**
  * Java version of IndexedFile.scala that uses Kernel's action classes.
  *
- * <p> File: represents a data file in Delta. 
- * <p> Indexed: refers to the index in DeltaSourceOffset, assigned by the streaming engine.
+ * <p>File: represents a data file in Delta.
+ *
+ * <p>Indexed: refers to the index in DeltaSourceOffset, assigned by the streaming engine.
  */
 public class KernelIndexedFile {
   private final long version;
