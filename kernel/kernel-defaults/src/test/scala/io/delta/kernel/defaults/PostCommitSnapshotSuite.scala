@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Snapshot}
+import io.delta.kernel.{Operation, Snapshot, TransactionCommitResult}
 import io.delta.kernel.defaults.utils.{TestRow, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
@@ -34,55 +34,58 @@ import org.scalatest.funsuite.AnyFunSuite
  */
 class PostCommitSnapshotSuite extends AnyFunSuite with WriteUtilsWithV2Builders {
 
+  //////////////////
+  // Test Helpers //
+  //////////////////
+
   private def assertAddFilesMatch(
+      engine: Engine,
       actual: SnapshotImpl,
-      expected: SnapshotImpl,
-      engine: Engine): Unit = {
+      expected: SnapshotImpl): Unit = {
     val actualFiles = collectScanFileRows(actual.getScanBuilder.build(), engine)
-      .map(InternalScanFileUtils.getAddFileStatus)
+      .map(x => InternalScanFileUtils.getAddFileStatus(x).getPath)
     val expectedFiles = collectScanFileRows(expected.getScanBuilder.build(), engine)
-      .map(InternalScanFileUtils.getAddFileStatus)
+      .map(x => InternalScanFileUtils.getAddFileStatus(x).getPath)
 
-    assert(actualFiles.size === expectedFiles.size)
-
-    val actualFilePaths = actualFiles.map(_.getPath).sorted
-    val expectedFilePaths = expectedFiles.map(_.getPath).sorted
-
-    assert(actualFilePaths === expectedFilePaths)
+    assert(actualFiles === expectedFiles)
   }
 
-  private def verifyPostCommitSnapshotMatchesLatest(
+  private def checkPostCommitSnapshot(
+      engine: Engine,
       postCommitSnapshot: Snapshot,
-      tablePath: String,
-      engine: Engine): Unit = {
+      expectCrc: Boolean = false): Unit = {
     val actual = postCommitSnapshot.asInstanceOf[SnapshotImpl]
-    val expected = latestSnapshot(tablePath, engine)
+    val expected = latestSnapshot(actual.getPath, engine)
+
+    if (expectCrc) {
+      assert(actual.getCurrentCrcInfo.isPresent)
+    }
+
+    // TODO: We need better visibility into when the below information is loaded from the log,
+    //       loaded from CRC, or already stored in memory (i.e. injected during post-commit snapshot
+    //       creation)
 
     assert(actual.getVersion === expected.getVersion)
     assert(actual.getSchema === expected.getSchema)
     assert(actual.getProtocol === expected.getProtocol)
     assert(actual.getMetadata === expected.getMetadata)
-    assertAddFilesMatch(actual, expected, engine)
-
-    // TODO: We need better visibility into when the below information is loaded from the log,
-    //       loaded from CRC, or already stored in memory (i.e. injected during post-commit snapshot
-    //       creation)
+    assert(actual.getPartitionColumnNames === expected.getPartitionColumnNames)
+    assert(actual.getPhysicalClusteringColumns === expected.getPhysicalClusteringColumns)
     assert(actual.getTimestamp(engine) === expected.getTimestamp(engine))
-
-    // The postCommitSnapshot might have the CRCInfo (injected in memory) even if it wasn't written
-    // out to disk
-    if (expected.getCurrentCrcInfo.isPresent) {
-      assert(actual.getCurrentCrcInfo === expected.getCurrentCrcInfo)
-    }
-
     assert(actual.getActiveDomainMetadataMap === expected.getActiveDomainMetadataMap)
+
+    assertAddFilesMatch(engine, actual, expected)
   }
+
+  ////////////////////////////
+  // Create new table tests //
+  ////////////////////////////
 
   test("creating a new empty table => yields a PCS") {
     withTempDirAndEngine { (tablePath, engine) =>
       val result = createEmptyTable(engine, tablePath, testSchema)
 
-      verifyPostCommitSnapshotMatchesLatest(result.getPostCommitSnapshot.get(), tablePath, engine)
+      checkPostCommitSnapshot(engine, result.getPostCommitSnapshot.get(), expectCrc = true)
     }
   }
 
@@ -95,121 +98,123 @@ class PostCommitSnapshotSuite extends AnyFunSuite with WriteUtilsWithV2Builders 
         schema = testSchema,
         data = seqOfUnpartitionedDataBatch1)
 
-      verifyPostCommitSnapshotMatchesLatest(result.getPostCommitSnapshot.get(), tablePath, engine)
+      checkPostCommitSnapshot(engine, result.getPostCommitSnapshot.get(), expectCrc = true)
     }
   }
 
+  /////////////////////////
+  // CRC existence tests //
+  /////////////////////////
+
   test("commit at readVersion + 1 (*with* CRC at readVersion) => yields a PCS with CRC") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // ===== GIVEN =====
       val result0 = createEmptyTable(engine, tablePath, testSchema)
       executeCrcSimple(result0, engine)
+      assert(latestSnapshot(tablePath, engine).getCurrentCrcInfo.isPresent)
 
-      val snapshot0 = latestSnapshot(tablePath, engine)
-      assert(snapshot0.getCurrentCrcInfo.isPresent)
-
-      // ===== WHEN =====
       val result1 = appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1)
 
-      // ===== THEN =====
-      verifyPostCommitSnapshotMatchesLatest(result1.getPostCommitSnapshot.get(), tablePath, engine)
+      checkPostCommitSnapshot(engine, result1.getPostCommitSnapshot.get(), expectCrc = true)
     }
   }
 
   test("commit at readVersion + 1 (*without* CRC at readVersion) => yields a PCS without CRC") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // ===== GIVEN =====
       createEmptyTable(engine, tablePath, testSchema)
 
-      val snapshot0 = latestSnapshot(tablePath, engine)
-      assert(snapshot0.getCurrentCrcInfo.isEmpty)
-
-      // ===== WHEN =====
       val result1 = appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1)
 
-      // ===== THEN =====
-      verifyPostCommitSnapshotMatchesLatest(result1.getPostCommitSnapshot.get(), tablePath, engine)
+      checkPostCommitSnapshot(engine, result1.getPostCommitSnapshot.get(), expectCrc = false)
     }
   }
 
   test("commit at readVersion + 2 => does NOT yield a PCS") {
     withTempDirAndEngine { (tablePath, engine) =>
       // ===== GIVEN =====
-      createEmptyTable(engine, tablePath, testSchema)
+      createEmptyTable(engine, tablePath, testSchema) // V0
 
-      val txn = getUpdateTxn(engine, tablePath) // Create a transaction that reads at version 0
+      val txn = getUpdateTxn(engine, tablePath) // Create a transaction that reads at V0
       assert(txn.getReadTableVersion == 0)
 
-      // Create winning commits at v1 and v2
-      appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1)
-      appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch2)
+      // Create winning commits at V1 and V2
+      appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1) // V1
+      appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch2) // V2
       assert(latestSnapshot(tablePath, engine).getVersion == 2)
 
       // ===== WHEN =====
       // Now commit the original txn that read at v0. This will commit at v3
       val txnState = txn.getTransactionState(engine)
       val actions = inMemoryIterable(stageData(txnState, Map.empty[String, Literal], dataBatches1))
-      val result = commitTransaction(txn, engine, actions)
+      val result = commitTransaction(txn, engine, actions) // V3
 
       // ===== THEN =====
-      assert(!result.getPostCommitSnapshot.isPresent)
       assert(result.getVersion == 3)
+      assert(!result.getPostCommitSnapshot.isPresent)
     }
   }
 
-  test("commit schema change at readVersion + 1 => yields a PCS with updated schema") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // ===== GIVEN =====
-      createEmptyTable(
-        engine,
-        tablePath,
-        testSchema,
-        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
-      val newSchema = latestSnapshot(tablePath, engine).getSchema.add("newCol", INTEGER)
+  ///////////////////////////
+  // Metadata change tests //
+  ///////////////////////////
 
-      // ===== WHEN =====
-      val result = updateTableMetadata(engine, tablePath, schema = newSchema)
+  case class MetadataChangeTestCase(
+      changeType: String,
+      initTableProperties: Map[String, String] = Map.empty,
+      updateFn: (Engine, String) => TransactionCommitResult)
 
-      // ===== THEN =====
-      verifyPostCommitSnapshotMatchesLatest(result.getPostCommitSnapshot.get(), tablePath, engine)
-    }
+  Seq(
+    MetadataChangeTestCase(
+      changeType = "schema",
+      initTableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"),
+      updateFn = (engine, tablePath) => {
+        val newSchema = latestSnapshot(tablePath, engine).getSchema.add("newCol", INTEGER)
+        updateTableMetadata(engine, tablePath, schema = newSchema)
+      }),
+    MetadataChangeTestCase(
+      changeType = "tbl property",
+      updateFn = (engine, tablePath) =>
+        updateTableMetadata(engine, tablePath, tableProperties = Map("foo" -> "bar"))),
+    MetadataChangeTestCase(
+      changeType = "protocol",
+      updateFn = (engine, tablePath) => {
+        val snapshot = latestSnapshot(tablePath, engine)
+        assert(!snapshot.getProtocol.getWriterFeatures.contains("deletionVectors"))
+
+        updateTableMetadata(
+          engine,
+          tablePath,
+          tableProperties = Map("delta.enableDeletionVectors" -> "true"))
+      }),
+    MetadataChangeTestCase(
+      changeType = "clustering columns",
+      updateFn = (engine, tablePath) =>
+        updateTableMetadata(
+          engine,
+          tablePath,
+          clusteringColsOpt = Some(testClusteringColumns)))).foreach {
+    case MetadataChangeTestCase(changeType, initTableProperties, updateFn) =>
+      test(
+        s"commit $changeType change at readVersion + 1 => yields a PCS with updated $changeType") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          createEmptyTable(
+            engine,
+            tablePath,
+            schema = testPartitionSchema,
+            tableProperties = initTableProperties)
+
+          val result = updateFn(engine, tablePath)
+
+          checkPostCommitSnapshot(engine, result.getPostCommitSnapshot.get())
+        }
+      }
   }
 
-  test("commit tbl property change at readVersion + 1 => yields a PCS with updated property") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // ===== GIVEN =====
-      createEmptyTable(engine, tablePath, testSchema)
-
-      // ===== WHEN =====
-      val result = updateTableMetadata(engine, tablePath, tableProperties = Map("foo" -> "bar"))
-
-      // ===== THEN =====
-      verifyPostCommitSnapshotMatchesLatest(result.getPostCommitSnapshot.get(), tablePath, engine)
-    }
-  }
-
-  test("commit protocol change at readVersion + 1 => yields a PCS with updated protocol") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // ===== GIVEN =====
-      createEmptyTable(engine, tablePath, testSchema)
-
-      val snapshot0 = latestSnapshot(tablePath, engine)
-      assert(!snapshot0.getProtocol.getWriterFeatures.contains("deletionVectors"))
-
-      // ===== WHEN =====
-      val result = updateTableMetadata(
-        engine,
-        tablePath,
-        tableProperties = Map("delta.enableDeletionVectors" -> "true"))
-
-      // ===== THEN =====
-      verifyPostCommitSnapshotMatchesLatest(result.getPostCommitSnapshot.get(), tablePath, engine)
-    }
-  }
+  ////////////////////////////////////////////////////////////////
+  // Using PostCommitSnapshot to read data and write data tests //
+  ////////////////////////////////////////////////////////////////
 
   test("postCommitSnapshot can be used to read data") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // ===== WHEN =====
       val result = appendData(
         engine,
         tablePath,
@@ -217,7 +222,6 @@ class PostCommitSnapshotSuite extends AnyFunSuite with WriteUtilsWithV2Builders 
         schema = testSchema,
         data = seqOfUnpartitionedDataBatch1)
 
-      // ===== THEN =====
       val postCommitSnapshot = result.getPostCommitSnapshot.get()
       val expectedData = dataBatches1.flatMap(_.toTestRows)
       val dataFromPostCommit = readSnapshot(postCommitSnapshot, engine = engine).map(TestRow(_))
@@ -234,8 +238,7 @@ class PostCommitSnapshotSuite extends AnyFunSuite with WriteUtilsWithV2Builders 
         isNewTable = true,
         schema = testSchema,
         data = seqOfUnpartitionedDataBatch1)
-
-      val postCommitSnapshot0 = result0.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+      val postCommitSnapshot0 = result0.getPostCommitSnapshot.get()
       assert(postCommitSnapshot0.getVersion == 0)
 
       // ===== WHEN =====
@@ -248,10 +251,7 @@ class PostCommitSnapshotSuite extends AnyFunSuite with WriteUtilsWithV2Builders 
       val result1 = commitTransaction(txn, engine, actions)
 
       // ===== THEN =====
-      assert(result1.getVersion == 1)
-
-      val postCommitSnapshot1 = result1.getPostCommitSnapshot.get()
-      verifyPostCommitSnapshotMatchesLatest(postCommitSnapshot1, tablePath, engine)
+      checkPostCommitSnapshot(engine, result1.getPostCommitSnapshot.get())
     }
   }
 }
