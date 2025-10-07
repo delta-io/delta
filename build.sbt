@@ -35,6 +35,7 @@ import sbtprotoc.ProtocPlugin.autoImport._
 import xsbti.compile.CompileAnalysis
 
 import Checkstyle._
+import ShadedIcebergBuild._
 import Mima._
 import Unidoc._
 
@@ -52,11 +53,10 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
-val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
+val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
-kernelSpark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
@@ -231,9 +231,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
       "-Dlog4j.configurationFile=log4j2_spark_master.properties"
     ),
-    // For Delta Connect tests we create a Spark Distribution from the classpath. For this to work
-    // dependencies on other modules need to be exposed as a JAR, and not as a directory of classes.
-    exportJars := true,
+
     // Java-/Scala-/Uni-Doc Settings
     // This isn't working yet against Spark Master.
     // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
@@ -267,6 +265,8 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     name := "delta-connect-common",
     commonSettings,
     crossSparkSettings(),
+    // iceberg-core 1.8.0 brings jackson 2.18.2 thus force upgrade
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
@@ -328,37 +328,61 @@ lazy val connectClient = (project in file("spark-connect/client"))
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
+
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests"
+      "org.apache.spark" %% "spark-common-utils" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests",
     ),
-    (Test / javaOptions) += {
-      // Create a (mini) Spark Distribution based on the server classpath.
-      val serverClassPath = (connectServer / Compile / fullClasspath).value
-      val distributionDir = crossTarget.value / "test-dist"
-      if (!distributionDir.exists()) {
-        val jarsDir = distributionDir / "jars"
-        IO.createDirectory(jarsDir)
-        // Create symlinks for all dependencies.
-        serverClassPath.distinct.foreach { entry =>
-          val jarFile = entry.data.toPath
-          val linkedJarFile = jarsDir / entry.data.getName
-          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+    (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
+    (Test / resourceGenerators) += Def.task {
+      val location = url("https://dist.apache.org/repos/dist/release/spark/spark-4.0.0-preview1/spark-4.0.0-preview1-bin-hadoop3.tgz")
+      val destDir = (Test / resourceManaged).value / "spark"
+      if (!destDir.exists()) {
+        IO.createDirectory(destDir)
+        val files = mutable.Buffer.empty[File]
+        Using(new BufferedInputStream(location.openStream())) { bi =>
+          Using(new GzipCompressorInputStream(bi)) { gi =>
+            Using(new TarArchiveInputStream(gi)) { ti =>
+              var entry = ti.getNextEntry
+              while (entry != null) {
+                val dest = destDir / entry.getName
+                if (entry.isDirectory) {
+                  dest.mkdirs()
+                } else {
+                  files += dest
+                  Using(Files.newOutputStream(dest.toPath)) { os =>
+                    IOUtils.copy(ti, os)
+                  }
+
+                  val perms = new util.HashSet[PosixFilePermission]()
+                  perms.add(PosixFilePermission.OWNER_EXECUTE)
+                  perms.add(PosixFilePermission.OWNER_READ)
+                  perms.add(PosixFilePermission.OWNER_WRITE)
+                  Files.setPosixFilePermissions(dest.toPath, perms)
+                }
+                entry = ti.getNextEntry
+              }
+            }
+          }
         }
-        // Create a symlink for the log4j properties
-        val confDir = distributionDir / "conf"
-        IO.createDirectory(confDir)
-        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2_spark_master.properties"
-        val linkedLog4jProps = confDir / "log4j2.properties"
-        Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
+        files
+      } else {
+        destDir.get()
       }
-      // Return the location of the distribution directory.
-      "-Ddelta.spark.home=" + distributionDir
-    },
-    // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
+    }.taskValue,
+    (Test / resourceGenerators) += Def.task {
+      val src = url("https://repository.apache.org/content/groups/public/org/apache/spark/spark-connect_2.13/4.0.0-preview1/spark-connect_2.13-4.0.0-preview1.jar")
+      val dest = (Test / resourceManaged).value / "spark-connect.jar"
+      if (!dest.exists()) {
+        src #> dest !;
+        Seq(dest)
+      } else {
+        dest.get()
+      }
+    }.taskValue
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -403,16 +427,6 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
-    excludeDependencies ++= Seq(
-      // Exclude connect common because a properly shaded version of it is included in the
-      // spark-connect jar. Including it causes classpath problems.
-      ExclusionRule("org.apache.spark", "spark-connect-common_2.13"),
-      // Exclude connect shims because we have spark-core on the classpath. The shims are only
-      // needed for the client. Including it causes classpath problems.
-      ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
-    ),
-    // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
@@ -612,12 +626,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
-      "org.assertj" % "assertj-core" % "3.26.3" % "test",
-      // JMH dependencies allow writing micro-benchmarks for testing performance of components.
-      // JMH has framework to define benchmarks and takes care of many common functionalities
-      // such as warm runs, cold runs, defining benchmark parameter variables etc.
-      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
-      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test"
+      "org.assertj" % "assertj-core" % "3.26.3" % "test"
     ),
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.
@@ -671,7 +680,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
            |""".stripMargin)
       Seq(file)
     },
-    MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
@@ -693,8 +701,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javafmtCheckSettings,
     scalafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
-    // This allows generating tables with unsupported test table features in delta-spark
-    Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
@@ -717,57 +723,10 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
     ),
-    MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
-
-
-lazy val kernelSpark = (project in file("kernel-spark"))
-  .dependsOn(kernelApi)
-  .dependsOn(kernelDefaults)
-  .dependsOn(spark % "test->test")
-  .dependsOn(goldenTables % "test")
-  .settings(
-    name := "kernel-spark",
-    commonSettings,
-    javafmtCheckSettings,
-    skipReleaseSettings,
-    Test / javaOptions ++= Seq("-ea"),
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
-    ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
-  )
-  // TODO to enable unit doc for kernelSpark.
-
-lazy val unity = (project in file("unity"))
-  .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelApi % "compile->compile;test->test")
-  .dependsOn(kernelDefaults % "test->test")
-  .dependsOn(storage)
-  .settings (
-    name := "delta-unity",
-    commonSettings,
-    javaOnlyReleaseSettings,
-    javafmtCheckSettings,
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
-    scalaStyleSettings,
-    scalafmtCheckSettings,
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-    ),
-    unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
-  ).configureUnidoc()
 
 // TODO javastyle tests
 // TODO unidoc
@@ -777,7 +736,6 @@ lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
     commonSettings,
-    exportJars := true,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
@@ -921,8 +879,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
-
+val icebergShadedVersion = "1.8.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -930,28 +887,46 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     name := "iceberg-shaded",
     commonSettings,
     skipReleaseSettings,
-
-    // Compile, patch and generated Iceberg JARs
-    generateIcebergJarsTask := {
-      import sys.process._
-      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
-      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
-      Seq("python3", scriptPath.getPath)!
-    },
-    Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
-    cleanFiles += baseDirectory.value / "iceberg_src",
-    cleanFiles += baseDirectory.value / "lib",
-
+    // must exclude all dependencies from Iceberg that delta-spark includes
+    libraryDependencies ++= Seq(
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
+      "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion excludeAll (
+        icebergExclusionRules: _*
+      ),
+      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergShadedVersion excludeAll (
+        icebergExclusionRules: _*
+      ),
+      // the hadoop client and hive metastore versions come from this file in the
+      // iceberg repo of icebergShadedVersion: iceberg/gradle/libs.versions.toml
+      "org.apache.hadoop" % "hadoop-client" % "2.7.3" % "provided" excludeAll (
+        hadoopClientExclusionRules: _*
+      ),
+      "org.apache.hive" % "hive-metastore" % "2.3.8" % "provided" excludeAll (
+        hiveMetastoreExclusionRules: _*
+      )
+    ),
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyShadeRules := Seq(
-      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
+      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll
     ),
+    assembly / assemblyExcludedJars := {
+      val cp = (fullClasspath in assembly).value
+      cp.filter { jar =>
+        val doExclude = jar.data.getName.contains("jackson-annotations") ||
+          jar.data.getName.contains("RoaringBitmap")
+        doExclude
+      }
+    },
+    // all following clases have Delta customized implementation under icebergShaded/src and thus
+    // require them to be 'first' to replace the class from iceberg jar
+    assembly / assemblyMergeStrategy := updateMergeStrategy((assembly / assemblyMergeStrategy).value),
     assemblyPackageScala / assembleArtifact := false,
-    // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
 
 lazy val hudi = (project in file("hudi"))
@@ -1241,7 +1216,7 @@ lazy val hive2Tez = (project in file("connectors/hive2-tez"))
  *
  * So, we create an impostor, cosmetic project used only for publishing.
  *
- * build/sbt standalone/package
+ * build/sbt standaloneCosmetic/package
  * - creates connectors/standalone/target/scala-2.12/delta-standalone-original-shaded_2.12-0.2.1-SNAPSHOT.jar
  *   (this is the shaded JAR we want)
  *
@@ -1658,7 +1633,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, kernelSpark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

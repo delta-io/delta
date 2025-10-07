@@ -60,10 +60,6 @@ print("########### Read table with DeltaTable ###########")
 deltaTable = DeltaTable.forPath(spark, "/tmp/delta-table")
 deltaTable.toDF().show()
 
-
-print("########### All import submodules work ###########")
-from delta.exceptions import MetadataChangedException
-
 spark.stop()
 
 # cleanup

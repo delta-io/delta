@@ -66,9 +66,11 @@ realpath () {
 )
 }
 
-# Make Jenkins use Google Mirror first as Maven Central may ban us
-SBT_REPOSITORIES_CONFIG="$(dirname "$(realpath "$0")")/sbt-config/repositories"
-export SBT_OPTS="-Dsbt.override.build.repos=true -Dsbt.repository.config=$SBT_REPOSITORIES_CONFIG"
+if [[ "$JENKINS_URL" != "" ]]; then
+  # Make Jenkins use Google Mirror first as Maven Central may ban us
+  SBT_REPOSITORIES_CONFIG="$(dirname "$(realpath "$0")")/sbt-config/repositories"
+  export SBT_OPTS="-Dsbt.override.build.repos=true -Dsbt.repository.config=$SBT_REPOSITORIES_CONFIG"
+fi
 
 . "$(dirname "$(realpath "$0")")"/sbt-launch-lib.bash
 

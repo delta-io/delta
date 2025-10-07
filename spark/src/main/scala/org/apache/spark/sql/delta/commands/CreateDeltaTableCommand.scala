@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperties
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata

@@ -61,20 +61,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       Some("data")
     } else None
 
-  // It's okay to make this a lazy val. Once this is read, the metadata will be marked as read
-  // and can't be changed again within the transaction, otherwise it will throw an exception.
-  private lazy val randomizeFilePrefixes =
-    DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(metadata)
-  private lazy val randomPrefixLength = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(metadata)
-
-  protected def getCommitter(outputPath: Path): DelayedCommitProtocol = {
-    // We force the use of random prefixes in column mapping modes.
-    // Note that here we need to use the txn metadata instead of the snapshot's metadata
-    val prefixLengthOpt = if (randomizeFilePrefixes || metadata.columnMappingMode != NoMapping) {
-      Some(randomPrefixLength)
-    } else None
-    new DelayedCommitProtocol("delta", outputPath.toString, prefixLengthOpt, deltaDataSubdir)
-  }
+  protected def getCommitter(outputPath: Path): DelayedCommitProtocol =
+    new DelayedCommitProtocol("delta", outputPath.toString, None, deltaDataSubdir)
 
   /** Makes the output attributes nullable, so that we don't write unreadable parquet files. */
   protected def makeOutputNullable(output: Seq[Attribute]): Seq[Attribute] = {

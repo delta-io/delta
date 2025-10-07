@@ -19,16 +19,16 @@ package org.apache.spark.sql.delta.commands
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
-import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TransactionalWrite}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{AnalysisException, DataFrame, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
@@ -128,19 +128,13 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
-  /** Whether this merge statement only has MATCHED clauses. */
+  /** Whether this merge statement has only MATCHED clauses. */
   protected def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty &&
     notMatchedBySourceClauses.isEmpty
 
-  /** Whether this merge statement only has insert (NOT MATCHED) clauses. */
+  /** Whether this merge statement only has only insert (NOT MATCHED) clauses. */
   protected def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.nonEmpty &&
     notMatchedBySourceClauses.isEmpty
-
-  /** Whether this merge statement only has delete clauses. */
-  protected lazy val isDeleteOnly: Boolean =
-    matchedClauses.forall(_.isInstanceOf[DeltaMergeIntoMatchedDeleteClause]) &&
-      notMatchedClauses.isEmpty &&
-      notMatchedBySourceClauses.forall(_.isInstanceOf[DeltaMergeIntoNotMatchedBySourceDeleteClause])
 
   /** Whether this merge statement includes inserts statements. */
   protected def includesInserts: Boolean = notMatchedClauses.nonEmpty
@@ -559,190 +553,6 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       matchedClauses.forall(isConditionDeterministic) &&
       notMatchedClauses.forall(isConditionDeterministic) &&
       notMatchedBySourceClauses.forall(isConditionDeterministic)
-  }
-
-  /**
-   * Validates that the number of records does not increase if there are no insert clauses, and does
-   * not decrease if there are no delete clauses.
-   *
-   * Note: ideally we would also compare the number of added/removed rows in the statistics with the
-   * number of inserted/updated/deleted/copied rows in the SQL metrics, but unfortunately this is
-   * not possible, as sql metrics are not reliable when there are task or stage retries.
-   */
-  protected def validateNumRecords(
-      actions: Seq[Action],
-      numRecordsStats: NumRecordsStats,
-      op: DeltaOperations.Merge,
-      deltaLog: DeltaLog): Unit = {
-    (numRecordsStats.numLogicalRecordsAdded,
-      numRecordsStats.numLogicalRecordsRemoved,
-      numRecordsStats.numLogicalRecordsAddedInFilesWithDeletionVectors) match {
-      case (
-        Some(numAddedRecords),
-        Some(numRemovedRecords),
-        Some(numRecordsNotCopied)) =>
-        if (!includesInserts && numAddedRecords > numRemovedRecords) {
-          logNumRecordsMismatch(targetDeltaLog, actions, numRecordsStats, op)
-          if (conf.getConf(DeltaSQLConf.NUM_RECORDS_VALIDATION_ENABLED)) {
-            throw DeltaErrors.numRecordsMismatch(
-              operation = "MERGE without INSERT clauses",
-              numAddedRecords,
-              numRemovedRecords
-            )
-          }
-        }
-        if (!includesDeletes && numAddedRecords < numRemovedRecords) {
-          logNumRecordsMismatch(targetDeltaLog, actions, numRecordsStats, op)
-          if (conf.getConf(DeltaSQLConf.NUM_RECORDS_VALIDATION_ENABLED)) {
-            throw DeltaErrors.numRecordsMismatch(
-              operation = "MERGE without DELETE clauses",
-              numAddedRecords,
-              numRemovedRecords
-            )
-          }
-        }
-
-        if (conf.getConf(DeltaSQLConf.COMMAND_INVARIANT_CHECKS_USE_UNRELIABLE)) {
-          // and also using regular (unreliable) metrics for baseline
-          validateMetricBasedCommandInvariants(
-            numAddedRecords, numRemovedRecords, numRecordsNotCopied, op, deltaLog)
-        }
-
-      case _ =>
-        recordDeltaEvent(
-          targetDeltaLog, opType = "delta.assertions.statsNotPresentForNumRecordsCheck")
-        logWarning(log"Could not validate number of records due to missing statistics.")
-    }
-  }
-
-  private def validateMetricBasedCommandInvariants(
-      numAddedRecords: Long,
-      numRemovedRecords: Long,
-      numRecordsNotCopied: Long,
-      op: DeltaOperations.Merge,
-      deltaLog: DeltaLog): Unit = try {
-
-    val numRowsInserted = CommandInvariantMetricValueFromSingle(metrics("numTargetRowsInserted"))
-    val numRowsUpdated = CommandInvariantMetricValueFromSingle(metrics("numTargetRowsUpdated"))
-    val numRowsDeleted = CommandInvariantMetricValueFromSingle(metrics("numTargetRowsDeleted"))
-    val numRowsCopied = CommandInvariantMetricValueFromSingle(metrics("numTargetRowsCopied"))
-
-    checkCommandInvariant(
-      invariant = () => includesInserts || numRowsInserted.getOrThrow == 0,
-      label = "includesInserts || numRowsInserted == 0",
-      op = op,
-      deltaLog = deltaLog,
-      parameters = Map(
-        "numRowsInserted" -> numRowsInserted.getOrDummy
-      )
-    )
-
-    checkCommandInvariant(
-      invariant = () => includesDeletes || numRowsDeleted.getOrThrow == 0,
-      label = "includesDeletes || numRowsDeleted == 0",
-      op = op,
-      deltaLog = deltaLog,
-      parameters = Map(
-        "numRowsDeleted" -> numRowsDeleted.getOrDummy
-      )
-    )
-
-    checkCommandInvariant(
-      invariant = () => !isDeleteOnly ||
-        numRowsUpdated.getOrThrow + numRowsInserted.getOrThrow == 0,
-      label = "!isDeleteOnlyMerge || numRowsUpdated + numRowsInserted == 0",
-      op = op,
-      deltaLog = deltaLog,
-      parameters = Map(
-        "numRowsUpdated" -> numRowsUpdated.getOrDummy,
-        "numRowsInserted" -> numRowsInserted.getOrDummy
-      )
-    )
-
-    if (conf.getConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
-      checkCommandInvariant(
-        invariant = () => !isInsertOnly ||
-          numRowsUpdated.getOrThrow +
-            numRowsDeleted.getOrThrow +
-            numRowsCopied.getOrThrow +
-            numRecordsNotCopied == 0,
-        label = "!isInsertOnly" +
-          " || numRowsUpdated + numRowsDeleted + numRowsCopied + numRecordsNotCopied == 0",
-        op = op,
-        deltaLog = deltaLog,
-        parameters = Map(
-          "numRowsUpdated" -> numRowsUpdated.getOrDummy,
-          "numRowsDeleted" -> numRowsDeleted.getOrDummy,
-          "numRowsCopied" -> numRowsCopied.getOrDummy,
-          "numRecordsNotCopied" -> numRecordsNotCopied
-        )
-      )
-    } else {
-      // When the special insert-only codepath is disabled, we may end up copying some rows.
-      checkCommandInvariant(
-        invariant = () => !isInsertOnly ||
-          numRowsUpdated.getOrThrow + numRowsDeleted.getOrThrow == 0,
-        label = "!isInsertOnly" +
-          " || numRowsUpdated + numRowsDeleted == 0",
-        op = op,
-        deltaLog = deltaLog,
-        parameters = Map(
-          "numRowsUpdated" -> numRowsUpdated.getOrDummy,
-          "numRowsDeleted" -> numRowsDeleted.getOrDummy
-        )
-      )
-    }
-
-    checkCommandInvariant(
-      invariant = () =>
-        numRowsUpdated.getOrThrow +
-          numRowsDeleted.getOrThrow +
-          numRowsCopied.getOrThrow +
-          numRecordsNotCopied == numRemovedRecords,
-      label = "numRowsUpdated + numRowsDeleted + numRowsCopied + numRecordsNotCopied ==" +
-        " numRemovedRecords",
-      op = op,
-      deltaLog = deltaLog,
-      parameters = Map(
-        "numRowsUpdated" -> numRowsUpdated.getOrDummy,
-        "numRowsDeleted" -> numRowsDeleted.getOrDummy,
-        "numRowsCopied" -> numRowsCopied.getOrDummy,
-        "numRemovedRecords" -> numRemovedRecords,
-        "numRecordsNotCopied" -> numRecordsNotCopied
-      )
-    )
-
-    checkCommandInvariant(
-      invariant = () =>
-        numRowsInserted.getOrThrow +
-          numRowsUpdated.getOrThrow +
-          numRowsCopied.getOrThrow +
-          numRecordsNotCopied == numAddedRecords,
-      label = "numRowsInserted + numRowsUpdated + numRowsCopied + numRecordsNotCopied ==" +
-        " numAddedRecords",
-      op = op,
-      deltaLog = deltaLog,
-      parameters = Map(
-        "numRowsInserted" -> numRowsInserted.getOrDummy,
-        "numRowsUpdated" -> numRowsUpdated.getOrDummy,
-        "numRowsCopied" -> numRowsCopied.getOrDummy,
-        "numAddedRecords" -> numAddedRecords,
-        "numRecordsNotCopied" -> numRecordsNotCopied
-      )
-    )
-  } catch {
-    // Immediately re-throw actual command invariant violations, so we don't re-wrap them below.
-    case e: DeltaIllegalStateException if e.getErrorClass == "DELTA_COMMAND_INVARIANT_VIOLATION" =>
-      throw e
-    case NonFatal(e) =>
-      logWarning(log"Unexpected error in validateMetricBasedCommandInvariants", e)
-      checkCommandInvariant(
-        invariant = () => false,
-        label = "Unexpected error in validateMetricBasedCommandInvariants",
-        op = op,
-        deltaLog = deltaLog,
-        parameters = Map.empty
-      )
   }
 }
 

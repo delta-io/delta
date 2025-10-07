@@ -275,9 +275,7 @@ These files reside in the `_delta_log/_sidecars` directory.
 
 ### Log Compaction Files
 
-Log compaction files reside in the `_delta_log` directory. A log compaction
-file from a start version `x` to an end version `y` (`y` must be _greater_ than `x`)
-will have the following name:
+Log compaction files reside in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name:
 `<x>.<y>.compacted.json`. This contains the aggregated
 actions for commit range `[x, y]`. Similar to commits, each row in the log
 compaction file represents an [action](#actions).
@@ -1519,7 +1517,7 @@ Field Name | optional/required | Description
 `fieldPath`| optional | When updating the type of a map key/value or array element only: the path from the struct field holding the metadata to the map key/value or array element that was updated.
 
 The `fieldPath` value is "key", "value" and "element"  when updating resp. the type of a map key, map value and array element.
-The `fieldPath` value for nested maps and nested arrays are prefixed by their parents' path, separated by dots.
+The `fieldPath` value for nested maps and nested arrays are prefixed by their parents's path, separated by dots.
 
 The following is an example for the definition of a column that went through two type changes:
 ```json
@@ -1932,7 +1930,6 @@ When enabled:
 - The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
 - The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
 - Writers MUST enforce that before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row. By the same token, if the engine specified the explicit `DEFAULT` SQL keyword for any column, the expression result must be substituted in the same way.
-- All columns of `variant` type must default to null.
 
 ## Identity Columns
 
@@ -2133,7 +2130,6 @@ It is highly recommended that modern writers adjust the timestamp to UTC and sto
 ## Schema Serialization Format
 
 Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
-All column names must be unique regardless of casing.
 A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
 
 ### Primitive Types

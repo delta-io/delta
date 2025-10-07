@@ -19,12 +19,10 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
-import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -39,7 +37,6 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference,
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
@@ -301,11 +298,9 @@ case class UpdateCommand(
 
     val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ totalActions
     val numRecordsStats = NumRecordsStats.fromActions(finalActions)
-    val operation = DeltaOperations.Update(condition)
-    validateNumRecords(finalActions, numRecordsStats, operation)
     val commitVersion = txn.commitIfNeeded(
       actions = finalActions,
-      op = operation,
+      op = DeltaOperations.Update(condition),
       tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
     sendDriverMetrics(sparkSession, metrics)
 
@@ -395,106 +390,6 @@ case class UpdateCommand(
       spark: SparkSession, txn: OptimisticTransaction): Boolean = {
     spark.conf.get(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS) &&
       DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
-  }
-
-  /**
-   * Validates that the number of records does not change.
-   */
-  private def validateNumRecords(
-      actions: Seq[Action],
-      numRecordsStats: NumRecordsStats,
-      op: Operation): Unit = {
-    val deltaLog = tahoeFileIndex.deltaLog
-
-    (numRecordsStats.numLogicalRecordsAdded,
-      numRecordsStats.numLogicalRecordsRemoved,
-      numRecordsStats.numLogicalRecordsAddedInFilesWithDeletionVectors) match {
-      case (
-        Some(numAddedRecords),
-        Some(numRemovedRecords),
-        Some(numRecordsNotCopied)) =>
-        if (numAddedRecords != numRemovedRecords) {
-          logNumRecordsMismatch(deltaLog, actions, numRecordsStats, op)
-          if (conf.getConf(DeltaSQLConf.NUM_RECORDS_VALIDATION_ENABLED)) {
-            throw DeltaErrors.numRecordsMismatch(
-              operation = "UPDATE",
-              numAddedRecords,
-              numRemovedRecords
-            )
-          }
-        }
-
-        if (conf.getConf(DeltaSQLConf.COMMAND_INVARIANT_CHECKS_USE_UNRELIABLE)) {
-          // and also using regular (unreliable) metrics for baseline
-          validateMetricBasedCommandInvariants(
-            numAddedRecords, numRemovedRecords, numRecordsNotCopied, op, deltaLog)
-        }
-
-      case _ =>
-        recordDeltaEvent(deltaLog, opType = "delta.assertions.statsNotPresentForNumRecordsCheck")
-        logWarning(log"Could not validate number of records due to missing statistics.")
-    }
-  }
-
-  private def validateMetricBasedCommandInvariants(
-      numAddedRecords: Long,
-      numRemovedRecords: Long,
-      numRecordsNotCopied: Long,
-      op: Operation,
-      deltaLog: DeltaLog): Unit = try {
-
-    // Note: These are redundant w.r.t. validateNumRecords, but they ensure correct metrics.
-    val numRowsUpdated = CommandInvariantMetricValueFromSingle(metrics("numUpdatedRows"))
-    val numRowsCopied = CommandInvariantMetricValueFromSingle(metrics("numCopiedRows"))
-
-    // There's a bug where Spark eliminates the entire plan and just rewrites the input files 1:1
-    // for no-op updates and in this case we don't record any metrics.
-    if (numRowsUpdated.getOrDummy == 0 && numRowsCopied.getOrDummy == 0) {
-      return
-    }
-
-    checkCommandInvariant(
-      invariant = () =>
-        numRowsUpdated.getOrThrow + numRowsCopied.getOrThrow + numRecordsNotCopied
-          == numRemovedRecords,
-      label = "numRowsUpdated + numRowsCopied + numRecordsNotCopied == numRemovedRecords",
-      op = op,
-      deltaLog = deltaLog,
-      parameters = Map(
-        "numRowsUpdated" -> numRowsUpdated.getOrDummy,
-        "numRowsCopied" -> numRowsCopied.getOrDummy,
-        "numRemovedRecords" -> numRemovedRecords,
-        "numRecordsNotCopied" -> numRecordsNotCopied
-      )
-    )
-
-    checkCommandInvariant(
-      invariant = () =>
-        numRowsUpdated.getOrThrow + numRowsCopied.getOrDummy + numRecordsNotCopied
-          == numAddedRecords,
-      label = "numRowsUpdated + numRowsCopied + numRecordsNotCopied == numAddedRecords",
-      op = op,
-      deltaLog = deltaLog,
-      parameters = Map(
-        "numRowsUpdated" -> numRowsUpdated.getOrDummy,
-        "numRowsCopied" -> numRowsCopied.getOrDummy,
-        "numAddedRecords" -> numAddedRecords,
-        "numRecordsNotCopied" -> numRecordsNotCopied
-      )
-    )
-  } catch {
-    // Immediately re-throw actual command invariant violations, so we don't re-wrap them below.
-    case e: DeltaIllegalStateException if e.getErrorClass == "DELTA_COMMAND_INVARIANT_VIOLATION" =>
-      throw e
-    case NonFatal(e) =>
-      logWarning(log"Unexpected error in validateMetricBasedCommandInvariants", e)
-      checkCommandInvariant(
-        invariant = () => false,
-        label = "Unexpected error in validateMetricBasedCommandInvariants",
-        op = op,
-        deltaLog = deltaLog,
-        parameters = Map.empty
-      )
   }
 }
 
