@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.catalogManaged
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.TableManager
@@ -30,6 +32,13 @@ import org.scalatest.funsuite.AnyFunSuite
 class CatalogManagedLogSegmentSuite extends AnyFunSuite
     with MockFileSystemClientUtils
     with ActionUtils {
+
+  implicit class OptionOps[T](option: Option[T]) {
+    def asJava: Optional[T] = option match {
+      case Some(value) => Optional.of(value)
+      case None => Optional.empty()
+    }
+  }
 
   private def testLogSegment(
       testName: String,
@@ -65,7 +74,9 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
         assert(expectedExceptionClassOpt.get.isInstance(exception))
       } else {
         val snapshot = builder.build(engine)
-        val actualDeltaAndCommitFileStatuses = snapshot.getLogSegment.getDeltas.asScala
+        val logSegment = snapshot.getLogSegment
+
+        val actualDeltaAndCommitFileStatuses = logSegment.getDeltas.asScala
 
         // Check: we got the expected versions
         val actualDeltaAndCommitVersions =
@@ -84,6 +95,11 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
             assert(FileNames.isPublishedDeltaFile(path))
           }
         }
+
+        val expectedMaxPublishedDeltaVersion = deltaVersions
+          .filter(_ <= versionToLoad).reduceOption(_ max _).asJava
+
+        assert(logSegment.getMaxPublishedDeltaVersion === expectedMaxPublishedDeltaVersion)
       }
     }
   }

@@ -210,11 +210,6 @@ public class SnapshotManager {
   public LogSegment getLogSegmentForVersion(
       Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogDatas) {
     final long versionToLoad = versionToLoadOpt.orElse(Long.MAX_VALUE);
-
-    // Defaulting to listing the files for now. This has low cost. We can make this a configurable
-    // option in the future if we need to.
-    final boolean USE_COMPACTED_FILES = true;
-
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
     final long logSegmentBuildingStartTimeMillis = System.currentTimeMillis();
@@ -252,10 +247,10 @@ public class SnapshotManager {
     Set<DeltaLogFileType> fileTypes =
         new HashSet<>(
             Arrays.asList(
-                DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT, DeltaLogFileType.CHECKSUM));
-    if (USE_COMPACTED_FILES) {
-      fileTypes.add(DeltaLogFileType.LOG_COMPACTION);
-    }
+                DeltaLogFileType.COMMIT,
+                DeltaLogFileType.CHECKPOINT,
+                DeltaLogFileType.CHECKSUM,
+                DeltaLogFileType.LOG_COMPACTION));
 
     final long listingStartTimeMillis = System.currentTimeMillis();
     final List<FileStatus> listedFileStatuses =
@@ -412,16 +407,13 @@ public class SnapshotManager {
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
-    final Lazy<Optional<ParsedPublishedDeltaData>> lazyDeltaAtCheckpointVersionOpt =
-        new Lazy<>(
-            () ->
-                allPublishedDeltas.stream()
-                    .filter(x -> x.getVersion() == latestCompleteCheckpointVersion)
-                    .findFirst());
+    final Optional<ParsedPublishedDeltaData> deltaAtCheckpointVersionOpt =
+        allPublishedDeltas.stream()
+            .filter(x -> x.getVersion() == latestCompleteCheckpointVersion)
+            .findFirst();
 
     // Check that, for a checkpoint at version N, there's a delta file at N, too.
-    if (latestCompleteCheckpointOpt.isPresent()
-        && !lazyDeltaAtCheckpointVersionOpt.get().isPresent()) {
+    if (latestCompleteCheckpointOpt.isPresent() && !deltaAtCheckpointVersionOpt.isPresent()) {
       throw new InvalidTableException(
           tablePath.toString(),
           String.format("Missing delta file for version %s", latestCompleteCheckpointVersion));
@@ -504,9 +496,20 @@ public class SnapshotManager {
                 })
             .orElse(Collections.emptyList());
 
-    //////////////////////////////////////////
-    // Step 12: Grab the last seen checksum //
-    //////////////////////////////////////////
+    ////////////////////////////////////////////////////////
+    // Step 12: Calculate the remaining LogSegment params //
+    ////////////////////////////////////////////////////////
+
+    // If our LogSegment has deltas (allDeltasAfterCheckpoint), we use the last delta.
+    // Else, our LogSegment only has a checkpoint, and we have checked above that if there's a
+    // checkpoint then the `deltaAtCheckpointVersionOpt` exists.
+    final FileStatus deltaAtEndVersion =
+        allDeltasAfterCheckpoint.isEmpty()
+            ? deltaAtCheckpointVersionOpt.get().getFileStatus()
+            : ListUtils.getLast(allDeltasAfterCheckpoint).getFileStatus();
+
+    final Optional<Long> maxPublishedDeltaVersion =
+        allPublishedDeltas.stream().map(ParsedPublishedDeltaData::getVersion).max(Long::compareTo);
 
     Optional<FileStatus> lastSeenChecksumFile = Optional.empty();
     if (!listedChecksumFileStatuses.isEmpty()) {
@@ -526,14 +529,6 @@ public class SnapshotManager {
         newVersion,
         System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
 
-    // If our LogSegment has deltas (allDeltasAfterCheckpoint), we use the last delta.
-    // Else, our LogSegment only has a checkpoint, and we have checked above that if there's a
-    // checkpoint then the `lazyDeltaAtCheckpointVersionOpt` exists.
-    final FileStatus deltaAtEndVersion =
-        allDeltasAfterCheckpoint.isEmpty()
-            ? lazyDeltaAtCheckpointVersionOpt.get().get().getFileStatus()
-            : ListUtils.getLast(allDeltasAfterCheckpoint).getFileStatus();
-
     return new LogSegment(
         logPath,
         newVersion,
@@ -543,7 +538,8 @@ public class SnapshotManager {
         compactionsAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
         deltaAtEndVersion,
-        lastSeenChecksumFile);
+        lastSeenChecksumFile,
+        maxPublishedDeltaVersion);
   }
 
   /////////////////////////

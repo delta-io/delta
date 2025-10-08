@@ -79,7 +79,8 @@ trait MockSnapshotUtils {
       Seq.empty.asJava, /* compactions */
       Seq.empty.asJava, /* checkpoints */
       fs, /* deltaAtEndVersion */
-      Optional.empty() /* lastSeenChecksum */
+      Optional.empty(), /* lastSeenChecksum */
+      Optional.empty() /* maxPublishedDeltaVersion */
     )
     val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(dataPath.toString)
     new SnapshotImpl(
