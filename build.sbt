@@ -813,8 +813,14 @@ lazy val kernelSpark = (project in file("kernel-spark"))
         override def transform(node: scala.xml.Node): scala.xml.NodeSeq = node match {
           case e: scala.xml.Elem if e.label == "dependency" =>
             val artifactId = (e \ "artifactId").text
-            // Remove kernel-api and kernel-defaults from POM since they're in the fat jar
-            if (artifactId == "delta-kernel-api" || artifactId == "delta-kernel-defaults") {
+            // Remove dependencies from POM that are already packaged in the fat jar:
+            // - kernel-api and kernel-defaults are included
+            // - delta-spark-v1 is included as shaded classes
+            // - golden-tables is test-only and not published
+            if (artifactId == "delta-kernel-api" || 
+                artifactId == "delta-kernel-defaults" ||
+                artifactId.startsWith("delta-spark-v1") ||
+                artifactId.startsWith("golden-tables")) {
               scala.xml.NodeSeq.Empty
             } else {
               node
