@@ -47,7 +47,7 @@ import org.slf4j.LoggerFactory;
  * An implementation of {@link Committer} that handles commits to Delta tables managed by Unity
  * Catalog. That is, these Delta tables must have the catalogManaged table feature supported.
  */
-public class UCCatalogManagedCommitter implements Committer {
+public class UCCatalogManagedCommitter implements Committer, SupportsPublishing {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
   protected final UCClient ucClient;
@@ -194,24 +194,12 @@ public class UCCatalogManagedCommitter implements Committer {
     } catch (java.nio.file.FileAlreadyExistsException e) {
       // File already exists - this is okay, it means this version was already published
       logger.info("[{}] Version {} already published", ucTableId, commitVersion);
-    } catch (Throwable t) {
-      if (isFatal(t)) {
-        if (t instanceof Error) {
-          throw (Error) t;
-        }
-        if (t instanceof RuntimeException) {
-          throw (RuntimeException) t;
-        }
-        // For checked fatal exceptions (e.g., InterruptedException), wrap in RuntimeException
-        throw new RuntimeException("Fatal exception during publish", t);
-      }
-
-      // Non-fatal exception (e.g., IOException) - wrap in PublishFailedException
+    } catch (Exception ex) {
       throw new PublishFailedException(
           String.format(
               "Failed to publish version %d from %s to %s: %s",
-              commitVersion, sourcePath, targetPath, t.getMessage()),
-          t);
+              commitVersion, sourcePath, targetPath, ex.getMessage()),
+          ex);
     }
   }
 

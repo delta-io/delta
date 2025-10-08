@@ -18,10 +18,12 @@ package io.delta.kernel.commit;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import java.util.List;
 
 /** Metadata required for publishing catalog commits to the Delta log. */
+@Experimental
 public class PublishMetadata {
 
   private final long snapshotVersion;
@@ -41,12 +43,15 @@ public class PublishMetadata {
     return snapshotVersion;
   }
 
-  /** @return the path to the Delta log directory */
+  /** @return the path to the Delta log directory, located at {@code <table_root>/_delta_log} */
   public String getLogPath() {
     return logPath;
   }
 
-  /** @return the list of catalog commits to be published, in ascending order of version number */
+  /**
+   * @return the list of contiguous catalog commits to be published, in ascending order of version
+   *     number
+   */
   public List<ParsedCatalogCommitData> getAscendingCatalogCommits() {
     return ascendingCatalogCommits;
   }
