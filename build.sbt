@@ -738,6 +738,8 @@ lazy val sparkShaded = (project in file("sparkShaded"))
     assembly / test := {},
     assembly / assemblyShadeRules := Seq(
       // Shade all delta-spark-v1 classes to shaded.* package
+      // This is necessary because shading happens at assembly time, not compile time
+      // The wrapper classes in kernelSpark need to extend shaded.* classes at compile time
       ShadeRule.rename("org.apache.spark.sql.delta.**" -> "shaded.org.apache.spark.sql.delta.@1").inAll,
       ShadeRule.rename("io.delta.**" -> "shaded.io.delta.@1").inAll,
       ShadeRule.rename("com.databricks.**" -> "shaded.com.databricks.@1").inAll
