@@ -232,7 +232,7 @@ public class TableImpl implements Table {
         getLogPath(),
         millisSinceEpochUTC,
         latestSnapshot,
-        emptyList() /* parsedDeltaDatas */);
+        emptyList() /* catalogCommits */);
   }
 
   /**
@@ -263,7 +263,7 @@ public class TableImpl implements Table {
         getLogPath(),
         millisSinceEpochUTC,
         latestSnapshot,
-        emptyList() /* parsedDeltaDatas */);
+        emptyList() /* catalogCommits */);
   }
 
   /** Helper method that loads a snapshot with proper metrics recording, logging, and reporting. */

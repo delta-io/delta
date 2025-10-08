@@ -383,6 +383,10 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       commitRange.asInstanceOf[CommitRangeImpl].getDeltaFiles.asScala.toSet)
   }
 
+  /**
+   * @param expectedFileList takes in a tuple (startVersion, endVersion) of a range and returns the
+   *                         expected file list for that version range
+   */
   private def testStartAndEndBoundaryCombinationsWithCatalogCommits(
       description: String,
       fileStatuses: Seq[FileStatus],
@@ -768,7 +772,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     }
     assert(e.getMessage.contains(
       "Missing delta file: found staged ratified commit for version 0 but no published " +
-        "delta file. Found published deltas for versions: [1, 2, 3]"))
+        "delta file. Found published deltas for later versions: [1, 2, 3]"))
   }
 
   test("build CommitRange fails if published commits and catalog commits are not contiguous") {

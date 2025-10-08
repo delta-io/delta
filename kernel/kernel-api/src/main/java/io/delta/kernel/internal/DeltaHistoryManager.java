@@ -64,6 +64,7 @@ public final class DeltaHistoryManager {
    * </ul>
    *
    * @param millisSinceEpochUTC the number of milliseconds since midnight, January 1, 1970 UTC
+   * @param catalogCommits parsed log Deltas to use (must be sorted and contiguous)
    * @return latest commit that happened at or before {@code timestamp}.
    * @throws KernelException if the timestamp is more than the timestamp of any committed version
    */
@@ -113,6 +114,7 @@ public final class DeltaHistoryManager {
    * </ul>
    *
    * @param millisSinceEpochUTC the number of milliseconds since midnight, January 1, 1970 UTC
+   * @param catalogCommits parsed log Deltas to use (must be sorted and contiguous)
    * @return latest commit that happened before or at {@code timestamp}.
    * @throws KernelException if the timestamp is less than the timestamp of any committed version
    */
@@ -152,7 +154,7 @@ public final class DeltaHistoryManager {
    *     provided timestamp is after the latest commit
    * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
    *     provided timestamp is before the earliest commit
-   * @param catalogCommits parsed log Deltas to use
+   * @param catalogCommits parsed log Deltas to use (must be sorted and contiguous)
    * @throws KernelException if the provided timestamp is before the earliest commit and
    *     canReturnEarliestCommit is false
    * @throws KernelException if the provided timestamp is after the latest commit and
