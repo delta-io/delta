@@ -216,7 +216,8 @@ public class SnapshotFactory {
         protocol,
         metadata,
         ctx.committerOpt.orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE),
-        snapshotCtx);
+        snapshotCtx,
+        Optional.empty() /* inCommitTimestampOpt */);
   }
 
   private SnapshotQueryContext getSnapshotQueryContext() {

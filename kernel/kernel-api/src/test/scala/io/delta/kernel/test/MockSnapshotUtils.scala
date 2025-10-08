@@ -90,7 +90,8 @@ trait MockSnapshotUtils {
       new Protocol(1, 2), /* protocol */
       metadata,
       DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
-      snapshotQueryContext /* snapshotContext */
+      snapshotQueryContext, /* snapshotContext */
+      Optional.empty() /* inCommitTimestampOpt */
     )
   }
 }

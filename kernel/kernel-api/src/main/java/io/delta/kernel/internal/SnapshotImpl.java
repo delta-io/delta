@@ -51,6 +51,7 @@ import java.util.Optional;
 
 /** Implementation of {@link Snapshot}. */
 public class SnapshotImpl implements Snapshot {
+
   private final Path logPath;
   private final Path dataPath;
   private final long version;
@@ -59,11 +60,25 @@ public class SnapshotImpl implements Snapshot {
   private final Protocol protocol;
   private final Metadata metadata;
   private final Committer committer;
+
+  /**
+   * If this snapshot does not have the InCommitTimestamp (ICT) table feature enabled, then this is
+   * always Optional.empty(). If it does, then this is:
+   *
+   * <ul>
+   *   <li>Optional.empty(): if the ICT value is not yet known (i.e. has not yet been read from the
+   *       CRC or CommitInfo)
+   *   <li>Optional.of(timestamp): if the ICT value has been read from the CRC or CommitInfo, or was
+   *       injected into this Snapshot at construction time (e.g. for a post-commit snapshot)
+   * </ul>
+   */
   private Optional<Long> inCommitTimestampOpt;
+
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
   // TODO: Do not take in LogReplay as a constructor argument.
+  // TODO: Also take in clustering columns for post-commit snapshot
   public SnapshotImpl(
       Path dataPath,
       long version,
@@ -72,7 +87,8 @@ public class SnapshotImpl implements Snapshot {
       Protocol protocol,
       Metadata metadata,
       Committer committer,
-      SnapshotQueryContext snapshotContext) {
+      SnapshotQueryContext snapshotContext,
+      Optional<Long> inCommitTimestampOpt) {
     checkArgument(version >= 0, "A snapshot cannot have version < 0");
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
@@ -82,7 +98,7 @@ public class SnapshotImpl implements Snapshot {
     this.protocol = requireNonNull(protocol);
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
-    this.inCommitTimestampOpt = Optional.empty();
+    this.inCommitTimestampOpt = inCommitTimestampOpt;
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
     // constructor because some Snapshot metrics, like {@link
@@ -117,9 +133,6 @@ public class SnapshotImpl implements Snapshot {
 
   /**
    * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this Snapshot.
-   * If the table does not yet exist (i.e. this Snapshot is being used to create a new table), this
-   * method returns -1. Note that this -1 value will never be exposed to users - either they get a
-   * valid snapshot for an existing table or they get an exception.
    *
    * <p>When InCommitTimestampTableFeature is enabled, the timestamp is retrieved from the
    * CommitInfo of the latest commit in this Snapshot, which can result in an IO operation.
@@ -127,6 +140,7 @@ public class SnapshotImpl implements Snapshot {
    * <p>For non-ICT tables, this is the same as the file modification time of the latest commit in
    * this Snapshot.
    */
+  // TODO: Support reading from CRC file if available
   @Override
   public long getTimestamp(Engine engine) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {

@@ -196,7 +196,7 @@ trait AbstractTestUtils
     testFunc(tablePath)
   }
 
-  def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
+  def latestSnapshot(path: String, engine: Engine = defaultEngine): SnapshotImpl = {
     getTableManagerAdapter.getSnapshotAtLatest(engine, path)
   }
 
