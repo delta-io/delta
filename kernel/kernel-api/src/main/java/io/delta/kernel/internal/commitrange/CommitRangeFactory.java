@@ -58,7 +58,7 @@ class CommitRangeFactory {
     List<ParsedCatalogCommitData> ratifiedCommits = getFileBasedRatifiedCommits();
     long startVersion = resolveStartVersion(engine, ratifiedCommits);
     Optional<Long> endVersionOpt = resolveEndVersionIfSpecified(engine, ratifiedCommits);
-    validateDeltasMatchVersionRange(startVersion, endVersionOpt);
+    validateVersionRange(startVersion, endVersionOpt);
     logResolvedVersions(startVersion, endVersionOpt);
     List<ParsedDeltaData> deltas =
         getDeltasForVersionRangeWithCatalogPriority(
@@ -128,7 +128,7 @@ class CommitRangeFactory {
     }
   }
 
-  private void validateDeltasMatchVersionRange(long startVersion, Optional<Long> endVersionOpt) {
+  private void validateVersionRange(long startVersion, Optional<Long> endVersionOpt) {
     endVersionOpt.ifPresent(
         endVersion ->
             checkArgument(
