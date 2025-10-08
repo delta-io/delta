@@ -52,7 +52,7 @@ public interface SupportsPublishing extends Committer {
    * <p>Catalog-specific semantics: Each catalog implementation may specify its own rules and
    * semantics for publishing, including whether it expects to be notified immediately upon
    * publishing success, whether published deltas must appear with PUT-if-absent semantics in the
-   * Delta log, and whether publishing happens client-side or server-side.
+   * Delta log, and whether publishing happens in the client-side or server-side catalog-component.
    *
    * @param engine the {@link Engine} instance used for publishing commits
    * @param publishMetadata the {@link PublishMetadata} containing the snapshot version up to which
