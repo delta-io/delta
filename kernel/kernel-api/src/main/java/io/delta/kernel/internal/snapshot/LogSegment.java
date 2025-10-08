@@ -255,8 +255,21 @@ public class LogSegment {
   }
 
   /**
-   * Returns the maximum version among all published delta files that were seen during log segment
-   * construction, if available.
+   * Returns the maximum published delta version observed during log segment construction.
+   *
+   * <p>This is a best-effort API that returns what was actually seen during construction, not the
+   * authoritative maximum published delta version in the log.
+   *
+   * <p>{@code Optional.empty()} means "we don't know" - not necessarily that no deltas have been
+   * published. This can occur when:
+   *
+   * <ul>
+   *   <li>Only checkpoint files were found during listing (e.g., due to log cleanup)
+   *   <li>Listing bounds did not include published delta files
+   *   <li>The table contains only catalog commits with no published deltas
+   * </ul>
+   *
+   * @return the maximum published delta version seen during construction, or empty if unknown
    */
   public Optional<Long> getMaxPublishedDeltaVersion() {
     return maxPublishedDeltaVersion;
