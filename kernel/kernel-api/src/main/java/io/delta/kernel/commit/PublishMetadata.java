@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.lang.ListUtils;
 import java.util.List;
@@ -74,16 +75,7 @@ public class PublishMetadata {
   }
 
   private void validateCommitsContiguous() {
-    for (int i = 0; i < ascendingCatalogCommits.size() - 1; i++) {
-      long currentVersion = ascendingCatalogCommits.get(i).getVersion();
-      long nextVersion = ascendingCatalogCommits.get(i + 1).getVersion();
-      checkArgument(
-          nextVersion == currentVersion + 1,
-          "Catalog commits must be contiguous and sorted in ascending order. "
-              + "Expected version %d but got %d",
-          currentVersion + 1,
-          nextVersion);
-    }
+    LogDataUtils.validateLogDataIsSortedContiguous(ascendingCatalogCommits);
   }
 
   private void validateLastCommitMatchesSnapshotVersion() {

@@ -61,8 +61,7 @@ class PublishMetadataSuite extends AnyFunSuite with TestFixtures {
     val ex = intercept[IllegalArgumentException] {
       new PublishMetadata(4, logPath, commits)
     }
-    assert(ex.getMessage.contains("must be contiguous and sorted in ascending order"))
-    assert(ex.getMessage.contains("Expected version 3 but got 4"))
+    assert(ex.getMessage.contains("must be sorted and contiguous"))
   }
 
   test("constructor validates sorted commits - out of order") {
@@ -74,7 +73,7 @@ class PublishMetadataSuite extends AnyFunSuite with TestFixtures {
     val ex = intercept[IllegalArgumentException] {
       new PublishMetadata(3, logPath, commits)
     }
-    assert(ex.getMessage.contains("must be contiguous and sorted in ascending order"))
+    assert(ex.getMessage.contains("must be sorted and contiguous"))
   }
 
   test("constructor validates last commit matches snapshot version") {
