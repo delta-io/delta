@@ -58,7 +58,7 @@ class CommitRangeFactory {
     List<ParsedCatalogCommitData> ratifiedCommits = getFileBasedRatifiedCommits();
     long startVersion = resolveStartVersion(engine, ratifiedCommits);
     Optional<Long> endVersionOpt = resolveEndVersionIfSpecified(engine, ratifiedCommits);
-    validateVersionRange(startVersion, endVersionOpt);
+    validateDeltasMatchVersionRange(startVersion, endVersionOpt);
     logResolvedVersions(startVersion, endVersionOpt);
     List<ParsedDeltaData> deltas =
         getDeltasForVersionRangeWithCatalogPriority(
@@ -128,7 +128,7 @@ class CommitRangeFactory {
     }
   }
 
-  private void validateVersionRange(long startVersion, Optional<Long> endVersionOpt) {
+  private void validateDeltasMatchVersionRange(long startVersion, Optional<Long> endVersionOpt) {
     endVersionOpt.ifPresent(
         endVersion ->
             checkArgument(
@@ -192,7 +192,7 @@ class CommitRangeFactory {
     List<ParsedDeltaData> combinedDeltas =
         LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
             publishedDeltas, ratifiedDeltas);
-    validateVersionRange(combinedDeltas, startVersion, endVersionOpt);
+    validateDeltasMatchVersionRange(combinedDeltas, startVersion, endVersionOpt);
     return combinedDeltas;
   }
 
@@ -241,7 +241,7 @@ class CommitRangeFactory {
       long earliestPublishedVersion = publishedDeltas.get(0).getVersion();
       long earliestRatifiedVersion = ratifiedDeltas.get(0).getVersion();
       // We cannot have ratifiedDeltas.head.version < publishedDeltas.head.version
-      // Example: P2, P3 + R1, R2, R3 is invalid
+      // Invalid example: P2, P3 + R1, R2, R3
       if (earliestRatifiedVersion < earliestPublishedVersion) {
         throw catalogCommitsPrecedePublishedDeltas(
             tablePath.toString(),
@@ -250,7 +250,7 @@ class CommitRangeFactory {
       }
       long lastPublishedVersion = ListUtils.getLast(publishedDeltas).getVersion();
       // We must have publishedDeltas + ratifiedDeltas be contiguous
-      // Example: P0, P1 + R3, R4 is invalid
+      // Invalid example: P0, P1 + R3, R4
       if (lastPublishedVersion + 1 < earliestRatifiedVersion) {
         throw publishedDeltasAndCatalogCommitsNotContiguous(
             tablePath.toString(),
@@ -260,7 +260,7 @@ class CommitRangeFactory {
     }
   }
 
-  private void validateVersionRange(
+  private void validateDeltasMatchVersionRange(
       List<ParsedDeltaData> deltas, long startVersion, Optional<Long> endVersionOpt) {
     // This can only happen if publishedDeltas.isEmpty && ratifiedDeltas.isEmpty
     if (deltas.isEmpty()) {

@@ -65,7 +65,7 @@ public class DeltaErrorsInternal {
         tablePath,
         String.format(
             "Missing delta file: found staged ratified commit for version %s but no published "
-                + "delta file. Found published deltas for versions: %s",
+                + "delta file. Found published deltas for later versions: %s",
             earliestCatalogCommitVersion, foundPublishedVersions));
   }
 
