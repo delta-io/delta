@@ -760,6 +760,7 @@ public class TransactionImpl implements Transaction {
       ParsedDeltaData committedDelta,
       Optional<Long> committedIctOpt,
       Optional<CRCInfo> postCommitCrcOpt) {
+    // TODO: Support building post-commit Snapshots after conflicts
     if (committedDelta.getVersion() != getReadTableVersion() + 1) {
       return Optional.empty();
     }

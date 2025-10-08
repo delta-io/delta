@@ -60,7 +60,21 @@ public class SnapshotImpl implements Snapshot {
   private final Protocol protocol;
   private final Metadata metadata;
   private final Committer committer;
+
+  /**
+   * If this snapshot does not have ICT enabled, then this is always Optional.empty().
+   *
+   * <p>If this snapshot does have ICT enabled, then this is:
+   *
+   * <ul>
+   *   <li>Optional.empty(): if the ICT value is not yet known (i.e. has not yet been read from the
+   *       CRC or CommitInfo)
+   *   <li>Optional.of(timestamp): if the ICT value has been read from the CRC or CommitInfo, or was
+   *       injected into this Snapshot at construction time (e.g. for a post-commit snapshot)
+   * </ul>
+   */
   private Optional<Long> inCommitTimestampOpt;
+
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
@@ -120,9 +134,6 @@ public class SnapshotImpl implements Snapshot {
 
   /**
    * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this Snapshot.
-   * If the table does not yet exist (i.e. this Snapshot is being used to create a new table), this
-   * method returns -1. Note that this -1 value will never be exposed to users - either they get a
-   * valid snapshot for an existing table or they get an exception.
    *
    * <p>When InCommitTimestampTableFeature is enabled, the timestamp is retrieved from the
    * CommitInfo of the latest commit in this Snapshot, which can result in an IO operation.
@@ -130,6 +141,7 @@ public class SnapshotImpl implements Snapshot {
    * <p>For non-ICT tables, this is the same as the file modification time of the latest commit in
    * this Snapshot.
    */
+  // TODO: Support reading from CRC file if available
   @Override
   public long getTimestamp(Engine engine) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
