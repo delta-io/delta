@@ -806,7 +806,23 @@ lazy val kernelSpark = (project in file("kernel-spark"))
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     },
-    assemblyPackageScala / assembleArtifact := false
+    assemblyPackageScala / assembleArtifact := false,
+    // Remove dependencies from POM that are already packaged in the fat jar
+    pomPostProcess := { (node: scala.xml.Node) =>
+      new scala.xml.transform.RuleTransformer(new scala.xml.transform.RewriteRule {
+        override def transform(node: scala.xml.Node): scala.xml.NodeSeq = node match {
+          case e: scala.xml.Elem if e.label == "dependency" =>
+            val artifactId = (e \ "artifactId").text
+            // Remove kernel-api and kernel-defaults from POM since they're in the fat jar
+            if (artifactId == "delta-kernel-api" || artifactId == "delta-kernel-defaults") {
+              scala.xml.NodeSeq.Empty
+            } else {
+              node
+            }
+          case _ => node
+        }
+      }).transform(node).head
+    }
   )
   // TODO to enable unit doc for kernelSpark.
 
