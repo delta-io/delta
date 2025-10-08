@@ -184,8 +184,9 @@ public class UCCatalogManagedCommitter implements Committer, SupportsPublishing 
     try {
       logger.info("[{}] Publishing catalog commit: {} -> {}", ucTableId, sourcePath, targetPath);
 
-      // Copy the staged commit file to the published delta file location.
-      // Use overwrite=false to ensure PUT-if-absent semantics.
+      // Copy the staged commit file to the published delta file location. We use overwrite=false to
+      // ensure PUT-if-absent semantics, since UC catalogManaged tables expect immutability of
+      // published delta files (e.g. never want the e-tag to change).
       engine
           .getFileSystemClient()
           .copyFileAtomically(sourcePath, targetPath, false /* overwrite */);
@@ -346,21 +347,5 @@ public class UCCatalogManagedCommitter implements Committer, SupportsPublishing 
         storageCFE.getConflict(),
         storageCFE.getMessage(),
         storageCFE.getCause());
-  }
-
-  /**
-   * Returns true if the provided Throwable is to be considered fatal, or false if it is to be
-   * considered non-fatal
-   */
-  private static boolean isFatal(Throwable t) {
-    // VirtualMachineError includes OutOfMemoryError and other fatal errors
-    if (t instanceof VirtualMachineError
-        || t instanceof ThreadDeath
-        || t instanceof InterruptedException
-        || t instanceof LinkageError) {
-      return true;
-    }
-
-    return false;
   }
 }

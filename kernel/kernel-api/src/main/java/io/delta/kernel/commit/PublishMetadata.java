@@ -16,10 +16,12 @@
 
 package io.delta.kernel.commit;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.internal.lang.ListUtils;
 import java.util.List;
 
 /** Metadata required for publishing catalog commits to the Delta log. */
@@ -28,6 +30,13 @@ public class PublishMetadata {
 
   private final long snapshotVersion;
   private final String logPath;
+
+  /**
+   * List of contiguous catalog commits to be published, in ascending order of version number.
+   *
+   * <p>Must be non-empty and must end with a catalog commit whose version matches {@code
+   * snapshotVersion}.
+   */
   private final List<ParsedCatalogCommitData> ascendingCatalogCommits;
 
   public PublishMetadata(
@@ -36,6 +45,10 @@ public class PublishMetadata {
     this.logPath = requireNonNull(logPath, "logPath is null");
     this.ascendingCatalogCommits =
         requireNonNull(ascendingCatalogCommits, "ascendingCatalogCommits is null");
+
+    validateCommitsNonEmpty();
+    validateCommitsContiguous();
+    validateLastCommitMatchesSnapshotVersion();
   }
 
   /** @return the snapshot version up to which all catalog commits must be published */
@@ -54,5 +67,32 @@ public class PublishMetadata {
    */
   public List<ParsedCatalogCommitData> getAscendingCatalogCommits() {
     return ascendingCatalogCommits;
+  }
+
+  private void validateCommitsNonEmpty() {
+    checkArgument(!ascendingCatalogCommits.isEmpty(), "ascendingCatalogCommits must be non-empty");
+  }
+
+  private void validateCommitsContiguous() {
+    for (int i = 0; i < ascendingCatalogCommits.size() - 1; i++) {
+      long currentVersion = ascendingCatalogCommits.get(i).getVersion();
+      long nextVersion = ascendingCatalogCommits.get(i + 1).getVersion();
+      checkArgument(
+          nextVersion == currentVersion + 1,
+          "Catalog commits must be contiguous and sorted in ascending order. "
+              + "Expected version %d but got %d",
+          currentVersion + 1,
+          nextVersion);
+    }
+  }
+
+  private void validateLastCommitMatchesSnapshotVersion() {
+    final long lastCommitVersion = ListUtils.getLast(ascendingCatalogCommits).getVersion();
+
+    checkArgument(
+        lastCommitVersion == snapshotVersion,
+        "Last catalog commit version %d must equal snapshot version %d",
+        lastCommitVersion,
+        snapshotVersion);
   }
 }

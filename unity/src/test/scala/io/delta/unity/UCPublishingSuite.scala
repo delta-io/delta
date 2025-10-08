@@ -57,10 +57,10 @@ class UCPublishingSuite
    * Helper to create a staged commit file and return its ParsedCatalogCommitData.
    * Just writes the file directly without using the committer.
    */
-  private def createStagedCommitFile(
+  private def writeStagedCatalogCommit(
       logPath: String,
       version: Long,
-      content: String): ParsedCatalogCommitData = {
+      content: String = ""): ParsedCatalogCommitData = {
     val stagedPath = FileNames.stagedCommitFile(logPath, version)
     defaultEngine.getJsonHandler.writeJsonFileAtomically(
       stagedPath,
@@ -75,7 +75,7 @@ class UCPublishingSuite
     val publishMetadata = createPublishMetadata(
       snapshotVersion = 1,
       logPath = baseTestLogPath,
-      catalogCommits = Nil)
+      catalogCommits = List(createStagedCatalogCommit(1, baseTestLogPath)))
 
     assertThrows[NullPointerException] {
       committer.publish(null, publishMetadata)
@@ -112,9 +112,9 @@ class UCPublishingSuite
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val catalogCommits = List(
-        createStagedCommitFile(logPath, 1, "COMMIT_V1"),
-        createStagedCommitFile(logPath, 2, "COMMIT_V2"),
-        createStagedCommitFile(logPath, 3, "COMMIT_V3"))
+        writeStagedCatalogCommit(logPath, 1, "COMMIT_V1"),
+        writeStagedCatalogCommit(logPath, 2, "COMMIT_V2"),
+        writeStagedCatalogCommit(logPath, 3, "COMMIT_V3"))
       val committer = createCommitter(tablePath)
       val publishMetadata = createPublishMetadata(
         snapshotVersion = 3,
@@ -134,7 +134,7 @@ class UCPublishingSuite
   test("publish: does not overwrite existing published files") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
-      val catalogCommit = createStagedCommitFile(logPath, 1, "TEST_IDEMPOTENT_PUBLISH")
+      val catalogCommit = writeStagedCatalogCommit(logPath, 1, "TEST_IDEMPOTENT_PUBLISH")
       val committer = createCommitter(tablePath)
       val publishMetadata = createPublishMetadata(
         snapshotVersion = 1,
@@ -160,7 +160,7 @@ class UCPublishingSuite
   test("publish: creates published file at correct location with identical content") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
-      val catalogCommit = createStagedCommitFile(logPath, 1, "VERSION_1")
+      val catalogCommit = writeStagedCatalogCommit(logPath, 1, "VERSION_1")
       val committer = createCommitter(tablePath)
       val publishMetadata = createPublishMetadata(
         snapshotVersion = 1,
@@ -189,7 +189,7 @@ class UCPublishingSuite
   test("publish: throws PublishFailedException on IOException") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
-      val catalogCommit = createStagedCommitFile(logPath, 1, "TEST_EXCEPTION")
+      val catalogCommit = writeStagedCatalogCommit(logPath, 1, "TEST_EXCEPTION")
       val throwingEngine = mockEngine(fileSystemClient = new BaseMockFileSystemClient {
         override def copyFileAtomically(
             srcPath: String,
