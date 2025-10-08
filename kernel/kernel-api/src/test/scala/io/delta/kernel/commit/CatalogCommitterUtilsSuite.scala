@@ -19,10 +19,15 @@ package io.delta.kernel.commit
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.internal.actions.Protocol
+import io.delta.kernel.internal.files.ParsedDeltaData
+import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class CatalogCommitterUtilsSuite extends AnyFunSuite {
+class CatalogCommitterUtilsSuite
+    extends AnyFunSuite
+    with MockFileSystemClientUtils
+    with VectorTestUtils {
 
   test("extractProtocolProperties - legacy protocol (1, 2)") {
     // ===== GIVEN =====
@@ -54,4 +59,29 @@ class CatalogCommitterUtilsSuite extends AnyFunSuite {
     assert(properties("delta.feature.deletionVectors") === "supported")
     assert(properties("delta.feature.appendOnly") === "supported")
   }
+
+  test("getPublishedDeltaFilePath - generates correct path format") {
+    // ===== GIVEN =====
+    val logPath = "/path/to/table/_delta_log"
+    val catalogCommit = ParsedDeltaData.forFileStatus(stagedCommitFile(42))
+
+    // ===== WHEN =====
+    val publishedPath = CatalogCommitterUtils.getPublishedDeltaFilePath(logPath, catalogCommit)
+
+    // ===== THEN =====
+    assert(publishedPath === s"$logPath/00000000000000000042.json")
+  }
+
+  test("publishCatalogCommit - throws exception for inline catalog commit") {
+    // ===== GIVEN =====
+    val logPath = "/path/to/table/_delta_log"
+    val inlineCatalogCommit = ParsedDeltaData.forInlineData(10L, emptyColumnarBatch)
+
+    // ===== WHEN/THEN =====
+    val exception = intercept[UnsupportedOperationException] {
+      CatalogCommitterUtils.publishCatalogCommit(mockEngine(), logPath, inlineCatalogCommit)
+    }
+    assert(exception.getMessage === "Publishing inline catalog commits is not supported")
+  }
+
 }
