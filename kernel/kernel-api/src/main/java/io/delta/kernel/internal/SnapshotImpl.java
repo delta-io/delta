@@ -62,9 +62,8 @@ public class SnapshotImpl implements Snapshot {
   private final Committer committer;
 
   /**
-   * If this snapshot does not have ICT enabled, then this is always Optional.empty().
-   *
-   * <p>If this snapshot does have ICT enabled, then this is:
+   * If this snapshot does not have the InCommitTimestamp (ICT) table feature enabled, then this is
+   * always Optional.empty(). If it does, then this is:
    *
    * <ul>
    *   <li>Optional.empty(): if the ICT value is not yet known (i.e. has not yet been read from the

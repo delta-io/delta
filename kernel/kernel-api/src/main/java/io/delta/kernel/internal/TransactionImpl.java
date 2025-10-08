@@ -760,7 +760,11 @@ public class TransactionImpl implements Transaction {
       ParsedDeltaData committedDelta,
       Optional<Long> committedIctOpt,
       Optional<CRCInfo> postCommitCrcOpt) {
-    // TODO: Support building post-commit Snapshots after conflicts
+    // TODO: Support building post-commit Snapshots after conflicts. If there was a conflict, then
+    //       we'd need to keep track of each of the conflicting commit files in order to build the
+    //       new LogSegment for our post-commit Snapshot. This is currently not done, today. Note
+    //       that for catalogManaged tables, we would need the Committer to provide the conflicting
+    //       commits as part of the CommitFailedException.
     if (committedDelta.getVersion() != getReadTableVersion() + 1) {
       return Optional.empty();
     }

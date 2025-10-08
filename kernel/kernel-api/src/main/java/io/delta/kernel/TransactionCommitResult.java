@@ -82,10 +82,12 @@ public class TransactionCommitResult {
   }
 
   /**
-   * @return the snapshot at the committed version. Currently, Kernel does not support getting the
-   *     post-commit snapshot for transactions that experienced conflicts.
+   * Return the snapshot at the committed version.
+   *
+   * <p>Currently, Kernel does not support getting the post-commit snapshot for transactions that
+   * experienced conflicts.
    */
   public Optional<Snapshot> getPostCommitSnapshot() {
-    return postCommitSnapshotOpt.map(s -> s); // Need to upcast
+    return postCommitSnapshotOpt.map(s -> s); // Map needed to upcast to Optional<Snapshot>
   }
 }
