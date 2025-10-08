@@ -764,6 +764,8 @@ lazy val kernelSpark = (project in file("kernel-spark"))
     javafmtCheckSettings(),
     releaseSettings,
     crossSparkSettings(),
+    // Skip scaladoc generation because wrapper classes extend shaded classes
+    Compile / packageDoc / publishArtifact := false,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
