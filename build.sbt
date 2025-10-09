@@ -64,7 +64,6 @@ sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
-val flinkVersion = "1.16.1"
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
@@ -1276,120 +1275,6 @@ lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
       "org.apache.spark" % ("spark-core_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % defaultSparkVersion % "test",
       "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % defaultSparkVersion % "test"
     )
-  )
-
-def flinkScalaVersion(scalaBinaryVersion: String): String = {
-  scalaBinaryVersion match {
-    // Flink doesn't support 2.13. We return 2.12 so that we can resolve the dependencies but we
-    // will not publish Flink connector with Scala 2.13.
-    case "2.13" => "2.12"
-    case _ => scalaBinaryVersion
-  }
-}
-
-lazy val flink = (project in file("connectors/flink"))
-  .dependsOn(standaloneCosmetic % "provided")
-  .dependsOn(kernelApi)
-  .dependsOn(kernelDefaults)
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings (
-    name := "delta-flink",
-    commonSettings,
-    releaseSettings,
-    flinkMimaSettings,
-    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
-    autoScalaLibrary := false, // exclude scala-library from dependencies
-    Test / publishArtifact := false,
-    pomExtra :=
-      <url>https://github.com/delta-io/delta</url>
-        <scm>
-          <url>git@github.com:delta-io/delta.git</url>
-          <connection>scm:git:git@github.com:delta-io/delta.git</connection>
-        </scm>
-        <developers>
-          <developer>
-            <id>pkubit-g</id>
-            <name>Paweł Kubit</name>
-            <url>https://github.com/pkubit-g</url>
-          </developer>
-          <developer>
-            <id>kristoffSC</id>
-            <name>Krzysztof Chmielewski</name>
-            <url>https://github.com/kristoffSC</url>
-          </developer>
-        </developers>,
-    crossPaths := false,
-    libraryDependencies ++= Seq(
-      "org.apache.flink" % "flink-parquet" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
-      "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-      "org.apache.flink" % "flink-connector-files" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-table-runtime" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-scala_2.12" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-connector-hive_2.12" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-table-planner_2.12" % flinkVersion % "provided",
-
-      "org.apache.flink" % "flink-connector-files" % flinkVersion % "test" classifier "tests",
-      "org.apache.flink" % "flink-runtime-web" % flinkVersion % "test",
-      "org.apache.flink" % "flink-sql-gateway-api" % flinkVersion % "test",
-      "org.apache.flink" % "flink-connector-test-utils" % flinkVersion % "test",
-      "org.apache.flink" % "flink-clients" % flinkVersion % "test",
-      "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test" classifier "tests",
-      "org.mockito" % "mockito-inline" % "4.11.0" % "test",
-      "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
-      "org.junit.vintage" % "junit-vintage-engine" % "5.8.2" % "test",
-      "org.mockito" % "mockito-junit-jupiter" % "4.11.0" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "io.github.artsok" % "rerunner-jupiter" % "2.1.6" % "test",
-
-      // Exclusions due to conflicts with Flink's libraries from table planer, hive, calcite etc.
-      "org.apache.hive" % "hive-metastore" % "3.1.2" % "test" excludeAll(
-        ExclusionRule("org.apache.avro", "avro"),
-        ExclusionRule("org.slf4j", "slf4j-log4j12"),
-        ExclusionRule("org.pentaho"),
-        ExclusionRule("org.apache.hbase"),
-        ExclusionRule("org.apache.hbase"),
-        ExclusionRule("co.cask.tephra"),
-        ExclusionRule("com.google.code.findbugs", "jsr305"),
-        ExclusionRule("org.eclipse.jetty.aggregate", "module: 'jetty-all"),
-        ExclusionRule("org.eclipse.jetty.orbit", "javax.servlet"),
-        ExclusionRule("org.apache.parquet", "parquet-hadoop-bundle"),
-        ExclusionRule("com.tdunning", "json"),
-        ExclusionRule("javax.transaction", "transaction-api"),
-        ExclusionRule("'com.zaxxer", "HikariCP"),
-      ),
-      // Exclusions due to conflicts with Flink's libraries from table planer, hive, calcite etc.
-      "org.apache.hive" % "hive-exec" % "3.1.2" % "test" classifier "core" excludeAll(
-        ExclusionRule("'org.apache.avro", "avro"),
-        ExclusionRule("org.slf4j", "slf4j-log4j12"),
-        ExclusionRule("org.pentaho"),
-        ExclusionRule("com.google.code.findbugs", "jsr305"),
-        ExclusionRule("org.apache.calcite.avatica"),
-        ExclusionRule("org.apache.calcite"),
-        ExclusionRule("org.apache.hive", "hive-llap-tez"),
-        ExclusionRule("org.apache.logging.log4j"),
-        ExclusionRule("com.google.protobuf", "protobuf-java"),
-      ),
-    ),
-    // generating source java class with version number to be passed during commit to the DeltaLog as engine info
-    // (part of transaction's metadata)
-    Compile / sourceGenerators += Def.task {
-      val file = (Compile / sourceManaged).value / "io" / "delta" / "flink" / "internal" / "Meta.java"
-      IO.write(file,
-        s"""package io.delta.flink.internal;
-           |
-           |public final class Meta {
-           |    public static final String FLINK_VERSION = "${flinkVersion}";
-           |    public static final String CONNECTOR_VERSION = "${version.value}";
-           |}
-           |""".stripMargin)
-      Seq(file)
-    },
-
-    // TODO: this is the config that was used before archiving connectors but it has
-    //  standalone-specific import orders
-    javaCheckstyleSettings("dev/connectors-checkstyle.xml")
   )
 
 /**

@@ -36,6 +36,3 @@ jobs:
         #  if: startsWith(matrix.scala, '2.12.')
       - name: Run Delta Standalone tests
         run: build/sbt "++ ${{ matrix.scala }}" standalone/test testStandaloneCosmetic/test standaloneParquet/test testParquetUtilsWithStandaloneCosmetic/test
-      - name: Run Flink tests (Scala 2.12 only)
-        run: build/sbt -mem 3000 "++ ${{ matrix.scala }}" flink/test
-        if: ${{ startsWith(matrix.scala, '2.12.') }}
