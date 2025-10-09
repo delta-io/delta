@@ -588,7 +588,7 @@ lazy val spark = (project in file("spark-combined"))
     releaseSettings, // Published as delta-spark.jar
     crossSparkSettings(),
     
-    // Remove internal module dependencies from published pom.xml
+    // Remove internal module dependencies from published pom.xml and ivy.xml
     // Users should only depend on delta-spark jar, not internal modules
     pomPostProcess := { node =>
       import scala.xml._
@@ -606,6 +606,16 @@ lazy val spark = (project in file("spark-combined"))
           case _ => Seq(n)
         }
       }).transform(node).head
+    },
+    
+    // Also remove internal modules from ivy.xml
+    pomIncludeRepository := { _ => false },  // Don't include repositories in pom
+    
+    // Override projectDependencies to exclude internal modules
+    projectDependencies := {
+      projectDependencies.value.filterNot { dep =>
+        dep.name.startsWith("delta-spark-v") || dep.name == "delta-spark-shaded"
+      }
     },
     
     // No prod code in this module
