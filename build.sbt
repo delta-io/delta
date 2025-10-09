@@ -188,7 +188,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   case LATEST_RELEASED_SPARK_VERSION => Seq(
     scalaVersion := default_scala_version.value,
     crossScalaVersions := all_scala_versions,
-    targetJvm := "8",
+    targetJvm := "11",
     // For adding staged Spark RC versions, e.g.:
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
@@ -1386,7 +1386,7 @@ lazy val flink = (project in file("connectors/flink"))
            |""".stripMargin)
       Seq(file)
     },
-    
+
     // TODO: this is the config that was used before archiving connectors but it has
     //  standalone-specific import orders
     javaCheckstyleSettings("dev/connectors-checkstyle.xml")
