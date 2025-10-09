@@ -24,12 +24,12 @@ import io.delta.kernel.internal.actions.AddFile;
  *
  * <p>Indexed: refers to the index in DeltaSourceOffset, assigned by the streaming engine.
  */
-public class KernelIndexedFile {
+public class IndexedFile {
   private final long version;
   private final long index;
   private final AddFile addFile;
 
-  public KernelIndexedFile(long version, long index, AddFile addFile) {
+  public IndexedFile(long version, long index, AddFile addFile) {
     this.version = version;
     this.index = index;
     this.addFile = addFile;
@@ -50,7 +50,7 @@ public class KernelIndexedFile {
   @Override
   public String toString() {
     StringBuilder sb = new StringBuilder();
-    sb.append("KernelIndexedFile{");
+    sb.append("IndexedFile{");
     sb.append("version=").append(version);
     sb.append(", index=").append(index);
     sb.append(", addFile=").append(addFile);

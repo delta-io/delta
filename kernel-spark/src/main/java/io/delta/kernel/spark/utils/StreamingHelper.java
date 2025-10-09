@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.spark.utils;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.data.ColumnVector;
@@ -147,18 +149,28 @@ public class StreamingHelper {
   }
 
   /**
+   * Returns the index of the field with the given name in the schema of the batch. Throws an {@link
+   * IllegalArgumentException} if the field is not found.
+   */
+  private static int getFieldIndex(ColumnarBatch batch, String fieldName) {
+    int index = batch.getSchema().indexOf(fieldName);
+    checkArgument(index >= 0, "Field '%s' not found in schema: %s", fieldName, batch.getSchema());
+    return index;
+  }
+
+  /**
    * Get the version from a batch. Assumes all rows in the batch have the same version, so it reads
    * from the first row (rowId=0).
    */
   public static long getVersion(ColumnarBatch batch) {
     assert batch.getSize() > 0;
-    int versionColIdx = batch.getSchema().indexOf("version");
+    int versionColIdx = getFieldIndex(batch, "version");
     return batch.getColumnVector(versionColIdx).getLong(0);
   }
 
   /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
   public static Optional<AddFile> getDataChangeAdd(ColumnarBatch batch, int rowId) {
-    int addIdx = batch.getSchema().indexOf("add");
+    int addIdx = getFieldIndex(batch, "add");
     ColumnVector addVector = batch.getColumnVector(addIdx);
     if (addVector.isNullAt(rowId)) {
       return Optional.empty();
@@ -177,7 +189,7 @@ public class StreamingHelper {
    * Get RemoveFile action from a batch at the specified row, if present and has dataChange=true.
    */
   public static Optional<RemoveFile> getDataChangeRemove(ColumnarBatch batch, int rowId) {
-    int removeIdx = batch.getSchema().indexOf("remove");
+    int removeIdx = getFieldIndex(batch, "remove");
     ColumnVector removeVector = batch.getColumnVector(removeIdx);
     if (removeVector.isNullAt(rowId)) {
       return Optional.empty();

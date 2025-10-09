@@ -31,7 +31,6 @@ import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
-import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -107,20 +106,21 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     assertEquals("stop is not supported", exception.getMessage());
   }
 
-  private String formatIndexedFile(IndexedFile file) {
+  private String formatIndexedFile(org.apache.spark.sql.delta.sources.IndexedFile file) {
     return String.format(
         "IndexedFile(version=%d, index=%d, hasAdd=%b)",
         file.version(), file.index(), file.add() != null);
   }
 
-  private String formatKernelIndexedFile(KernelIndexedFile file) {
+  private String formatKernelIndexedFile(io.delta.kernel.spark.read.IndexedFile file) {
     return String.format(
-        "KernelIndexedFile(version=%d, index=%d, hasAdd=%b)",
+        "IndexedFile(version=%d, index=%d, hasAdd=%b)",
         file.getVersion(), file.getIndex(), file.getAddFile() != null);
   }
 
   private void compareFileChanges(
-      List<IndexedFile> deltaSourceFiles, List<KernelIndexedFile> kernelFiles) {
+      List<org.apache.spark.sql.delta.sources.IndexedFile> deltaSourceFiles,
+      List<io.delta.kernel.spark.read.IndexedFile> kernelFiles) {
     assertEquals(
         deltaSourceFiles.size(),
         kernelFiles.size(),
@@ -129,8 +129,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             deltaSourceFiles.size(), kernelFiles.size()));
 
     for (int i = 0; i < deltaSourceFiles.size(); i++) {
-      IndexedFile deltaFile = deltaSourceFiles.get(i);
-      KernelIndexedFile kernelFile = kernelFiles.get(i);
+      org.apache.spark.sql.delta.sources.IndexedFile deltaFile = deltaSourceFiles.get(i);
+      io.delta.kernel.spark.read.IndexedFile kernelFile = kernelFiles.get(i);
 
       assertEquals(
           deltaFile.version(),
@@ -207,9 +207,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
               new DeltaSourceOffset(
                   deltaLog.tableId(), endVersion.get(), offsetIndex, isInitialSnapshot));
     }
-    ClosableIterator<IndexedFile> deltaChanges =
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
         deltaSource.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, scalaEndOffset, true);
-    List<IndexedFile> deltaFilesList = new ArrayList<>();
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
     while (deltaChanges.hasNext()) {
       deltaFilesList.add(deltaChanges.next());
     }
@@ -217,9 +217,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     // dsv2 SparkMicroBatchStream
     Option<DeltaSourceOffset> endOffsetOption = scalaEndOffset;
-    try (CloseableIterator<KernelIndexedFile> kernelChanges =
+    try (CloseableIterator<io.delta.kernel.spark.read.IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
-      List<KernelIndexedFile> kernelFilesList = new ArrayList<>();
+      List<io.delta.kernel.spark.read.IndexedFile> kernelFilesList = new ArrayList<>();
       while (kernelChanges.hasNext()) {
         kernelFilesList.add(kernelChanges.next());
       }
@@ -316,12 +316,12 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         assertThrows(
             UnsupportedOperationException.class,
             () -> {
-              ClosableIterator<IndexedFile> deltaChanges =
+              ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
                   deltaSource.getFileChanges(
                       fromVersion, fromIndex, isInitialSnapshot, endOffset, true);
               // Consume the iterator to trigger validation
               while (deltaChanges.hasNext()) {
-                IndexedFile file = deltaChanges.next();
+                org.apache.spark.sql.delta.sources.IndexedFile file = deltaChanges.next();
                 System.out.println(
                     String.format(
                         "  DSv1 Read: version=%d, index=%d, hasAdd=%b",
@@ -337,11 +337,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         assertThrows(
             UnsupportedOperationException.class,
             () -> {
-              try (CloseableIterator<KernelIndexedFile> kernelChanges =
+              try (CloseableIterator<io.delta.kernel.spark.read.IndexedFile> kernelChanges =
                   stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
                 // Consume the iterator to trigger validation
                 while (kernelChanges.hasNext()) {
-                  KernelIndexedFile file = kernelChanges.next();
+                  io.delta.kernel.spark.read.IndexedFile file = kernelChanges.next();
                   System.out.println(
                       String.format(
                           "  DSv2 Read: version=%d, index=%d, hasAdd=%b",
