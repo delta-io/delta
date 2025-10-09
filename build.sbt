@@ -574,9 +574,12 @@ lazy val `delta-spark-shaded` = (project in file("spark-shaded"))
 // Module 5: delta-spark (final published module - combined v1+v2+shaded)
 // ============================================================
 lazy val spark = (project in file("spark-combined"))
-  .dependsOn(`delta-spark-shaded`)
-  .dependsOn(`delta-spark-v1` % "test->test")
+  .dependsOn(`delta-spark-v1`)  // Direct dependency on v1 (full version with DeltaLog)
+  .dependsOn(`delta-spark-v2`)  // Direct dependency on v2
+  .dependsOn(`delta-spark-v1` % "test->test")  // Test utilities from v1
   .dependsOn(storage)  // Explicit dependency on storage
+  // Note: We don't .dependsOn delta-spark-shaded to avoid resolution issues,
+  // but we include its classes in packageBin / mappings below
   .settings (
     name := "delta-spark",
     commonSettings,
@@ -584,6 +587,26 @@ lazy val spark = (project in file("spark-combined"))
     sparkMimaSettings,
     releaseSettings, // Published as delta-spark.jar
     crossSparkSettings(),
+    
+    // Remove internal module dependencies from published pom.xml
+    // Users should only depend on delta-spark jar, not internal modules
+    pomPostProcess := { node =>
+      import scala.xml._
+      import scala.xml.transform._
+      new RuleTransformer(new RewriteRule {
+        override def transform(n: Node): Seq[Node] = n match {
+          case e: Elem if e.label == "dependency" =>
+            val artifactId = (e \ "artifactId").text
+            // Remove delta-spark-v1, delta-spark-v2, delta-spark-v1-shaded, delta-spark-shaded from pom
+            if (artifactId.startsWith("delta-spark-v") || artifactId == "delta-spark-shaded") {
+              Seq.empty
+            } else {
+              Seq(n)
+            }
+          case _ => Seq(n)
+        }
+      }).transform(node).head
+    },
     
     // No prod code in this module
     Compile / sources := Seq.empty,
