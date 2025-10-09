@@ -28,6 +28,15 @@ import java.util.Map;
 @Experimental
 public interface CatalogCommitter extends Committer {
 
+  /**
+   * Returns required catalog table properties that must be set in the Delta metadata.
+   *
+   * <p>These properties are automatically injected during CREATE and REPLACE operations and cannot
+   * be changed or removed by users. Any attempt to set these properties to different values or
+   * remove them will result in a validation error.
+   *
+   * @return a map of required catalog properties
+   */
   default Map<String, String> getRequiredTableProperties() {
     return Collections.emptyMap();
   }
