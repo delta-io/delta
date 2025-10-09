@@ -22,6 +22,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedLogData;
 import java.util.Collections;
 import java.util.List;
@@ -76,9 +77,6 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
 
   @Override
   public CommitRange build(Engine engine) {
-    if (!ctx.logDatas.isEmpty()) {
-      throw new UnsupportedOperationException("CommitRange does not support providing logData yet");
-    }
     validateInputOnBuild();
     return new CommitRangeFactory(engine, ctx).create(engine);
   }
@@ -108,6 +106,8 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
       // Mixed types are allowed but will need runtime resolution
     }
 
-    // TODO: validate parsedLogData input
+    // Validate logData input
+    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
+    LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
   }
 }

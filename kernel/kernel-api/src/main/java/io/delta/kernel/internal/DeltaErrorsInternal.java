@@ -15,6 +15,9 @@
  */
 package io.delta.kernel.internal;
 
+import io.delta.kernel.exceptions.InvalidTableException;
+import java.util.List;
+
 /**
  * Contains methods to create developer-facing exceptions. See <a
  * href="https://github.com/delta-io/delta/blob/master/kernel/EXCEPTION_PRINCIPLES.md">Exception
@@ -54,5 +57,32 @@ public class DeltaErrorsInternal {
             "The number of partition columns (%s) plus the physical schema size (%s) does not "
                 + "equal the logical schema size (%s).",
             num_partition_cols, physical_size, logical_size));
+  }
+
+  public static InvalidTableException catalogCommitsPrecedePublishedDeltas(
+      String tablePath, long earliestCatalogCommitVersion, List<Long> foundPublishedVersions) {
+    return new InvalidTableException(
+        tablePath,
+        String.format(
+            "Missing delta file: found staged ratified commit for version %s but no published "
+                + "delta file. Found published deltas for later versions: %s",
+            earliestCatalogCommitVersion, foundPublishedVersions));
+  }
+
+  public static InvalidTableException publishedDeltasAndCatalogCommitsNotContiguous(
+      String tablePath, List<Long> publishedDeltaVersions, List<Long> catalogCommitVersions) {
+    return new InvalidTableException(
+        tablePath,
+        String.format(
+            "Missing delta files: found published delta files for versions %s and staged "
+                + "ratified commits for versions %s",
+            publishedDeltaVersions, catalogCommitVersions));
+  }
+
+  public static InvalidTableException publishedDeltasNotContiguous(
+      String tablePath, List<Long> foundVersions) {
+    return new InvalidTableException(
+        tablePath,
+        String.format("Missing delta files: versions are not contiguous: (%s)", foundVersions));
   }
 }
