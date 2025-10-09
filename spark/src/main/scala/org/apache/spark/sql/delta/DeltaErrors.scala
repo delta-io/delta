@@ -25,7 +25,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.catalog.LegacyDeltaCatalog
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
@@ -1882,9 +1882,9 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
       messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
-        catalogImplConfig, classOf[DeltaCatalog].getName,
+        catalogImplConfig, classOf[LegacyDeltaCatalog].getName,
         classOf[DeltaSparkSessionExtension].getName,
-        catalogImplConfig, classOf[DeltaCatalog].getName),
+        catalogImplConfig, classOf[LegacyDeltaCatalog].getName),
       cause = originalException)
   }
 
