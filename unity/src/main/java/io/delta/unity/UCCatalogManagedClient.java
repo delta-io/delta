@@ -277,16 +277,14 @@ public class UCCatalogManagedClient {
   // TODO: should this be ParsedCatalogCommitData?
   // TODO: we could also make this static in-theory and take ucClient as an arg
   public List<ParsedLogData> getCommits(
-      Engine engine,
-      String ucTableId,
-      String tablePath,
-      Optional<Long> endVersionOpt) {
+      Engine engine, String ucTableId, String tablePath, Optional<Long> endVersionOpt) {
     Objects.requireNonNull(engine, "engine is null");
     Objects.requireNonNull(ucTableId, "ucTableId is null");
     Objects.requireNonNull(tablePath, "tablePath is null");
     Objects.requireNonNull(endVersionOpt, "endVersionOpt is null");
     endVersionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
-    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOpt);
+    final GetCommitsResponse response =
+        getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOpt);
     final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
     endVersionOpt.ifPresent(
         version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));

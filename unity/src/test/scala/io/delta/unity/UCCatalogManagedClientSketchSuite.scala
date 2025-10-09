@@ -2,17 +2,18 @@ package io.delta.unity
 
 import java.util.{Comparator, Optional}
 
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
-import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.TableManager
+import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
+import io.delta.kernel.internal.util.FileNames
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.UCClient
 import io.delta.unity.InMemoryUCClient.TableData
 import io.delta.unity.UCCatalogManagedClientSuite.{emptyLongOpt, InMemoryUCClientWithMetrics}
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.funsuite.AnyFunSuite
@@ -22,7 +23,7 @@ class UCCatalogManagedClientSketchSuite extends AnyFunSuite with UCCatalogManage
   private val emptyLongOpt = Optional.empty[java.lang.Long]()
 
   private def withUCClientAndTestTable(
-    textFx: (UCClient, String, Long) => Unit): Unit = {
+      textFx: (UCClient, String, Long) => Unit): Unit = {
     val maxRatifiedVersion = 2L
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
     val ucClient = new InMemoryUCClientWithMetrics("ucMetastoreId")
@@ -87,7 +88,7 @@ class UCCatalogManagedClientSketchSuite extends AnyFunSuite with UCCatalogManage
         "ucTableId",
         new Path(tablePath).toUri(),
         Optional.empty(), /* startVersion */
-        endVersionOptForGetCommits /* endVersion */)
+        endVersionOptForGetCommits /* endVersion */ )
       // Potentially validate maxRatifiedVersion?
       // Convert response commits to ParsedLogData
       val logData = response.getCommits().asScala.sortBy(_.getVersion).map { commit =>
