@@ -274,6 +274,31 @@ public class UCCatalogManagedClient {
         });
   }
 
+  // TODO: should this be ParsedCatalogCommitData?
+  // TODO: we could also make this static in-theory and take ucClient as an arg
+  public List<ParsedLogData> getCommits(
+      Engine engine,
+      String ucTableId,
+      String tablePath,
+      Optional<Long> endVersionOpt) {
+    Objects.requireNonNull(engine, "engine is null");
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+    Objects.requireNonNull(endVersionOpt, "endVersionOpt is null");
+    endVersionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
+    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOpt);
+    final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
+    endVersionOpt.ifPresent(
+        version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));
+    return getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
+  }
+
+  public static io.delta.kernel.utils.FileStatus hadoopFileStatusToKernelFileStatus(
+      org.apache.hadoop.fs.FileStatus hadoopFS) {
+    return io.delta.kernel.utils.FileStatus.of(
+        hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
+  }
+
   /////////////////////////////////////////
   // Protected Methods for Extensibility //
   /////////////////////////////////////////
@@ -426,12 +451,6 @@ public class UCCatalogManagedClient {
     logger.debug("[{}] Created ParsedLogData from ratified commits: {}", ucTableId, result);
 
     return result;
-  }
-
-  private static io.delta.kernel.utils.FileStatus hadoopFileStatusToKernelFileStatus(
-      org.apache.hadoop.fs.FileStatus hadoopFS) {
-    return io.delta.kernel.utils.FileStatus.of(
-        hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
   }
 
   /**
