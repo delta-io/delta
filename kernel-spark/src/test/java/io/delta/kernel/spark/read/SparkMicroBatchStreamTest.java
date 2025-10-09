@@ -163,8 +163,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /**
    * Parameterized test that verifies parity between DSv1 DeltaSource.getFileChanges and DSv2
    * SparkMicroBatchStream.getFileChanges using Delta Kernel APIs.
-   * 
-   * TODO(#5319): consider adding a test similar to SparkGoldenTableTest.java.
+   *
+   * <p>TODO(#5319): consider adding a test similar to SparkGoldenTableTest.java.
    */
   @ParameterizedTest
   @MethodSource("getFileChangesParameters")

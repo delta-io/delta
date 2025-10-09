@@ -163,7 +163,6 @@ public class StreamingHelper {
    * from the first row (rowId=0).
    */
   public static long getVersion(ColumnarBatch batch) {
-    assert batch.getSize() > 0;
     int versionColIdx = getFieldIndex(batch, "version");
     return batch.getColumnVector(versionColIdx).getLong(0);
   }

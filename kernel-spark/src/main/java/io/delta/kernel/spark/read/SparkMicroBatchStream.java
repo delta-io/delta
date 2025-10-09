@@ -38,6 +38,10 @@ import scala.Option;
 
 public class SparkMicroBatchStream implements MicroBatchStream {
 
+  private static final Set<DeltaAction> ACTION_SET =
+      Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE)));
+
   private final Engine engine;
   private final String tablePath;
 
@@ -139,7 +143,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     return result;
   }
 
-  // TODO(M1): implement lazy loading (one batch at a time).
+  // TODO(#5318): implement lazy loading (one batch at a time).
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Option<DeltaSourceOffset> endOffset) {
     List<IndexedFile> allIndexedFiles = new ArrayList<>();
@@ -157,10 +161,9 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
     Snapshot startSnapshot =
         TableManager.loadSnapshot(tablePath).atVersion(startVersion).build(engine);
-    // TODO(M1): This is not working with ccv2 table
-    Set<DeltaAction> actionSet = new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE));
+    // TODO(#5318): This is not working with ccv2 table
     try (CloseableIterator<ColumnarBatch> actionsIter =
-        commitRange.getActions(engine, startSnapshot, actionSet)) {
+        commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
       // Each batch is guaranteed to have the same commit version.
       // A version can be split across multiple batches.
       long currentVersion = -1;
@@ -173,7 +176,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
           continue;
         }
         long version = StreamingHelper.getVersion(batch);
-        // TODO(M1): migrate to kernel's commit-level iterator (WIP).
+        // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
         // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
         // in a commit; we should implement a proper two-pass approach once kernel API is ready.
 
@@ -279,7 +282,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     // Add BEGIN sentinel
     result.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null));
 
-    // TODO(M2): check trackingMetadataChange flag and compare with stream metadata.
+    // TODO(#5319): check trackingMetadataChange flag and compare with stream metadata.
 
     result.addAll(dataFiles);
 
