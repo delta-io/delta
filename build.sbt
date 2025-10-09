@@ -596,7 +596,14 @@ lazy val spark = (project in file("spark-combined"))
       val v2 = (`delta-spark-v2` / Compile / packageBin / mappings).value
       val shaded = (`delta-spark-shaded` / Compile / packageBin / mappings).value
       val storageClasses = (storage / Compile / packageBin / mappings).value  // Add storage classes
-      v1Full ++ v2 ++ shaded ++ storageClasses
+      
+      // Merge all mappings, shaded classes override v1 classes if there are conflicts
+      // This allows delegation classes in shaded (DeltaCatalog, DeltaSparkSessionExtension)
+      // to replace v1 originals
+      val allMappings = v1Full ++ v2 ++ storageClasses ++ shaded
+      
+      // Remove duplicates by path (keep the last occurrence, which is from shaded)
+      allMappings.groupBy(_._2).map(_._2.last).toSeq
     },
     
     // Test sources point to original spark/src/test/ (no file movement)
