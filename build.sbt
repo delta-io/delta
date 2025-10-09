@@ -574,12 +574,9 @@ lazy val `delta-spark-shaded` = (project in file("spark-shaded"))
 // Module 5: delta-spark (final published module - combined v1+v2+shaded)
 // ============================================================
 lazy val spark = (project in file("spark-combined"))
-  .dependsOn(`delta-spark-v1`)  // Direct dependency on v1 (full version with DeltaLog)
-  .dependsOn(`delta-spark-v2`)  // Direct dependency on v2
+  .dependsOn(`delta-spark-shaded`)  // Direct dependency on shaded (for delegation classes)
   .dependsOn(`delta-spark-v1` % "test->test")  // Test utilities from v1
   .dependsOn(storage)  // Explicit dependency on storage
-  // Note: We don't .dependsOn delta-spark-shaded to avoid resolution issues,
-  // but we include its classes in packageBin / mappings below
   .settings (
     name := "delta-spark",
     commonSettings,
@@ -620,6 +617,15 @@ lazy val spark = (project in file("spark-combined"))
     
     // No prod code in this module
     Compile / sources := Seq.empty,
+    
+    // Use test sources from original spark/ directory
+    Test / unmanagedSourceDirectories := Seq(
+      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "scala",
+      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "java"
+    ),
+    Test / unmanagedResourceDirectories := Seq(
+      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources"
+    ),
     
     // Package combined classes: FULL v1 (with DeltaLog) + v2 + shaded + storage
     // Note: v2 only depends on v1-shaded (without DeltaLog) at compile time,
