@@ -202,7 +202,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
       operationType = "UPDATE",
       initialTableProperties = catalogManagedFeaturePropMap ++ validRequiredCatalogPropMap,
       transactionProperties = Map.empty,
-      removedPropertyKeys = Set(customCatalogCommitter.REQUIRED_PROPERTY_KEY),
+      removedPropertyKeys = Set(customCatalogCommitter.REQUIRED_PROPERTY_KEY), // <-- Removed!
       expectedSuccess = false,
       expectedExceptionMessage =
         Some("Metadata is missing or has incorrect values for required catalog properties")))
