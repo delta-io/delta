@@ -19,6 +19,8 @@ package io.delta.unity;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.unity.utils.OperationTimer.timeUncheckedOperation;
 
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.TableManager;
@@ -28,6 +30,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -125,8 +128,7 @@ public class UCCatalogManagedClient {
             // If timestampOpt is present, we know versionOpt is not ==> logData was not requested
             // with an endVersion and thus can be re-used to load the latest snapshot
             Snapshot latestSnapshot =
-                loadLatestSnapshotForTimestampTimeTravelQuery(
-                    engine, ucTableId, tablePath, logData);
+                loadLatestSnapshotForTimestampResolution(engine, ucTableId, tablePath, logData);
             snapshotBuilder = snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
           }
 
@@ -165,6 +167,113 @@ public class UCCatalogManagedClient {
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
   }
 
+  /**
+   * Loads a Kernel {@link CommitRange} for the provided boundaries. If no start boundary is
+   * provided, defaults to version 0. If no end boundary is provided, defaults to the latest
+   * version.
+   *
+   * @param engine The Delta Kernel {@link Engine} to use for loading the table.
+   * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
+   * @param tablePath The path to the Delta table in the underlying storage system.
+   * @param startVersionOpt The optional start version boundary. This must be mutually exclusive
+   *     with startTimestampOpt.
+   * @param startTimestampOpt The optional start timestamp boundary. This must be mutually exclusive
+   *     with startVersionOpt.
+   * @param endVersionOpt The optional end version boundary. This must be mutually exclusive * with
+   *     endTimestampOpt.
+   * @param endTimestampOpt The optional end timestamp boundary. This must be mutually exclusive
+   *     with endVersionOpt.
+   * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
+   * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
+   */
+  public CommitRange loadCommitRange(
+      Engine engine,
+      String ucTableId,
+      String tablePath,
+      Optional<Long> startVersionOpt,
+      Optional<Long> startTimestampOpt,
+      Optional<Long> endVersionOpt,
+      Optional<Long> endTimestampOpt) {
+    Objects.requireNonNull(engine, "engine is null");
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+    Objects.requireNonNull(startVersionOpt, "startVersionOpt is null");
+    Objects.requireNonNull(startTimestampOpt, "startTimestampOpt is null");
+    Objects.requireNonNull(endVersionOpt, "endVersionOpt is null");
+    Objects.requireNonNull(endTimestampOpt, "endTimestampOpt is null");
+    checkArgument(
+        !startVersionOpt.isPresent() || !startTimestampOpt.isPresent(),
+        "Cannot provide both a start timestamp and start version");
+    checkArgument(
+        !endVersionOpt.isPresent() || !endTimestampOpt.isPresent(),
+        "Cannot provide both an end timestamp and start version");
+    if (startVersionOpt.isPresent() && endVersionOpt.isPresent()) {
+      checkArgument(
+          startVersionOpt.get() <= endVersionOpt.get(),
+          "Cannot provide a start version greater than the end version");
+    }
+    if (startTimestampOpt.isPresent() && endTimestampOpt.isPresent()) {
+      checkArgument(
+          startTimestampOpt.get() <= endTimestampOpt.get(),
+          "Cannot provide a start timestamp greater than the end timestamp");
+    }
+
+    logger.info(
+        "[{}] Loading CommitRange for {}",
+        ucTableId,
+        getCommitRangeBoundariesString(
+            startVersionOpt, startTimestampOpt, endVersionOpt, endTimestampOpt));
+    // If we have a timestamp-based boundary we need to build the latest snapshot, don't provide
+    // an endVersion
+    Optional<Long> endVersionOptForCommitQuery =
+        endVersionOpt.filter(v -> !startTimestampOpt.isPresent());
+    final GetCommitsResponse response =
+        getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
+    final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
+    // TODO: should we throw early if startVersion or endVersion is >= ucTableVersion?
+    final List<ParsedLogData> logData =
+        getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
+    final Lazy<Snapshot> latestSnapshot =
+        new Lazy<>(
+            () -> loadLatestSnapshotForTimestampResolution(engine, ucTableId, tablePath, logData));
+
+    return timeUncheckedOperation(
+        logger,
+        "TableManager.loadCommitRange",
+        ucTableId,
+        () -> {
+          CommitRangeBuilder commitRangeBuilder = TableManager.loadCommitRange(tablePath);
+
+          if (startVersionOpt.isPresent()) {
+            commitRangeBuilder =
+                commitRangeBuilder.withStartBoundary(
+                    CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get()));
+          }
+          if (startTimestampOpt.isPresent()) {
+            commitRangeBuilder =
+                commitRangeBuilder.withStartBoundary(
+                    CommitRangeBuilder.CommitBoundary.atTimestamp(
+                        startTimestampOpt.get(), latestSnapshot.get()));
+          }
+          if (endVersionOpt.isPresent()) {
+            commitRangeBuilder =
+                commitRangeBuilder.withEndBoundary(
+                    CommitRangeBuilder.CommitBoundary.atVersion(endVersionOpt.get()));
+          }
+          if (endTimestampOpt.isPresent()) {
+            commitRangeBuilder =
+                commitRangeBuilder.withEndBoundary(
+                    CommitRangeBuilder.CommitBoundary.atTimestamp(
+                        endTimestampOpt.get(), latestSnapshot.get()));
+          }
+
+          return commitRangeBuilder
+              // TODO: potentially filter and cast this based on changes in base PR
+              .withLogData(logData)
+              .build(engine);
+        });
+  }
+
   /////////////////////////////////////////
   // Protected Methods for Extensibility //
   /////////////////////////////////////////
@@ -196,6 +305,30 @@ public class UCCatalogManagedClient {
     } else {
       return "latest";
     }
+  }
+
+  private String getCommitRangeBoundariesString(
+      Optional<Long> startVersionOpt,
+      Optional<Long> startTimestampOpt,
+      Optional<Long> endVersionOpt,
+      Optional<Long> endTimestampOpt) {
+    String startBound;
+    if (startVersionOpt.isPresent()) {
+      startBound = startVersionOpt.get() + "(version)";
+    } else if (startTimestampOpt.isPresent()) {
+      startBound = startTimestampOpt.get() + "(timestamp)";
+    } else {
+      startBound = "0(default)";
+    }
+    String endBound;
+    if (endVersionOpt.isPresent()) {
+      endBound = endVersionOpt.get() + "(version)";
+    } else if (endTimestampOpt.isPresent()) {
+      endBound = endTimestampOpt.get() + "(timestamp)";
+    } else {
+      endBound = "latestVersion(default)";
+    }
+    return String.format("startBoundary=%s and endBoundary=%s", startBound, endBound);
   }
 
   private GetCommitsResponse getRatifiedCommitsFromUC(
@@ -303,11 +436,11 @@ public class UCCatalogManagedClient {
 
   /**
    * Helper method to load the latest snapshot and time the operation. This is used to load the
-   * latest snapshot for timestamp-based time-travel queries. Reuses existing logData that has
-   * already been queried from the catalog (it is required that this includes the latest commits
-   * from the catalog and were not queried with an endVersion).
+   * latest snapshot for timestamp resolution queries. Reuses existing logData that has already been
+   * queried from the catalog (it is required that this includes the latest commits from the catalog
+   * and were not queried with an endVersion).
    */
-  private Snapshot loadLatestSnapshotForTimestampTimeTravelQuery(
+  private Snapshot loadLatestSnapshotForTimestampResolution(
       Engine engine, String ucTableId, String tablePath, List<ParsedLogData> logData) {
     return timeUncheckedOperation(
         logger,

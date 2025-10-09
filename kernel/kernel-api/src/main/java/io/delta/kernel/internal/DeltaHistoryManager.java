@@ -68,7 +68,11 @@ public final class DeltaHistoryManager {
    * @throws KernelException if the timestamp is more than the timestamp of any committed version
    */
   public static long getVersionAtOrAfterTimestamp(
-      Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
+      Engine engine,
+      Path logPath,
+      long millisSinceEpochUTC,
+      SnapshotImpl latestSnapshot,
+      List<ParsedCatalogCommitData> parsedCatalogCommits) {
     DeltaHistoryManager.Commit commit =
         DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
@@ -82,8 +86,7 @@ public final class DeltaHistoryManager {
             // e.g. we give time T-1 and first commit has time T, then we DO want that earliest
             // commit
             true /* canReturnEarliestCommit */,
-            // TODO: pass through parsedDeltaData for ccv2
-            Collections.emptyList() /* parsedDeltaDatas */);
+            parsedCatalogCommits);
 
     if (commit.getTimestamp() >= millisSinceEpochUTC) {
       return commit.getVersion();
@@ -114,7 +117,11 @@ public final class DeltaHistoryManager {
    * @throws KernelException if the timestamp is less than the timestamp of any committed version
    */
   public static long getVersionBeforeOrAtTimestamp(
-      Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
+      Engine engine,
+      Path logPath,
+      long millisSinceEpochUTC,
+      SnapshotImpl latestSnapshot,
+      List<ParsedCatalogCommitData> parsedCatalogCommits) {
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
             latestSnapshot,
@@ -126,8 +133,7 @@ public final class DeltaHistoryManager {
             // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest
             // commit
             false /* canReturnEarliestCommit */,
-            // TODO: pass through parsedDeltaData for ccv2
-            Collections.emptyList() /* parsedDeltaDatas */)
+            parsedCatalogCommits)
         .getVersion();
   }
 

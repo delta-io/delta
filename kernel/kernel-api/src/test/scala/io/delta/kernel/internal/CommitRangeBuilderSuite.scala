@@ -21,18 +21,21 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.{CommitRange, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException}
 import io.delta.kernel.internal.commitrange.{CommitRangeBuilderImpl, CommitRangeImpl}
-import io.delta.kernel.internal.files.ParsedLogData
+import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromFileSystemClient, MockSnapshotUtils}
+import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromFileSystemClient, MockReadICTFileJsonHandler, MockSnapshotUtils, VectorTestUtils}
 import io.delta.kernel.test.MockSnapshotUtils.getMockSnapshot
 import io.delta.kernel.utils.FileStatus
 
+import junit.runner.Version
 import org.scalatest.funsuite.AnyFunSuite
 
-class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils {
+class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
+    with VectorTestUtils {
 
   private def checkQueryBoundaries(
       commitRange: CommitRange,
@@ -64,12 +67,21 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
   }
 
   private def buildCommitRange(
+      engine: Engine,
       fileList: Seq[FileStatus],
       startVersion: Option[Long] = None,
       endVersion: Option[Long] = None,
       startTimestamp: Option[Long] = None,
-      endTimestamp: Option[Long] = None): CommitRange = {
-    val latestVersion = fileList.map(fs => FileNames.getFileVersion(new Path(fs.getPath))).max
+      endTimestamp: Option[Long] = None,
+      logData: Option[Seq[ParsedLogData]] = None,
+      ictEnablementInfo: Option[(Long, Long)] = None): CommitRange = {
+    def getVersionFromFS(fs: FileStatus): Long = FileNames.getFileVersion(new Path(fs.getPath))
+    val latestVersion = fileList.map(getVersionFromFS).max
+    // If we have a ratified commit file at the end version, we want to use this in the log segment
+    // for our mockLatestSnapshot, so we get the ICT from that file
+    val deltaFileAtEndVersion = fileList
+      .filter(fs => FileNames.isStagedDeltaFile(fs.getPath))
+      .find(getVersionFromFS(_) == latestVersion)
 
     var commitRangeBuilder = TableManager.loadCommitRange(dataPath.toString)
     startVersion.foreach { v =>
@@ -78,17 +90,23 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     endVersion.foreach { v =>
       commitRangeBuilder = commitRangeBuilder.withEndBoundary(CommitBoundary.atVersion(v))
     }
+    lazy val mockLatestSnapshot = getMockSnapshot(
+      dataPath,
+      latestVersion,
+      ictEnablementInfoOpt = ictEnablementInfo,
+      deltaFileAtEndVersion = deltaFileAtEndVersion)
     startTimestamp.foreach { v =>
       commitRangeBuilder = commitRangeBuilder.withStartBoundary(
-        CommitBoundary.atTimestamp(v, getMockSnapshot(dataPath, latestVersion)))
+        CommitBoundary.atTimestamp(v, mockLatestSnapshot))
     }
     endTimestamp.foreach { v =>
       commitRangeBuilder = commitRangeBuilder.withEndBoundary(
-        CommitBoundary.atTimestamp(v, getMockSnapshot(dataPath, latestVersion)))
+        CommitBoundary.atTimestamp(v, mockLatestSnapshot))
     }
-    val mockedEngine = mockEngine(fileSystemClient =
-      new MockListFromFileSystemClient(listFromProvider(fileList)))
-    commitRangeBuilder.build(mockedEngine)
+    logData.foreach { l =>
+      commitRangeBuilder = commitRangeBuilder.withLogData(l.asJava)
+    }
+    commitRangeBuilder.build(engine)
   }
 
   private def checkCommitRange(
@@ -100,6 +118,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       startTimestamp: Option[Long] = None,
       endTimestamp: Option[Long] = None): Unit = {
     val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
       fileList,
       startVersion,
       endVersion,
@@ -223,13 +242,16 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
           if (expectedException.isDefined) {
             val e = intercept[Throwable] {
               buildCommitRange(
+                createMockFSListFromEngine(fileStatuses),
                 fileList = fileStatuses,
                 startVersion = startBound.version,
                 endVersion = endBound.version,
                 startTimestamp = startBound.timestamp,
                 endTimestamp = endBound.timestamp)
             }
-            assert(expectedException.get._1.isInstance(e))
+            assert(
+              expectedException.get._1.isInstance(e),
+              s"Expected exception of ${expectedException.get._1} but found $e")
             assert(e.getMessage.contains(expectedException.get._2))
           } else {
             checkCommitRange(
@@ -245,6 +267,8 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       }
     }
   }
+
+  /* --------------- Without catalog commits --------------- */
 
   // The below test cases mimic the cases in TableImplSuite for the timestamp-resolution
   testStartAndEndBoundaryCombinations(
@@ -328,14 +352,493 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       VersionBoundaryDef(1L, expectsError = true) // version DNE
     ))
 
-  // We don't support CCV2 tables yet so we don't support providing parsedLogData
-  test("build - throws UnsupportedOperationException when logData is provided") {
-    val builder = new CommitRangeBuilderImpl("/path/to/table")
-    val mockLogData = Collections.singletonList(null.asInstanceOf[ParsedLogData])
-    builder.withLogData(mockLogData)
+  /* --------------- With catalog commits --------------- */
 
-    assertThrows[UnsupportedOperationException] {
-      builder.build(mockEngine())
+  private def checkCommitRangeWithCatalogCommits(
+      fileList: Seq[FileStatus],
+      logData: Seq[ParsedLogData],
+      versionToICT: Map[Long, Long],
+      startBound: BoundaryDef,
+      endBound: BoundaryDef,
+      expectedFileList: Seq[FileStatus]): Unit = {
+    // Create mock engine with ICT reading support
+    val commitRange = buildCommitRange(
+      createMockFSAndJsonEngineForICT(fileList, versionToICT),
+      fileList,
+      startVersion = startBound.version,
+      endVersion = endBound.version,
+      startTimestamp = startBound.timestamp,
+      endTimestamp = endBound.timestamp,
+      Some(logData),
+      ictEnablementInfo = Some((0, 0)))
+    assert(commitRange.getStartVersion == startBound.expectedVersion)
+    assert(commitRange.getEndVersion == endBound.expectedVersion)
+    checkQueryBoundaries(
+      commitRange,
+      startBound.version,
+      endBound.version,
+      startBound.timestamp,
+      endBound.timestamp)
+    assert(expectedFileList.toSet ==
+      commitRange.asInstanceOf[CommitRangeImpl].getDeltaFiles.asScala.toSet)
+  }
+
+  private def testStartAndEndBoundaryCombinationsWithCatalogCommits(
+      description: String,
+      fileStatuses: Seq[FileStatus],
+      expectedFileList: (Long, Long) => Seq[FileStatus],
+      logData: Seq[ParsedLogData],
+      versionToICT: Map[Long, Long],
+      startBoundaries: Seq[BoundaryDef],
+      endBoundaries: Seq[BoundaryDef]): Unit = {
+    startBoundaries.foreach { startBound =>
+      endBoundaries.foreach { endBound =>
+        test(s"$description: build CommitRange with startBound=$startBound endBound=$endBound") {
+          val expectedException = getExpectedException(startBound, endBound)
+          if (expectedException.isDefined) {
+            val e = intercept[Throwable] {
+              buildCommitRange(
+                createMockFSAndJsonEngineForICT(fileStatuses, versionToICT),
+                fileStatuses,
+                startVersion = startBound.version,
+                endVersion = endBound.version,
+                startTimestamp = startBound.timestamp,
+                endTimestamp = endBound.timestamp,
+                Some(logData),
+                ictEnablementInfo = Some((0, 0)))
+            }
+            assert(
+              expectedException.get._1.isInstance(e),
+              s"Expected exception of ${expectedException.get._1} but found $e")
+            assert(e.getMessage.contains(expectedException.get._2))
+          } else {
+            checkCommitRangeWithCatalogCommits(
+              fileStatuses,
+              logData,
+              versionToICT,
+              startBound,
+              endBound,
+              expectedFileList(startBound.expectedVersion, endBound.expectedVersion))
+          }
+        }
+      }
     }
+  }
+
+  // Basic case with no overlap: P0, P1, C2, C3, C4
+  {
+    val catalogCommitFiles = Seq(stagedCommitFile(2), stagedCommitFile(3), stagedCommitFile(4))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val fileList = Seq(deltaFileStatus(0), deltaFileStatus(1)) ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L, 2L -> 2050L, 3L -> 3050L, 4L -> 4050L)
+
+    val startBoundaries = Seq(
+      // V0 (first published commit)
+      VersionBoundaryDef(0),
+      DefaultBoundaryDef(0),
+      TimestampBoundaryDef(5L, 0), // before V0
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      // V1 (last published commit)
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1000L, 1), // between V0 and V1
+      // V2 (first catalog commit)
+      VersionBoundaryDef(2),
+      TimestampBoundaryDef(1500, 2), // between V1 and V2
+      TimestampBoundaryDef(2050, 2), // exactly at V2
+      // V3 (middle catalog commit)
+      VersionBoundaryDef(3L),
+      // V4 (last catalog commit)
+      VersionBoundaryDef(4L),
+      TimestampBoundaryDef(3500L, 4L), // between V3 and V4
+      TimestampBoundaryDef(4050L, 4), // exactly at V4
+      // Some error cases
+      TimestampBoundaryDef(4500, 4L, expectsError = true), // after V4
+      VersionBoundaryDef(5, expectsError = true) // version DNE
+    )
+    val endBoundaries = Seq(
+      // V0 (first published commit)
+      VersionBoundaryDef(0),
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      TimestampBoundaryDef(500L, 0L), // between V0 and V1
+      // V1 (last published commit)
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1500L, 1), // between V1 and V2
+      // V2 (first catalog commit)
+      VersionBoundaryDef(2),
+      TimestampBoundaryDef(2500, 2), // between V2 and V3
+      TimestampBoundaryDef(2050, 2), // exactly at V2
+      // V3 (middle catalog commit)
+      VersionBoundaryDef(3L),
+      TimestampBoundaryDef(3500L, 3L), // between V3 and V4
+      // V4 (last catalog commit)
+      VersionBoundaryDef(4L),
+      TimestampBoundaryDef(4050L, 4), // exactly at V4
+      DefaultBoundaryDef(4L),
+      TimestampBoundaryDef(4500, 4L), // after V4
+      // Some error cases
+      TimestampBoundaryDef(5L, 0, expectsError = true), // before V0
+      VersionBoundaryDef(5, expectsError = true) // version DNE
+    )
+    testStartAndEndBoundaryCombinationsWithCatalogCommits(
+      "catalog commits basic case no overlap",
+      fileList,
+      (startV, endV) => fileList.slice(startV.toInt, endV.toInt + 1),
+      parsedLogData,
+      versionToICT,
+      startBoundaries,
+      endBoundaries)
+  }
+
+  // Basic case with overlap: P0, P1, P2, R1, R2, R3 (+ prioritize catalog commits)
+  {
+    val catalogCommitFiles = Seq(stagedCommitFile(1), stagedCommitFile(2), stagedCommitFile(3))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val publishedDeltaFiles = Seq(deltaFileStatus(0), deltaFileStatus(1), deltaFileStatus(2))
+    val fileList = publishedDeltaFiles ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L, 2L -> 2050L, 3L -> 3050L)
+    // We expect catalog commits to take precedence over published deltas
+    val expectedFileList = publishedDeltaFiles.slice(0, 1) ++ catalogCommitFiles
+
+    val startBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      DefaultBoundaryDef(0),
+      TimestampBoundaryDef(5L, 0), // before V0
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1050L, 1), // at V1
+      TimestampBoundaryDef(1000L, 1), // between V0 and V1
+      // V2
+      VersionBoundaryDef(2),
+      TimestampBoundaryDef(1500, 2), // between V1 and V2
+      TimestampBoundaryDef(2050, 2), // exactly at V2
+      // V3
+      VersionBoundaryDef(3L),
+      TimestampBoundaryDef(2500, 3), // between V2 and V3
+      TimestampBoundaryDef(3050, 3), // exactly at V3
+      // Some error cases
+      TimestampBoundaryDef(4500, 3L, expectsError = true), // after V4
+      VersionBoundaryDef(4, expectsError = true) // version DNE
+    )
+    val endBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      TimestampBoundaryDef(500L, 0L), // between V0 and V1
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1500L, 1), // between V1 and V2
+      // V2
+      VersionBoundaryDef(2),
+      TimestampBoundaryDef(2500, 2), // between V2 and V3
+      TimestampBoundaryDef(2050, 2), // exactly at V2
+      // V3
+      VersionBoundaryDef(3L),
+      TimestampBoundaryDef(3050L, 3), // exactly at V3
+      DefaultBoundaryDef(3L),
+      TimestampBoundaryDef(3500, 3L), // after V3
+      // Some error cases
+      TimestampBoundaryDef(5L, 0, expectsError = true), // before V0
+      VersionBoundaryDef(5, expectsError = true) // version DNE
+    )
+    testStartAndEndBoundaryCombinationsWithCatalogCommits(
+      "catalog commits basic case with overlap",
+      fileList,
+      (startV, endV) => expectedFileList.slice(startV.toInt, endV.toInt + 1),
+      parsedLogData,
+      versionToICT,
+      startBoundaries,
+      endBoundaries)
+  }
+
+  // Only catalog commits: C0, C1
+  {
+    val catalogCommitFiles = Seq(stagedCommitFile(0), stagedCommitFile(1))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L)
+
+    val startBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      DefaultBoundaryDef(0),
+      TimestampBoundaryDef(5L, 0), // before V0
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1050L, 1), // at V1
+      TimestampBoundaryDef(1000L, 1), // between V0 and V1
+      // Some error cases
+      TimestampBoundaryDef(4500, 1L, expectsError = true), // after V1
+      VersionBoundaryDef(4, expectsError = true) // version DNE
+    )
+    val endBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      TimestampBoundaryDef(500L, 0L), // between V0 and V1
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1050L, 1), // exactly at V1
+      TimestampBoundaryDef(1500L, 1), // after V1
+      DefaultBoundaryDef(1),
+      // Some error cases
+      TimestampBoundaryDef(5L, 0, expectsError = true), // before V0
+      VersionBoundaryDef(5, expectsError = true) // version DNE
+    )
+    testStartAndEndBoundaryCombinationsWithCatalogCommits(
+      "catalog commits no published deltas",
+      catalogCommitFiles,
+      (startV, endV) => catalogCommitFiles.slice(startV.toInt, endV.toInt + 1),
+      parsedLogData,
+      versionToICT,
+      startBoundaries,
+      endBoundaries)
+  }
+
+  // Single published commit + single catalog commit: P0, C1
+  {
+    val catalogCommitFiles = Seq(stagedCommitFile(1))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val publishedDeltaFiles = Seq(deltaFileStatus(0))
+    val fileList = publishedDeltaFiles ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L)
+
+    val startBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      DefaultBoundaryDef(0),
+      TimestampBoundaryDef(5L, 0), // before V0
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1050L, 1), // at V1
+      TimestampBoundaryDef(1000L, 1), // between V0 and V1
+      // Some error cases
+      TimestampBoundaryDef(4500, 1L, expectsError = true), // after V1
+      VersionBoundaryDef(4, expectsError = true) // version DNE
+    )
+    val endBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      TimestampBoundaryDef(500L, 0L), // between V0 and V1
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1050L, 1), // exactly at V1
+      TimestampBoundaryDef(1500L, 1), // after V1
+      DefaultBoundaryDef(1),
+      // Some error cases
+      TimestampBoundaryDef(5L, 0, expectsError = true), // before V0
+      VersionBoundaryDef(5, expectsError = true) // version DNE
+    )
+    testStartAndEndBoundaryCombinationsWithCatalogCommits(
+      "catalog commits single catalog commit single published commit",
+      fileList,
+      (startV, endV) => fileList.slice(startV.toInt, endV.toInt + 1),
+      parsedLogData,
+      versionToICT,
+      startBoundaries,
+      endBoundaries)
+  }
+
+  // Overlap by just 1: P0, P1, R1, R2
+  {
+    val catalogCommitFiles = Seq(stagedCommitFile(1), stagedCommitFile(2))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val publishedDeltaFiles = Seq(deltaFileStatus(0), deltaFileStatus(1))
+    val fileList = publishedDeltaFiles ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L, 2L -> 2050L)
+    // We expect catalog commits to take precedence over published deltas
+    val expectedFileList = publishedDeltaFiles.slice(0, 1) ++ catalogCommitFiles
+
+    val startBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      DefaultBoundaryDef(0),
+      TimestampBoundaryDef(5L, 0), // before V0
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1050L, 1), // at V1
+      TimestampBoundaryDef(1000L, 1), // between V0 and V1
+      // V2
+      VersionBoundaryDef(2L),
+      TimestampBoundaryDef(1500, 2), // between V1 and V2
+      TimestampBoundaryDef(2050, 2), // exactly at V2
+      // Some error cases
+      TimestampBoundaryDef(4500, 3L, expectsError = true), // after V2
+      VersionBoundaryDef(4, expectsError = true) // version DNE
+    )
+    val endBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      TimestampBoundaryDef(500L, 0L), // between V0 and V1
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1500L, 1), // between V1 and V2
+      // V2
+      VersionBoundaryDef(2L),
+      TimestampBoundaryDef(2050L, 2), // exactly at V2
+      DefaultBoundaryDef(2L),
+      TimestampBoundaryDef(2500, 2), // after V2
+      // Some error cases
+      TimestampBoundaryDef(5L, 0, expectsError = true), // before V0
+      VersionBoundaryDef(5, expectsError = true) // version DNE
+    )
+    testStartAndEndBoundaryCombinationsWithCatalogCommits(
+      "catalog commits single commit overlap",
+      fileList,
+      (startV, endV) => expectedFileList.slice(startV.toInt, endV.toInt + 1),
+      parsedLogData,
+      versionToICT,
+      startBoundaries,
+      endBoundaries)
+  }
+
+  // Full overlap: P0, P1, P2 + C0, C1, C2
+  {
+    val catalogCommitFiles = Seq(stagedCommitFile(0), stagedCommitFile(1), stagedCommitFile(2))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val publishedDeltaFiles = Seq(deltaFileStatus(0), deltaFileStatus(1), deltaFileStatus(2))
+    val fileList = publishedDeltaFiles ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L, 2L -> 2050L)
+
+    val startBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      DefaultBoundaryDef(0),
+      TimestampBoundaryDef(5L, 0), // before V0
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1050L, 1), // at V1
+      TimestampBoundaryDef(1000L, 1), // between V0 and V1
+      // V2
+      VersionBoundaryDef(2L),
+      TimestampBoundaryDef(1500, 2), // between V1 and V2
+      TimestampBoundaryDef(2050, 2), // exactly at V2
+      // Some error cases
+      TimestampBoundaryDef(4500, 3L, expectsError = true), // after V2
+      VersionBoundaryDef(4, expectsError = true) // version DNE
+    )
+    val endBoundaries = Seq(
+      // V0
+      VersionBoundaryDef(0),
+      TimestampBoundaryDef(50L, 0L), // exactly at V0
+      TimestampBoundaryDef(500L, 0L), // between V0 and V1
+      // V1
+      VersionBoundaryDef(1),
+      TimestampBoundaryDef(1500L, 1), // between V1 and V2
+      // V2
+      VersionBoundaryDef(2L),
+      TimestampBoundaryDef(2050L, 2), // exactly at V2
+      DefaultBoundaryDef(2L),
+      TimestampBoundaryDef(2500, 2), // after V2
+      // Some error cases
+      TimestampBoundaryDef(5L, 0, expectsError = true), // before V0
+      VersionBoundaryDef(5, expectsError = true) // version DNE
+    )
+    testStartAndEndBoundaryCombinationsWithCatalogCommits(
+      "catalog commits full overlap",
+      fileList,
+      (startV, endV) => catalogCommitFiles.slice(startV.toInt, endV.toInt + 1),
+      parsedLogData,
+      versionToICT,
+      startBoundaries,
+      endBoundaries)
+  }
+
+  test("build CommitRange fails if catalog commits pre-curse published commits") {
+    val catalogCommitFiles = Seq(stagedCommitFile(0), stagedCommitFile(1), stagedCommitFile(2))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val publishedDeltaFiles = Seq(deltaFileStatus(1), deltaFileStatus(2), deltaFileStatus(3))
+    val fileList = publishedDeltaFiles ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L, 2L -> 2050L)
+
+    val e = intercept[InvalidTableException] {
+      buildCommitRange(
+        createMockFSAndJsonEngineForICT(fileList, versionToICT),
+        fileList,
+        startVersion = Some(0),
+        endVersion = Some(3),
+        logData = Some(parsedLogData),
+        ictEnablementInfo = Some((0, 0)))
+    }
+    assert(e.getMessage.contains(
+      "Missing delta file: found staged ratified commit for version 0 but no published " +
+        "delta file. Found published deltas for versions: [1, 2, 3]"))
+  }
+
+  test("build CommitRange fails if published commits and catalog commits are not contiguous") {
+    val catalogCommitFiles = Seq(stagedCommitFile(2))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val publishedDeltaFiles = Seq(deltaFileStatus(0))
+    val fileList = publishedDeltaFiles ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L, 2L -> 2050L)
+
+    val e = intercept[InvalidTableException] {
+      buildCommitRange(
+        createMockFSAndJsonEngineForICT(fileList, versionToICT),
+        fileList,
+        startVersion = Some(0),
+        endVersion = Some(2),
+        logData = Some(parsedLogData),
+        ictEnablementInfo = Some((0, 0)))
+    }
+    assert(e.getMessage.contains(
+      "Missing delta files: found published delta files for versions [0] and staged " +
+        "ratified commits for versions [2]"))
+  }
+
+  test("build CommitRange fails if published deltas are not contiguous") {
+    val publishedDeltaFiles = Seq(deltaFileStatus(0), deltaFileStatus(2), deltaFileStatus(3))
+    val e = intercept[InvalidTableException] {
+      buildCommitRange(
+        createMockFSListFromEngine(publishedDeltaFiles),
+        publishedDeltaFiles,
+        startVersion = Some(0),
+        endVersion = Some(3))
+    }
+    assert(e.getMessage.contains(
+      "Missing delta files: versions are not contiguous: ([0, 2, 3])"))
+  }
+
+  Seq(
+    ParsedCatalogCommitData.forInlineData(1, emptyColumnarBatch),
+    ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
+    val suffix = s"- type=${parsedLogData.getGroupByCategoryClass.toString}"
+    test(s"withLogData: non-staged-ratified-commit throws IllegalArgumentException $suffix") {
+      val builder = TableManager
+        .loadCommitRange(dataPath.toString)
+        .withLogData(Collections.singletonList(parsedLogData))
+
+      val exMsg = intercept[IllegalArgumentException] {
+        builder.build(mockEngine())
+      }.getMessage
+
+      assert(exMsg.contains("Only staged ratified commits are supported"))
+    }
+  }
+
+  test("withLogData: non-contiguous input throws IllegalArgumentException") {
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager.loadCommitRange(dataPath.toString)
+        .withLogData(parsedRatifiedStagedCommits(Seq(0, 2)).toList.asJava)
+        .build(mockEngine())
+    }.getMessage
+
+    assert(exMsg.contains("Log data must be sorted and contiguous"))
+  }
+
+  test("withLogData: non-sorted input throws IllegalArgumentException") {
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager.loadCommitRange(dataPath.toString)
+        .withLogData(parsedRatifiedStagedCommits(Seq(2, 1, 0)).toList.asJava)
+        .build(mockEngine())
+    }.getMessage
+
+    assert(exMsg.contains("Log data must be sorted and contiguous"))
   }
 }
