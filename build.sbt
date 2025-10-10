@@ -650,7 +650,7 @@ lazy val spark = (project in file("spark-combined"))
       sbt.internal.inc.Analysis.Empty
     },
     
-    // Use test sources from original spark/ directory
+    // Use test sources and resources from original spark/ directory
     Test / unmanagedSourceDirectories := Seq(
       baseDirectory.value.getParentFile / "spark" / "src" / "test" / "scala",
       baseDirectory.value.getParentFile / "spark" / "src" / "test" / "java"
@@ -658,6 +658,9 @@ lazy val spark = (project in file("spark-combined"))
     Test / unmanagedResourceDirectories := Seq(
       baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources"
     ),
+    Test / resourceDirectory := baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources",
+    // Set working directory for tests to spark/ so relative paths work
+    Test / baseDirectory := baseDirectory.value.getParentFile / "spark",
     
     // Package combined classes: FULL v1 (with DeltaLog) + v2 + shaded + storage
     // Note: v2 only depends on v1-shaded (without DeltaLog) at compile time,
