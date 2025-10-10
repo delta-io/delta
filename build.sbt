@@ -446,7 +446,7 @@ lazy val `delta-spark-v1` = (project in file("spark"))
     name := "delta-spark-v1",
     commonSettings,
     scalaStyleSettings,
-    sparkMimaSettings,
+    // No MiMa check - this is an internal module not published
     skipReleaseSettings, // Not published
     crossSparkSettings(),
     
@@ -617,6 +617,27 @@ lazy val spark = (project in file("spark-combined"))
     
     // No prod code in this module
     Compile / sources := Seq.empty,
+    
+    // Copy all classes from dependencies to classes directory for MiMa
+    Compile / compile := {
+      val _ = (Compile / compile).value
+      val classesDir = (Compile / classDirectory).value
+      val v1Classes = (`delta-spark-v1` / Compile / classDirectory).value
+      val v2Classes = (`delta-spark-v2` / Compile / classDirectory).value
+      val shadedClasses = (`delta-spark-shaded` / Compile / classDirectory).value
+      val storageClasses = (storage / Compile / classDirectory).value
+      
+      // Ensure classes directory exists
+      IO.createDirectory(classesDir)
+      
+      // Copy all classes (shaded classes override v1 classes)
+      IO.copyDirectory(v1Classes, classesDir, overwrite = false, preserveLastModified = true)
+      IO.copyDirectory(storageClasses, classesDir, overwrite = false, preserveLastModified = true)
+      IO.copyDirectory(v2Classes, classesDir, overwrite = true, preserveLastModified = true)
+      IO.copyDirectory(shadedClasses, classesDir, overwrite = true, preserveLastModified = true)
+      
+      sbt.internal.inc.Analysis.Empty
+    },
     
     // Use test sources from original spark/ directory
     Test / unmanagedSourceDirectories := Seq(
