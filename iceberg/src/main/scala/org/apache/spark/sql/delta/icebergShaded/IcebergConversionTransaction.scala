@@ -426,6 +426,10 @@ class IcebergConversionTransaction(
       )
     }
     try {
+      // Iceberg CREATE_TABLE reassigns the field id in schema, which
+      // is overwritten by setting Delta schema with Delta generated field id to ensure
+      // consistency between field id in Iceberg schema after conversion and field id in
+      // parquet files written by Delta.
       if (tableOp == CREATE_TABLE) {
         metadataUpdates.add(
           new AddSchema(icebergSchema, postCommitSnapshot.metadata.columnMappingMaxId.toInt)
