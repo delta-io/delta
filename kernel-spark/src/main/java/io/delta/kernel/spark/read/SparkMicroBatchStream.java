@@ -106,6 +106,12 @@ public class SparkMicroBatchStream implements MicroBatchStream {
    * implementation of DeltaSource.getFileChanges.
    *
    * <p>Package-private for testing.
+   *
+   * @param fromVersion The starting version (exclusive with fromIndex)
+   * @param fromIndex The starting index within fromVersion (exclusive)
+   * @param isInitialSnapshot Whether this is the initial snapshot
+   * @param endOffset The end offset (inclusive), or empty to read all available commits
+   * @return An iterator of IndexedFile representing the file changes
    */
   CloseableIterator<IndexedFile> getFileChanges(
       long fromVersion,
@@ -229,7 +235,6 @@ public class SparkMicroBatchStream implements MicroBatchStream {
         return;
       }
     }
-
     int numRows = batch.getSize();
     // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreDeletes (legacy)
     for (int rowId = 0; rowId < numRows; rowId++) {
