@@ -26,5 +26,13 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * - V2: io.delta.kernel.spark.*
  */
 class DeltaSparkSessionExtension extends AbstractSparkSessionExtension {
+  
+  /**
+   * NoOpRule for binary compatibility with Delta 3.3.0
+   * This class must remain here to satisfy MiMa checks
+   */
+  class NoOpRule extends Rule[LogicalPlan] {
+    override def apply(plan: LogicalPlan): LogicalPlan = plan
+  }
 }
 
