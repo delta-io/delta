@@ -42,6 +42,8 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
   test("all test cases are implemented") {
     val ignoredTestCases = Map(
       "null struct with different field order"
+       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert),
+      "cast with dot in column name"
        -> (insertsDataframe.intersect(insertsByName) - StreamingInsert)
     )
     checkAllTestCasesImplemented(ignoredTestCases)
@@ -206,6 +208,33 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
      // Dataframe INSERTs by name don't support implicit casting except for streaming
      // writes, no point in testing them.
      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert
+   )
+ }
+
+  for { (inserts: Set[Insert], expectedAnswer) <- Seq(
+    insertsAppend ->
+      TestData("`s.a` long, s struct <x long, y: int>",
+        Seq("""{ "s.a": 1, "s": { "x": 2, "y": 3 } }""",
+        """{ "s.a": 1, "s": { "x": 4, "y": 5 } }""")),
+    insertsOverwrite ->
+      TestData("`s.a` long, s struct <x long, y: int>",
+        Seq("""{ "s.a": 1, "s": { "x": 4, "y": 5 } }"""))
+    )
+  } {
+   testInserts(s"cast with dot in column name")(
+     initialData = TestData(
+       "`s.a` long, s struct <x: long, y int>",
+       Seq("""{ "s.a": 1, "s": { "x": 2, "y": 3 } }""")),
+     partitionBy = Seq("`s.a`"),
+     overwriteWhere = "`s.a`" -> 1,
+     insertData = TestData("`s.a` int, s struct <x int, y int>",
+       Seq("""{ "s.a": 1, "s": { "x": 4, "y": 5 } }""")),
+     expectedResult = ExpectedResult.Success(expectedAnswer),
+     includeInserts = inserts,
+     // Dataframe INSERTs by name don't support implicit casting except for streaming
+     // writes, no point in testing them.
+     excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+     confs = Seq(DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_ESCAPE_COLUMN_NAMES.key -> "true")
    )
  }
 }
