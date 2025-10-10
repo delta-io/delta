@@ -25,13 +25,6 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * - V1: org.apache.spark.sql.delta.* (full version with DeltaLog)
  * - V2: io.delta.kernel.spark.*
  */
-class DeltaSparkSessionExtension extends io.delta.sql.AbstractSparkSessionExtension {
-  
-  /**
-   * NoOpRule for binary compatibility
-   */
-  class NoOpRule extends Rule[LogicalPlan] {
-    override def apply(plan: LogicalPlan): LogicalPlan = plan
-  }
+class DeltaSparkSessionExtension extends AbstractSparkSessionExtension {
 }
 
