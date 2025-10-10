@@ -17,6 +17,10 @@
 import sbt._
 import sbtassembly.*
 
+/**
+ * Exclusion rules for not bringing in conflicting dependencies via Iceberg Jar
+ */
+
 object ShadedIcebergBuild {
   val icebergExclusionRules = List.apply(
     ExclusionRule("com.github.ben-manes.caffeine"),
@@ -63,6 +67,12 @@ object ShadedIcebergBuild {
     ExclusionRule("org.datanucleus")
   )
 
+  /**
+   * Replace those files with our customized version
+   * Here's an overview:
+   *  PartitionSpec: sets checkConflicts to false to honor field ID assigned by Delta
+   *  HiveCatalog, HiveTableOperations: allow metadataUpdates to overwrite schema and partition spec
+   */
   def updateMergeStrategy(prev: String => MergeStrategy): String => MergeStrategy = {
     case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
       MergeStrategy.first
