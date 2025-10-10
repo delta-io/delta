@@ -450,7 +450,8 @@ lazy val `delta-spark-v1` = (project in file("spark"))
     skipReleaseSettings, // Not published
     crossSparkSettings(),
     
-    // Only compile main sources, exclude tests
+    // Don't compile tests in delta-spark-v1 - they are compiled in the final spark module
+    // This avoids circular dependencies with delta-spark-shaded
     Test / sources := Seq.empty,
     Test / resources := Seq.empty,
     
@@ -462,6 +463,16 @@ lazy val `delta-spark-v1` = (project in file("spark"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      
+      // Test dependencies
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
+      "com.github.sbt" % "junit-interface" % "0.13.3" % "test",
+      "org.mockito" % "mockito-inline" % "4.11.0" % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -901,7 +912,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
-  .dependsOn(`delta-spark-v1` % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
@@ -924,6 +934,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "io.delta" %% "delta-spark" % "3.3.2" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
       // such as warm runs, cold runs, defining benchmark parameter variables etc.

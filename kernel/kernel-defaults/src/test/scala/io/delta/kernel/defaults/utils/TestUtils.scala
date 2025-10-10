@@ -17,7 +17,8 @@ package io.delta.kernel.defaults.utils
 
 import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
-import java.nio.file.Files
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
 import java.util.{Optional, TimeZone, UUID}
 
 import scala.collection.JavaConverters._
@@ -168,6 +169,38 @@ trait AbstractTestUtils
 
   implicit class JavaOptionalOps[T](optional: Optional[T]) {
     def toScala: Option[T] = if (optional.isPresent) Some(optional.get()) else None
+  }
+
+  /**
+   * Provides test-only apis to internal Delta Spark APIs.
+   */
+  implicit class OptimisticTxnTestHelper(txn: org.apache.spark.sql.delta.OptimisticTransaction) {
+
+    /**
+     * Test only method to commit arbitrary actions to delta table.
+     */
+    def commitManuallyWithValidation(actions: org.apache.spark.sql.delta.actions.Action*): Unit = {
+      txn.commit(actions.toSeq, org.apache.spark.sql.delta.DeltaOperations.ManualUpdate)
+    }
+
+    /**
+     * Test only method to unsafe commit - writes actions directly to transaction log.
+     * Note: This bypasses Delta Spark transaction logic.
+     *
+     * @param tablePath The path to the Delta table
+     * @param version The commit version number
+     * @param actions Sequence of Action objects to write
+     */
+    def commitUnsafe(
+        tablePath: String,
+        version: Long,
+        actions: org.apache.spark.sql.delta.actions.Action*): Unit = {
+      val logPath = new Path(tablePath, "_delta_log")
+      val commitFile = FileNames.unsafeDeltaFile(logPath, version)
+      val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
+      Files.write(Paths.get(commitFile.toString), commitContent)
+      Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
+    }
   }
 
   implicit object ResourceLoader {
