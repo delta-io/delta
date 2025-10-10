@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
