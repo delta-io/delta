@@ -661,6 +661,8 @@ lazy val spark = (project in file("spark-combined"))
     Test / resourceDirectory := baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources",
     // Set working directory for tests to spark/ so relative paths work
     Test / baseDirectory := baseDirectory.value.getParentFile / "spark",
+    // Also set the working directory for forked test JVMs
+    Test / javaOptions += s"-Duser.dir=${(baseDirectory.value.getParentFile / "spark").getAbsolutePath}",
     
     // Package combined classes: FULL v1 (with DeltaLog) + v2 + shaded + storage
     // Note: v2 only depends on v1-shaded (without DeltaLog) at compile time,
