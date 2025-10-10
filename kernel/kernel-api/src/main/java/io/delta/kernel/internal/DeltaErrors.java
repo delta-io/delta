@@ -29,6 +29,7 @@ import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -492,6 +493,25 @@ public final class DeltaErrors {
                 + "inCommitTimestamp in the CommitInfo action. However, this field has not been "
                 + "set in commit version %d.",
             version));
+  }
+
+  public static KernelException metadataMissingRequiredCatalogTableProperty(
+      Map<String, String> missingOrViolatingProperties,
+      Map<String, String> requiredCatalogTableProperties) {
+    final String details =
+        missingOrViolatingProperties.entrySet().stream()
+            .map(
+                entry ->
+                    String.format(
+                        "%s (current: '%s', required: '%s')",
+                        entry.getKey(),
+                        entry.getValue(),
+                        requiredCatalogTableProperties.get(entry.getKey())))
+            .collect(Collectors.joining(", "));
+    return new KernelException(
+        String.format(
+            "Metadata is missing or has incorrect values for required catalog properties: %s.",
+            details));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

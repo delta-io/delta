@@ -47,7 +47,8 @@ class TransactionMetadataFactorySuite extends AnyFunSuite {
       testSchema,
       tableProperties,
       Optional.empty(), // no partition columns
-      Optional.empty() // no clustering columns
+      Optional.empty(), // no clustering columns
+      Optional.empty() // no custom committer
     )
 
     // Verify both metadata and protocol are present for create table
@@ -71,7 +72,9 @@ class TransactionMetadataFactorySuite extends AnyFunSuite {
       testSchema,
       tableProperties,
       partitionCols,
-      Optional.empty())
+      Optional.empty(),
+      Optional.empty() /* committerOpt */
+    )
 
     assert(output.newMetadata.isPresent)
     assert(output.newProtocol.isPresent)
@@ -94,7 +97,9 @@ class TransactionMetadataFactorySuite extends AnyFunSuite {
       testSchema,
       tableProperties,
       Optional.empty(), // no partition columns
-      clusteringCols)
+      clusteringCols,
+      Optional.empty() /* committerOpt */
+    )
 
     assert(output.newMetadata.isPresent)
     assert(output.newProtocol.isPresent)
@@ -113,7 +118,9 @@ class TransactionMetadataFactorySuite extends AnyFunSuite {
         testSchema,
         tableProperties,
         partitionCols,
-        clusteringCols)
+        clusteringCols,
+        Optional.empty() /* committerOpt */
+      )
     }
   }
 

@@ -16,7 +16,9 @@
 
 package io.delta.kernel.defaults.utils
 
-import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
+import java.util.Collections
+
+import io.delta.kernel.commit.{CatalogCommitter, CommitMetadata, CommitResponse, Committer, PublishMetadata}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData
@@ -36,5 +38,27 @@ trait TestCommitterUtils {
         .writeJsonFileAtomically(filePath, finalizedActions, false)
       new CommitResponse(ParsedPublishedDeltaData.forFileStatus(FileStatus.of(filePath)))
     }
+  }
+
+  val customCatalogCommitter = new CatalogCommitter {
+
+    val REQUIRED_PROPERTY_KEY = "test.committer.required.foo"
+    val REQUIRED_PROPERTY_VALUE = "bar"
+
+    override def commit(
+        engine: Engine,
+        finalizedActions: CloseableIterator[Row],
+        commitMetadata: CommitMetadata): CommitResponse = {
+      committerUsingPutIfAbsent.commit(engine, finalizedActions, commitMetadata)
+    }
+
+    override def getRequiredTableProperties: java.util.Map[String, String] = {
+      Collections.singletonMap(REQUIRED_PROPERTY_KEY, REQUIRED_PROPERTY_VALUE)
+    }
+
+    override def publish(engine: Engine, publishMetadata: PublishMetadata): Unit = {
+      // No-op
+    }
+
   }
 }
