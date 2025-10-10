@@ -107,6 +107,32 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
         });
     }
 
+    @Test
+    public void shouldCreateSourceForPartitionFilter() {
+        StructField[] schema = {new StructField("col1", new StringType())};
+        mockDeltaTableForSchema(schema);
+
+        List<RowDataBoundedDeltaSourceBuilder> builders = Arrays.asList(
+                getBuilderAllColumns().versionAsOf(1).partitionFilter(
+                        "partCol=partVal"),
+                getBuilderAllColumns().versionAsOf(1).option(
+                        DeltaSourceOptions.PARTITION_FILTERS.key(), "partCol=partVal")
+        );
+
+        when(deltaLog.getSnapshotForVersionAsOf(1)).thenReturn(headSnapshot);
+        assertAll(() -> {
+            for (RowDataBoundedDeltaSourceBuilder builder : builders) {
+                DeltaSource<RowData> source = builder.build();
+
+                assertThat(source, notNullValue());
+                assertThat(source.getBoundedness(), equalTo(Boundedness.BOUNDED));
+                assertThat(source.getSourceConfiguration()
+                        .getValue(DeltaSourceOptions.PARTITION_FILTERS),
+                        equalTo("partCol=partVal"));
+            }
+        });
+    }
+
     /**
      * Test for versionAsOf.
      * This tests also checks option's value type conversion.

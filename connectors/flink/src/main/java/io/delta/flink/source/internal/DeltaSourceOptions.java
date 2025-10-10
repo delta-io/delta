@@ -7,6 +7,7 @@ import io.delta.flink.internal.options.BooleanOptionTypeConverter;
 import io.delta.flink.internal.options.DeltaConfigOption;
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.internal.options.NonNegativeNumberTypeConverter;
+import io.delta.flink.internal.options.PartitionFilterOptionTypeConverter;
 import io.delta.flink.internal.options.StartingVersionOptionTypeConverter;
 import io.delta.flink.internal.options.TimestampOptionTypeConverter;
 import org.apache.flink.configuration.ConfigOptions;
@@ -192,6 +193,23 @@ public class DeltaSourceOptions {
             Integer.class,
             new NonNegativeNumberTypeConverter<>());
 
+    /**
+     * An option to set partition columns for bounded source reader. When this option is set, the
+     * source reader will only read data from the specified partitions. The value of this option
+     * should be a semicolon-separated list of partition column filters in the format. E.g.
+     * "year=2023;month=01;day=15".
+     * One can specify multiple values for a partition column using the "in" syntax, e.g.
+     * "year=2023;month in (01,02);day=15".
+     * When this option is not set or is empty, the source reader will read data from
+     * all partitions.
+     */
+    public static final DeltaConfigOption<String> PARTITION_FILTERS =
+            DeltaConfigOption.of(
+                    ConfigOptions.key("partitionFilters").stringType().defaultValue(""),
+                    String.class,
+                    new PartitionFilterOptionTypeConverter());
+
+
     // ----- INNER ONLY OPTIONS ----- //
     // Inner options should not be set by user, and they are used internally by Flin connector.
 
@@ -234,6 +252,7 @@ public class DeltaSourceOptions {
         USER_FACING_SOURCE_OPTIONS.put(IGNORE_DELETES.key(), IGNORE_DELETES);
         USER_FACING_SOURCE_OPTIONS.put(IGNORE_CHANGES.key(), IGNORE_CHANGES);
         USER_FACING_SOURCE_OPTIONS.put(PARQUET_BATCH_SIZE.key(), PARQUET_BATCH_SIZE);
+        USER_FACING_SOURCE_OPTIONS.put(PARTITION_FILTERS.key(), PARTITION_FILTERS);
     }
 
     static {

@@ -80,6 +80,22 @@ public class RowDataBoundedDeltaSourceBuilder
     }
 
     /**
+     * Sets value of "partitionFilter" option. With this option we will load the data only
+     * from specified partitions.
+     * <p>
+     *
+     * @param partitionFilter The partitions to load data. Supported formats are:
+     *                          <ul>
+     *                                <li>year=2023;month=01;day=15</li>
+     *                                <li>year=2023;month in (01,02);day=15</li>
+     *                           </ul>
+     */
+    @Override
+    public RowDataBoundedDeltaSourceBuilder partitionFilter(String partitionFilter) {
+        return super.partitionFilter(partitionFilter);
+    }
+
+    /**
      * Sets value of "timestampAsOf" option. With this option we will load the latest table version
      * that was generated at or before the given timestamp.
      * <p>
