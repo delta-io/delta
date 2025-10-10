@@ -235,7 +235,10 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
     // changes either.
     case (fromType: AtomicType, toType: AtomicType) if isStringTypeChange(fromType, toType) =>
       Seq.empty
-    case (_: AtomicType, _: AtomicType) =>
+    // Don't recurse inside structs, `collectTypeChanges` should be called directly on each struct
+    // fields instead to only collect type changes inside these fields.
+    case (_: StructType, _: StructType) => Seq.empty
+    case _ =>
       deltaAssert(!logNonWideningChanges || fromType == toType,
         name = "typeWidening.unexpectedTypeChange",
         msg = s"Trying to apply an unsupported type change: $fromType to $toType",
@@ -245,9 +248,6 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
         )
       )
       Seq.empty
-    // Don't recurse inside structs, `collectTypeChanges` should be called directly on each struct
-    // fields instead to only collect type changes inside these fields.
-    case (_: StructType, _: StructType) => Seq.empty
   }
 
   /** Returns whether the given type change is Char/Varchar/String or collation type change. */
