@@ -196,7 +196,7 @@ trait AbstractTestUtils
         version: Long,
         actions: org.apache.spark.sql.delta.actions.Action*): Unit = {
       val logPath = new Path(tablePath, "_delta_log")
-      val commitFile = FileNames.unsafeDeltaFile(logPath, version)
+      val commitFile = org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile(logPath, version)
       val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
       Files.write(Paths.get(commitFile.toString), commitContent)
       Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
