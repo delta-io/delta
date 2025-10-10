@@ -663,6 +663,14 @@ lazy val spark = (project in file("spark-combined"))
     Test / baseDirectory := baseDirectory.value.getParentFile / "spark",
     // Also set the working directory for forked test JVMs
     Test / javaOptions += s"-Duser.dir=${(baseDirectory.value.getParentFile / "spark").getAbsolutePath}",
+    // Map target directory for tests that write logs/output
+    Test / target := baseDirectory.value.getParentFile / "spark" / "target",
+    // Ensure the build creates necessary directories before tests run
+    Test / test := {
+      val sparkTargetDir = (baseDirectory.value.getParentFile / "spark" / "target")
+      if (!sparkTargetDir.exists()) sparkTargetDir.mkdirs()
+      (Test / test).value
+    },
     
     // Package combined classes: FULL v1 (with DeltaLog) + v2 + shaded + storage
     // Note: v2 only depends on v1-shaded (without DeltaLog) at compile time,
