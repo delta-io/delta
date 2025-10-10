@@ -19,7 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
-import io.delta.kernel.spark.read.IndexedFile;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.ArrayList;
@@ -281,12 +280,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     return new org.apache.spark.sql.delta.sources.DeltaSource(
         spark,
         deltaLog,
-        Option.empty(),
+        /* catalogTableOpt= */ Option.empty(),
         options,
-        deltaLog.update(false, Option.empty(), Option.empty()),
-        tablePath + "/_checkpoint",
-        Option.empty(),
-        emptySeq);
+        /* snapshotAtSourceInit= */ deltaLog.update(false, Option.empty(), Option.empty()),
+        /* metadataPath= */ tablePath + "/_checkpoint");
   }
 
   @Test
@@ -320,11 +317,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             UnsupportedOperationException.class,
             () -> {
               ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                  deltaSource.getFileChanges(
-                      fromVersion,
-                      fromIndex,
-                      isInitialSnapshot,
-                      endOffset);
+                  deltaSource.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset);
               // Consume the iterator to trigger validation
               while (deltaChanges.hasNext()) {
                 org.apache.spark.sql.delta.sources.IndexedFile file = deltaChanges.next();
