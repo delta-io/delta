@@ -423,8 +423,23 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         engine,
         tablePath,
         testSchema)
-      DeltaTable.forPath(spark, tablePath)
-        .addFeatureSupport("testUnsupportedWriter")
+
+      // Use your new commitUnsafe API to write an unsupported writer feature
+      import org.apache.spark.sql.delta.DeltaLog
+      import org.apache.spark.sql.delta.actions.Protocol
+
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val txn = deltaLog.startTransaction()
+
+      // Create Protocol action with unsupported writer feature
+      val protocolAction = Protocol(
+        minReaderVersion = 3,
+        minWriterVersion = 7,
+        readerFeatures = Some(Set.empty),
+        writerFeatures = Some(Set("testUnsupportedWriter")))
+
+      // Use your elegant API to commit directly to version 1
+      txn.commitUnsafe(tablePath, 1L, protocolAction)
       val e = intercept[KernelException] {
         getUpdateTxn(engine, tablePath)
       }

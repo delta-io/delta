@@ -140,7 +140,6 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 timestamp,
-                Option.empty(),
                 false /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -172,7 +171,6 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 futureTimestamp,
-                Option.empty(),
                 true /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -204,7 +202,6 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 futureTimestamp,
-                Option.empty(),
                 true /* canReturnLastCommit */,
                 false /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -236,7 +233,6 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 earlyTimestamp,
-                Option.empty(),
                 false /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 true /* canReturnEarliestCommit */);
@@ -268,7 +264,6 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 earlyTimestamp,
-                Option.empty(),
                 false /* canReturnLastCommit */,
                 false /* mustBeRecreatable */,
                 true /* canReturnEarliestCommit */);
@@ -352,13 +347,10 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
           () ->
               deltaLog
                   .history()
-                  .checkVersionExists(
-                      versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange));
+                  .checkVersionExists(versionToCheck, mustBeRecreatable, allowOutOfRange));
     } else {
       streamingHelper.checkVersionExists(versionToCheck, mustBeRecreatable, allowOutOfRange);
-      deltaLog
-          .history()
-          .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);
+      deltaLog.history().checkVersionExists(versionToCheck, mustBeRecreatable, allowOutOfRange);
     }
   }
 }
