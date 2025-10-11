@@ -586,7 +586,6 @@ lazy val `delta-spark-shaded` = (project in file("spark-shaded"))
 // ============================================================
 lazy val spark = (project in file("spark-combined"))
   .dependsOn(`delta-spark-shaded`)  // Direct dependency on shaded (for delegation classes)
-  .dependsOn(`delta-spark-v1` % "test->test")  // Test utilities from v1
   .dependsOn(storage)  // Explicit dependency on storage
   .settings (
     name := "delta-spark",
@@ -650,28 +649,6 @@ lazy val spark = (project in file("spark-combined"))
       sbt.internal.inc.Analysis.Empty
     },
     
-    // Use test sources and resources from original spark/ directory
-    Test / unmanagedSourceDirectories := Seq(
-      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "scala",
-      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "java"
-    ),
-    Test / unmanagedResourceDirectories := Seq(
-      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources"
-    ),
-    Test / resourceDirectory := baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources",
-    // Set working directory for tests to spark/ so relative paths work
-    Test / baseDirectory := baseDirectory.value.getParentFile / "spark",
-    // Also set the working directory for forked test JVMs
-    Test / javaOptions += s"-Duser.dir=${(baseDirectory.value.getParentFile / "spark").getAbsolutePath}",
-    // Map target directory for tests that write logs/output
-    Test / target := baseDirectory.value.getParentFile / "spark" / "target",
-    // Ensure the build creates necessary directories before tests run
-    Test / test := {
-      val sparkTargetDir = (baseDirectory.value.getParentFile / "spark" / "target")
-      if (!sparkTargetDir.exists()) sparkTargetDir.mkdirs()
-      (Test / test).value
-    },
-    
     // Package combined classes: FULL v1 (with DeltaLog) + v2 + shaded + storage
     // Note: v2 only depends on v1-shaded (without DeltaLog) at compile time,
     //       but final jar includes full v1 for users
@@ -682,21 +659,21 @@ lazy val spark = (project in file("spark-combined"))
       val storageClasses = (storage / Compile / packageBin / mappings).value  // Add storage classes
       
       // Merge all mappings, shaded classes override v1 classes if there are conflicts
-      // This allows delegation classes in shaded (DeltaCatalog, DeltaSparkSessionExtension)
-      // to replace v1 originals
       val allMappings = v1Full ++ v2 ++ storageClasses ++ shaded
       
       // Remove duplicates by path (keep the last occurrence, which is from shaded)
       allMappings.groupBy(_._2).map(_._2.last).toSeq
     },
     
-    // Test sources point to original spark/src/test/ (no file movement)
-    Test / unmanagedSourceDirectories ++= Seq(
+    // Test sources and resources from original spark/ directory
+    Test / unmanagedSourceDirectories := Seq(
       baseDirectory.value.getParentFile / "spark" / "src" / "test" / "scala",
       baseDirectory.value.getParentFile / "spark" / "src" / "test" / "java"
     ),
-    Test / unmanagedResourceDirectories += 
-      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources",
+    Test / unmanagedResourceDirectories := Seq(
+      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources"
+    ),
+    Test / resourceDirectory := baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources",
     
     // Include spark-version-specific test sources
     Test / unmanagedSourceDirectories ++= {
@@ -709,6 +686,9 @@ lazy val spark = (project in file("spark-combined"))
         Seq.empty
       }
     },
+    
+    // Set working directory for tests to spark/ so relative paths work
+    Test / baseDirectory := baseDirectory.value.getParentFile / "spark",
     
     libraryDependencies ++= Seq(
       // Provided deps (needed for compile and test)
