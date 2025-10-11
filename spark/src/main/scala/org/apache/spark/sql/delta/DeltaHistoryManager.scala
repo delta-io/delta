@@ -688,7 +688,7 @@ object DeltaHistoryManager extends DeltaLogging {
     while (i < length - 1) {
       val prevTimestamp = commits(i).getTimestamp
       assert(commits(i).getVersion < commits(i + 1).getVersion, "Unordered commits provided.")
-      if (prevTimestamp >= commits(i + 1).getTimestamp) {
+      if (prevTimestamp > commits(i + 1).getTimestamp) {
         logWarning(log"Found Delta commit ${MDC(DeltaLogKeys.VERSION, commits(i).getVersion)} " +
           log"with a timestamp ${MDC(DeltaLogKeys.TIMESTAMP, prevTimestamp)} " +
           log"which is greater than the next commit timestamp " +
