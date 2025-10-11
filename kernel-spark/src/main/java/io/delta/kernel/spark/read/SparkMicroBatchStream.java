@@ -165,13 +165,13 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     }
     CommitRange commitRange = builder.build(engine);
     // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
+    // TODO(#5318): This is not working with ccv2 table
     Snapshot startSnapshot =
         TableManager.loadSnapshot(tablePath).atVersion(startVersion).build(engine);
-    // TODO(#5318): This is not working with ccv2 table
     try (CloseableIterator<ColumnarBatch> actionsIter =
         commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
-      // Each batch is guaranteed to have the same commit version.
-      // A version can be split across multiple batches.
+      // Each ColumnarBatch belongs to a single commit version,
+      // but a single version may span multiple ColumnarBatches.
       long currentVersion = -1;
       long currentIndex = 0;
       List<IndexedFile> currentVersionFiles = new ArrayList<>();
@@ -182,41 +182,58 @@ public class SparkMicroBatchStream implements MicroBatchStream {
           continue;
         }
         long version = StreamingHelper.getVersion(batch);
-        // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
-        // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
-        // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-
+        // When version changes, flush the completed version
         if (currentVersion != -1 && version != currentVersion) {
-          // Process the previous version's files
-          List<IndexedFile> currentVersionFilesWithSentinels =
-              addBeginAndEndIndexOffsetsForVersion(currentVersion, currentVersionFiles);
-          allIndexedFiles.addAll(currentVersionFilesWithSentinels);
-          // Reset for the new version -- we've added all version files from this version to
-          // allIndexedFiles.
+          flushVersion(currentVersion, currentVersionFiles, allIndexedFiles);
           currentVersionFiles.clear();
           currentIndex = 0;
         }
 
         // Validate the commit before processing files from this batch
+        // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
+        // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
+        // in a commit; we should implement a proper two-pass approach once kernel API is ready.
         validateCommit(batch, version, endOffset);
 
-        // Update current version tracking
         currentVersion = version;
-        List<IndexedFile> batchFiles = extractIndexedFilesFromBatch(batch, version, currentIndex);
-        currentIndex += batchFiles.size();
-        currentVersionFiles.addAll(batchFiles);
+        currentIndex =
+            extractIndexedFilesFromBatch(batch, version, currentIndex, currentVersionFiles);
       }
 
-      // Process the last version's files if any
+      // Flush the last version
       if (currentVersion != -1) {
-        List<IndexedFile> versionFilesWithSentinels =
-            addBeginAndEndIndexOffsetsForVersion(currentVersion, currentVersionFiles);
-        allIndexedFiles.addAll(versionFilesWithSentinels);
+        flushVersion(currentVersion, currentVersionFiles, allIndexedFiles);
       }
     } catch (IOException e) {
       throw new RuntimeException("Failed to read commit range", e);
     }
+    // TODO(#5318): implement lazy loading (only load a batch into memory if needed).
     return Utils.toCloseableIterator(allIndexedFiles.iterator());
+  }
+
+  /**
+   * Flushes a completed version by adding BEGIN/END sentinels around data files.
+   *
+   * <p>Sentinels are IndexedFiles with null addFile that mark version boundaries. They serve
+   * several purposes:
+   *
+   * <ul>
+   *   <li>Enable offset tracking at version boundaries (before any files or after all files)
+   *   <li>Allow streaming to resume at the start or end of a version
+   *   <li>Handle versions with only metadata/protocol changes (no data files)
+   * </ul>
+   *
+   * <p>This mimics DeltaSource.addBeginAndEndIndexOffsetsForVersion
+   */
+  private void flushVersion(
+      long version, List<IndexedFile> versionFiles, List<IndexedFile> output) {
+    // Add BEGIN sentinel
+    output.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null));
+    // TODO(#5319): implement getMetadataOrProtocolChangeIndexedFileIterator.
+    // Add all data files
+    output.addAll(versionFiles);
+    // Add END sentinel
+    output.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null));
   }
 
   /**
@@ -237,6 +254,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     }
     int numRows = batch.getSize();
     // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreDeletes (legacy)
+    // TODO(#5318): validate METADATA actions
     for (int rowId = 0; rowId < numRows; rowId++) {
       // RULE 1: If commit has RemoveFile(dataChange=true), fail this stream.
       Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
@@ -254,46 +272,22 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   }
 
   /**
-   * Extracts IndexedFiles from a batch of actions for a given version. Assigns an index to each
-   * IndexedFile.
+   * Extracts IndexedFiles from a batch of actions for a given version and adds them to the output
+   * list. Assigns an index to each IndexedFile.
+   *
+   * @return The next available index after processing this batch
    */
-  private List<IndexedFile> extractIndexedFilesFromBatch(
-      ColumnarBatch batch, long version, long startIndex) {
-    List<IndexedFile> indexedFiles = new ArrayList<>();
+  private long extractIndexedFilesFromBatch(
+      ColumnarBatch batch, long version, long startIndex, List<IndexedFile> output) {
     long index = startIndex;
     for (int rowId = 0; rowId < batch.getSize(); rowId++) {
       Optional<AddFile> addOpt = StreamingHelper.getDataChangeAdd(batch, rowId);
       if (addOpt.isPresent()) {
         AddFile addFile = addOpt.get();
-        indexedFiles.add(new IndexedFile(version, index++, addFile));
+        output.add(new IndexedFile(version, index++, addFile));
       }
     }
 
-    return indexedFiles;
-  }
-
-  /**
-   * Adds BEGIN and END sentinel IndexedFiles for a version. Sentinels are used to mark the
-   * beginning and end of a version.
-   *
-   * <p>This mimics DeltaSource.addBeginAndEndIndexOffsetsForVersion and
-   * getMetadataOrProtocolChangeIndexedFileIterator.
-   */
-  private List<IndexedFile> addBeginAndEndIndexOffsetsForVersion(
-      long version, List<IndexedFile> dataFiles) {
-
-    List<IndexedFile> result = new ArrayList<>();
-
-    // Add BEGIN sentinel
-    result.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null));
-
-    // TODO(#5319): check trackingMetadataChange flag and compare with stream metadata.
-
-    result.addAll(dataFiles);
-
-    // Add END sentinel
-    result.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null));
-
-    return result;
+    return index;
   }
 }
