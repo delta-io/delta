@@ -381,8 +381,29 @@ public class LogSegment {
 
   @Override
   public int hashCode() {
-    // TODO: support staged commits #4927
-    return Objects.hash(deltas, checkpoints, compactions);
+    List<Long> deltaVersions =
+        deltas.stream()
+            .map(fs -> FileNames.deltaVersion(fs.getPath()))
+            .sorted()
+            .collect(Collectors.toList());
+
+    List<Long> checkpointVersions =
+        checkpoints.stream()
+            .map(fs -> FileNames.checkpointVersion(fs.getPath()))
+            .sorted()
+            .collect(Collectors.toList());
+
+    List<String> compactionVersionStrings =
+        compactions.stream()
+            .map(
+                fs -> {
+                  Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
+                  return versions._1 + "-" + versions._2;
+                })
+            .sorted()
+            .collect(Collectors.toList());
+
+    return Objects.hash(deltaVersions, checkpointVersions, compactionVersionStrings);
   }
 
   //////////////////////////////
