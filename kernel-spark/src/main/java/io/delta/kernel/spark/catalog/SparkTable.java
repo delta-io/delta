@@ -21,6 +21,23 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.utils.SchemaUtils;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.BinaryType;
+import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.ByteType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DateType;
+import io.delta.kernel.types.DecimalType;
+import io.delta.kernel.types.DoubleType;
+import io.delta.kernel.types.FloatType;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.ShortType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.TimestampNTZType;
+import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.types.VariantType;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
@@ -28,8 +45,7 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
-import org.apache.spark.sql.types.StructField;
-import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.types.*;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
@@ -46,12 +62,81 @@ public class SparkTable implements Table, SupportsRead {
   private final SnapshotImpl snapshot;
   private final Configuration hadoopConf;
 
-  private final StructType schema;
+  private final org.apache.spark.sql.types.StructType schema;
   private final List<String> partColNames;
-  private final StructType dataSchema;
-  private final StructType partitionSchema;
+  private final org.apache.spark.sql.types.StructType dataSchema;
+  private final org.apache.spark.sql.types.StructType partitionSchema;
   private final Column[] columns;
   private final Transform[] partitionTransforms;
+
+  /**
+   * Validates all fields in kernel schema use allowed data types.
+   *
+   * @param schema the kernel schema to validate
+   * @throws IllegalArgumentException if any field uses a disallowed data type
+   */
+  private static void validateSchemaTypes(io.delta.kernel.types.StructType schema) {
+    for (io.delta.kernel.types.StructField field : schema.fields()) {
+      validateKernelDataType(field.getDataType(), field.getName());
+    }
+  }
+
+  /**
+   * Recursively validate kernel data type and nested types.
+   *
+   * @param dataType the kernel data type to validate
+   * @param fieldPath the path to the field (for error messages)
+   * @throws IllegalArgumentException if the data type is not allowed
+   */
+  private static void validateKernelDataType(DataType dataType, String fieldPath) {
+    if (isAllowedKernelType(dataType)) {
+      // Validate nested fields for structs, arrays, maps
+      if (dataType instanceof io.delta.kernel.types.StructType) {
+        io.delta.kernel.types.StructType structType = (io.delta.kernel.types.StructType) dataType;
+        for (io.delta.kernel.types.StructField field : structType.fields()) {
+          validateKernelDataType(field.getDataType(), fieldPath + "." + field.getName());
+        }
+      } else if (dataType instanceof ArrayType) {
+        ArrayType arrayType = (ArrayType) dataType;
+        validateKernelDataType(arrayType.getElementType(), fieldPath + ".element");
+      } else if (dataType instanceof MapType) {
+        MapType mapType = (MapType) dataType;
+        validateKernelDataType(mapType.getKeyType(), fieldPath + ".key");
+        validateKernelDataType(mapType.getValueType(), fieldPath + ".value");
+      }
+    } else {
+      throw new IllegalArgumentException(
+          String.format(
+              "Unsupported data type '%s' for field '%s'. ", dataType.toString(), fieldPath));
+    }
+  }
+
+  /**
+   * Checks if a kernel data type is allowed.
+   *
+   * @param dataType the kernel data type to check
+   * @return true if the data type is allowed, false otherwise
+   */
+  private static boolean isAllowedKernelType(DataType dataType) {
+    // allowed kernel data types
+    return dataType instanceof ArrayType
+        || dataType instanceof BinaryType
+        || dataType instanceof BooleanType
+        || dataType instanceof ByteType
+        || dataType instanceof DateType
+        || dataType instanceof DecimalType
+        || dataType instanceof DoubleType
+        || dataType instanceof FloatType
+        || dataType instanceof IntegerType
+        || dataType instanceof LongType
+        || dataType instanceof MapType
+        || dataType instanceof ShortType
+        || dataType instanceof StringType
+        || dataType instanceof io.delta.kernel.types.StructType
+        || dataType instanceof TimestampType
+        || dataType instanceof TimestampNTZType
+        || dataType instanceof VariantType;
+  }
 
   /**
    * Creates a SparkTable backed by a Delta Kernel snapshot and initializes Spark-facing metadata
@@ -81,16 +166,17 @@ public class SparkTable implements Table, SupportsRead {
             io.delta.kernel.TableManager.loadSnapshot(tablePath)
                 .build(io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf));
 
+    validateSchemaTypes(snapshot.getSchema());
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.partColNames =
         Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
 
-    final List<StructField> dataFields = new ArrayList<>();
-    final List<StructField> partitionFields = new ArrayList<>();
+    final List<org.apache.spark.sql.types.StructField> dataFields = new ArrayList<>();
+    final List<org.apache.spark.sql.types.StructField> partitionFields = new ArrayList<>();
 
     // Build a map for O(1) field lookups to improve performance
-    Map<String, StructField> fieldMap = new HashMap<>();
-    for (StructField field : schema.fields()) {
+    Map<String, org.apache.spark.sql.types.StructField> fieldMap = new HashMap<>();
+    for (org.apache.spark.sql.types.StructField field : schema.fields()) {
       fieldMap.put(field.name(), field);
     }
 
@@ -99,7 +185,7 @@ public class SparkTable implements Table, SupportsRead {
     // in snapshotSchema, and we need to preserve the partColNames order for
     // proper partitioning behavior
     for (String partColName : partColNames) {
-      StructField field = fieldMap.get(partColName);
+      org.apache.spark.sql.types.StructField field = fieldMap.get(partColName);
       if (field != null) {
         partitionFields.add(field);
       }
@@ -107,13 +193,17 @@ public class SparkTable implements Table, SupportsRead {
 
     // Add remaining fields as data fields (non-partition columns)
     // These are fields that exist in the schema but are not partition columns
-    for (StructField field : schema.fields()) {
+    for (org.apache.spark.sql.types.StructField field : schema.fields()) {
       if (!partColNames.contains(field.name())) {
         dataFields.add(field);
       }
     }
-    this.dataSchema = new StructType(dataFields.toArray(new StructField[0]));
-    this.partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
+    this.dataSchema =
+        new org.apache.spark.sql.types.StructType(
+            dataFields.toArray(new org.apache.spark.sql.types.StructField[0]));
+    this.partitionSchema =
+        new org.apache.spark.sql.types.StructType(
+            partitionFields.toArray(new org.apache.spark.sql.types.StructField[0]));
 
     this.columns = CatalogV2Util.structTypeToV2Columns(schema);
     this.partitionTransforms =
@@ -138,7 +228,7 @@ public class SparkTable implements Table, SupportsRead {
   }
 
   @Override
-  public StructType schema() {
+  public org.apache.spark.sql.types.StructType schema() {
     return schema;
   }
 
