@@ -689,6 +689,7 @@ lazy val spark = (project in file("spark-combined"))
     
     // Set working directory for tests to spark/ so relative paths work
     Test / baseDirectory := baseDirectory.value.getParentFile / "spark",
+    Test / javaOptions += s"-Duser.dir=${(baseDirectory.value.getParentFile / "spark").getAbsolutePath}",
     
     libraryDependencies ++= Seq(
       // Provided deps (needed for compile and test)
