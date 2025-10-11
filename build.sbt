@@ -551,10 +551,17 @@ lazy val `delta-spark-v2` = (project in file("kernel-spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
+      // Test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+      // Spark test classes for Scala/Java test utilities
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      // ScalaTest for test utilities (needed by Spark test classes)
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
