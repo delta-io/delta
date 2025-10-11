@@ -716,6 +716,9 @@ lazy val spark = (project in file("spark-combined"))
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
 
+    // Fork tests to ensure javaOptions (especially user.dir) are applied
+    Test / fork := true,
+
     javaOptions += "-Xmx1024m",
 
     // Configurations to speed up tests and reduce memory footprint
