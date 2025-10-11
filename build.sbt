@@ -689,7 +689,6 @@ lazy val spark = (project in file("spark-combined"))
     
     // Set working directory for tests to spark/ so relative paths work
     Test / baseDirectory := baseDirectory.value.getParentFile / "spark",
-    Test / javaOptions += s"-Duser.dir=${(baseDirectory.value.getParentFile / "spark").getAbsolutePath}",
     
     libraryDependencies ++= Seq(
       // Provided deps (needed for compile and test)
@@ -728,7 +727,8 @@ lazy val spark = (project in file("spark-combined"))
       "-Ddelta.log.cacheSize=3",
       "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-      "-Xmx1024m"
+      "-Xmx1024m",
+      s"-Duser.dir=${(baseDirectory.value.getParentFile / "spark").getAbsolutePath}"  // Set working directory for relative paths
     ),
 
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
