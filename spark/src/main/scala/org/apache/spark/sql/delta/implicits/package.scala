@@ -17,12 +17,11 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.implicits.RichSparkClasses
 import org.apache.spark.sql.delta.util.DeltaEncoders
 
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
-package object implicits extends DeltaEncoders with RichSparkClasses {
+package object implicits extends DeltaEncoders with implicits.RichSparkClasses {
   // Define a few implicit classes to provide the `toDF` method. These classes are not using generic
   // types to avoid touching Scala reflection.
   implicit class RichAddFileSeq(files: Seq[AddFile]) {
