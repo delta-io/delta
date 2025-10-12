@@ -723,32 +723,34 @@ lazy val spark = (project in file("spark-combined"))
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
 
-    // Fork tests to ensure javaOptions (especially user.dir) are applied
-    Test / fork := true,
-    
-    // Set fork options to run tests in spark/ directory
-    Test / forkOptions := {
-      val sparkDir = (Test / baseDirectory).value
-      val currentEnv = (Test / envVars).value
-      ForkOptions()
-        .withWorkingDirectory(sparkDir)
-        .withEnvVars(currentEnv)
-    },
-
-    // Configurations to speed up tests and reduce memory footprint
-    Test / javaOptions ++= Seq(
-      "-Dspark.ui.enabled=false",
-      "-Dspark.ui.showConsoleProgress=false",
-      "-Dspark.databricks.delta.snapshotPartitions=2",
-      "-Dspark.sql.shuffle.partitions=5",
-      "-Ddelta.log.cacheSize=3",
-      "-Dspark.databricks.delta.delta.log.cacheSize=3",
-      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-      "-Xmx1024m"
-    ),
-
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
+
+    // Fork tests to ensure javaOptions are applied
+    Test / fork := true,
+    
+    // Set working directory for forked tests to spark/ directory
+    Test / forkOptions := (Test / forkOptions).value.withWorkingDirectory(
+      (Test / baseDirectory).value
+    ),
+
+    // Configurations to speed up tests and reduce memory footprint
+    Test / javaOptions ++= {
+      val sparkDir = (Test / baseDirectory).value
+      Seq(
+        // Explicitly set user.dir for cross-platform compatibility
+        // On some platforms, withWorkingDirectory doesn't update user.dir
+        s"-Duser.dir=$sparkDir",
+        "-Dspark.ui.enabled=false",
+        "-Dspark.ui.showConsoleProgress=false",
+        "-Dspark.databricks.delta.snapshotPartitions=2",
+        "-Dspark.sql.shuffle.partitions=5",
+        "-Ddelta.log.cacheSize=3",
+        "-Dspark.databricks.delta.delta.log.cacheSize=3",
+        "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+        "-Xmx1024m"
+      )
+    },
 
     TestParallelization.settings,
   )
