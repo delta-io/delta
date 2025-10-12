@@ -733,17 +733,23 @@ lazy val spark = (project in file("spark-combined"))
     // Fork tests to ensure javaOptions are applied
     Test / fork := true,
     
-    // Set working directory for forked tests to spark/ directory
+    // Set working directory for forked tests to spark/ directory  
+    // Note: withWorkingDirectory sets the process working directory, but Java's user.dir
+    // system property might not update automatically, so we also set it in javaOptions
     Test / forkOptions := (Test / forkOptions).value.withWorkingDirectory(
       (Test / baseDirectory).value
     ),
 
     // Configurations to speed up tests and reduce memory footprint
-    Test / javaOptions ++= Seq(
-      // Explicitly set user.dir for cross-platform compatibility
-      // On some platforms, withWorkingDirectory doesn't update user.dir
-      // Use delta-spark-v1's baseDirectory (which is spark/) for clarity
-      s"-Duser.dir=${(`delta-spark-v1` / baseDirectory).value}",
+    Test / javaOptions ++= {
+      val sparkDir = (`delta-spark-v1` / baseDirectory).value
+      // Print debug info (will show during SBT loading)
+      println(s"[Delta Build] Setting Test/javaOptions user.dir to: $sparkDir")
+      Seq(
+        // Explicitly set user.dir for cross-platform compatibility
+        // On some platforms, withWorkingDirectory doesn't update user.dir  
+        // Use delta-spark-v1's baseDirectory (which is spark/) for clarity
+        s"-Duser.dir=$sparkDir",
       "-Dspark.ui.enabled=false",
       "-Dspark.ui.showConsoleProgress=false",
       "-Dspark.databricks.delta.snapshotPartitions=2",
@@ -752,7 +758,8 @@ lazy val spark = (project in file("spark-combined"))
       "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
-    ),
+      )
+    },
 
     TestParallelization.settings,
   )
