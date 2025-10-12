@@ -735,22 +735,20 @@ lazy val spark = (project in file("spark-combined"))
     ),
 
     // Configurations to speed up tests and reduce memory footprint
-    Test / javaOptions ++= {
-      val sparkDir = (Test / baseDirectory).value
-      Seq(
-        // Explicitly set user.dir for cross-platform compatibility
-        // On some platforms, withWorkingDirectory doesn't update user.dir
-        s"-Duser.dir=$sparkDir",
-        "-Dspark.ui.enabled=false",
-        "-Dspark.ui.showConsoleProgress=false",
-        "-Dspark.databricks.delta.snapshotPartitions=2",
-        "-Dspark.sql.shuffle.partitions=5",
-        "-Ddelta.log.cacheSize=3",
-        "-Dspark.databricks.delta.delta.log.cacheSize=3",
-        "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-        "-Xmx1024m"
-      )
-    },
+    Test / javaOptions ++= Seq(
+      // Explicitly set user.dir for cross-platform compatibility
+      // On some platforms, withWorkingDirectory doesn't update user.dir
+      // Use absolute path to avoid dependency on baseDirectory resolution order
+      s"-Duser.dir=${baseDirectory.value.getParentFile}/spark",
+      "-Dspark.ui.enabled=false",
+      "-Dspark.ui.showConsoleProgress=false",
+      "-Dspark.databricks.delta.snapshotPartitions=2",
+      "-Dspark.sql.shuffle.partitions=5",
+      "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
+      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+      "-Xmx1024m"
+    ),
 
     TestParallelization.settings,
   )
