@@ -725,8 +725,15 @@ lazy val spark = (project in file("spark-combined"))
 
     // Fork tests to ensure javaOptions (especially user.dir) are applied
     Test / fork := true,
-
-    javaOptions += "-Xmx1024m",
+    
+    // Set fork options to run tests in spark/ directory
+    Test / forkOptions := {
+      val sparkDir = (Test / baseDirectory).value
+      val currentEnv = (Test / envVars).value
+      ForkOptions()
+        .withWorkingDirectory(sparkDir)
+        .withEnvVars(currentEnv)
+    },
 
     // Configurations to speed up tests and reduce memory footprint
     Test / javaOptions ++= Seq(
@@ -737,8 +744,7 @@ lazy val spark = (project in file("spark-combined"))
       "-Ddelta.log.cacheSize=3",
       "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-      "-Xmx1024m",
-      s"-Duser.dir=${(baseDirectory.value.getParentFile / "spark").getAbsolutePath}"  // Set working directory for relative paths
+      "-Xmx1024m"
     ),
 
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
