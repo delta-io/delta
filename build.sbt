@@ -694,8 +694,8 @@ lazy val spark = (project in file("spark-combined"))
       }
     },
     
-    // Set working directory for tests to spark/ so relative paths work
-    Test / baseDirectory := baseDirectory.value.getParentFile / "spark",
+    // Set working directory for tests to spark/ (delta-spark-v1's directory)
+    Test / baseDirectory := (`delta-spark-v1` / baseDirectory).value,
     
     libraryDependencies ++= Seq(
       // Provided deps (needed for compile and test)
@@ -738,8 +738,8 @@ lazy val spark = (project in file("spark-combined"))
     Test / javaOptions ++= Seq(
       // Explicitly set user.dir for cross-platform compatibility
       // On some platforms, withWorkingDirectory doesn't update user.dir
-      // Use absolute path to avoid dependency on baseDirectory resolution order
-      s"-Duser.dir=${baseDirectory.value.getParentFile}/spark",
+      // Use delta-spark-v1's baseDirectory (which is spark/) for clarity
+      s"-Duser.dir=${(`delta-spark-v1` / baseDirectory).value}",
       "-Dspark.ui.enabled=false",
       "-Dspark.ui.showConsoleProgress=false",
       "-Dspark.databricks.delta.snapshotPartitions=2",
