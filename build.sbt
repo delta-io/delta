@@ -736,9 +736,12 @@ lazy val spark = (project in file("spark-combined"))
     // Set working directory for forked tests to spark/ directory  
     // Note: withWorkingDirectory sets the process working directory, but Java's user.dir
     // system property might not update automatically, so we also set it in javaOptions
-    Test / forkOptions := (Test / forkOptions).value.withWorkingDirectory(
-      (Test / baseDirectory).value
-    ),
+    Test / forkOptions := {
+      val sparkDir = (Test / baseDirectory).value
+      val opts = (Test / forkOptions).value
+      println(s"[Delta Build] Setting Test/forkOptions workingDirectory to: $sparkDir")
+      opts.withWorkingDirectory(sparkDir)
+    },
 
     // Configurations to speed up tests and reduce memory footprint
     Test / javaOptions ++= {
