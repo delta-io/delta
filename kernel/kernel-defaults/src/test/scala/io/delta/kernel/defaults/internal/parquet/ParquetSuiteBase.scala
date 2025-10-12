@@ -59,7 +59,7 @@ trait ParquetSuiteBase extends TestUtils {
               Seq(
                 Option(stats.getMinValues.get(column)).map(_.getValue).orNull,
                 Option(stats.getMaxValues.get(column)).map(_.getValue).orNull,
-                Option(stats.getNullCounts.get(column)).orNull)
+                Option(stats.getNullCount.get(column)).orNull)
             } else {
               Seq(null, null, null)
             }
@@ -289,7 +289,7 @@ trait ParquetSuiteBase extends TestUtils {
       readSchema,
       predicate)
 
-    data.asScala.toSeq
+    data.asScala.toSeq.map(_.getData)
   }
 
   def parquetFileCount(fileOrDir: String): Long = parquetFiles(fileOrDir).size

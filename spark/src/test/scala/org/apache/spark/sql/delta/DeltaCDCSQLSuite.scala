@@ -20,6 +20,7 @@ import java.util.Date
 
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
@@ -100,6 +101,34 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       sql(prefix + suffix)
     }
   }
+
+  private def testNullRangeBoundary(start: Boundary, end: Boundary): Unit = {
+    test(s"range boundary cannot be null - start=$start end=$end") {
+      val tblName = "tbl"
+      withTable(tblName) {
+        createTblWithThreeVersions(tblName = Some(tblName))
+
+        checkError(intercept[DeltaIllegalArgumentException] {
+          cdcRead(new TableName(tblName), start, end)
+        }, "DELTA_CDC_READ_NULL_RANGE_BOUNDARY")
+      }
+    }
+  }
+
+  for (end <- Seq(
+    Unbounded,
+    EndingVersion("null"),
+    EndingVersion("0"),
+    EndingTimestamp(dateFormat.format(new Date(1)))
+  )) {
+    testNullRangeBoundary(StartingVersion("null"), end)
+  }
+
+  for (start <- Seq(StartingVersion("0"), StartingTimestamp(dateFormat.format(new Date(1))))) {
+    testNullRangeBoundary(start, EndingVersion("null"))
+  }
+
+  testNullRangeBoundary(StartingVersion("CAST(null AS INT)"), Unbounded)
 
   test("select individual column should push down filters") {
     val tblName = "tbl"
@@ -231,6 +260,12 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
         modifyCommitTimestamp(deltaLog, 1, currentTime)
         modifyCommitTimestamp(deltaLog, 2, currentTime + 100000)
 
+        // Make sure the snapshot used for the `table_changes` query is updated with the
+        // new timestamps. The ICT changes in un-backfilled commits will not trigger the real
+        // snapshot update, so we need to manually clear the cache and refresh the snapshot
+        // to ensure the new timestamps are used.
+        DeltaLog.clearCache()
+
         val readDf = sql(s"SELECT * FROM table_changes('$tbl', 0, now())")
         checkCDCAnswer(
           DeltaLog.forTable(spark, TableIdentifier("tbl")),
@@ -303,6 +338,12 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
   }
 
   test("protocol version") {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      cancel("This test is intended to test the protocol version of `ChangeDataFeedTableFeature`." +
+        "For CCv1.5 tables, the protocol version has different requirement and we already have " +
+        "the corresponding coverage in `CatalogOwnedEnablementSuite` and " +
+        "`CatalogOwnedPropertyEdgeSuite`.")
+    }
     withTable("tbl") {
       spark.range(10).write.format("delta").saveAsTable("tbl")
       val log = DeltaLog.forTable(spark, TableIdentifier(tableName = "tbl"))
@@ -344,4 +385,16 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       }
     }
   }
+}
+
+class DeltaCDCSQLWithCatalogOwnedBatch1Suite extends DeltaCDCSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaCDCSQLWithCatalogOwnedBatch2Suite extends DeltaCDCSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaCDCSQLWithCatalogOwnedBatch100Suite extends DeltaCDCSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

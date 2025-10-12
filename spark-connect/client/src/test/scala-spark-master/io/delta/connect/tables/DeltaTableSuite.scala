@@ -19,17 +19,17 @@ package io.delta.tables
 import java.io.File
 import java.text.SimpleDateFormat
 
+import org.apache.commons.io.FileUtils
+
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.test.DeltaQueryTest
 
-// TODO(hvanhovell) All tests here are temporary disabled. While the code compiles, we need to a
-//  Spark PR to land (https://github.com/apache/spark/pull/49971), and make a couple of changes to
-//  make tests work. This will be done in a follow-up PR.
 class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
   private lazy val testData = spark.range(100).toDF("value")
 
-  ignore("forPath") {
+  test("forPath") {
     withTempPath { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
       checkAnswer(
@@ -39,7 +39,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("forName") {
+  test("forName") {
     withTable("deltaTable") {
       testData.write.format("delta").saveAsTable("deltaTable")
       checkAnswer(
@@ -49,7 +49,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("as") {
+  test("as") {
     withTempPath { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
       checkAnswer(
@@ -59,7 +59,27 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("history") {
+  test("vacuum") {
+    withTempPath { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      val table = io.delta.tables.DeltaTable.forPath(spark, dir.getAbsolutePath)
+
+      // create a uncommitted file.
+      val notCommittedFile = "notCommittedFile.json"
+      val file = new File(dir, notCommittedFile)
+      FileUtils.write(file, "gibberish")
+      // set to ancient time so that the file is eligible to be vacuumed.
+      file.setLastModified(0)
+      assert(file.exists())
+
+      table.vacuum()
+
+      val file2 = new File(dir, notCommittedFile)
+      assert(!file2.exists())
+    }
+  }
+
+  test("history") {
     val session = spark
     import session.implicits._
 
@@ -75,7 +95,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("detail") {
+  test("detail") {
     val session = spark
     import session.implicits._
 
@@ -90,40 +110,52 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("isDeltaTable - path - with _delta_log dir") {
+  test("isDeltaTable - path - with _delta_log dir") {
     withTempPath { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
       assert(DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("isDeltaTable - path - with empty _delta_log dir") {
+  test("isDeltaTable - path - with empty _delta_log dir") {
     withTempPath { dir =>
       new File(dir, "_delta_log").mkdirs()
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("isDeltaTable - path - with no _delta_log dir") {
+  test("isDeltaTable - path - with no _delta_log dir") {
     withTempPath { dir =>
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("isDeltaTable - path - with non-existent dir") {
+  test("isDeltaTable - path - with non-existent dir") {
     withTempPath { dir =>
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("isDeltaTable - with non-Delta table path") {
+  test("isDeltaTable - with non-Delta table path") {
     withTempPath { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("delete") {
+  test("generate") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      testData.toDF().write.format("delta").save(path)
+      val table = DeltaTable.forPath(spark, path)
+      val manifestDir = new File(dir, "_symlink_format_manifest")
+      assert(!manifestDir.exists())
+      table.generate("symlink_format_manifest")
+      assert(manifestDir.exists())
+    }
+  }
+
+  test("delete") {
     val session = spark
     import session.implicits._
     withTempPath { dir =>
@@ -143,7 +175,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("update") {
+  test("update") {
     val session = spark
     import session.implicits._
     withTempPath { dir =>
@@ -173,7 +205,175 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     sdf.format(file.lastModified())
   }
 
-  ignore("restore") {
+  test("clone") {
+    withTempPath { dir =>
+      val baseDir = dir.getAbsolutePath
+
+      val srcDir = new File(baseDir, "source").getCanonicalPath
+      val dstDir = new File(baseDir, "destination").getCanonicalPath
+
+      spark.range(10).write.format("delta").save(srcDir)
+
+      val srcTable = io.delta.tables.DeltaTable.forPath(spark, srcDir)
+      srcTable.clone(dstDir, true)
+
+      checkAnswer(
+        spark.read.format("delta").load(dstDir),
+        spark.read.format("delta").load(srcDir))
+    }
+  }
+
+  private def writeOptimizeTestData(path: String): Unit = {
+    testData
+      .withColumn("col1", col("value") % 7)
+      .withColumn("col2", col("value") % 27)
+      .withColumn("p", col("value") % 10)
+      .repartition(numPartitions = 4)
+      .write.partitionBy("p").format("delta").save(path)
+  }
+
+  private def checkOptimizeMetrics(
+      result: DataFrame, numFilesAdded: Long, numFilesRemoved: Long): Unit = {
+    val metrics = result.select("metrics.*").head()
+    assert(metrics.getLong(0) == numFilesAdded)
+    assert(metrics.getLong(1) == numFilesRemoved)
+  }
+
+  private def checkOptimizeHistory(
+      table: DeltaTable, expectedPredicates: Seq[String], expectedZorderCols: Seq[String]): Unit = {
+    val session = table.toDF.sparkSession
+    import session.implicits._
+
+    val (operation, operationParameters) = table.history()
+      .select("operation", "operationParameters")
+      .as[(String, Map[String, String])]
+      .head()
+    assert(operation == "OPTIMIZE")
+    assert(operationParameters("predicate") ==
+      expectedPredicates.map(p => s"""\"($p)\"""").mkString(start = "[", sep = ",", end = "]"))
+    assert(operationParameters("zOrderBy") ==
+      expectedZorderCols.map(c => s"""\"$c\"""").mkString(start = "[", sep = ",", end = "]"))
+  }
+
+  test("optimize - compaction") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+
+      writeOptimizeTestData(path)
+
+      val numDataFilesPreCompaction =
+        spark.read.format("delta").load(path)
+          .select("_metadata.file_path")
+          .distinct().count()
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val result = table.optimize().executeCompaction()
+
+      checkOptimizeMetrics(result, numFilesAdded = 10, numFilesRemoved = numDataFilesPreCompaction)
+      checkOptimizeHistory(table, expectedPredicates = Nil, expectedZorderCols = Nil)
+    }
+  }
+
+  test("optimize - compaction - with partition filter") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+
+      writeOptimizeTestData(path)
+
+      val numDataFilesPreCompaction =
+        spark.read.format("delta").load(path)
+          .where("p = 2")
+          .select("_metadata.file_path")
+          .distinct().count()
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val result = table.optimize().where("p = 2").executeCompaction()
+
+      checkOptimizeMetrics(result, numFilesAdded = 1, numFilesRemoved = numDataFilesPreCompaction)
+      checkOptimizeHistory(table, expectedPredicates = Seq("'p = 2"), expectedZorderCols = Nil)
+    }
+  }
+
+  test("optimize - zorder") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+
+      writeOptimizeTestData(path)
+
+      val numDataFilesPreZOrder =
+        spark.read.format("delta").load(path)
+          .select("_metadata.file_path")
+          .distinct().count()
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val result = table.optimize().executeZOrderBy("col1", "col2")
+
+      checkOptimizeMetrics(result, numFilesAdded = 10, numFilesRemoved = numDataFilesPreZOrder)
+      checkOptimizeHistory(
+        table, expectedPredicates = Nil, expectedZorderCols = Seq("col1", "col2"))
+    }
+  }
+
+  test("optimize - zorder - with partition filter") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+
+      writeOptimizeTestData(path)
+
+      val numDataFilesPreZOrder =
+        spark.read.format("delta").load(path)
+          .where("p = 2")
+          .select("_metadata.file_path")
+          .distinct().count()
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val result = table.optimize().where("p = 2").executeZOrderBy("col1", "col2")
+
+      checkOptimizeMetrics(result, numFilesAdded = 1, numFilesRemoved = numDataFilesPreZOrder)
+      checkOptimizeHistory(
+        table, expectedPredicates = Seq("'p = 2"), expectedZorderCols = Seq("col1", "col2"))
+    }
+  }
+
+  test("cloneAtVersion/timestamp - with filesystem options") {
+    val session = spark
+    import session.implicits._
+    withTempPath { dir =>
+      val baseDir = dir.getAbsolutePath
+
+      val srcDir = new File(baseDir, "source").getCanonicalPath
+      val dstDir1 = new File(baseDir, "destination1").getCanonicalPath
+      val dstDir2 = new File(baseDir, "destination2").getCanonicalPath
+
+      val df1 = Seq(1, 2, 3).toDF("id")
+      val df2 = Seq(4, 5).toDF("id")
+      val df3 = Seq(6, 7).toDF("id")
+
+      // version 0.
+      df1.write.format("delta").save(srcDir)
+      // version 1.
+      df2.write.format("delta").mode("append").save(srcDir)
+      // version 2.
+      df3.write.format("delta").mode("append").save(srcDir)
+
+      val srcTable = io.delta.tables.DeltaTable.forPath(spark, srcDir)
+
+      srcTable.cloneAtVersion(1, dstDir1, true)
+
+      checkAnswer(
+        spark.read.format("delta").load(dstDir1),
+        df1.union(df2))
+
+      val timestamp = getTimestampForVersion(srcDir, version = 0)
+      srcTable.cloneAtTimestamp(timestamp, dstDir2, isShallow = true, replace = true)
+
+      checkAnswer(
+        spark.read.format("delta").load(dstDir2),
+        df1)
+    }
+  }
+
+  test("restore") {
     val session = spark
     import session.implicits._
     withTempPath { dir =>
@@ -210,4 +410,64 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
         df1)
     }
   }
+
+  test("upgradeTableProtocol") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      testData.write.format("delta").save(path)
+      val table = DeltaTable.forPath(spark, path)
+      table.upgradeTableProtocol(1, 2)
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"))
+      )
+    }
+  }
+
+  test("addFeatureSupport") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      testData.write.format("delta").save(path)
+      val table = DeltaTable.forPath(spark, path)
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"))
+      )
+      table.addFeatureSupport("testReaderWriter")
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"))
+      )
+    }
+  }
+
+  test("dropFeatureSupport") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      testData.write.format("delta").save(path)
+      val table = DeltaTable.forPath(spark, path)
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"))
+      )
+
+      table.addFeatureSupport("testRemovableWriter")
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"))
+      )
+
+      // Attempt truncating the history when dropping a feature that is not required.
+      // This verifies the truncateHistory option was correctly passed.
+      assert(intercept[Exception] {
+        table.dropFeatureSupport("testRemovableWriter", truncateHistory = true)
+      }.getMessage.contains("The particular feature does not require history truncation."))
+
+      table.dropFeatureSupport("testRemovableWriter")
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"), Row(2L, "DROP FEATURE"))
+      )
+    }
+  }  
 }

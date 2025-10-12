@@ -22,6 +22,7 @@ import java.util
 import java.util.Locale
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
@@ -55,7 +56,7 @@ import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Ident
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, V1Write, WriteBuilder}
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
@@ -618,7 +619,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     override def abortStagedChanges(): Unit = {}
 
     override def capabilities(): util.Set[TableCapability] = {
-      Set(V1_BATCH_WRITE).asJava
+      Set(V1_BATCH_WRITE, TRUNCATE).asJava
     }
 
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
@@ -629,7 +630,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     /*
      * WriteBuilder for creating a Delta table.
      */
-    private class DeltaV1WriteBuilder extends WriteBuilder {
+    private class DeltaV1WriteBuilder extends WriteBuilder with SupportsTruncate {
+      override def truncate(): this.type = this
       override def build(): V1Write = new V1Write {
         override def toInsertableRelation(): InsertableRelation = {
           new InsertableRelation {
@@ -648,10 +650,14 @@ class DeltaCatalog extends DelegatingCatalogExtension
     // We also must define an artificial type for SetLocation, since data source V2 considers
     // location just another property but it's special in catalog tables.
     class SetLocation {}
-    val grouped = changes.groupBy {
+    val grouped = ListMap(changes.groupBy {
       case s: SetProperty if s.property() == "location" => classOf[SetLocation]
       case c => c.getClass
-    }
+    }.toSeq.sortBy {
+      // force SetProperty first to handle if other TableChange requires table feature enabled
+      case (cls, _) if cls == classOf[SetProperty] => 0
+      case _ => 1
+    }: _*)
     // Determines whether this DDL SET or UNSET the table redirect property. If it is, the table
     // redirect feature should be disabled to ensure the DDL can be applied onto the source or
     // destination table properly.
@@ -747,14 +753,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
         // TODO: Theoretically we should be able to fetch the snapshot from a txn.
-        val snapshotSchema = table.initialSnapshot.schema
-        val schema = if (!spark.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)) {
-          // Convert (StringType, metadata = 'VARCHAR(n)') into (VARCHAR(n), metadata = '')
-          // so that CHAR/VARCHAR to String conversion can be handled correctly.
-          SchemaUtils.getRawSchemaWithoutCharVarcharMetadata(snapshotSchema)
-        } else {
-          snapshotSchema
-        }
+        val schema = table.initialSnapshot.schema
         def getColumn(fieldNames: Seq[String])
             : DeltaChangeColumnSpec = {
           columnUpdates.getOrElseUpdate(fieldNames, {
@@ -800,8 +799,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
           case dataType: UpdateColumnType =>
             val field = dataType.fieldNames()
             val spec = getColumn(field)
-            columnUpdates(field) = spec.copy(
-              newColumn = spec.newColumn.copy(dataType = dataType.newDataType()))
+            val newField = SchemaUtils.setFieldDataTypeCharVarcharSafe(
+              spec.newColumn, dataType.newDataType())
+            columnUpdates(field) = spec.copy(newColumn = newField)
 
           case position: UpdateColumnPosition =>
             val field = position.fieldNames()

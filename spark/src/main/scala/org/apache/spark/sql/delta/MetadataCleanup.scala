@@ -33,6 +33,7 @@ import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.{col, isnull, lit, not, when}
 
 private[delta] object TruncationGranularity extends Enumeration {
@@ -62,20 +63,23 @@ trait MetadataCleanup extends DeltaLogging {
     DeltaConfigs.getMilliSeconds(interval)
   }
 
-  override def doLogCleanup(snapshotToCleanup: Snapshot): Unit = {
-    if (enableExpiredLogCleanup(snapshot.metadata)) {
-      cleanUpExpiredLogs(snapshotToCleanup)
+  override def doLogCleanup(
+      snapshotToCleanup: Snapshot,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    if (enableExpiredLogCleanup(unsafeVolatileSnapshot.metadata)) {
+      cleanUpExpiredLogs(snapshotToCleanup, catalogTableOpt)
     }
   }
 
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
   private[delta] def cleanUpExpiredLogs(
       snapshotToCleanup: Snapshot,
+      catalogTableOpt: Option[CatalogTable] = None,
       deltaRetentionMillisOpt: Option[Long] = None,
       cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
     recordDeltaOperation(this, "delta.log.cleanup") {
       val retentionMillis =
-        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(snapshot.metadata))
+        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(unsafeVolatileSnapshot.metadata))
       val fileCutOffTime =
         truncateDate(clock.getTimeMillis() - retentionMillis, cutoffTruncationGranularity).getTime
       val formattedDate = fileCutOffTime.toGMTString
@@ -149,8 +153,8 @@ trait MetadataCleanup extends DeltaLogging {
   }
 
   /** Helper function for getting the version of a checkpoint or a commit. */
-  def getDeltaFileOrCheckpointVersion(filePath: Path): Long = {
-    require(isCheckpointFile(filePath) || isDeltaFile(filePath))
+  def getDeltaFileChecksumOrCheckpointVersion(filePath: Path): Long = {
+    require(isCheckpointFile(filePath) || isDeltaFile(filePath) || isChecksumFile(filePath))
     getFileVersion(filePath)
   }
 
@@ -165,10 +169,10 @@ trait MetadataCleanup extends DeltaLogging {
     if (latestCheckpoint.isEmpty) return Iterator.empty
     val threshold = latestCheckpoint.get.version - 1L
     val files = store.listFrom(listingPrefix(logPath, 0), newDeltaHadoopConf())
-      .filter(f => isCheckpointFile(f) || isDeltaFile(f))
+      .filter(f => isCheckpointFile(f) || isDeltaFile(f) || isChecksumFile(f))
 
     new BufferingLogDeletionIterator(
-      files, fileCutOffTime, threshold, getDeltaFileOrCheckpointVersion)
+      files, fileCutOffTime, threshold, getDeltaFileChecksumOrCheckpointVersion)
   }
 
   protected def checkpointExistsAtCleanupBoundary(deltaLog: DeltaLog, version: Long): Boolean = {
@@ -507,15 +511,23 @@ trait MetadataCleanup extends DeltaLogging {
       getLatestCompleteCheckpointFromList(instances).isDefined
     }
 
+    // Iterate logs files in ascending order to find the earliest reliable checkpoint, for the same
+    // version, checkpoint is always processed before commit so that we can identify the candidate
+    // checkpoint first and then verify commits since the candidate's version (inclusive)
     store.listFrom(listingPrefix(logPath, 0L), hadoopConf)
       .map(_.getPath)
       .foreach {
-        case CheckpointFile(f, checkpointVersion) if earliestCheckpointVersionOpt.isEmpty =>
-          if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
-            // If it's a different checkpoint, clear the existing one.
-            currentCheckpointFiles.clear()
-          }
-          currentCheckpointFiles += f
+        case CheckpointFile(f, checkpointVersion)
+          // Invalidate the candidate if we observe missing commits before the current checkpoint.
+          // the incoming commit will invalidate the candidate as well, but then we miss the current
+          // checkpoint, which is also a valid candidate.
+          if earliestCheckpointVersionOpt.isEmpty || checkpointVersion > prevCommitVersion + 1 =>
+            earliestCheckpointVersionOpt = None
+            if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
+              // If it's a different checkpoint, clear the existing one.
+              currentCheckpointFiles.clear()
+            }
+            currentCheckpointFiles += f
         case DeltaFile(_, deltaVersion) =>
           if (earliestCheckpointVersionOpt.isEmpty && isCurrentCheckpointComplete) {
             // We have found a complete checkpoint, but we should not stop here. If a future

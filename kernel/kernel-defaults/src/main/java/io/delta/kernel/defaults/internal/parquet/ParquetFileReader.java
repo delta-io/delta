@@ -25,6 +25,7 @@ import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -32,11 +33,10 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.parquet.ParquetReadOptions;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.format.converter.ParquetMetadataConverter;
-import org.apache.parquet.hadoop.ParquetRecordReaderWrapper;
+import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
@@ -61,13 +61,17 @@ public class ParquetFileReader {
   public CloseableIterator<ColumnarBatch> read(
       FileStatus fileStatus, StructType schema, Optional<Predicate> predicate) {
 
-    final boolean hasRowIndexCol =
-        schema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) >= 0
-            && schema.get(StructField.METADATA_ROW_INDEX_COLUMN_NAME).isMetadataColumn();
+    if (schema.fields().stream()
+        .filter(StructField::isMetadataColumn)
+        .anyMatch(col -> col.getMetadataColumnSpec() != MetadataColumnSpec.ROW_INDEX)) {
+      throw new IllegalArgumentException(
+          "The parquet reader does not support metadata columns other than ROW_INDEX");
+    }
+    final boolean hasRowIndexCol = schema.contains(MetadataColumnSpec.ROW_INDEX);
 
     return new CloseableIterator<ColumnarBatch>() {
       private final BatchReadSupport readSupport = new BatchReadSupport(maxBatchSize, schema);
-      private ParquetRecordReaderWrapper<Object> reader;
+      private ParquetReader<Object> reader;
       private boolean hasNotConsumedNextElement;
 
       @Override
@@ -83,9 +87,10 @@ public class ParquetFileReader {
             return true;
           }
 
-          hasNotConsumedNextElement = reader.nextKeyValue() && reader.getCurrentValue() != null;
+          Object next = reader.read();
+          hasNotConsumedNextElement = next != null;
           return hasNotConsumedNextElement;
-        } catch (IOException | InterruptedException ex) {
+        } catch (IOException ex) {
           throw new KernelEngineException(
               "Error reading Parquet file: " + fileStatus.getPath(), ex);
         }
@@ -129,30 +134,28 @@ public class ParquetFileReader {
             Optional<FilterPredicate> parquetPredicate =
                 predicate.flatMap(predicate -> toParquetFilter(parquetSchema, predicate));
 
-            // Disable the record level filtering as the `parquet-mr` evaluates
-            // the filter once the entire record has been materialized. Instead,
-            // we use the predicate to prune the row groups which is more efficient.
-            // In the future, we can consider using the record level filtering if a
-            // native Parquet reader is implemented in Kernel default module.
-            ParquetReadOptions readOptions =
-                ParquetReadOptions.builder()
+            // TODO: We can avoid reading the footer again if we can pass the footer, but there is
+            // no API to do that in the current version of parquet-mr which takes InputFile
+            // as input.
+            reader =
+                new ParquetReader.Builder<Object>(parquetInputFile) {
+                  @Override
+                  protected ReadSupport<Object> getReadSupport() {
+                    return readSupport;
+                  }
+                }.withFilter(parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
+                    // Disable the record level filtering as the `parquet-mr` evaluates
+                    // the filter once the entire record has been materialized. Instead,
+                    // we use the predicate to prune the row groups which is more efficient.
+                    // In the future, we can consider using the record level filtering if a
+                    // native Parquet reader is implemented in Kernel default module.
                     .useRecordFilter(false)
                     .useStatsFilter(true) // only enable the row group level filtering
                     .useBloomFilter(false)
                     .useDictionaryFilter(false)
                     .useColumnIndexFilter(false)
-                    .withRecordFilter(
-                        parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
                     .build();
 
-            // Pass the already read footer to the reader to avoid reading it again.
-            // TODO: We can avoid reading the footer again if we can pass the footer, but there is
-            // no API to do that in the current version of parquet-mr which takes InputFile
-            // as input.
-            fileReader =
-                org.apache.parquet.hadoop.ParquetFileReader.open(parquetInputFile, readOptions);
-            reader = new ParquetRecordReaderWrapper<>(readSupport);
-            reader.initialize(fileReader, readOptions);
           } catch (IOException e) {
             Utils.closeCloseablesSilently(fileReader, reader);
             throw new KernelEngineException(

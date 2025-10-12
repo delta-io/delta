@@ -21,12 +21,12 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.Transaction.{generateAppendActions, transformLogicalData}
+import io.delta.kernel.Transaction.{generateAppendActions, getWriteContext, transformLogicalData}
 import io.delta.kernel.data._
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{DataWriteContextImpl, TableConfig, TransactionImpl}
-import io.delta.kernel.internal.TableConfig.ICEBERG_COMPAT_V2_ENABLED
+import io.delta.kernel.internal.TableConfig.{COLUMN_MAPPING_MODE, ICEBERG_COMPAT_V2_ENABLED, ICEBERG_COMPAT_V3_ENABLED}
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
@@ -35,7 +35,7 @@ import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
-import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructType, TimestampType}
+import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructType, TimestampType, VariantType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -44,48 +44,60 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
 
   import io.delta.kernel.TransactionSuite._
 
-  Seq(true, false).foreach { icebergCompatV2Enabled =>
-    test("transformLogicalData: un-partitioned table, " +
-      s"icebergCompatV2Enabled=$icebergCompatV2Enabled") {
+  def withIcebergCompatVersions(testNamePrefix: String)(
+      body: (Boolean, Boolean) => Unit): Unit = {
+    Seq((false, false), (true, false), (false, true)).foreach {
+      case (v2, v3) =>
+        test(s"$testNamePrefix, icebergCompatV2Enabled=$v2 icebergCompatV3Enabled=$v3") {
+          body(v2, v3)
+        }
+    }
+  }
+
+  withIcebergCompatVersions("transformLogicalData: un-partitioned table") {
+    case (icebergCompatV2Enabled, icebergCompatV3Enabled) =>
       val transformedDateIter = transformLogicalData(
         mockEngine(),
-        testTxnState(testSchema, enableIcebergCompatV2 = icebergCompatV2Enabled),
+        testTxnState(
+          testSchema,
+          enableIcebergCompatV2 = icebergCompatV2Enabled,
+          enableIcebergCompatV3 = icebergCompatV3Enabled),
         testData(includePartitionCols = false),
         Map.empty[String, Literal].asJava /* partition values */ )
       transformedDateIter.map(_.getData).forEachRemaining(batch => {
         assert(batch.getSchema === testSchema)
       })
-    }
   }
 
-  Seq(true, false).foreach { icebergCompatV2Enabled =>
-    test("transformLogicalData: partitioned table, " +
-      s"icebergCompatV2Enabled=$icebergCompatV2Enabled") {
+  withIcebergCompatVersions("transformLogicalData: partitioned table") {
+    case (icebergCompatV2Enabled, icebergCompatV3Enabled) =>
       val transformedDateIter = transformLogicalData(
         mockEngine(),
         testTxnState(
           testSchemaWithPartitions,
           testPartitionColNames,
-          enableIcebergCompatV2 = icebergCompatV2Enabled),
+          enableIcebergCompatV2 = icebergCompatV2Enabled,
+          enableIcebergCompatV3 = icebergCompatV3Enabled),
         testData(includePartitionCols = true),
         /* partition values */
         Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA")).asJava)
 
-      transformedDateIter.map(_.getData).forEachRemaining(batch => {
-        if (icebergCompatV2Enabled) {
+      transformedDateIter.map(_.getData).forEachRemaining { batch =>
+        if (icebergCompatV2Enabled || icebergCompatV3Enabled) {
           // when icebergCompatV2Enabled is true, the partition columns included in the output
           assert(batch.getSchema === testSchemaWithPartitions)
         } else {
           assert(batch.getSchema === testSchema)
         }
-      })
-    }
+      }
   }
 
-  Seq(true, false).foreach { icebergCompatV2Enabled =>
-    test(s"generateAppendActions: iceberg comaptibily checks, " +
-      s"icebergCompatV2Enabled=$icebergCompatV2Enabled") {
-      val txnState = testTxnState(testSchema, enableIcebergCompatV2 = icebergCompatV2Enabled)
+  withIcebergCompatVersions("generateAppendActions: iceberg comaptibily checks") {
+    case (icebergCompatV2Enabled, icebergCompatV3Enabled) =>
+      val txnState = testTxnState(
+        testSchema,
+        enableIcebergCompatV2 = icebergCompatV2Enabled,
+        enableIcebergCompatV3 = icebergCompatV3Enabled)
       val engine = mockEngine()
 
       Seq(
@@ -95,9 +107,9 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
             "file1" -> testStats(Some(10)), // valid stats
             "file2" -> None // missing stats
           ),
-          "icebergCompatV2 compatibility requires 'numRecords' statistic." // expected error message
+          "compatibility requires 'numRecords' statistic." // expected error message
         )).foreach { case (actionRows, expectedErrorMsg) =>
-        if (icebergCompatV2Enabled) {
+        if (icebergCompatV2Enabled || icebergCompatV3Enabled) {
           val ex = intercept[KernelException] {
             generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
               .forEachRemaining(_ => ()) // consume the iterator
@@ -124,9 +136,8 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         }
 
       assert(actStats === Seq(
-        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}",
-        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}"))
-    }
+        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}",
+        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}"))
   }
 
   Seq(0, -1).foreach { numIndexedCols =>
@@ -156,7 +167,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
         stringStringMapValue(configMap.asJava))
-      val txnState = TransactionStateRow.of(metadata, "table path", schema)
+      val txnState = TransactionStateRow.of(metadata, "table path", 200 /* maxRetries */ )
 
       // Get statistics columns and define expected result
       val statsColumns = TransactionImpl.getStatisticsColumns(txnState)
@@ -185,6 +196,74 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       }
     }
   }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"transformLogicalData: CM tables are blocked: cmMode=$cmMode") {
+      val txnState = testTxnState(new StructType(), cmMode = cmMode)
+      val engine = mockEngine()
+
+      val ex = intercept[UnsupportedOperationException] {
+        transformLogicalData(
+          engine,
+          txnState,
+          testData(includePartitionCols = false),
+          Map.empty[String, Literal].asJava /* partition values */ )
+          .forEachRemaining(_ => ()) // consume the iterator
+      }
+      assert(ex.getMessage.contains(
+        "Writing into column mapping enabled table is not supported yet."))
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"getWriteContext: CM tables are blocked: $cmMode") {
+      val txnState = testTxnState(new StructType(), cmMode = cmMode)
+      val engine = mockEngine()
+
+      val ex = intercept[UnsupportedOperationException] {
+        getWriteContext(
+          engine,
+          txnState,
+          Map.empty[String, Literal].asJava /* partition values */ )
+      }
+      assert(ex.getMessage.contains(
+        "Writing into column mapping enabled table is not supported yet."))
+    }
+  }
+
+  test("transformLogicalData: Writing to tables with variant is blocked") {
+    val txnState = testTxnState(new StructType().add("variant", VariantType.VARIANT))
+    val engine = mockEngine()
+
+    val ex = intercept[UnsupportedOperationException] {
+      transformLogicalData(
+        engine,
+        txnState,
+        testData(includePartitionCols = false),
+        Map.empty[String, Literal].asJava /* partition values */ )
+        .forEachRemaining(_ => ()) // consume the iterator
+    }
+    assert(ex.getMessage.contains(
+      "Transforming logical data with variant data is currently unsupported"))
+  }
+
+  test("transformLogicalData: Writing to tables with nested variant is blocked") {
+    val txnState = testTxnState(new StructType().add(
+      "nested",
+      new StructType().add("nested_variant", VariantType.VARIANT)))
+    val engine = mockEngine()
+
+    val ex = intercept[UnsupportedOperationException] {
+      transformLogicalData(
+        engine,
+        txnState,
+        testData(includePartitionCols = false),
+        Map.empty[String, Literal].asJava /* partition values */ )
+        .forEachRemaining(_ => ()) // consume the iterator
+    }
+    assert(ex.getMessage.contains(
+      "Transforming logical data with variant data is currently unsupported"))
+  }
 }
 
 object TransactionSuite extends VectorTestUtils with MockEngineUtils {
@@ -197,7 +276,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testBatch(includePartitionCols: Boolean): ColumnarBatch = {
     val testColumnVectors = Seq(
       stringVector(Seq("Alice", "Bob", "Charlie", "David", "Eve")), // name
-      longVector(20L, 30L, 40L, 50L, 60L), // id
+      longVector(Seq(20L, 30L, 40L, 50L, 60L)), // id
       stringVector(Seq("Campbell", "Roanoke", "Dallas", "Monte Sereno", "Minneapolis")) // city
     ) ++ {
       if (includePartitionCols) {
@@ -249,8 +328,13 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testTxnState(
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty,
-      enableIcebergCompatV2: Boolean = false): Row = {
-    val configurationMap = Map(ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString)
+      cmMode: String = "none",
+      enableIcebergCompatV2: Boolean = false,
+      enableIcebergCompatV3: Boolean = false): Row = {
+    val configurationMap = Map(
+      ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString,
+      ICEBERG_COMPAT_V3_ENABLED.getKey -> enableIcebergCompatV3.toString,
+      COLUMN_MAPPING_MODE.getKey -> cmMode)
     val metadata = new Metadata(
       "id",
       Optional.empty(), /* name */
@@ -262,7 +346,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
-    TransactionStateRow.of(metadata, "table path", schema)
+    TransactionStateRow.of(metadata, "table path", 200 /* maxRetries */ )
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {
@@ -271,7 +355,8 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
         numRows,
         Map.empty[Column, Literal].asJava, // minValues - empty value as this is just for tests.
         Map.empty[Column, Literal].asJava, // maxValues - empty value as this is just for tests.
-        Map.empty[Column, JLong].asJava // nullCount - empty value as this is just for tests.
+        Map.empty[Column, JLong].asJava, // nullCount - empty value as this is just for tests.
+        Optional.empty() // tightBounds is unspecified
       )
     })
   }

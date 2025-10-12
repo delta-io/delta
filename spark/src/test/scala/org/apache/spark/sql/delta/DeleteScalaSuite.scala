@@ -20,33 +20,27 @@ import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandT
 
 import org.apache.spark.sql.{functions, Row}
 
-class DeleteScalaSuite extends DeleteSuiteBase
+trait DeleteScalaMixin
+  extends DeleteBaseMixin
   with DeltaSQLCommandTest
+  with DeltaDMLTestUtilsPathBased
   with DeltaExcludedTestMixin {
 
-  override def excluded: Seq[String] = super.excluded ++ Seq(
-    // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
-    // use them anyway with the Scala API.
-    // scalastyle:off line.size.limit
-    "test delete on temp view - basic - Partition=true - SQL TempView",
-    "test delete on temp view - basic - Partition=true - Dataset TempView",
-    "test delete on temp view - basic - Partition=false - SQL TempView",
-    "test delete on temp view - basic - Partition=false - Dataset TempView",
-    "test delete on temp view - subset cols - SQL TempView",
-    "test delete on temp view - subset cols - Dataset TempView",
-    "test delete on temp view - superset cols - SQL TempView",
-    "test delete on temp view - superset cols - Dataset TempView",
-    "test delete on temp view - nontrivial projection - SQL TempView",
-    "test delete on temp view - nontrivial projection - Dataset TempView",
-    "test delete on temp view - view with too many internal aliases - SQL TempView",
-    "test delete on temp view - view with too many internal aliases - Dataset TempView",
-    "test delete on temp view - nontrivial projection with write amplification reduction - SQL TempView",
-    "test delete on temp view - nontrivial projection with write amplification reduction - Dataset TempView",
-    "test delete on temp view - view with too many internal aliases with write amplification reduction - SQL TempView",
-    "test delete on temp view - view with too many internal aliases with write amplification reduction - Dataset TempView"
-    // scalastyle:on line.size.limit
-  )
+  override protected def executeDelete(target: String, where: String = null): Unit = {
+    val deltaTable: io.delta.tables.DeltaTable =
+      DeltaTestUtils.getDeltaTableForIdentifierOrPath(
+        spark,
+        DeltaTestUtils.getTableIdentifierOrPath(target))
 
+    if (where != null) {
+      deltaTable.delete(where)
+    } else {
+      deltaTable.delete()
+    }
+  }
+}
+
+trait DeleteScalaTests extends DeleteScalaMixin {
   import testImplicits._
 
   test("delete usage test - without condition") {
@@ -68,18 +62,5 @@ class DeleteScalaSuite extends DeleteSuiteBase
     val table = io.delta.tables.DeltaTable.forPath(tempPath)
     table.delete(functions.expr("key = 1 or key = 2"))
     checkAnswer(readDeltaTable(tempPath), Row(3, 30) :: Row(4, 40) :: Nil)
-  }
-
-  override protected def executeDelete(target: String, where: String = null): Unit = {
-    val deltaTable: io.delta.tables.DeltaTable =
-      DeltaTestUtils.getDeltaTableForIdentifierOrPath(
-        spark,
-        DeltaTestUtils.getTableIdentifierOrPath(target))
-
-    if (where != null) {
-      deltaTable.delete(where)
-    } else {
-      deltaTable.delete()
-    }
   }
 }

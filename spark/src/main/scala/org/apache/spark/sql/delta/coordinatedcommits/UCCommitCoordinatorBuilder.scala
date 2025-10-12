@@ -39,13 +39,14 @@ import org.apache.spark.sql.SparkSession
  *
  * It caches the UCCommitCoordinatorClient instance for a given metastore ID upon its first access.
  */
-object UCCommitCoordinatorBuilder extends CommitCoordinatorBuilder with DeltaLogging {
+object UCCommitCoordinatorBuilder
+    extends CatalogOwnedCommitCoordinatorBuilder with DeltaLogging {
 
   /** Prefix for Spark SQL catalog configurations. */
   final private val SPARK_SQL_CATALOG_PREFIX = "spark.sql.catalog."
 
   /** Connector class name for filtering relevant Unity Catalog catalogs. */
-  final private val UNITY_CATALOG_CONNECTOR_CLASS: String =
+  final private[delta] val UNITY_CATALOG_CONNECTOR_CLASS: String =
     "io.unitycatalog.spark.UCSingleCatalog"
 
   /** Suffix for the URI configuration of a catalog. */
@@ -77,6 +78,18 @@ object UCCommitCoordinatorBuilder extends CommitCoordinatorBuilder with DeltaLog
       metastoreId,
       _ => new UCCommitCoordinatorClient(conf.asJava, getMatchingUCClient(spark, metastoreId))
     )
+  }
+
+  override def buildForCatalog(
+      spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
+    val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
+      case Some((_, uri, token)) => ucClientFactory.createUCClient(uri, token)
+      case None =>
+        throw new IllegalArgumentException(
+          s"Catalog $catalogName not found in the provided SparkSession configurations.")
+    }
+    val conf = Map.empty[String, String]
+    new UCCommitCoordinatorClient(conf.asJava, client)
   }
 
   /**

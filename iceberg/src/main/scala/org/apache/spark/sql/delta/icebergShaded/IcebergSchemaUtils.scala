@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.icebergShaded
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import shadedForDelta.org.apache.iceberg.{Schema => IcebergSchema}
 import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
@@ -55,7 +56,8 @@ trait IcebergSchemaUtils extends DeltaLogging {
   private[delta] def getNestedFieldId(field: Option[StructField], path: Seq[String]): Int
 
   /** Visible for testing */
-  private[delta] def convertStruct(deltaSchema: StructType): IcebergTypes.StructType = {
+  private[delta] def convertStruct(deltaSchema: StructType)(
+      implicit compatVersion: Int = 0): IcebergTypes.StructType = {
     /**
      * Recursively (i.e. for all nested elements) transforms the delta DataType `elem` into its
      * corresponding Iceberg type.
@@ -69,13 +71,23 @@ trait IcebergSchemaUtils extends DeltaLogging {
         : IcebergType = elem match {
       case StructType(fields) =>
         IcebergTypes.StructType.of(fields.map { f =>
-          IcebergTypes.NestedField.of(
+          val icebergField = IcebergTypes.NestedField.of(
             getFieldId(Some(f)),
             f.nullable,
             f.name,
             transform(f.dataType, Some(f), Seq(DeltaColumnMapping.getPhysicalName(f))),
             f.getComment().orNull
           )
+          // Translate column default value
+          if (compatVersion >= 3) {
+            DeltaToIcebergConvert.Schema.extractLiteralDefault(f) match {
+              case Left(errorMsg) =>
+                throw new UnsupportedOperationException(errorMsg)
+              case _ => icebergField
+            }
+          } else {
+            icebergField
+          }
         }.toList.asJava)
 
       case ArrayType(elementType, containsNull) =>

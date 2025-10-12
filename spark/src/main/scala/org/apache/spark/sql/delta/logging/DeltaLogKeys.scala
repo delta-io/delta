@@ -46,6 +46,7 @@ import org.apache.spark.internal.LogKeyShims
  */
 trait DeltaLogKeysBase {
   case object APP_ID extends LogKeyShims
+  case object ATTEMPT extends LogKeyShims
   case object BATCH_ID extends LogKeyShims
   case object BATCH_SIZE extends LogKeyShims
   case object CATALOG extends LogKeyShims
@@ -61,6 +62,7 @@ trait DeltaLogKeysBase {
   case object DELTA_METADATA extends LogKeyShims
   case object DIR extends LogKeyShims
   case object DURATION extends LogKeyShims
+  case object ERROR_ID extends LogKeyShims
   case object END_INDEX extends LogKeyShims
   case object END_OFFSET extends LogKeyShims
   case object END_VERSION extends LogKeyShims
@@ -75,6 +77,7 @@ trait DeltaLogKeysBase {
   case object FILTER extends LogKeyShims
   case object FILTER2 extends LogKeyShims
   case object HOOK_NAME extends LogKeyShims
+  case object INVARIANT_CHECK_INFO extends LogKeyShims
   case object ISOLATION_LEVEL extends LogKeyShims
   case object IS_DRY_RUN extends LogKeyShims
   case object IS_INIT_SNAPSHOT extends LogKeyShims
@@ -86,6 +89,7 @@ trait DeltaLogKeysBase {
   case object METADATA_NEW extends LogKeyShims
   case object METADATA_OLD extends LogKeyShims
   case object METRICS extends LogKeyShims
+  case object METRIC_NAME extends LogKeyShims
   case object MIN_SIZE extends LogKeyShims
   case object NUM_ACTIONS extends LogKeyShims
   case object NUM_ACTIONS2 extends LogKeyShims
@@ -97,6 +101,7 @@ trait DeltaLogKeysBase {
   case object NUM_PARTITIONS extends LogKeyShims
   case object NUM_PREDICATES extends LogKeyShims
   case object NUM_RECORDS extends LogKeyShims
+  case object NUM_RECORDS2 extends LogKeyShims
   case object NUM_SKIPPED extends LogKeyShims
   case object OFFSET extends LogKeyShims
   case object OPERATION extends LogKeyShims

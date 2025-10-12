@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands.backfill
 
-import java.util.concurrent.{ConcurrentLinkedDeque, ExecutionException, Future, ThreadFactory, TimeUnit}
+import java.util.concurrent.{ConcurrentLinkedDeque, ExecutionException, Future, TimeUnit}
 
 import scala.annotation.tailrec
 
@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.exceptions.MetadataChangedException
 
-import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
@@ -77,6 +77,7 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
 
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
+    .set(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key, "true")
 
   protected val usePersistentDeletionVectors = false
 
@@ -121,18 +122,13 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
   protected val backfillObservers =
     new ConcurrentLinkedDeque[PhaseLockingTransactionExecutionObserver]
 
-  // A Thread Factory that adds transaction observers to `backfillObservers` for all new threads.
-  private class BackfillObservingThreadFactory extends ThreadFactory {
-    override def newThread(r: Runnable): Thread = {
+  // An observer that adds transaction observers to `backfillObservers` for all batches.
+  object TrackingBackfillExecutionObserver extends BackfillExecutionObserver {
+    override def executeBatch[T](f: => T): T = {
       val observer = new PhaseLockingTransactionExecutionObserver(
         OptimisticTransactionPhases.forName("backfill-observer"))
       backfillObservers.addLast(observer)
-
-      val runnable: Runnable = () => {
-        TransactionExecutionObserver.withObserver(observer) { r.run() }
-      }
-
-      new Thread(runnable)
+      TransactionExecutionObserver.withObserver(observer)(f)
     }
   }
 
@@ -170,20 +166,6 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
     waitForCommit(observer)
   }
 
-  protected def commitBatchesSimultaneously(numBatches: Int): Unit = {
-    // Wait for all backfill commit threads to be launched.
-    busyWaitFor(backfillObservers.size() == numBatches, timeout)
-
-    // Unblock all commits.
-    backfillObservers.forEach(unblockAllPhases(_))
-
-    // Wait for all commits to be finished.
-    while (!backfillObservers.isEmpty) {
-      val observer = backfillObservers.removeFirst()
-      waitForCommit(observer)
-    }
-  }
-
   // Launch the backfill command and wait until the table feature has been committed.
   protected def launchBackFillAndBlockAfterFeatureIsCommitted(): Future[_] = {
     val backfillFuture = launchBackfillInBackgroundThread()
@@ -199,19 +181,13 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
   }
 
   protected def withTrackedBackfillCommits(testBlock: => Unit): Unit = {
-    // Use `BackfillObservingThreadFactory` on the backfill thread pool.
-    val oldThreadFactory = BackfillExecutor.getOrCreateThreadPool().getThreadFactory
-    assert(!oldThreadFactory.isInstanceOf[BackfillObservingThreadFactory])
-    BackfillExecutor.getOrCreateThreadPool()
-      .setThreadFactory(new BackfillObservingThreadFactory())
-
+    assert(backfillObservers.isEmpty)
     try {
-      withSQLConf(DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT.key ->
-          numFiles.toString) {
+      BackfillExecutionObserver.withObserver(TrackingBackfillExecutionObserver) {
         testBlock
       }
     } finally {
-      BackfillExecutor.getOrCreateThreadPool().setThreadFactory(oldThreadFactory)
+      backfillObservers.clear()
     }
   }
 

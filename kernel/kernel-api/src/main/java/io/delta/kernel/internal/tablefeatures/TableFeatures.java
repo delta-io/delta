@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode.NONE;
 import static io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ;
 import static io.delta.kernel.types.VariantType.VARIANT;
+import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
@@ -28,16 +29,34 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.CaseInsensitiveMap;
-import io.delta.kernel.internal.util.SchemaUtils;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.FieldMetadata;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Stream;
 
 /** Contains utility methods related to the Delta table feature support in protocol. */
 public class TableFeatures {
+
+  /**
+   * The prefix for setting an override of a feature option in {@linkplain Metadata} configuration.
+   *
+   * <p>Keys with this prefix should never be persisted in the Metadata action. The keys can be
+   * filtered out by using {@linkplain #extractFeaturePropertyOverrides}.
+   *
+   * <p>These overrides only support add the feature as supported in the Protocol action.
+   *
+   * <p>Disabling features via this method is unsupported.
+   */
+  public static String SET_TABLE_FEATURE_SUPPORTED_PREFIX = "delta.feature.";
+
+  /**
+   * Configuration value to turn on support for a table feature when used with {@link
+   * #SET_TABLE_FEATURE_SUPPORTED_PREFIX}.
+   *
+   * <p>Example: {@code "delta.feature.myFeature" -> "supported"}
+   */
+  public static String SET_TABLE_FEATURE_SUPPORTED_VALUE = "supported";
 
   /////////////////////////////////////////////////////////////////////////////////
   /// START: Define the {@link TableFeature}s                                   ///
@@ -60,6 +79,23 @@ public class TableFeatures {
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
       return true;
+    }
+  }
+
+  // TODO: [delta-io/delta#4763] Support `catalogManaged` when the RFC is formally accepted into the
+  //       protocol.
+
+  public static final TableFeature CATALOG_MANAGED_R_W_FEATURE_PREVIEW =
+      new CatalogManagedFeatureBase("catalogOwned-preview");
+
+  private static class CatalogManagedFeatureBase extends TableFeature.ReaderWriterFeature {
+    CatalogManagedFeatureBase(String featureName) {
+      super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(IN_COMMIT_TIMESTAMP_W_FEATURE);
     }
   }
 
@@ -170,27 +206,62 @@ public class TableFeatures {
     }
   }
 
-  public static final TableFeature VARIANT_RW_FEATURE = new VariantTypeTableFeature("variantType");
-  public static final TableFeature VARIANT_RW_PREVIEW_FEATURE =
-      new VariantTypeTableFeature("variantType-preview");
+  /* ---- Start: variantType ---- */
+  // Base class for variantType and variantType-preview features. Both features are same in terms
+  // of behavior and given the feature is graduated, we will enable the `variantType` by default
+  // if the metadata requirements are satisfied and the table doesn't already contain the
+  // `variantType-preview` feature. Also to note, with this version of Kernel, one can't
+  // auto upgrade to `variantType-preview` with metadata requirements. It can only be set
+  // manually using `delta.feature.variantType-preview=supported` property.
+  private static class VariantTypeTableFeatureBase extends TableFeature.ReaderWriterFeature {
+    VariantTypeTableFeatureBase(String featureName) {
+      super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+  }
 
-  private static class VariantTypeTableFeature extends TableFeature.ReaderWriterFeature
+  private static class VariantTypeTableFeature extends VariantTypeTableFeatureBase
       implements FeatureAutoEnabledByMetadata {
-    VariantTypeTableFeature(String featureName) {
-      super(
-          /* featureName = */ featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    VariantTypeTableFeature() {
+      super("variantType");
     }
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return hasTypeColumn(metadata.getSchema(), VARIANT);
+      return hasTypeColumn(metadata.getSchema(), VARIANT)
+          &&
+          // Don't automatically enable the stable feature if the preview feature is
+          // already supported, to avoid possibly breaking old clients that only
+          // support the preview feature.
+          !protocol.supportsFeature(VARIANT_RW_PREVIEW_FEATURE);
+    }
+  }
+
+  public static final TableFeature VARIANT_RW_FEATURE = new VariantTypeTableFeature();
+  public static final TableFeature VARIANT_RW_PREVIEW_FEATURE =
+      new VariantTypeTableFeatureBase("variantType-preview");
+  /* ---- End: variantType ---- */
+
+  /* ---- Start: variantShredding-preview ---- */
+  public static final TableFeature VARIANT_SHREDDING_PREVIEW_RW_FEATURE =
+      new VariantShreddingPreviewFeature();
+
+  private static class VariantShreddingPreviewFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    VariantShreddingPreviewFeature() {
+      super("variantShredding-preview", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
     }
 
     @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.VARIANT_SHREDDING_ENABLED.fromMetadata(metadata);
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return new HashSet<>(Arrays.asList(TableFeatures.VARIANT_RW_FEATURE));
     }
   }
+  /* ---- End: variantShredding-preview ---- */
 
   public static final TableFeature DOMAIN_METADATA_W_FEATURE = new DomainMetadataFeature();
 
@@ -223,11 +294,7 @@ public class TableFeatures {
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
-        throw new UnsupportedOperationException(
-            "Feature `rowTracking` is not yet supported in Kernel.");
-      }
-      return false;
+      return TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
     }
 
     @Override
@@ -241,7 +308,7 @@ public class TableFeatures {
   /**
    * Kernel currently only support blind appends. So we don't need to do anything special for
    * writing into a table with deletion vectors enabled (i.e a table feature with DV enabled is both
-   * readable and writable.
+   * readable and writable).
    */
   private static class DeletionVectorsTableFeature extends TableFeature.ReaderWriterFeature
       implements FeatureAutoEnabledByMetadata {
@@ -273,27 +340,60 @@ public class TableFeatures {
     }
   }
 
-  public static final TableFeature TYPE_WIDENING_RW_FEATURE =
-      new TypeWideningTableFeature("typeWidening");
-  public static final TableFeature TYPE_WIDENING_PREVIEW_TABLE_FEATURE =
-      new TypeWideningTableFeature("typeWidening-preview");
+  public static final TableFeature ICEBERG_COMPAT_V3_W_FEATURE = new IcebergCompatV3TableFeature();
 
-  private static class TypeWideningTableFeature extends TableFeature.ReaderWriterFeature
+  private static class IcebergCompatV3TableFeature extends TableFeature.WriterFeature
       implements FeatureAutoEnabledByMetadata {
-    TypeWideningTableFeature(String featureName) {
-      super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    IcebergCompatV3TableFeature() {
+      super("icebergCompatV3", /* minWriterVersion = */ 7);
     }
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(metadata);
+      return TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList(COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)));
+    }
+  }
+
+  /* ---- Start: type widening ---- */
+  // Base class for typeWidening and typeWidening-preview features. Both features are same in terms
+  // of behavior and given the feature is graduated, we will enable the `typeWidening` by default
+  // if the metadata requirements are satisfied and the table doesn't already contain the
+  // `typeWidening-preview` feature. Also to note, with this version of Kernel, one can't
+  // auto upgrade to `typeWidening-preview` with metadata requirements. It can only be set
+  // manually using `delta.feature.typeWidening-preview=supported` property.
+  private static class TypeWideningTableFeatureBase extends TableFeature.ReaderWriterFeature {
+    TypeWideningTableFeatureBase(String featureName) {
+      super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+  }
+
+  private static class TypeWideningTableFeature extends TypeWideningTableFeatureBase
+      implements FeatureAutoEnabledByMetadata {
+    TypeWideningTableFeature() {
+      super("typeWidening");
     }
 
     @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to support it.
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(metadata)
+          &&
+          // Don't automatically enable the stable feature if the preview feature is already
+          // supported, to
+          // avoid possibly breaking old clients that only support the preview feature.
+          !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE);
     }
   }
+
+  public static final TableFeature TYPE_WIDENING_RW_FEATURE = new TypeWideningTableFeature();
+
+  public static final TableFeature TYPE_WIDENING_RW_PREVIEW_FEATURE =
+      new TypeWideningTableFeatureBase("typeWidening-preview");
+  /* ---- End: type widening ---- */
 
   public static final TableFeature IN_COMMIT_TIMESTAMP_W_FEATURE =
       new InCommitTimestampTableFeature();
@@ -370,6 +470,24 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature ICEBERG_WRITER_COMPAT_V3 = new IcebergWriterCompatV3();
+
+  private static class IcebergWriterCompatV3 extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    IcebergWriterCompatV3() {
+      super("icebergWriterCompatV3", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(ICEBERG_COMPAT_V3_W_FEATURE);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -387,6 +505,7 @@ public class TableFeatures {
       Collections.unmodifiableList(
           Arrays.asList(
               APPEND_ONLY_W_FEATURE,
+              CATALOG_MANAGED_R_W_FEATURE_PREVIEW,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
               CLUSTERING_W_FEATURE,
@@ -396,17 +515,20 @@ public class TableFeatures {
               GENERATED_COLUMNS_W_FEATURE,
               DOMAIN_METADATA_W_FEATURE,
               ICEBERG_COMPAT_V2_W_FEATURE,
+              ICEBERG_COMPAT_V3_W_FEATURE,
               IDENTITY_COLUMNS_W_FEATURE,
               IN_COMMIT_TIMESTAMP_W_FEATURE,
               INVARIANTS_W_FEATURE,
               ROW_TRACKING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
-              TYPE_WIDENING_PREVIEW_TABLE_FEATURE,
+              TYPE_WIDENING_RW_PREVIEW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
               VACUUM_PROTOCOL_CHECK_RW_FEATURE,
               VARIANT_RW_FEATURE,
               VARIANT_RW_PREVIEW_FEATURE,
-              ICEBERG_WRITER_COMPAT_V1));
+              VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
+              ICEBERG_WRITER_COMPAT_V1,
+              ICEBERG_WRITER_COMPAT_V3));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(
@@ -453,31 +575,24 @@ public class TableFeatures {
    * metadata. If the current protocol already satisfies the metadata requirements, return empty.
    *
    * @param newMetadata the new metadata to be applied to the table.
-   * @param needDomainMetadataSupport whether the table needs to explicitly support domain metadata.
-   * @param needClusteringTableFeature whether the table needs to support clustering table feature
-   *     if true it would add domainMetadata support as well.
+   * @param manuallyEnabledFeatures features that were requested to be added to the protocol.
    * @param currentProtocol the current protocol of the table.
    * @return the upgraded protocol and the set of new features that were enabled in the upgrade.
    */
   public static Optional<Tuple2<Protocol, Set<TableFeature>>> autoUpgradeProtocolBasedOnMetadata(
       Metadata newMetadata,
-      boolean needDomainMetadataSupport,
-      boolean needClusteringTableFeature,
+      Collection<TableFeature> manuallyEnabledFeatures,
       Protocol currentProtocol) {
 
     Set<TableFeature> allNeededTableFeatures =
         extractAllNeededTableFeatures(newMetadata, currentProtocol);
-    if (needDomainMetadataSupport) {
+    if (manuallyEnabledFeatures != null && !manuallyEnabledFeatures.isEmpty()) {
+      // Note that any dependent features are handled below in the withFeatures call.
       allNeededTableFeatures =
-          Stream.concat(allNeededTableFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
+          Stream.concat(allNeededTableFeatures.stream(), manuallyEnabledFeatures.stream())
               .collect(toSet());
     }
-    // Its dependency feature(domainMetadata) would be enabled automatically.
-    if (needClusteringTableFeature) {
-      allNeededTableFeatures =
-          Stream.concat(allNeededTableFeatures.stream(), Stream.of(CLUSTERING_W_FEATURE))
-              .collect(toSet());
-    }
+
     Protocol required =
         new Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
             .withFeatures(allNeededTableFeatures)
@@ -493,6 +608,62 @@ public class TableFeatures {
     } else {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Checks if a table feature is being manually supported through user property {@code
+   * delta.feature.<featureName>=supported}.
+   */
+  public static boolean isPropertiesManuallySupportingTableFeature(
+      Map<String, String> userProperties, TableFeature tableFeature) {
+    final String featurePropKey = SET_TABLE_FEATURE_SUPPORTED_PREFIX + tableFeature.featureName();
+    final String propertyValue = userProperties.get(featurePropKey); // will be null if not found
+    return SET_TABLE_FEATURE_SUPPORTED_VALUE.equals(propertyValue);
+  }
+
+  /**
+   * Extracts features overrides from Metadata properties and returns an updated metadata if any
+   * overrides are present.
+   *
+   * <p>Overrides are specified using a key in th form {@linkplain
+   * #SET_TABLE_FEATURE_SUPPORTED_PREFIX} + {featureName}. (e.g. {@code
+   * delta.feature.icebergWriterCompatV1}). The value must be "supported" to add the feature.
+   * Currently, removing values is not handled.
+   *
+   * @return A set of features that had overrides and Metadata object with the properties removed if
+   *     any overrides were present.
+   * @throws KernelException if the feature name for the override is invalid or the value is not
+   *     equal to "supported".
+   */
+  public static Tuple2<Set<TableFeature>, Optional<Metadata>> extractFeaturePropertyOverrides(
+      Metadata currentMetadata) {
+    Set<TableFeature> features = new HashSet<>();
+    Map<String, String> properties = currentMetadata.getConfiguration();
+    for (Map.Entry<String, String> entry : properties.entrySet()) {
+      if (entry.getKey().startsWith(SET_TABLE_FEATURE_SUPPORTED_PREFIX)) {
+        String featureName = entry.getKey().substring(SET_TABLE_FEATURE_SUPPORTED_PREFIX.length());
+
+        TableFeature feature = getTableFeature(featureName);
+        features.add(feature);
+        if (!entry.getValue().equals(SET_TABLE_FEATURE_SUPPORTED_VALUE)) {
+          throw DeltaErrors.invalidConfigurationValueException(
+              entry.getKey(),
+              entry.getValue(),
+              "TableFeature override options may only have \"supported\" as there value");
+        }
+      }
+    }
+
+    if (features.isEmpty()) {
+      return new Tuple2<>(features, Optional.empty());
+    }
+
+    Map<String, String> cleanedProperties =
+        properties.entrySet().stream()
+            .filter(e -> !e.getKey().startsWith(SET_TABLE_FEATURE_SUPPORTED_PREFIX))
+            .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+    return new Tuple2<>(
+        features, Optional.of(currentMetadata.withReplacedConfiguration(cleanedProperties)));
   }
 
   /** Utility method to check if the table with given protocol is readable by the Kernel. */
@@ -536,18 +707,82 @@ public class TableFeatures {
     }
   }
 
+  /////////////////////////////
+  // Is feature X supported? //
+  /////////////////////////////
+
+  public static boolean isCatalogManagedSupported(Protocol protocol) {
+    return protocol.supportsFeature(CATALOG_MANAGED_R_W_FEATURE_PREVIEW);
+  }
+
   public static boolean isRowTrackingSupported(Protocol protocol) {
-    return protocol.getImplicitlyAndExplicitlySupportedFeatures().contains(ROW_TRACKING_W_FEATURE);
+    return protocol.supportsFeature(ROW_TRACKING_W_FEATURE);
   }
 
   public static boolean isDomainMetadataSupported(Protocol protocol) {
-    return protocol
-        .getImplicitlyAndExplicitlySupportedFeatures()
-        .contains(DOMAIN_METADATA_W_FEATURE);
+    return protocol.supportsFeature(DOMAIN_METADATA_W_FEATURE);
   }
 
   public static boolean isClusteringTableFeatureSupported(Protocol protocol) {
     return protocol.supportsFeature(CLUSTERING_W_FEATURE);
+  }
+
+  ///////////////////////////
+  // Does protocol have X? //
+  ///////////////////////////
+
+  public static boolean hasInvariants(StructType tableSchema) {
+    return SchemaIterable.newSchemaIterableWithIgnoredRecursion(
+            tableSchema,
+            // invariants are not allowed in maps or arrays
+            new Class<?>[] {MapType.class, ArrayType.class})
+        .stream()
+        .anyMatch(element -> element.getField().getMetadata().contains("delta.invariants"));
+  }
+
+  public static boolean hasCheckConstraints(Metadata metadata) {
+    return metadata.getConfiguration().keySet().stream()
+        .anyMatch(s -> s.startsWith("delta.constraints."));
+  }
+
+  public static boolean hasIdentityColumns(Metadata metadata) {
+    return SchemaIterable.newSchemaIterableWithIgnoredRecursion(
+            metadata.getSchema(),
+            // invariants are not allowed in maps or arrays
+            new Class<?>[] {MapType.class, ArrayType.class})
+        .stream()
+        .anyMatch(
+            element -> {
+              StructField field = element.getField();
+              FieldMetadata fieldMetadata = field.getMetadata();
+
+              // Check if the metadata contains the required keys
+              boolean hasStart = fieldMetadata.contains("delta.identity.start");
+              boolean hasStep = fieldMetadata.contains("delta.identity.step");
+              boolean hasInsert = fieldMetadata.contains("delta.identity.allowExplicitInsert");
+
+              // Verify that all or none of the three fields are present
+              if (!((hasStart == hasStep) && (hasStart == hasInsert))) {
+                throw new KernelException(
+                    String.format(
+                        "Inconsistent IDENTITY metadata for column %s detected: %s, %s, %s",
+                        field.getName(), hasStart, hasStep, hasInsert));
+              }
+
+              // Return true only if all three fields are present
+              return hasStart && hasStep && hasInsert;
+            });
+  }
+
+  public static boolean hasGeneratedColumns(Metadata metadata) {
+    return SchemaIterable.newSchemaIterableWithIgnoredRecursion(
+            metadata.getSchema(),
+            // don't expected generated columns in
+            // nested columns
+            new Class<?>[] {MapType.class, ArrayType.class})
+        .stream()
+        .anyMatch(
+            element -> element.getField().getMetadata().contains("delta.generationExpression"));
   }
 
   /////////////////////////////////////////////////////////////////////////////////
@@ -591,68 +826,11 @@ public class TableFeatures {
     }
   }
 
-  public static boolean hasInvariants(StructType tableSchema) {
-    return !SchemaUtils.filterRecursively(
-            tableSchema,
-            // invariants are not allowed in maps or arrays
-            /* recurseIntoMapOrArrayElements = */ false,
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getMetadata().contains("delta.invariants"))
-        .isEmpty();
-  }
-
-  private static boolean hasCheckConstraints(Metadata metadata) {
-    return metadata.getConfiguration().keySet().stream()
-        .anyMatch(s -> s.startsWith("delta.constraints."));
-  }
-
   /**
    * Check if the table schema has a column of type. Caution: works only for the primitive types.
    */
   private static boolean hasTypeColumn(StructType tableSchema, DataType type) {
-    return !SchemaUtils.filterRecursively(
-            tableSchema,
-            /* recurseIntoMapOrArrayElements = */ true,
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getDataType().equals(type))
-        .isEmpty();
-  }
-
-  private static boolean hasIdentityColumns(Metadata metadata) {
-    return !SchemaUtils.filterRecursively(
-            metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false, // don't expected identity columns in
-            // nested columns
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> {
-              FieldMetadata fieldMetadata = field.getMetadata();
-
-              // Check if the metadata contains the required keys
-              boolean hasStart = fieldMetadata.contains("delta.identity.start");
-              boolean hasStep = fieldMetadata.contains("delta.identity.step");
-              boolean hasInsert = fieldMetadata.contains("delta.identity.allowExplicitInsert");
-
-              // Verify that all or none of the three fields are present
-              if (!((hasStart == hasStep) && (hasStart == hasInsert))) {
-                throw new KernelException(
-                    String.format(
-                        "Inconsistent IDENTITY metadata for column %s detected: %s, %s, %s",
-                        field.getName(), hasStart, hasStep, hasInsert));
-              }
-
-              // Return true only if all three fields are present
-              return hasStart && hasStep && hasInsert;
-            })
-        .isEmpty();
-  }
-
-  private static boolean hasGeneratedColumns(Metadata metadata) {
-    return !SchemaUtils.filterRecursively(
-            metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false, // don't expected generated columns in
-            // nested columns
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getMetadata().contains("delta.generationExpression"))
-        .isEmpty();
+    return new SchemaIterable(tableSchema)
+        .stream().anyMatch(element -> element.getField().getDataType().equals(type));
   }
 }

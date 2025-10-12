@@ -36,6 +36,13 @@ public abstract class DataType {
     return equals(dataType);
   }
 
+  /**
+   * Returns true iff this data is a nested data type (it logically parameterized by other types).
+   *
+   * <p>For example StructType, ArrayType, MapType are nested data types.
+   */
+  public abstract boolean isNested();
+
   @Override
   public abstract int hashCode();
 

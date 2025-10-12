@@ -20,7 +20,7 @@ package io.delta.storage.commit.uccommitcoordinator;
  * This exception is thrown by the UC client in case a commit attempt tried to add
  * a UUID-based commit to the wrong table. The table is wrong if the path prefixes
  * of the table and the UUID commit do not match.
- * For example, adding /path/to/table1/_commits/01-uuid.json to the table at
+ * For example, adding /path/to/table1/_staged_commits/01-uuid.json to the table at
  * /path/to/table2 is not allowed.
  */
 public class InvalidTargetTableException extends UCCommitCoordinatorException {

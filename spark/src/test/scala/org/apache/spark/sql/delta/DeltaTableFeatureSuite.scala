@@ -22,6 +22,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -490,7 +491,8 @@ class DeltaTableFeatureSuite
 
       val tableFeature =
         TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
-      assert(tableFeature.historyContainsFeature(spark, log.update()))
+      assert(tableFeature.historyContainsFeature(
+        spark, DeltaTableV2(spark, log.dataPath), log.update()))
 
       // Dropping feature should fail because the feature still has traces in deltas.
       val e = intercept[DeltaTableFeatureException] {

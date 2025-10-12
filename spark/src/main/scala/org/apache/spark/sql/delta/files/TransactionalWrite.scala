@@ -61,8 +61,20 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       Some("data")
     } else None
 
-  protected def getCommitter(outputPath: Path): DelayedCommitProtocol =
-    new DelayedCommitProtocol("delta", outputPath.toString, None, deltaDataSubdir)
+  // It's okay to make this a lazy val. Once this is read, the metadata will be marked as read
+  // and can't be changed again within the transaction, otherwise it will throw an exception.
+  private lazy val randomizeFilePrefixes =
+    DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(metadata)
+  private lazy val randomPrefixLength = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(metadata)
+
+  protected def getCommitter(outputPath: Path): DelayedCommitProtocol = {
+    // We force the use of random prefixes in column mapping modes.
+    // Note that here we need to use the txn metadata instead of the snapshot's metadata
+    val prefixLengthOpt = if (randomizeFilePrefixes || metadata.columnMappingMode != NoMapping) {
+      Some(randomPrefixLength)
+    } else None
+    new DelayedCommitProtocol("delta", outputPath.toString, prefixLengthOpt, deltaDataSubdir)
+  }
 
   /** Makes the output attributes nullable, so that we don't write unreadable parquet files. */
   protected def makeOutputNullable(output: Seq[Attribute]): Seq[Attribute] = {
@@ -518,10 +530,13 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     }
 
     // add [[AddFile.Tags.ICEBERG_COMPAT_VERSION.name]] tags to addFiles
-    if (IcebergCompatV2.isEnabled(metadata)) {
+    // starting from IcebergCompatV2
+    val enabledCompat = IcebergCompat.anyEnabled(metadata)
+    if (enabledCompat.exists(_.version >= 2)) {
       resultFiles = resultFiles.map { addFile =>
-        val tags = if (addFile.tags != null) addFile.tags else Map.empty[String, String]
-        addFile.copy(tags = tags + (AddFile.Tags.ICEBERG_COMPAT_VERSION.name -> "2"))
+        addFile.copy(tags = Option(addFile.tags).getOrElse(Map.empty[String, String]) +
+          (AddFile.Tags.ICEBERG_COMPAT_VERSION.name -> enabledCompat.get.version.toString)
+        )
       }
     }
 

@@ -21,18 +21,23 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.ScanImpl;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.internal.deletionvectors.DeletionVectorUtils;
 import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -92,8 +97,8 @@ public interface Scan {
    *           <ul>
    *             <li>name: {@code tableRoot}, type: {@code string}
    *             <li>Description: Absolute path of the table location. The path is a URI as
-   *                 specified by RFC 2396 URI Generic Syntax, which needs to be decode to get the
-   *                 data file path. NOTE: this is temporary. Will be removed in future.
+   *                 specified by RFC 2396 URI Generic Syntax, which needs to be decoded to get the
+   *                 data file path. NOTE: this is temporary. Will be removed in the future.
    * @see <a href=https://github.com/delta-io/delta/issues/2089></a>
    *     </ul>
    *     </ol>
@@ -118,8 +123,12 @@ public interface Scan {
   Row getScanState(Engine engine);
 
   /**
-   * Transform the physical data read from the table data file into the logical data that expected
+   * Transform the physical data read from the table data file to the logical data that are expected
    * out of the Delta table.
+   *
+   * <p>This iterator effectively reverses the logical-to-physical schema transformation performed
+   * in {@link ScanImpl#getScanState(Engine)} by transforming physical data batches into the logical
+   * data requested by the connector.
    *
    * @param engine Connector provided {@link Engine} implementation.
    * @param scanState Scan state returned by {@link Scan#getScanState(Engine)}
@@ -139,8 +148,9 @@ public interface Scan {
       boolean inited = false;
 
       // initialized as part of init()
-      StructType physicalReadSchema = null;
-      StructType logicalReadSchema = null;
+      StructType logicalSchema = null;
+      Map<String, String> configuration = null;
+      ColumnMappingMode columnMappingMode = null;
       String tablePath = null;
 
       RoaringBitmapArray currBitmap = null;
@@ -150,10 +160,10 @@ public interface Scan {
         if (inited) {
           return;
         }
-        physicalReadSchema = ScanStateRow.getPhysicalSchema(scanState);
-        logicalReadSchema = ScanStateRow.getLogicalSchema(scanState);
-
-        tablePath = ScanStateRow.getTableRoot(scanState);
+        logicalSchema = ScanStateRow.getLogicalSchema(scanState);
+        configuration = ScanStateRow.getConfiguration(scanState);
+        columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
+        tablePath = ScanStateRow.getTableRoot(scanState).toString();
         inited = true;
       }
 
@@ -173,20 +183,25 @@ public interface Scan {
         initIfRequired();
         ColumnarBatch nextDataBatch = physicalDataIter.next();
 
+        // Step 1: If row tracking is enabled, check for physical row tracking columns in the data
+        // batch and transform them to logical row tracking columns as needed
+        if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(configuration)) {
+          nextDataBatch =
+              MaterializedRowTrackingColumn.transformPhysicalData(
+                  nextDataBatch, scanFile, logicalSchema, configuration, engine);
+        }
+
+        // Step 2: Get the selectionVector if DV is present
         DeletionVectorDescriptor dv =
             InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
-
-        int rowIndexOrdinal =
-            nextDataBatch.getSchema().indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
-
-        // Get the selectionVector if DV is present
         Optional<ColumnVector> selectionVector;
         if (dv == null) {
           selectionVector = Optional.empty();
         } else {
+          int rowIndexOrdinal = nextDataBatch.getSchema().indexOf(MetadataColumnSpec.ROW_INDEX);
           if (rowIndexOrdinal == -1) {
             throw new IllegalArgumentException(
-                "Row index column is not " + "present in the data read from the Parquet file.");
+                "Row index column is not present in the data read from the Parquet file.");
           }
           if (!dv.equals(currDV)) {
             Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
@@ -197,24 +212,35 @@ public interface Scan {
           ColumnVector rowIndexVector = nextDataBatch.getColumnVector(rowIndexOrdinal);
           selectionVector = Optional.of(new SelectionColumnVector(currBitmap, rowIndexVector));
         }
-        if (rowIndexOrdinal != -1) {
-          nextDataBatch = nextDataBatch.withDeletedColumnAt(rowIndexOrdinal);
+
+        // Step 3: If a column was only requested to compute other columns, we remove it
+        for (StructField field : nextDataBatch.getSchema().fields()) {
+          if (field.isInternalColumn()) {
+            int columnOrdinal = nextDataBatch.getSchema().indexOf(field.getName());
+            if (columnOrdinal == -1) {
+              // This should never happen since we only interact with a single schema
+              throw new IllegalArgumentException(
+                  String.format(
+                      "Column %s was requested internally but is not present in the data batch.",
+                      field.getName()));
+            }
+            nextDataBatch = nextDataBatch.withDeletedColumnAt(columnOrdinal);
+          }
         }
 
-        // Add partition columns
+        // Step 4: Add partition columns back to the data batch
         nextDataBatch =
             PartitionUtils.withPartitionColumns(
-                engine.getExpressionHandler(),
                 nextDataBatch,
+                logicalSchema,
                 InternalScanFileUtils.getPartitionValues(scanFile),
-                physicalReadSchema);
+                engine.getExpressionHandler());
 
-        // Change back to logical schema
-        ColumnMappingMode columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
+        // Step 5: Transform column names back to logical names if column mapping is enabled
         switch (columnMappingMode) {
           case NAME: // fall through
           case ID:
-            nextDataBatch = nextDataBatch.withNewSchema(logicalReadSchema);
+            nextDataBatch = nextDataBatch.withNewSchema(logicalSchema);
             break;
           case NONE:
             break;

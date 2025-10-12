@@ -24,7 +24,6 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.OptimisticTransactionImpl
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.UniversalFormatConverter
 import org.apache.spark.sql.delta.actions.Action
@@ -67,9 +66,9 @@ class HudiConverter(spark: SparkSession)
   // Save an atomic reference of the snapshot being converted, and the txn that triggered
   // resulted in the specified snapshot
   protected val currentConversion =
-    new AtomicReference[(Snapshot, DeltaTransaction)]()
+    new AtomicReference[(Snapshot, CommittedTransaction)]()
   protected val standbyConversion =
-    new AtomicReference[(Snapshot, DeltaTransaction)]()
+    new AtomicReference[(Snapshot, CommittedTransaction)]()
 
   // Whether our async converter thread is active. We may already have an alive thread that is
   // about to shutdown, but in such cases this value should return false.
@@ -88,7 +87,7 @@ class HudiConverter(spark: SparkSession)
    */
   override def enqueueSnapshotForConversion(
       snapshotToConvert: Snapshot,
-      txn: DeltaTransaction): Unit = {
+      txn: CommittedTransaction): Unit = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return
     }
@@ -138,7 +137,7 @@ class HudiConverter(spark: SparkSession)
               }
 
           // Get a snapshot to convert from the hudiQueue. Sets the queue to null after.
-          private def getNextSnapshot: (Snapshot, DeltaTransaction) =
+          private def getNextSnapshot: (Snapshot, CommittedTransaction) =
             asyncThreadLock.synchronized {
               val potentialSnapshotAndTxn = standbyConversion.get()
               currentConversion.set(potentialSnapshotAndTxn)
@@ -189,7 +188,7 @@ class HudiConverter(spark: SparkSession)
    * @return Converted Delta version and commit timestamp
    */
   override def convertSnapshot(
-      snapshotToConvert: Snapshot, txn: DeltaTransaction): Option[(Long, Long)] = {
+      snapshotToConvert: Snapshot, txn: CommittedTransaction): Option[(Long, Long)] = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
@@ -207,7 +206,7 @@ class HudiConverter(spark: SparkSession)
    */
   private def convertSnapshot(
       snapshotToConvert: Snapshot,
-      txnOpt: Option[DeltaTransaction],
+      txnOpt: Option[CommittedTransaction],
       catalogTable: Option[CatalogTable]): Option[(Long, Long)] =
       recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
@@ -227,8 +226,8 @@ class HudiConverter(spark: SparkSession)
 
     // Get the most recently converted delta snapshot, if applicable
     val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
-      case (Some(version), Some(txn)) if version == txn.snapshot.version =>
-        Some(txn.snapshot)
+      case (Some(version), Some(txn)) if version == txn.readSnapshot.version =>
+        Some(txn.readSnapshot)
       // Check how long it has been since we last converted to Hudi. If outside the threshold,
       // fall back to state reconstruction to get the actions, to protect driver from OOMing.
       case (Some(version), _) if snapshotToConvert.version - version <= maxCommitsToConvert =>
@@ -257,7 +256,11 @@ class HudiConverter(spark: SparkSession)
         // Read the actions directly from the delta json files.
         // TODO: Run this as a spark job on executors
         val deltaFiles = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
-          spark, log, prevSnapshot.version + 1, snapshotToConvert.version)
+          spark = spark,
+          deltaLog = log,
+          startVersion = prevSnapshot.version + 1,
+          endVersion = snapshotToConvert.version,
+          catalogTableOpt = catalogTable)
 
         recordDeltaEvent(
           snapshotToConvert.deltaLog,

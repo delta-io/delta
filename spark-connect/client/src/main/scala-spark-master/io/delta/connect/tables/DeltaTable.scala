@@ -20,9 +20,10 @@ import scala.collection.JavaConverters._
 
 import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
+import io.delta.tables.execution.{CreateTableOptions, ReplaceTableOptions}
 
 import org.apache.spark.annotation.Evolving
-import org.apache.spark.sql.{functions, Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.{functions, AnalysisException, Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.AgnosticEncoders.PrimitiveBooleanEncoder
 import org.apache.spark.sql.connect.ColumnNodeToProtoConverter.toExpr
 import org.apache.spark.sql.connect.ConnectConversions._
@@ -66,6 +67,55 @@ class DeltaTable private[tables](
    * @since 4.0.0
    */
   def toDF: Dataset[Row] = df
+
+  /**
+   * Helper method for the vacuum APIs.
+   *
+   * @param retentionHours The retention threshold in hours. Files required by the table for
+   *                       reading versions earlier than this will be preserved and the
+   *                       rest of them will be deleted.
+   *
+   * @since 4.0.0
+   */
+  private def executeVacuum(retentionHours: Option[Double]): DataFrame = {
+    val vacuum = proto.VacuumTable
+      .newBuilder()
+      .setTable(table)
+    retentionHours.foreach(vacuum.setRetentionHours)
+    val command = proto.DeltaCommand
+      .newBuilder()
+      .setVacuumTable(vacuum)
+      .build()
+    execute(command)
+    sparkSession.emptyDataFrame
+  }
+
+  /**
+   * Recursively delete files and directories in the table that are not needed by the table for
+   * maintaining older versions up to the given retention threshold. This method will return an
+   * empty DataFrame on successful completion.
+   *
+   * @param retentionHours The retention threshold in hours. Files required by the table for
+   *                       reading versions earlier than this will be preserved and the
+   *                       rest of them will be deleted.
+   * @since 4.0.0
+   */
+  def vacuum(retentionHours: Double): DataFrame = {
+    executeVacuum(Some(retentionHours))
+  }
+
+  /**
+   * Recursively delete files and directories in the table that are not needed by the table for
+   * maintaining older versions up to the given retention threshold. This method will return an
+   * empty DataFrame on successful completion.
+   *
+   * note: This will use the default retention period of 7 days.
+   *
+   * @since 4.0.0
+   */
+  def vacuum(): DataFrame = {
+    executeVacuum(None)
+  }
 
   /**
    * Helper method for the history APIs.
@@ -175,6 +225,32 @@ class DeltaTable private[tables](
    */
   def delete(): Unit = {
     executeDelete(condition = None)
+  }
+
+
+  /**
+   * Optimize the data layout of the table. This returns
+   * a [[DeltaOptimizeBuilder]] object that can be used to specify
+   * the partition filter to limit the scope of optimize and
+   * also execute different optimization techniques such as file
+   * compaction or order data using Z-Order curves.
+   *
+   * See the [[DeltaOptimizeBuilder]] for a full description
+   * of this operation.
+   *
+   * Scala example to run file compaction on a subset of
+   * partitions in the table:
+   * {{{
+   *    deltaTable
+   *     .optimize()
+   *     .where("date='2021-11-18'")
+   *     .executeCompaction();
+   * }}}
+   *
+   * @since 4.0.0
+   */
+  def optimize(): DeltaOptimizeBuilder = {
+    DeltaOptimizeBuilder(sparkSession, table)
   }
 
   /**
@@ -384,6 +460,374 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
+   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * actions to be performed on rows based on whether the rows matched the condition or not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
+   * update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value");
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute();
+   * }}}
+   *
+   * @param source    source Dataframe to be merged.
+   * @param condition boolean expression as SQL formatted string
+   * @since 4.0.0
+   */
+  def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
+    merge(source, functions.expr(condition))
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
+   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * actions to be performed on rows based on whether the rows matched the condition or not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
+   * update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value")
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute()
+   * }}}
+   *
+   * @param source    source Dataframe to be merged.
+   * @param condition boolean expression as a Column object
+   * @since 4.0.0
+   */
+  def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
+    DeltaMergeBuilder(this, source, condition)
+  }
+  
+  private def executeClone(
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: Map[String, String],
+      versionAsOf: Option[Int] = None,
+      timestampAsOf: Option[String] = None): DeltaTable = {
+    val clone = proto.CloneTable
+      .newBuilder()
+      .setTable(table)
+      .setTarget(target)
+      .setIsShallow(isShallow)
+      .setReplace(replace)
+      .putAllProperties(properties.asJava)
+    versionAsOf.foreach(clone.setVersion)
+    timestampAsOf.foreach(clone.setTimestamp)
+    val command = proto.DeltaCommand.newBuilder().setCloneTable(clone).build()
+    execute(command)
+    DeltaTable.forPath(sparkSession, target)
+  }
+
+  /**
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *  io.delta.tables.DeltaTable.clone(
+   *   "/some/path/to/table",
+   *   true,
+   *   true,
+   *   Map("foo" -> "bar"))
+   * }}}
+   *
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   *
+   * @since 4.0.0
+   */
+  def clone(
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: Map[String, String]): DeltaTable = {
+    executeClone(target, isShallow, replace, properties, versionAsOf = None, timestampAsOf = None)
+  }
+
+  /**
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.clone(
+   *     "/some/path/to/table",
+   *     true,
+   *     true)
+   * }}}
+   *
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   *
+   * @since 4.0.0
+   */
+  def clone(target: String, isShallow: Boolean, replace: Boolean): DeltaTable = {
+    clone(target, isShallow, replace, properties = Map.empty[String, String])
+  }
+
+  /**
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.clone(
+   *     "/some/path/to/table",
+   *     true)
+   * }}}
+   *
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   *
+   * @since 4.0.0
+   */
+  def clone(target: String, isShallow: Boolean): DeltaTable = {
+    clone(target, isShallow, replace = false)
+  }
+
+  /**
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata at that version.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     Map("foo" -> "bar"))
+   * }}}
+   *
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   *
+   * @since 4.0.0
+   */
+  def cloneAtVersion(
+      version: Int,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: Map[String, String]): DeltaTable = {
+    executeClone(target, isShallow, replace, properties, versionAsOf = Some(version), timestampAsOf = None)
+  }
+
+  /**
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata at that version.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true,
+   *     true)
+   * }}}
+   *
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   *
+   * @since 4.0.0
+   */
+  def cloneAtVersion(
+      version: Int, target: String, isShallow: Boolean, replace: Boolean): DeltaTable = {
+    cloneAtVersion(version, target, isShallow, replace, properties = Map.empty[String, String])
+  }
+
+  /**
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata at that version.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true)
+   * }}}
+   *
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   *
+   * @since 4.0.0
+   */
+  def cloneAtVersion(version: Int, target: String, isShallow: Boolean): DeltaTable = {
+    cloneAtVersion(version, target, isShallow, replace = false)
+  }
+
+  /**
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata at that timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *     "2019-01-01",
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     Map("foo" -> "bar"))
+   * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   *
+   * @since 4.0.0
+   */
+  def cloneAtTimestamp(
+      timestamp: String,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: Map[String, String]): DeltaTable = {
+    executeClone(
+      target, isShallow, replace, properties, versionAsOf = None, timestampAsOf = Some(timestamp))
+  }
+
+  /**
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata at that timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *     "2019-01-01",
+   *     "/some/path/to/table",
+   *     true,
+   *     true)
+   * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   *
+   * @since 4.0.0
+   */
+  def cloneAtTimestamp(
+      timestamp: String, target: String, isShallow: Boolean, replace: Boolean): DeltaTable = {
+    cloneAtTimestamp(timestamp, target, isShallow, replace, properties = Map.empty[String, String])
+  }
+
+  /**
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata at that timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *     "2019-01-01",
+   *     "/some/path/to/table",
+   *     true)
+   * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   *
+   * @since 4.0.0
+   */
+  def cloneAtTimestamp(timestamp: String, target: String, isShallow: Boolean): DeltaTable = {
+    cloneAtTimestamp(timestamp, target, isShallow, replace = false)
+  }
+
+  /**
    * Helper method for the restoreToVersion and restoreToTimestamp APIs.
    *
    * @param version The version number of the older version of the table to restore to.
@@ -401,7 +845,12 @@ class DeltaTable private[tables](
     val extension = com.google.protobuf.Any.pack(relation)
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
     val result = sparkSession.newDataFrame(_.mergeFrom(sparkRelation)).collectResult()
-    sparkSession.createDataFrame(result.toArray.toSeq.asJava, result.schema)
+    val data = try {
+      result.toArray.toSeq.asJava
+    } finally {
+      result.close()
+    }
+    sparkSession.createDataFrame(data, result.schema)
   }
 
   /**
@@ -440,6 +889,141 @@ class DeltaTable private[tables](
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
     map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
   }
+
+  /**
+   * Generate a manifest for the given Delta Table
+   *
+   * @param mode Specifies the mode for the generation of the manifest.
+   *             The valid modes are as follows (not case sensitive):
+   *              - "symlink_format_manifest" : This will generate manifests in symlink format
+   *                for Presto and Athena read support.
+   *                See the online documentation for more information.
+   * @since 4.0.0
+   */
+  def generate(mode: String): Unit = {
+    val generate = proto.Generate
+      .newBuilder()
+      .setTable(table)
+      .setMode(mode)
+    val command = proto.DeltaCommand.newBuilder().setGenerate(generate).build()
+    execute(command)
+  }
+
+  /**
+   * Updates the protocol version of the table to leverage new features. Upgrading the reader
+   * version will prevent all clients that have an older version of Delta Lake from accessing this
+   * table. Upgrading the writer version will prevent older versions of Delta Lake to write to this
+   * table. The reader or writer version cannot be downgraded.
+   *
+   * See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
+   *
+   * @since 4.0.0
+   */
+  def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit = {
+    val upgrade = proto.UpgradeTableProtocol
+      .newBuilder()
+      .setTable(table)
+      .setReaderVersion(readerVersion)
+      .setWriterVersion(writerVersion)
+    val command = proto.DeltaCommand.newBuilder().setUpgradeTableProtocol(upgrade).build()
+    execute(command)
+  }
+
+  /**
+   * Modify the protocol to add a supported feature, and if the table does not support table
+   * features, upgrade the protocol automatically. In such a case when the provided feature is
+   * writer-only, the table's writer version will be upgraded to `7`, and when the provided
+   * feature is reader-writer, both reader and writer versions will be upgraded, to `(3, 7)`.
+   *
+   * See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
+   *
+   * @since 4.0.0
+   */
+  def addFeatureSupport(featureName: String): Unit = {
+    val addFeatureSupport = proto.AddFeatureSupport
+      .newBuilder()
+      .setTable(table)
+      .setFeatureName(featureName)
+    val command = proto.DeltaCommand.newBuilder().setAddFeatureSupport(addFeatureSupport).build()
+    execute(command)
+  }
+
+  private def executeDropFeature(featureName: String, truncateHistory: Option[Boolean]): Unit = {
+    val dropFeatureSupport = proto.DropFeatureSupport
+      .newBuilder()
+      .setTable(table)
+      .setFeatureName(featureName)
+    truncateHistory.foreach(dropFeatureSupport.setTruncateHistory)
+    val command = proto.DeltaCommand.newBuilder().setDropFeatureSupport(dropFeatureSupport).build()
+    execute(command)
+  }
+
+  /**
+   * Modify the protocol to drop a supported feature. The operation always normalizes the
+   * resulting protocol. Protocol normalization is the process of converting a table features
+   * protocol to the weakest possible form. This primarily refers to converting a table features
+   * protocol to a legacy protocol. A table features protocol can be represented with the legacy
+   * representation only when the feature set of the former exactly matches a legacy protocol.
+   * Normalization can also decrease the reader version of a table features protocol when it is
+   * higher than necessary. For example:
+   *
+   * (1, 7, None, {AppendOnly, Invariants, CheckConstraints}) -> (1, 3)
+   * (3, 7, None, {RowTracking}) -> (1, 7, RowTracking)
+   *
+   * The dropFeatureSupport method can be used as follows:
+   * {{{
+   *   io.delta.tables.DeltaTable.dropFeatureSupport("rowTracking")
+   * }}}
+   *
+   * See online documentation for more details.
+   *
+   * @param featureName The name of the feature to drop.
+   * @param truncateHistory Whether to truncate history before downgrading the protocol.
+   * @return None.
+   * @since 4.0.0
+   */
+  def dropFeatureSupport(featureName: String, truncateHistory: Boolean): Unit = {
+    executeDropFeature(featureName, Some(truncateHistory))
+  }
+
+  /**
+   * Modify the protocol to drop a supported feature. The operation always normalizes the
+   * resulting protocol. Protocol normalization is the process of converting a table features
+   * protocol to the weakest possible form. This primarily refers to converting a table features
+   * protocol to a legacy protocol. A table features protocol can be represented with the legacy
+   * representation only when the feature set of the former exactly matches a legacy protocol.
+   * Normalization can also decrease the reader version of a table features protocol when it is
+   * higher than necessary. For example:
+   *
+   * (1, 7, None, {AppendOnly, Invariants, CheckConstraints}) -> (1, 3)
+   * (3, 7, None, {RowTracking}) -> (1, 7, RowTracking)
+   *
+   * The dropFeatureSupport method can be used as follows:
+   * {{{
+   *   io.delta.tables.DeltaTable.dropFeatureSupport("rowTracking")
+   * }}}
+   *
+   * Note, this command will not truncate history.
+   *
+   * See online documentation for more details.
+   *
+   *
+   * @param featureName The name of the feature to drop.
+   * @return None.
+   * @since 4.0.0
+   */
+  def dropFeatureSupport(featureName: String): Unit = {
+    executeDropFeature(featureName, None)
+  }
+
+  private def execute(command: proto.DeltaCommand): Unit = {
+    val extension = com.google.protobuf.Any.pack(command)
+    val sparkCommand = spark_proto.Command
+      .newBuilder()
+      .setExtension(extension)
+      .build()
+    sparkSession.execute(sparkCommand)
+  }
 }
 
 /**
@@ -453,6 +1037,18 @@ class DeltaTable private[tables](
  */
 object DeltaTable {
   /**
+   * Helper method to get the active SparkSession.
+   * 
+   * @return The active SparkSession if one exists.
+   * @throws IllegalArgumentException if no active SparkSession is found.
+   */
+  private def getActiveSparkSession(): SparkSession = {
+    SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession") 
+    }
+  }
+
+  /**
    * Instantiate a [[DeltaTable]] object representing the data at the given path, If the given
    * path is invalid (i.e. either no table exists or an existing table is not a Delta table),
    * it throws a `not a Delta table` error.
@@ -464,10 +1060,7 @@ object DeltaTable {
    * @since 4.0.0
    */
   def forPath(path: String): DeltaTable = {
-    val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
-    }
-    forPath(sparkSession, path)
+    forPath(getActiveSparkSession(), path)
   }
 
   /**
@@ -558,10 +1151,7 @@ object DeltaTable {
    * @since 4.0.0
    */
   def forName(tableOrViewName: String): DeltaTable = {
-    val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
-    }
-    forName(sparkSession, tableOrViewName)
+    forName(getActiveSparkSession(), tableOrViewName)
   }
 
   /**
@@ -632,9 +1222,182 @@ object DeltaTable {
    * @since 4.0.0
    */
   def isDeltaTable(identifier: String): Boolean = {
-    val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
-    }
-    isDeltaTable(sparkSession, identifier)
+    isDeltaTable(getActiveSparkSession(), identifier)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * error if the table exists (the same as SQL `CREATE TABLE`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 4.0.0
+   */
+  @Evolving
+  def create(): DeltaTableBuilder = {
+    create(getActiveSparkSession())
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * error if the table exists (the same as SQL `CREATE TABLE`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 4.0.0
+   */
+  @Evolving
+  def create(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, CreateTableOptions(ifNotExists = false))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 4.0.0
+   */
+  @Evolving
+  def createIfNotExists(): DeltaTableBuilder = {
+    createIfNotExists(getActiveSparkSession())
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 4.0.0
+   */
+  @Evolving
+  def createIfNotExists(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, CreateTableOptions(ifNotExists = true))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 4.0.0
+   */
+  @Evolving
+  def replace(): DeltaTableBuilder = {
+    replace(getActiveSparkSession())
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 4.0.0
+   */
+  @Evolving
+  def replace(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = false))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table
+   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 4.0.0
+   */
+  @Evolving
+  def createOrReplace(): DeltaTableBuilder = {
+    createOrReplace(getActiveSparkSession())
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user.
+   * @since 4.0.0
+   */
+  @Evolving
+  def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = true))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
+   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @param colName string the column name
+   * @since 4.0.0
+   */
+  @Evolving
+  def columnBuilder(colName: String): DeltaColumnBuilder = {
+    new DeltaColumnBuilder(colName)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
+   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   *
+   * @param spark   sparkSession sparkSession passed by the user
+   * @param colName string the column name
+   * @since 4.0.0
+   */
+  @Evolving
+  def columnBuilder(spark: SparkSession, colName: String): DeltaColumnBuilder = {
+    new DeltaColumnBuilder(colName)
+  }
+
+  private[tables] def createAnalysisException(message: String): AnalysisException = {
+    // TODO: We should refactor this to use DeltaErrors. Until then, we need to use a dummy Spark
+    // error class to initialize the AnalysisException, which we then remove in the copy method.
+    new AnalysisException(
+      errorClass = "ALL_PARTITION_COLUMNS_NOT_ALLOWED",
+      messageParameters = Map("message" -> message)).copy(
+        message = message, 
+        errorClass = None,
+        messageParameters = Map.empty)
   }
 }

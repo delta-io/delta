@@ -490,6 +490,10 @@ object RedirectFeature {
     mapper.readValue(configString, classOf[TableRedirectConfiguration])
   }
 
+  /**
+   * Get the current `TableRedirectConfiguration` object from the table properties.
+   * Note that the redirect-reader-writer takes precedence over redirect-writer-only.
+   */
   def getRedirectConfiguration(
       properties: Map[String, String]): Option[TableRedirectConfiguration] = {
     properties.get(DeltaConfigs.REDIRECT_READER_WRITER.key)
@@ -514,13 +518,12 @@ object RedirectFeature {
     }
   }
 
-  /** Get the current `TableRedirectConfiguration` object from the snapshot. */
+  /**
+   * Get the current `TableRedirectConfiguration` object from the snapshot.
+   * Note that the redirect-reader-writer takes precedence over redirect-writer-only.
+   */
   def getRedirectConfiguration(snapshot: Snapshot): Option[TableRedirectConfiguration] = {
-    if (RedirectWriterOnly.isFeatureSupported(snapshot)) {
-      RedirectWriterOnly.getRedirectConfiguration(snapshot.metadata)
-    } else {
-      RedirectReaderWriter.getRedirectConfiguration(snapshot.metadata)
-    }
+    getRedirectConfiguration(snapshot.metadata.configuration)
   }
 
   /** Determines whether `configs` contains redirect configuration. */

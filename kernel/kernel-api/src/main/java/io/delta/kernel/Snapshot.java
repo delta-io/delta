@@ -18,23 +18,42 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
- * Represents the snapshot of a Delta table.
+ * Represents a snapshot of a Delta table at a specific version.
+ *
+ * <p>A {@code Snapshot} is a consistent view of a Delta table at a specific point in time,
+ * identified by a version number. It provides access to the table's metadata, schema, and
+ * capabilities for both reading and writing data. This interface serves as the entry point for
+ * table operations after resolving a table through a {@link SnapshotBuilder}.
+ *
+ * <p>The snapshot represents a consistent view of the table at the resolved version. All operations
+ * on this snapshot will see the same data and metadata, ensuring consistency across reads and
+ * writes within the same snapshot.
+ *
+ * <p>There are two ways to create a {@code Snapshot}:
+ *
+ * <ul>
+ *   <li><b>New API (recommended):</b> Use {@link TableManager#loadSnapshot(String)} to get a {@link
+ *       SnapshotBuilder}, which can then be configured and built into a snapshot
+ *   <li><b>Legacy API:</b> Use {@code Table.forPath(path)} followed by methods like {@code
+ *       getLatestSnapshot()}, {@code getSnapshotAtTimestamp()}, etc.
+ * </ul>
  *
  * @since 3.0.0
  */
 @Evolving
 public interface Snapshot {
 
-  /**
-   * Get the version of this snapshot in the table.
-   *
-   * @return version of this snapshot in the Delta table
-   */
+  /** @return the file system path to this table */
+  String getPath();
+
+  /** @return the version of this snapshot in the Delta table */
   long getVersion();
 
   /**
@@ -55,25 +74,31 @@ public interface Snapshot {
    */
   long getTimestamp(Engine engine);
 
-  /**
-   * Get the schema of the table at this snapshot.
-   *
-   * @return Schema of the Delta table at this snapshot.
-   */
+  /** @return the schema of the Delta table at this snapshot */
   StructType getSchema();
 
   /**
-   * Returns the configuration for the provided {@code domain} if it exists in the snapshot. Returns
-   * empty if the {@code domain} is not present in the snapshot.
+   * Returns the configuration for the provided domain if it exists in the snapshot. Returns empty
+   * if the domain is not present in the snapshot.
    *
-   * @return the configuration for the provided domain if it exists
+   * @param domain the domain to look up
+   * @return the domain configuration or empty
    */
   Optional<String> getDomainMetadata(String domain);
 
   /**
-   * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
+   * Get all table properties for the Delta table at this snapshot.
    *
-   * @return an instance of {@link ScanBuilder}
+   * @return a {@link Map} of table properties.
    */
+  Map<String, String> getTableProperties();
+
+  /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
   ScanBuilder getScanBuilder();
+
+  /**
+   * @return a {@link UpdateTableTransactionBuilder} to build an update table transaction
+   * @since 3.4.0
+   */
+  UpdateTableTransactionBuilder buildUpdateTableTransaction(String engineInfo, Operation operation);
 }

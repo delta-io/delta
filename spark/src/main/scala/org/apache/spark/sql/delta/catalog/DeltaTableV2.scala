@@ -61,7 +61,7 @@ import org.apache.spark.util.{Clock, SystemClock}
  * @param path The path to the table
  * @param tableIdentifier The table identifier for this table
  */
-class DeltaTableV2 private[delta](
+class DeltaTableV2 private(
     val spark: SparkSession,
     val path: Path,
     val catalogTable: Option[CatalogTable],
@@ -123,7 +123,11 @@ class DeltaTableV2 private[delta](
       } else {
         options
       }
-      DeltaLog.forTable(spark, rootPath, dataSourceOptions)
+      DeltaLog.forTable(
+        spark,
+        rootPath,
+        dataSourceOptions,
+        catalogTable)
     }
   }
 
@@ -131,6 +135,15 @@ class DeltaTableV2 private[delta](
    * Updates the delta log for this table and returns a new snapshot
    */
   def update(): Snapshot = deltaLog.update(catalogTableOpt = catalogTable)
+
+  def update(checkIfUpdatedSinceTs: Option[Long]): Snapshot =
+    deltaLog.update(checkIfUpdatedSinceTs = checkIfUpdatedSinceTs, catalogTableOpt = catalogTable)
+
+  /**
+   * Gets the snapshot at the given version of this table
+   */
+  def getSnapshotAt(version: Long): Snapshot =
+    deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
     spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
@@ -179,7 +192,10 @@ class DeltaTableV2 private[delta](
         "queriedVersion" -> version,
         "accessType" -> accessType
       ))
-      deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
+      deltaLog.getSnapshotAt(
+        version,
+        catalogTableOpt = catalogTable,
+        enforceTimeTravelWithinDeletedFileRetention = true)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,
@@ -328,6 +344,7 @@ class DeltaTableV2 private[delta](
 
     // Spark 4.0 and 3.5 handle time travel options differently.
     DeltaTimeTravelSpecShims.validateTimeTravelSpec(
+      spark,
       currSpecOpt = timeTravelOpt,
       newSpecOpt = ttSpec)
 
@@ -445,18 +462,22 @@ object DeltaTableV2 {
       val deltaLog = deltaTable.deltaLog
       val rootDeltaLogPath = DeltaLog.logPathFor(deltaTable.rootPath.toString)
       val finalDeltaLogPath = DeltaLog.formalizeDeltaPath(spark, options, rootDeltaLogPath)
-      val catalogTableOpt = if (finalDeltaLogPath == deltaLog.logPath) {
-        // If there is no redirection, use existing catalogTable.
-        catalogTable
+      if (finalDeltaLogPath == deltaLog.logPath) {
+        // If there is no redirection, use existing delta table.
+        deltaTable
       } else {
         // If there is redirection, use the catalogTable of deltaLog.
-        deltaLog.getInitialCatalogTable
+        val catalogTable = deltaLog.getInitialCatalogTable
+        val newPath = new Path(deltaLog.dataPath.toUri)
+        new DeltaTableV2(
+          spark,
+          path = newPath,
+          catalogTable = catalogTable,
+          tableIdentifier = catalogTable.map(_.identifier.identifier),
+          timeTravelOpt = timeTravelOpt,
+          options = options
+        )
       }
-      val tableIdentifier = catalogTableOpt.map(_.identifier.identifier)
-      val newPath = new Path(deltaLog.dataPath.toUri)
-      deltaTable.copy(
-        path = newPath, catalogTable = catalogTableOpt, tableIdentifier = tableIdentifier
-      )
     }
   }
 
@@ -490,6 +511,26 @@ object DeltaTableV2 {
       Some(DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table)))
     case _ => None
   }
+
+  /**
+   * Creates a DeltaTableV2 instance with a custom DeltaLog object for testing purposes. This is
+   * useful because the DeltaTableV2 constructor is private and cannot be called from
+   * DeltaTestImplicit.
+   */
+  def testOnlyApplyWithCustomDeltaLog(
+    spark: SparkSession, path: Path, clock: Clock): DeltaTableV2 = {
+    new DeltaTableV2(
+      spark,
+      path,
+      catalogTable = None,
+      tableIdentifier = None,
+      timeTravelOpt = None,
+      options = Map.empty
+    ) {
+      override lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, path, clock)
+    }
+  }
+
 
   /**
    * When Delta Log throws InvalidProtocolVersionException it doesn't know the table name and uses

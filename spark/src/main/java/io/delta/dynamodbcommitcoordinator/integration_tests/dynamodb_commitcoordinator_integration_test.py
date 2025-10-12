@@ -193,7 +193,7 @@ def check_for_delta_file_in_filesystem(delta_table_path, version, is_backfilled,
     s3_client = boto3.client("s3")
     relative_table_path = delta_table_path.replace(bucket_prefix, "")
     relative_delta_log_path = relative_table_path + "/_delta_log/"
-    relative_commit_folder_path = relative_delta_log_path if is_backfilled else os.path.join(relative_delta_log_path, "_commits")
+    relative_commit_folder_path = relative_delta_log_path if is_backfilled else os.path.join(relative_delta_log_path, "_staged_commits")
     listing_prefix = os.path.join(relative_commit_folder_path, f"{version:020}.").lstrip("/")
     print(f"querying {listing_prefix} from bucket {s3_bucket} for version {version}")
     response = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=listing_prefix)

@@ -24,6 +24,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.{DebugFilesystem, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.util.QuotingUtils
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.StructType
@@ -37,7 +38,12 @@ import org.apache.spark.sql.types.StructType
  * Each take a unique path through analysis. The abstractions below captures these different
  * inserts to allow more easily running tests with all or a subset of them.
  */
-trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQLCommandTest {
+trait DeltaInsertIntoTest
+  extends QueryTest
+  with DeltaDMLTestUtilsPathBased
+  with DeltaSQLCommandTest {
+
+  val catalogName = "spark_catalog"
 
   /**
    * Represents one way of inserting data into a Delta table.
@@ -339,7 +345,7 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
 
           def runInsert(): Unit =
             insert.runInsert(
-              columns = insertData.schema.map(_.name),
+              columns = insertData.schema.map(f => QuotingUtils.quoteIfNeeded(f.name)),
               whereCol = overwriteWhere._1,
               whereValue = overwriteWhere._2
             )

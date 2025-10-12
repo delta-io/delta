@@ -222,6 +222,205 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  ddlTest("SET TBLPROPERTIES - delta.randomizeFilePrefixes") {
+    withDeltaTable("v1 int, v2 string") { tableName =>
+      // Initially, randomizeFilePrefixes should be false (default)
+      val (deltaLog, initialSnapshot) = getDeltaLogWithSnapshot(tableName)
+      assert(!DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(initialSnapshot.metadata),
+        "randomizeFilePrefixes should be false by default")
+
+      // Set delta.randomizeFilePrefixes and delta.randomPrefixLength
+      sql(s"""
+         |ALTER TABLE $tableName
+         |SET TBLPROPERTIES (
+         |  'delta.randomizeFilePrefixes' = 'true',
+         |  'delta.randomPrefixLength' = '5'
+         |)""".stripMargin)
+
+      val snapshot1 = deltaLog.update()
+      assertEqual(snapshot1.metadata.configuration, Map(
+        "delta.randomizeFilePrefixes" -> "true",
+        "delta.randomPrefixLength" -> "5"
+      ))
+
+      // Verify the configuration is properly parsed
+      assert(DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(snapshot1.metadata),
+        "randomizeFilePrefixes should be enabled")
+      assert(DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot1.metadata) == 5,
+        "randomPrefixLength should be 5")
+
+      // Insert data to create files with random prefixes
+      sql(s"INSERT INTO $tableName VALUES (1, 'test1'), (2, 'test2'), (3, 'test3')")
+
+      val snapshot2 = deltaLog.update()
+      val allFiles = snapshot2.allFiles.collect()
+
+      // Verify that files exist and have random prefixes
+      assert(allFiles.nonEmpty, "Table should have data files")
+
+      // Check that file paths contain 5-character random prefix pattern
+      val prefixLength = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot2.metadata)
+      assert(prefixLength == 5, s"Expected prefix length of 5, but got $prefixLength")
+
+      val pattern = s"[A-Za-z0-9]{$prefixLength}/.*part-.*parquet"
+      allFiles.foreach { file =>
+        assert(file.path.matches(pattern),
+          s"File path '${file.path}' does not match expected random prefix pattern '$pattern'")
+      }
+    }
+  }
+
+  ddlTest("UNSET TBLPROPERTIES - delta.randomizeFilePrefixes") {
+    withDeltaTable("v1 int, v2 string") { tableName =>
+      // First, set the randomizeFilePrefixes properties
+      sql(s"""
+         |ALTER TABLE $tableName
+         |SET TBLPROPERTIES (
+         |  'delta.randomizeFilePrefixes' = 'true',
+         |  'delta.randomPrefixLength' = '8',
+         |  'key' = 'value'
+         |)""".stripMargin)
+
+      val (deltaLog, snapshot1) = getDeltaLogWithSnapshot(tableName)
+      assertEqual(snapshot1.metadata.configuration, Map(
+        "delta.randomizeFilePrefixes" -> "true",
+        "delta.randomPrefixLength" -> "8",
+        "key" -> "value"
+      ))
+
+      // Verify the configuration is properly set
+      assert(DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(snapshot1.metadata),
+        "randomizeFilePrefixes should be enabled")
+      assert(DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot1.metadata) == 8,
+        "randomPrefixLength should be 8")
+
+      // Insert data to create files with random prefixes
+      sql(s"INSERT INTO $tableName VALUES (1, 'test1'), (2, 'test2')")
+
+      val snapshot1WithData = deltaLog.update()
+      val filesWithPrefixes = snapshot1WithData.allFiles.collect()
+
+      // Verify files have random prefixes
+      assert(filesWithPrefixes.nonEmpty, "Table should have data files")
+      val pattern8 = s"[A-Za-z0-9]{8}/.*part-.*parquet"
+      filesWithPrefixes.foreach { file =>
+        assert(file.path.matches(pattern8),
+          s"File path '${file.path}' should have 8-character random prefix")
+      }
+
+      // Now UNSET the randomizeFilePrefixes property
+      sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('delta.randomizeFilePrefixes', 'key')")
+
+      val snapshot2 = deltaLog.update()
+      assertEqual(snapshot2.metadata.configuration,
+        Map("delta.randomPrefixLength" -> "8"))
+
+      // Verify that randomizeFilePrefixes is now disabled (reverted to default)
+      assert(!DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(snapshot2.metadata),
+        "randomizeFilePrefixes should be disabled after UNSET")
+      assert(DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot2.metadata) == 8,
+        "randomPrefixLength should still be 8 (not unset)")
+
+      // Insert more data to verify new files don't have random prefixes
+      sql(s"INSERT INTO $tableName VALUES (3, 'test3'), (4, 'test4')")
+
+      val snapshot3 = deltaLog.update()
+      val allFiles = snapshot3.allFiles.collect()
+      val newFiles = allFiles.filterNot(f => filesWithPrefixes.exists(_.path == f.path))
+
+      // Verify that new files don't have random prefixes (should be regular paths)
+      assert(newFiles.nonEmpty, "Should have new files after second insert")
+      newFiles.foreach { file =>
+        assert(!file.path.matches(pattern8),
+          s"New file path '${file.path}' should NOT have random prefix after UNSET")
+        // New files should have regular naming without random prefixes
+        assert(file.path.matches(".*part-.*parquet"),
+          s"New file path '${file.path}' should have regular parquet file naming")
+      }
+    }
+  }
+
+
+  ddlTest("SET/UNSET TBLPROPERTIES - delta.randomizeFilePrefixes - partitioned table") {
+    withDeltaTable(Seq((1, "x", 100), (2, "y", 200)).toDF("id", "part", "value"),
+                   Seq("part")) { tableName =>
+      // First, set the randomizeFilePrefixes properties
+      sql(s"""
+         |ALTER TABLE $tableName
+         |SET TBLPROPERTIES (
+         |  'delta.randomizeFilePrefixes' = 'true',
+         |  'delta.randomPrefixLength' = '7',
+         |  'key' = 'value'
+         |)""".stripMargin)
+
+      val (deltaLog, snapshot1) = getDeltaLogWithSnapshot(tableName)
+      assertEqual(snapshot1.metadata.configuration, Map(
+        "delta.randomizeFilePrefixes" -> "true",
+        "delta.randomPrefixLength" -> "7",
+        "key" -> "value"
+      ))
+
+      // Get initial files (created during table setup - should have partition structure)
+      val initialFiles = deltaLog.update().allFiles.collect()
+
+      // Insert data to create files with random prefixes
+      sql(s"INSERT INTO $tableName VALUES (3, 'x', 300), (4, 'z', 400)")
+
+      val snapshot1WithData = deltaLog.update()
+      val filesInSnapshot1 = snapshot1WithData.allFiles.collect()
+
+      // Separate initial files from new files with prefixes
+      val filesWithPrefixes = filesInSnapshot1.filterNot(f => initialFiles.exists(_.path == f.path))
+
+      // Verify INITIAL files have partition directory structure
+      // (created before random prefixes enabled)
+      val initialPartitionPattern = s"part=[xyz]/.*part-.*parquet"
+      initialFiles.foreach { file =>
+        assert(file.path.matches(initialPartitionPattern),
+          s"Initial file path '${file.path}' should have partition directory structure")
+      }
+
+      // Verify NEW files have random prefixes (created after random prefixes enabled)
+      assert(filesWithPrefixes.nonEmpty, "Should have new files with random prefixes")
+      val pattern7 = s"[A-Za-z0-9]{7}/.*part-.*parquet"
+      filesWithPrefixes.foreach { file =>
+        assert(file.path.matches(pattern7),
+          s"New file path '${file.path}' should have 7-character random prefix")
+      }
+
+      // Now UNSET the randomizeFilePrefixes property
+      sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('delta.randomizeFilePrefixes', 'key')")
+
+      val snapshot2 = deltaLog.update()
+      assertEqual(snapshot2.metadata.configuration,
+        Map("delta.randomPrefixLength" -> "7"))
+
+      // Verify that randomizeFilePrefixes is now disabled
+      assert(!DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(snapshot2.metadata),
+        "randomizeFilePrefixes should be disabled after UNSET")
+      assert(DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(snapshot2.metadata) == 7,
+        "randomPrefixLength should still be 7 (not unset)")
+
+      // Insert more data to verify new files don't have random prefixes
+      sql(s"INSERT INTO $tableName VALUES (5, 'x', 500), (6, 'y', 600)")
+
+      val snapshot3 = deltaLog.update()
+      val allFinalFiles = snapshot3.allFiles.collect()
+      val filesAfterUnset = allFinalFiles.filterNot(f => filesInSnapshot1.exists(_.path == f.path))
+
+      // Verify that new files don't have random prefixes (should revert to partition structure)
+      assert(filesAfterUnset.nonEmpty, "Should have new files after UNSET and second insert")
+      val partitionPatternAfterUnset = s"part=[xy]/.*part-.*parquet"
+      filesAfterUnset.foreach { file =>
+        assert(!file.path.matches(pattern7),
+          s"File after UNSET '${file.path}' should NOT have random prefix")
+        // New files should revert to partition directory structure
+        assert(file.path.matches(partitionPatternAfterUnset),
+          s"File after UNSET '${file.path}' should have partition directory structure")
+      }
+    }
+  }
+
   test("SET/UNSET comment by TBLPROPERTIES") {
     withDeltaTable("v1 int, v2 string") { tableName =>
       def assertCommentEmpty(): Unit = {
@@ -286,6 +485,160 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.constraints.c1'='age >= 25')")
       }
       assert(e3.getMessage.contains("ALTER TABLE ADD CONSTRAINT"))
+    }
+  }
+
+  private def setProps(table: String, kvs: (String, String)*): Unit = {
+    val props = kvs.map { case (k, v) => s"'$k'='$v'" }.mkString(", ")
+    val sqlString = s"ALTER TABLE $table SET TBLPROPERTIES ($props)"
+    spark.sql(sqlString)
+  }
+
+  private def expectValidationError(f: => Unit): Unit = {
+    val ex = intercept[Exception](f)
+    assert(
+      (ex.getMessage.contains("delta.logRetentionDuration") &&
+      ex.getMessage.contains("delta.deletedFileRetentionDuration")) &&
+      (ex.getMessage.contains("needs to be greater than or equal to") ||
+        ex.getMessage.contains("needs to be less than or equal to"))
+    )
+  }
+
+  ///////////////////////////////
+  // logRetentionDuration and deletedFileRetentionDuration table property
+  // compatibility tests
+  ///////////////////////////////
+
+  // cases where validation succeeds
+  test("log > deleted (same units) succeeds") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRetentionDuration" -> "interval 7 days",
+        "delta.logRetentionDuration"         -> "interval 30 days"
+      )
+    }
+  }
+
+  test("log > deleted (different units) succeeds") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRetentionDuration" -> "interval 4 days",
+        "delta.logRetentionDuration"         -> "interval 120 hours"
+      )
+    }
+  }
+
+  test("log > deleted one after the other succeeds") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRetentionDuration" -> "interval 6 days"
+      )
+      setProps(t,
+        "delta.logRetentionDuration" -> "interval 10 days"
+      )
+    }
+  }
+
+  test("key case-insensitivity still succeeds") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRETENTIONDuration" -> "  interval 7 days ",
+        "delta.logRetentionDURATION"         -> " INTERVAL 30 DAYS "
+      )
+    }
+  }
+
+  test("equal durations shouldn't fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+        setProps(t,
+          "delta.deletedFileRetentionDuration" -> "interval 7 days",
+          "delta.logRetentionDuration"         -> "interval 1 week"
+        )
+    }
+  }
+
+  // cases where validation fails
+  test("log < deleted should fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      expectValidationError(
+        setProps(t,
+          "delta.deletedFileRetentionDuration" -> "interval 10 days",
+          "delta.logRetentionDuration"         -> "interval 6 days"
+        )
+      )
+    }
+  }
+
+  test("sequence that becomes invalid (raise deleted above log) should fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRetentionDuration" -> "interval 7 days",
+        "delta.logRetentionDuration"         -> "interval 30 days"
+      )
+      expectValidationError(
+        setProps(t, "delta.deletedFileRetentionDuration" -> "interval 60 days")
+      )
+    }
+  }
+
+  test("default log vs explicit deleted that exceeds default should fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      // default log 30 days; setting deleted to 45 should fail
+      expectValidationError(
+        setProps(t, "delta.deletedFileRetentionDuration" -> "interval 45 days")
+      )
+    }
+  }
+
+  test("default deletedRetention vs explicit log retention that exceeds default should fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      // default deletedFileRetention 7 days; setting log to 5 should fail
+      expectValidationError(
+        setProps(t, "delta.logRetentionDuration" -> "interval 5 days")
+      )
+    }
+  }
+
+  test("key case-insensitivity still fails") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      expectValidationError(
+        setProps(t,
+          "DELTA.DELETEDFILERETENTIONDURATION" -> "interval 14 days",
+          "delta.logRetentionDurATION"         -> "interval 7 days"
+        )
+      )
+    }
+  }
+
+  test("reset to defaults becomes valid") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      // Start invalid
+      expectValidationError(
+        setProps(t,
+          "delta.deletedFileRetentionDuration" -> "interval 40 days",
+          "delta.logRetentionDuration"         -> "interval 30 days"
+        )
+      )
+      // Reset deleted; expect success if defaults are valid
+      spark.sql(s"ALTER TABLE $t UNSET TBLPROPERTIES ('delta.deletedFileRetentionDuration')")
+      // Now set log to something valid relative to default deleted (7d)
+      setProps(t, "delta.logRetentionDuration" -> "interval 30 days")
+    }
+  }
+
+  test("property values are invalid before. Setting an unrelated property shouldn't error out") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      // Start invalid
+      withSQLConf(
+        DeltaSQLConf.ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY.key ->
+          false.toString) {
+        setProps(t,
+          "delta.deletedFileRetentionDuration" -> "interval 40 days",
+          "delta.logRetentionDuration" -> "interval 30 days"
+        )
+      }
+      // Now set unrelated table property
+      setProps(t, "delta.checkpointInterval" -> "100")
     }
   }
 
@@ -1445,6 +1798,89 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         expectedResult)
       checkColType(spark.table(tableName).schema.head, CharType(1))
     }
+  }
+
+  ddlTest("CHANGE COLUMN - set comment on a array/map/struct<varchar> column") {
+    val schema = """
+      |arr_c array<char(1)>,
+      |map_cc map<char(1), char(1)>,
+      |map_sc map<string, char(1)>,
+      |map_cs map<char(1), string>,
+      |struct_c struct<v: char(1)>,
+      |arr_v array<varchar(1)>,
+      |map_vv map<varchar(1), varchar(1)>,
+      |map_sv map<string, varchar(1)>,
+      |map_vs map<varchar(1), string>,
+      |struct_v struct<v: varchar(1)>""".stripMargin
+    def testCommentOnVarcharInContainer(
+      colName: String,
+      expectedType: String,
+      goodInsertValue: String,
+      badInsertValue: String
+    ): Unit = {
+      withDeltaTable(schema = schema) { tableName =>
+        sql(s"ALTER TABLE $tableName CHANGE COLUMN $colName COMMENT 'test comment'")
+        val expectedResult = Row(colName, expectedType, "test comment") :: Nil
+        checkAnswer(
+          sql(s"DESCRIBE $tableName").filter(s"col_name = '$colName'"),
+          expectedResult)
+        sql(s"INSERT into $tableName($colName) values ($goodInsertValue)")
+        val e = intercept[DeltaInvariantViolationException] {
+          sql(s"INSERT into $tableName($colName) values ($badInsertValue)")
+        }
+        assert(e.getMessage.contains("exceeds char/varchar type length limitation"))
+      }
+    }
+    testCommentOnVarcharInContainer(
+      colName = "arr_c",
+      expectedType = "array<string>",
+      goodInsertValue = "array('1')",
+      badInsertValue = "array('12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_cc",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('1', '1')",
+      badInsertValue = "map('12', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_sc",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('123', '1')",
+      badInsertValue = "map('123', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_cs",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('1', '123')",
+      badInsertValue = "map('12', '123')")
+    testCommentOnVarcharInContainer(
+      colName = "struct_c",
+      expectedType = "struct<v:string>",
+      goodInsertValue = "named_struct('v', '1')",
+      badInsertValue = "named_struct('v', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "arr_v",
+      expectedType = "array<string>",
+      goodInsertValue = "array('1')",
+      badInsertValue = "array('12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_vv",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('1', '1')",
+      badInsertValue = "map('12', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_sv",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('123', '1')",
+      badInsertValue = "map('123', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_vs",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('1', '123')",
+      badInsertValue = "map('12', '123')")
+    testCommentOnVarcharInContainer(
+      colName = "struct_v",
+      expectedType = "struct<v:string>",
+      goodInsertValue = "named_struct('v', '1')",
+      badInsertValue = "named_struct('v', '12')")
   }
 
   ddlTest("CHANGE COLUMN - set a default value for a varchar column") {

@@ -20,9 +20,11 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.metrics.FileSizeHistogramResult;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
@@ -159,6 +161,15 @@ public class FileSizeHistogram {
     return boundaries;
   }
 
+  public static FileSizeHistogram fromFileSizeHistogramResult(
+      FileSizeHistogramResult fileSizeHistogramResult) {
+    requireNonNull(fileSizeHistogramResult);
+    return new FileSizeHistogram(
+        fileSizeHistogramResult.getSortedBinBoundaries(),
+        fileSizeHistogramResult.getFileCounts(),
+        fileSizeHistogramResult.getTotalBytes());
+  }
+
   ////////////////////////////////////
   // Member variables and methods  //
   ////////////////////////////////////
@@ -167,7 +178,8 @@ public class FileSizeHistogram {
   private final long[] fileCounts;
   private final long[] totalBytes;
 
-  private FileSizeHistogram(long[] sortedBinBoundaries, long[] fileCounts, long[] totalBytes) {
+  @VisibleForTesting
+  public FileSizeHistogram(long[] sortedBinBoundaries, long[] fileCounts, long[] totalBytes) {
     requireNonNull(sortedBinBoundaries, "sortedBinBoundaries cannot be null");
     requireNonNull(fileCounts, "fileCounts cannot be null");
     requireNonNull(totalBytes, "totalBytes cannot be null");
@@ -255,6 +267,90 @@ public class FileSizeHistogram {
         VectorUtils.buildArrayValue(
             Arrays.stream(totalBytes).boxed().collect(Collectors.toList()), LongType.LONG));
     return new GenericRow(FULL_SCHEMA, value);
+  }
+
+  public FileSizeHistogramResult captureFileSizeHistogramResult() {
+    return new FileSizeHistogramResult() {
+      final long[] copiedSortedBinBoundaries =
+          Arrays.copyOf(sortedBinBoundaries, sortedBinBoundaries.length);
+      final long[] copiedFileCounts = Arrays.copyOf(fileCounts, fileCounts.length);
+      final long[] copiedTotalBytes = Arrays.copyOf(totalBytes, totalBytes.length);
+
+      @Override
+      public long[] getSortedBinBoundaries() {
+        return copiedSortedBinBoundaries;
+      }
+
+      @Override
+      public long[] getFileCounts() {
+        return copiedFileCounts;
+      }
+
+      @Override
+      public long[] getTotalBytes() {
+        return copiedTotalBytes;
+      }
+    };
+  }
+
+  /**
+   * Adds two histograms together by combining their counts and total bytes. Both histograms must
+   * have the same bin boundaries.
+   *
+   * @param other The histogram to add to this histogram
+   * @return A new histogram with combined statistics
+   * @throws IllegalArgumentException if the histograms have different bin boundaries
+   */
+  public FileSizeHistogram plus(FileSizeHistogram other) {
+    requireNonNull(other, "histogram to add cannot be null");
+    checkArgument(
+        Arrays.equals(this.sortedBinBoundaries, other.sortedBinBoundaries),
+        "Cannot add histograms with different bin boundaries");
+
+    int length = this.sortedBinBoundaries.length;
+    long[] combinedCounts = new long[length];
+    long[] combinedBytes = new long[length];
+
+    for (int i = 0; i < length; i++) {
+      combinedCounts[i] = this.fileCounts[i] + other.fileCounts[i];
+      combinedBytes[i] = this.totalBytes[i] + other.totalBytes[i];
+    }
+
+    return new FileSizeHistogram(
+        Arrays.copyOf(this.sortedBinBoundaries, length), combinedCounts, combinedBytes);
+  }
+
+  /**
+   * Subtracts another histogram from this one. Both histograms must have the same bin boundaries.
+   * The result will ensure no negative counts or bytes.
+   *
+   * @param other The histogram to subtract from this histogram
+   * @return A new histogram with the difference in statistics
+   * @throws IllegalArgumentException if the histograms have different bin boundaries
+   * @throws IllegalArgumentException if subtraction would result in negative counts or bytes
+   */
+  public FileSizeHistogram minus(FileSizeHistogram other) {
+    requireNonNull(other, "histogram to minus cannot be null");
+    checkArgument(
+        Arrays.equals(this.sortedBinBoundaries, other.sortedBinBoundaries),
+        "Cannot subtract histograms with different bin boundaries");
+
+    int length = this.sortedBinBoundaries.length;
+    long[] resultCounts = new long[length];
+    long[] resultBytes = new long[length];
+
+    for (int i = 0; i < length; i++) {
+      resultCounts[i] = this.fileCounts[i] - other.fileCounts[i];
+      resultBytes[i] = this.totalBytes[i] - other.totalBytes[i];
+
+      checkArgument(
+          resultCounts[i] >= 0 && resultBytes[i] >= 0,
+          "Subtraction would result in negative counts or bytes at bin %d",
+          i);
+    }
+
+    return new FileSizeHistogram(
+        Arrays.copyOf(this.sortedBinBoundaries, length), resultCounts, resultBytes);
   }
 
   @Override

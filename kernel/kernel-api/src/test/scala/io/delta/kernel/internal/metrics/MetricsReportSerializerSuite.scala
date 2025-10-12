@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.internal.metrics
 
-import java.util.{Optional, UUID}
+import java.util.{Collections, Optional, UUID}
+
+import scala.collection.JavaConverters._
 
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
@@ -38,10 +40,16 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
   }
 
   private def testSnapshotReport(snapshotReport: SnapshotReport): Unit = {
-    val timestampToVersionResolutionDuration = optionToString(
-      snapshotReport.getSnapshotMetrics().getTimestampToVersionResolutionDurationNs())
+    val computeTimestampToVersionTotalDuration = optionToString(
+      snapshotReport.getSnapshotMetrics().getComputeTimestampToVersionTotalDurationNs())
+    val loadSnapshotTotalDuration =
+      snapshotReport.getSnapshotMetrics().getLoadSnapshotTotalDurationNs()
     val loadProtocolAndMetadataDuration =
-      snapshotReport.getSnapshotMetrics().getLoadInitialDeltaActionsDurationNs()
+      snapshotReport.getSnapshotMetrics().getLoadProtocolMetadataTotalDurationNs()
+    val buildLogSegmentDuration =
+      snapshotReport.getSnapshotMetrics().getLoadLogSegmentTotalDurationNs()
+    val loadCrcTotalDuration =
+      snapshotReport.getSnapshotMetrics().getLoadCrcTotalDurationNs()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
     val expectedJson =
       s"""
@@ -50,10 +58,14 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"reportUUID":"${snapshotReport.getReportUUID()}",
          |"exception":${optionToString(exception)},
          |"version":${optionToString(snapshotReport.getVersion())},
+         |"checkpointVersion":${optionToString(snapshotReport.getCheckpointVersion())},
          |"providedTimestamp":${optionToString(snapshotReport.getProvidedTimestamp())},
          |"snapshotMetrics":{
-         |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
-         |"loadInitialDeltaActionsDurationNs":${loadProtocolAndMetadataDuration}
+         |"computeTimestampToVersionTotalDurationNs":${computeTimestampToVersionTotalDuration},
+         |"loadSnapshotTotalDurationNs":${loadSnapshotTotalDuration},
+         |"loadProtocolMetadataTotalDurationNs":${loadProtocolAndMetadataDuration},
+         |"loadLogSegmentTotalDurationNs":${buildLogSegmentDuration},
+         |"loadCrcTotalDurationNs":${loadCrcTotalDuration}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -62,9 +74,13 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
 
   test("SnapshotReport serializer") {
     val snapshotContext1 = SnapshotQueryContext.forTimestampSnapshot("/table/path", 0)
-    snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionTimer.record(10)
-    snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
-    snapshotContext1.setVersion(1)
+    snapshotContext1.getSnapshotMetrics.computeTimestampToVersionTotalDurationTimer.record(10)
+    snapshotContext1.getSnapshotMetrics.loadSnapshotTotalTimer.record(2000)
+    snapshotContext1.getSnapshotMetrics.loadProtocolMetadataTotalDurationTimer.record(1000)
+    snapshotContext1.getSnapshotMetrics.loadLogSegmentTotalDurationTimer.record(500)
+    snapshotContext1.getSnapshotMetrics.loadCrcTotalDurationTimer.record(250)
+    snapshotContext1.setResolvedVersion(25)
+    snapshotContext1.setCheckpointVersion(Optional.of(20))
     val exception = new RuntimeException("something something failed")
 
     val snapshotReport1 = SnapshotReportImpl.forError(
@@ -78,11 +94,15 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"operationType":"Snapshot",
         |"reportUUID":"${snapshotReport1.getReportUUID()}",
         |"exception":"$exception",
-        |"version":1,
+        |"version":25,
+        |"checkpointVersion":20,
         |"providedTimestamp":0,
         |"snapshotMetrics":{
-        |"timestampToVersionResolutionDurationNs":10,
-        |"loadInitialDeltaActionsDurationNs":1000
+        |"computeTimestampToVersionTotalDurationNs":10,
+        |"loadSnapshotTotalDurationNs":2000,
+        |"loadProtocolMetadataTotalDurationNs":1000,
+        |"loadLogSegmentTotalDurationNs":500,
+        |"loadCrcTotalDurationNs":250
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")
@@ -103,6 +123,12 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       transactionReport.getSnapshotReportUUID().map(_.toString)
     val transactionMetrics = transactionReport.getTransactionMetrics
 
+    val clusterColString = transactionReport.getClusteringColumns
+      .asScala
+      .map(col =>
+        col.getNames.map(s => s""""$s"""").mkString("[", ",", "]"))
+      .mkString("[", ",", "]")
+
     val expectedJson =
       s"""
          |{"tablePath":"${transactionReport.getTablePath()}",
@@ -114,13 +140,15 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"baseSnapshotVersion":${transactionReport.getBaseSnapshotVersion()},
          |"snapshotReportUUID":${optionToString(snapshotReportUUID)},
          |"committedVersion":${optionToString(transactionReport.getCommittedVersion())},
+         |"clusteringColumns":$clusterColString,
          |"transactionMetrics":{
          |"totalCommitDurationNs":${transactionMetrics.getTotalCommitDurationNs},
          |"numCommitAttempts":${transactionMetrics.getNumCommitAttempts},
          |"numAddFiles":${transactionMetrics.getNumAddFiles},
          |"numRemoveFiles":${transactionMetrics.getNumRemoveFiles},
          |"numTotalActions":${transactionMetrics.getNumTotalActions},
-         |"totalAddFilesSizeInBytes":${transactionMetrics.getTotalAddFilesSizeInBytes}
+         |"totalAddFilesSizeInBytes":${transactionMetrics.getTotalAddFilesSizeInBytes},
+         |"totalRemoveFilesSizeInBytes":${transactionMetrics.getTotalRemoveFilesSizeInBytes}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -133,20 +161,23 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val exception = new RuntimeException("something something failed")
 
     // Initialize transaction metrics and record some values
-    val transactionMetrics1 = new TransactionMetrics()
+    val transactionMetrics1 = TransactionMetrics.forNewTable();
     transactionMetrics1.totalCommitTimer.record(200)
     transactionMetrics1.commitAttemptsCounter.increment(2)
-    transactionMetrics1.addFilesCounter.increment(82)
+    transactionMetrics1.updateForAddFile(1000)
+    transactionMetrics1.updateForAddFile(100)
+    transactionMetrics1.updateForRemoveFile(1000)
     transactionMetrics1.totalActionsCounter.increment(90)
-    transactionMetrics1.addFilesSizeInBytesCounter.increment(100)
 
     val transactionReport1 = new TransactionReportImpl(
       "/table/path",
       "test-operation",
       "test-engine",
       Optional.of(2), /* committedVersion */
+      Optional.of(Collections.singletonList(
+        new Column(Array[String]("test-clustering-col1", "nested")))),
       transactionMetrics1,
-      snapshotReport1,
+      Optional.of(snapshotReport1),
       Optional.of(exception))
 
     // Manually check expected JSON
@@ -161,13 +192,15 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"baseSnapshotVersion":1,
          |"snapshotReportUUID":"${snapshotReport1.getReportUUID}",
          |"committedVersion":2,
+         |"clusteringColumns":[["test-clustering-col1","nested"]],
          |"transactionMetrics":{
          |"totalCommitDurationNs":200,
          |"numCommitAttempts":2,
-         |"numAddFiles":82,
-         |"numRemoveFiles":0,
+         |"numAddFiles":2,
+         |"numRemoveFiles":1,
          |"numTotalActions":90,
-         |"totalAddFilesSizeInBytes":100
+         |"totalAddFilesSizeInBytes":1100,
+         |"totalRemoveFilesSizeInBytes":1000
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -178,14 +211,16 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     // Initialize snapshot report for the empty table case
     val snapshotReport2 = SnapshotReportImpl.forSuccess(
       SnapshotQueryContext.forVersionSnapshot("/table/path", -1))
-    // Empty option for alll possible fields (committedVersion, exception)
+    // Empty option for all possible fields (committedVersion, exception)
     val transactionReport2 = new TransactionReportImpl(
       "/table/path",
       "test-operation-2",
       "test-engine-2",
       Optional.empty(), /* committedVersion */
-      new TransactionMetrics(), // empty/un-incremented transaction metrics
-      snapshotReport2,
+      Optional.of(Collections.singletonList(new Column("test-clustering-col1"))),
+      // empty/un-incremented transaction metrics
+      TransactionMetrics.withExistingTableFileSizeHistogram(Optional.empty()),
+      Optional.of(snapshotReport2),
       Optional.empty() /* exception */
     )
     testTransactionReport(transactionReport2)
@@ -255,6 +290,11 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(exception))
 
     // Manually check expected JSON
+    val tableSchemaStr = "struct(StructField(name=part,type=integer,nullable=true,metadata={}," +
+      "typeChanges=[]), StructField(name=id,type=integer,nullable=true,metadata={},typeChanges=[]))"
+    val readSchemaStr = "struct(StructField(name=id,type=integer,nullable=true,metadata={}," +
+      "typeChanges=[]))"
+
     val expectedJson =
       s"""
          |{"tablePath":"/table/path",
@@ -262,11 +302,10 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"reportUUID":"${scanReport1.getReportUUID}",
          |"exception":"$exception",
          |"tableVersion":1,
-         |"tableSchema":"struct(StructField(name=part,type=integer,nullable=true,metadata={}),
-         | StructField(name=id,type=integer,nullable=true,metadata={}))",
+         |"tableSchema":"$tableSchemaStr",
          |"snapshotReportUUID":"$snapshotReportUUID",
          |"filter":"(column(`part`) > 1)",
-         |"readSchema":"struct(StructField(name=id,type=integer,nullable=true,metadata={}))",
+         |"readSchema":"$readSchemaStr",
          |"partitionPredicate":"(column(`part`) > 1)",
          |"dataSkippingFilter":null,
          |"isFullyConsumed":true,

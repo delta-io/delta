@@ -17,18 +17,21 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.lang.String.format;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
@@ -386,6 +389,92 @@ class DefaultExpressionUtils {
     };
   }
 
+  /** Represents an arithmetic operator that can be applied to two numeric values. */
+  public interface ArithmeticOperator {
+    byte apply(byte a, byte b);
+
+    short apply(short a, short b);
+
+    int apply(int a, int b);
+
+    long apply(long a, long b);
+
+    float apply(float a, float b);
+
+    double apply(double a, double b);
+  }
+
+  /**
+   * Creates a column vector that lazily evaluates an arithmetic operation between two column
+   * vectors.
+   *
+   * <p>Only numeric data types are supported.
+   *
+   * @param left the left operand column vector
+   * @param right the right operand column vector
+   * @param operator the arithmetic operator to apply
+   * @return a new column vector representing the result of the arithmetic operation
+   */
+  static ColumnVector arithmeticVector(
+      ColumnVector left, ColumnVector right, ArithmeticOperator operator) {
+    checkArgument(
+        left.getSize() == right.getSize(), "Left and right operand have different vector sizes.");
+    checkArgument(
+        left.getDataType().equals(right.getDataType()),
+        "Left and right operand have different data types.");
+    return new ColumnVector() {
+      @Override
+      public DataType getDataType() {
+        return left.getDataType();
+      }
+
+      @Override
+      public int getSize() {
+        return left.getSize();
+      }
+
+      @Override
+      public void close() {
+        Utils.closeCloseables(left, right);
+      }
+
+      @Override
+      public boolean isNullAt(int rowId) {
+        return left.isNullAt(rowId) || right.isNullAt(rowId);
+      }
+
+      @Override
+      public byte getByte(int rowId) {
+        return operator.apply(left.getByte(rowId), right.getByte(rowId));
+      }
+
+      @Override
+      public short getShort(int rowId) {
+        return operator.apply(left.getShort(rowId), right.getShort(rowId));
+      }
+
+      @Override
+      public int getInt(int rowId) {
+        return operator.apply(left.getInt(rowId), right.getInt(rowId));
+      }
+
+      @Override
+      public long getLong(int rowId) {
+        return operator.apply(left.getLong(rowId), right.getLong(rowId));
+      }
+
+      @Override
+      public float getFloat(int rowId) {
+        return operator.apply(left.getFloat(rowId), right.getFloat(rowId));
+      }
+
+      @Override
+      public double getDouble(int rowId) {
+        return operator.apply(left.getDouble(rowId), right.getDouble(rowId));
+      }
+    };
+  }
+
   /**
    * Checks if the specific expression is an integer literal, throws {@link
    * UnsupportedOperationException} if not.
@@ -414,7 +503,7 @@ class DefaultExpressionUtils {
   }
 
   static void checkIsStringType(DataType dataType, Expression parentExpr, String errorMessage) {
-    if (StringType.STRING.equals(dataType)) {
+    if (dataType instanceof StringType) {
       return;
     }
     throw unsupportedExpressionException(parentExpr, errorMessage);
@@ -424,5 +513,40 @@ class DefaultExpressionUtils {
     if (!(expr instanceof Literal)) {
       throw unsupportedExpressionException(parentExpr, errorMessage);
     }
+  }
+
+  /** Creates a {@link Predicate} with name, children and optional collation. */
+  static Predicate createPredicate(
+      String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
+    if (collationIdentifier.isPresent()) {
+      return new Predicate(name, children, collationIdentifier.get());
+    } else {
+      return new Predicate(name, children);
+    }
+  }
+
+  /**
+   * Checks if the collation is `UTF8_BINARY`, since this is the only collation the default engine
+   * can evaluate.
+   */
+  static void checkIsUTF8BinaryCollation(
+      Predicate predicate, CollationIdentifier collationIdentifier) {
+    if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
+      String msg =
+          format(
+              "Unsupported collation: \"%s\". Default Engine supports just" + " \"%s\" collation.",
+              collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
+      throw unsupportedExpressionException(predicate, msg);
+    }
+  }
+
+  /**
+   * Checks if the given expression is a null literal.
+   *
+   * @param expression The expression to check
+   * @return true if the expression is a Literal with null value, false otherwise
+   */
+  static boolean isNullLiteral(Expression expression) {
+    return expression instanceof Literal && ((Literal) expression).getValue() == null;
   }
 }

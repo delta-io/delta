@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.icebergcompat
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
@@ -22,11 +24,19 @@ import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater.validateAndUpdateIcebergWriterCompatV1Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1}
-import io.delta.kernel.types.{ByteType, DataType, FieldMetadata, IntegerType, ShortType, StructType}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.types.{ByteType, DataType, DecimalType, FieldMetadata, IntegerType, LongType, ShortType, StructField, StructType, TypeChange}
 
 class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     extends IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase {
+
+  override def validateAndUpdateIcebergCompatMetadata(
+      isNewTable: Boolean,
+      metadata: Metadata,
+      protocol: Protocol): Optional[Metadata] = {
+    validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+  }
 
   val icebergWriterCompatV1EnabledProps = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
@@ -42,6 +52,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
   override def getCompatEnabledMetadata(
       schema: StructType,
+      columnMappingMode: String = "id",
       partCols: Seq[String] = Seq.empty): Metadata = {
     testMetadata(schema, partCols)
       .withMergedConfiguration((
@@ -52,13 +63,6 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
   override def getCompatEnabledProtocol(tableFeatures: TableFeature*): Protocol = {
     testProtocol(tableFeatures ++
       Seq(ICEBERG_WRITER_COMPAT_V1, ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE): _*)
-  }
-
-  override def runValidateAndUpdateIcebergCompatV2Metadata(
-      isNewTable: Boolean,
-      metadata: Metadata,
-      protocol: Protocol): Unit = {
-    validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
   }
 
   test("checks are not enforced when table property is not enabled") {
@@ -89,7 +93,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  /* --- CM_ID_MODE_ENABLED tests --- */
+  /* --- CM_ID_MODE_ENABLED and PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK tests --- */
 
   Seq(true, false).foreach { isNewTable =>
     Seq(true, false).foreach { icebergCompatV2Enabled =>
@@ -112,6 +116,12 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
             validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
           assert(updatedMetadata.isPresent)
           assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "id")
+          // We correctly populate the column mapping metadata
+          verifyCMTestSchemaHasValidColumnMappingInfo(
+            updatedMetadata.get(),
+            isNewTable,
+            enableIcebergCompatV2 = true,
+            enableIcebergWriterCompatV1 = true)
         } else {
           val e = intercept[KernelException] {
             validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
@@ -141,6 +151,52 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
           s"The value '$cmMode' for the property 'delta.columnMapping.mode' is" +
             " not compatible with icebergWriterCompatV1 requirements"))
       }
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(s"cannot set physicalName to anything other than col-{fieldId}, isNewTable=$isNewTable") {
+      val schema = new StructType()
+        .add(
+          "c1",
+          IntegerType.INTEGER,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "c1")
+            .build())
+
+      val metadata = getCompatEnabledMetadata(schema)
+      val protocol = getCompatEnabledProtocol()
+
+      val e = intercept[KernelException] {
+        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+      }
+      assert(e.getMessage.contains(
+        "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
+          + "'col-[fieldId]', but this is not true for the following fields " +
+          "[c1(physicalName='c1', columnId=1)]"))
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(s"can provide correct physicalName=col-{fieldId}, isNewTable=$isNewTable") {
+      val schema = new StructType()
+        .add(
+          "c1",
+          IntegerType.INTEGER,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1")
+            .build())
+
+      val metadata = getCompatEnabledMetadata(schema)
+        .withMergedConfiguration(Map(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY -> "1").asJava)
+      val protocol = getCompatEnabledProtocol()
+
+      val updatedMetadata =
+        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+      // No metadata update happens
+      assert(!updatedMetadata.isPresent)
     }
   }
 
@@ -196,7 +252,13 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     // TODO add typeWidening and typeWidening-preview here once it's no longer blocked
     //  icebergCompatV2
     val writerFeatures = Set(
+      // Legacy incompatible features (allowed as long as they are inactive)
       "invariants",
+      "checkConstraints",
+      "changeDataFeed",
+      "identityColumns",
+      "generatedColumns",
+      // Compatible table features
       "appendOnly",
       "columnMapping",
       "icebergCompatV2",
@@ -206,13 +268,60 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       "v2Checkpoint",
       "inCommitTimestamp",
       "clustering",
-      // "typeWidening", add this to this test once we support typeWidening
-      // "typeWidening-preview", add this to this test once we support typeWidening
-      "timestampNtz")
+      "typeWidening",
+      "typeWidening-preview",
+      "timestampNtz",
+      "catalogOwned-preview")
     val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
     validateAndUpdateIcebergWriterCompatV1Metadata(true, metadata, protocol)
     validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+  }
+
+  test("compatible type widening is allowed with icebergWriterCompatV1") {
+    val schema = new StructType()
+      .add(
+        new StructField(
+          "intToLong",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1")
+            .build()).withTypeChanges(Seq(new TypeChange(
+          IntegerType.INTEGER,
+          LongType.LONG)).asJava))
+
+    val metadata = getCompatEnabledMetadata(schema)
+      .withMergedConfiguration(Map(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY -> "1").asJava)
+    val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
+
+    // This should not throw an exception
+    validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+  }
+
+  test("incompatible type widening throws exception with icebergWriterCompatV1") {
+    val schema = new StructType()
+      .add(
+        new StructField(
+          "intToLong",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1")
+            .build()).withTypeChanges(
+          Seq(new TypeChange(ByteType.BYTE, new DecimalType(10, 0))).asJava))
+
+    val metadata = getCompatEnabledMetadata(schema)
+      .withMergedConfiguration(Map(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY -> "1").asJava)
+    val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
+
+    val e = intercept[KernelException] {
+      validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+    }
+
+    assert(e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
   }
 
   private def checkUnsupportedOrIncompatibleFeature(
@@ -236,26 +345,8 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  Seq("typeWidening", "typeWidening-preview").foreach {
-    unsupportedCompatibleFeature =>
-      test(s"cannot enable with compatible UNSUPPORTED feature $unsupportedCompatibleFeature") {
-        // We add this test here so that it will fail when we add Kernel support for these features
-        // When this happens -> add the feature to the test above
-        checkUnsupportedOrIncompatibleFeature(
-          unsupportedCompatibleFeature,
-          "Unsupported Delta table feature: table requires feature " +
-            s""""$unsupportedCompatibleFeature" which is unsupported by this version of """ +
-            "Delta Kernel")
-      }
-  }
-
   Seq(
-    "changeDataFeed",
-    "checkConstraints",
-    "identityColumns",
-    "generatedColumns",
     // "defaultColumns", add this to this test once we support defaultColumns
-    "rowTracking",
     // "collations", add this to this test once we support collations
     "variantType").foreach { incompatibleFeature =>
     test(s"cannot enable with incompatible feature $incompatibleFeature") {
@@ -278,26 +369,78 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  /* --- INVARIANTS_INACTIVE_CHECK tests --- */
-  Seq(true, false).foreach { isNewTable =>
-    test(s"cannot enable with invariants active in the schema, isNewTable = $isNewTable") {
-      val schema = new StructType()
-        .add("c1", IntegerType.INTEGER)
-        .add(
-          "c2",
-          IntegerType.INTEGER,
-          FieldMetadata.builder()
-            .putString("delta.invariants", "{\"expression\": { \"expression\": \"x > 3\"} }")
-            .build())
-      val metadata = getCompatEnabledMetadata(schema)
-      val protocol = getCompatEnabledProtocol()
-      val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+  private def testIncompatibleActiveLegacyFeature(
+      activeFeatureMetadata: Metadata,
+      tableFeature: String): Unit = {
+    Seq(true, false).foreach { isNewTable =>
+      test(s"cannot enable with $tableFeature active, isNewTable = $isNewTable") {
+        val e = intercept[KernelException] {
+          validateAndUpdateIcebergWriterCompatV1Metadata(
+            isNewTable,
+            activeFeatureMetadata,
+            getCompatEnabledProtocol())
+        }
+        assert(e.getMessage.contains(
+          s"Table features [$tableFeature] are incompatible with icebergWriterCompatV1"))
       }
-      assert(e.getMessage.contains(
-        "Table features [invariants] are incompatible with icebergWriterCompatV1"))
     }
   }
+
+  /* --- INVARIANTS_INACTIVE_CHECK tests --- */
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(new StructType()
+      .add("c1", IntegerType.INTEGER)
+      .add(
+        "c2",
+        IntegerType.INTEGER,
+        FieldMetadata.builder()
+          .putString("delta.invariants", "{\"expression\": { \"expression\": \"x > 3\"} }")
+          .build())),
+    "invariants")
+
+  /* --- CHANGE_DATA_FEED_INACTIVE_CHECK tests --- */
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(cmTestSchema())
+      .withMergedConfiguration(Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true").asJava),
+    "changeDataFeed")
+
+  /* --- CHECK_CONSTRAINTS_INACTIVE_CHECK tests --- */
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(cmTestSchema())
+      .withMergedConfiguration(Map("delta.constraints.a" -> "a = b").asJava),
+    "checkConstraints")
+
+  /* --- ROW_TRACKING_INACTIVE_CHECK tests --- */
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(cmTestSchema())
+      .withMergedConfiguration(Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true").asJava),
+    "rowTracking")
+
+  /* --- IDENTITY_COLUMNS_INACTIVE_CHECK tests --- */
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(new StructType()
+      .add("c1", IntegerType.INTEGER)
+      .add(
+        "c2",
+        IntegerType.INTEGER,
+        FieldMetadata.builder()
+          .putLong("delta.identity.start", 1L)
+          .putLong("delta.identity.step", 2L)
+          .putBoolean("delta.identity.allowExplicitInsert", true)
+          .build())),
+    "identityColumns")
+
+  /* --- GENERATED_COLUMNS_INACTIVE_CHECK tests --- */
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(new StructType()
+      .add("c1", IntegerType.INTEGER)
+      .add(
+        "c2",
+        IntegerType.INTEGER,
+        FieldMetadata.builder()
+          .putString("delta.generationExpression", "{\"expression\": \"c1 + 1\"}")
+          .build())),
+    "generatedColumns")
 
   /* --- requiredDependencyTableFeatures tests --- */
   Seq(

@@ -20,15 +20,10 @@ import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.SchemaUtils;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Stream;
@@ -65,30 +60,27 @@ import java.util.stream.Stream;
  * TODO additional enforcements coming in (ie physicalName=fieldId)
  */
 public class IcebergWriterCompatV1MetadataValidatorAndUpdater
-    extends IcebergCompatMetadataValidatorAndUpdater {
+    extends IcebergWriterCompatMetadataValidatorAndUpdater {
 
   /**
    * Validates that any change to property {@link TableConfig#ICEBERG_WRITER_COMPAT_V1_ENABLED} is
-   * valid. Currently, the changes we support are
+   * valid (for existing table). Currently, the changes we support are
    *
    * <ul>
    *   <li>No change in enablement (true to true or false to false)
-   *   <li>Enabling but only on a new table (false to true)
-   *   <li>Disabling (true to false)
    * </ul>
    *
-   * If enabling (false to true) on an existing table we throw an {@link KernelException}.
+   * The changes that we do not support and for which we throw an {@link KernelException} are
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
    */
   public static void validateIcebergWriterCompatV1Change(
-      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
-    if (!isNewTable) {
-      boolean wasEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(oldConfig);
-      boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newConfig);
-      if (!wasEnabled && isEnabled) {
-        throw DeltaErrors.enablingIcebergWriterCompatV1OnExistingTable(
-            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
-      }
-    }
+      Map<String, String> oldConfig, Map<String, String> newConfig) {
+    blockConfigChangeOnExistingTable(
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED, oldConfig, newConfig);
   }
 
   /**
@@ -103,7 +95,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV1Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(isCreatingNewTable, newMetadata, newProtocol));
+        new IcebergCompatInputContext(
+            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
@@ -113,105 +106,30 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
   private static final IcebergWriterCompatV1MetadataValidatorAndUpdater INSTANCE =
       new IcebergWriterCompatV1MetadataValidatorAndUpdater();
 
-  private static final IcebergCompatRequiredTablePropertyEnforcer CM_ID_MODE_ENABLED =
-      new IcebergCompatRequiredTablePropertyEnforcer<>(
-          TableConfig.COLUMN_MAPPING_MODE,
-          (value) -> ColumnMapping.ColumnMappingMode.ID == value,
-          ColumnMapping.ColumnMappingMode.ID.value);
-
-  private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V2_ENABLED =
-      new IcebergCompatRequiredTablePropertyEnforcer<>(
-          TableConfig.ICEBERG_COMPAT_V2_ENABLED,
-          (value) -> value,
-          "true",
-          (inputContext) ->
-              IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
-                  inputContext.isCreatingNewTable,
-                  inputContext.newMetadata,
-                  inputContext.newProtocol));
+  /**
+   * Enforcer for Iceberg compatibility V2 (required by V1). Ensures the ICEBERG_COMPAT_V2_ENABLED
+   * property is set to "true" and delegates validation to the V2 metadata validator.
+   */
+  private static final IcebergCompatRequiredTablePropertyEnforcer<Boolean>
+      ICEBERG_COMPAT_V2_ENABLED =
+          createIcebergCompatEnforcer(
+              TableConfig.ICEBERG_COMPAT_V2_ENABLED,
+              (inputContext) ->
+                  IcebergCompatV2MetadataValidatorAndUpdater
+                      .validateAndUpdateIcebergCompatV2Metadata(
+                          inputContext.isCreatingNewTable,
+                          inputContext.newMetadata,
+                          inputContext.newProtocol));
 
   /**
-   * Current set of allowed table features. This may evolve as the protocol evolves. This includes
-   * `invariants` because it is auto-enabled for tables due to the default writer protocol version =
-   * 2. Below in INVARIANTS_INACTIVE_CHECK we check that there are no invariants in the table
-   * schema.
-   *
-   * <p>Notably, we do NOT include the other legacy table features here (such as CDF) because since
-   * we only support enabling IcebergWriterCompatV1 on *new* tables, if those features are present
-   * in the protocol they must be active (since they were enabled by the metadata). Thus, we know
-   * any protocol with those features we are incompatible with. `invariants` is a special case since
-   * it may be present but inactive even for new tables.
+   * Current set of allowed table features for Iceberg writer compat V1. This combines the common
+   * features with V1-specific features (ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1).
    */
   private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
-      Stream.of(
-              INVARIANTS_W_FEATURE,
-              APPEND_ONLY_W_FEATURE,
-              COLUMN_MAPPING_RW_FEATURE,
-              ICEBERG_COMPAT_V2_W_FEATURE,
-              ICEBERG_WRITER_COMPAT_V1,
-              DOMAIN_METADATA_W_FEATURE,
-              VACUUM_PROTOCOL_CHECK_RW_FEATURE,
-              CHECKPOINT_V2_RW_FEATURE,
-              IN_COMMIT_TIMESTAMP_W_FEATURE,
-              CLUSTERING_W_FEATURE,
-              TIMESTAMP_NTZ_RW_FEATURE,
-              TYPE_WIDENING_RW_FEATURE,
-              TYPE_WIDENING_PREVIEW_TABLE_FEATURE)
+      Stream.concat(
+              COMMON_ALLOWED_FEATURES.stream(),
+              Stream.of(ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1))
           .collect(toSet());
-
-  /** Checks that all features supported in the protocol are in {@link #ALLOWED_TABLE_FEATURES} */
-  private static final IcebergCompatCheck UNSUPPORTED_FEATURES_CHECK =
-      (inputContext) -> {
-        // TODO include additional information in inputContext so that we can throw different errors
-        //   for blocking enablement of icebergWriterCompatV1 versus enablement of the incompatible
-        //   feature
-        if (!ALLOWED_TABLE_FEATURES.containsAll(
-            inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures())) {
-          Set<TableFeature> incompatibleFeatures =
-              inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures();
-          incompatibleFeatures.removeAll(ALLOWED_TABLE_FEATURES);
-          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-              INSTANCE.compatFeatureName(), incompatibleFeatures);
-        }
-      };
-
-  /**
-   * Checks that there are no unsupported types in the schema. Data types {@link ByteType} and
-   * {@link ShortType} are unsupported for IcebergWriterCompatV1 tables.
-   */
-  private static final IcebergCompatCheck UNSUPPORTED_TYPES_CHECK =
-      (inputContext) -> {
-        List<Tuple2<List<String>, StructField>> matches =
-            SchemaUtils.filterRecursively(
-                inputContext.newMetadata.getSchema(),
-                /* recurseIntoMapAndArrayTypes= */ true,
-                /* stopOnFirstMatch = */ false,
-                field -> {
-                  DataType dataType = field.getDataType();
-                  return (dataType instanceof ByteType || dataType instanceof ShortType);
-                });
-
-        if (!matches.isEmpty()) {
-          throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-              INSTANCE.compatFeatureName(),
-              matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
-        }
-      };
-
-  /**
-   * Checks that the table feature `invariants` is not active in the table, meaning there are no
-   * invariants stored in the table schema.
-   */
-  private static final IcebergCompatCheck INVARIANTS_INACTIVE_CHECK =
-      // Note - since Kernel currently does not support the table feature `invariants` we will not
-      // hit this check for E2E writes since we will fail early due to unsupported write
-      // If Kernel starts supporting the feature `invariants` this check will become applicable
-      (inputContext) -> {
-        if (TableFeatures.hasInvariants(inputContext.newMetadata.getSchema())) {
-          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-              INSTANCE.compatFeatureName(), Collections.singleton(INVARIANTS_W_FEATURE));
-        }
-      };
 
   @Override
   String compatFeatureName() {
@@ -236,8 +154,15 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
   }
 
   @Override
+  protected Set<TableFeature> getAllowedTableFeatures() {
+    return ALLOWED_TABLE_FEATURES;
+  }
+
+  @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
-    return Stream.of(UNSUPPORTED_FEATURES_CHECK, UNSUPPORTED_TYPES_CHECK, INVARIANTS_INACTIVE_CHECK)
+    return Stream.concat(
+            Stream.of(createUnsupportedFeaturesCheck(this), ROW_TRACKING_INACTIVE_CHECK),
+            COMMON_CHECKS.stream())
         .collect(toList());
   }
 }

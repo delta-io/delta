@@ -29,6 +29,35 @@ class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
   val fsClient = defaultEngine.getFileSystemClient
   val fs = FileSystem.get(configuration)
 
+  private def writeFile(path: String, content: String): Unit = {
+    val out = fs.create(new Path(path))
+    try {
+      out.write(content.getBytes("UTF-8"))
+    } finally {
+      out.close()
+    }
+  }
+
+  private def readFile(path: String): String = {
+    val fileStatus = fs.getFileStatus(new Path(path))
+    val buffer = new Array[Byte](fileStatus.getLen.toInt)
+    val in = fs.open(new Path(path))
+    try {
+      in.readFully(buffer)
+      new String(buffer, "UTF-8")
+    } finally {
+      in.close()
+    }
+  }
+
+  private def withTempSrcAndDestFiles(f: (String, String) => Unit): Unit = {
+    withTempDir { tempDir =>
+      val src = tempDir + "/source.txt"
+      val dest = tempDir + "/dest.txt"
+      f(src, dest)
+    }
+  }
+
   test("list from file") {
     val basePath = fsClient.resolvePath(getTestResourceFilePath("json-files"))
     val listFrom = fsClient.resolvePath(getTestResourceFilePath("json-files/2.json"))
@@ -78,6 +107,60 @@ class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
       val dir3 = "/non-existentfileTable/sfdsd"
       assert(!fsClient.mkdirs(dir3))
       assert(!fs.exists(new Path(dir3)))
+    }
+  }
+
+  test("getFileStatus") {
+    val filePath = getTestResourceFilePath("json-files/1.json")
+    val fileStatus = fsClient.getFileStatus(filePath)
+
+    assert(fileStatus.getPath == fsClient.resolvePath(filePath))
+    assert(fileStatus.getSize > 0)
+    assert(fileStatus.getModificationTime > 0)
+  }
+
+  test("getFileStatus on non-existent file") {
+    intercept[FileNotFoundException] {
+      fsClient.getFileStatus("/non-existent-file.json")
+    }
+  }
+
+  test("copyFileAtomically - overwrite=false, dest does not exist") {
+    withTempSrcAndDestFiles { (src, dest) =>
+      writeFile(src, "test content")
+      fsClient.copyFileAtomically(src, dest, false /* overwrite */ )
+
+      assert(fs.exists(new Path(dest)))
+      assert(readFile(dest).trim == "test content")
+    }
+  }
+
+  test("copyFileAtomically - overwrite=false, dest exists") {
+    withTempSrcAndDestFiles { (src, dest) =>
+      writeFile(src, "source content")
+      writeFile(dest, "existing content")
+
+      intercept[java.nio.file.FileAlreadyExistsException] {
+        fsClient.copyFileAtomically(src, dest, false /* overwrite */ )
+      }
+    }
+  }
+
+  test("copyFileAtomically - overwrite=true") {
+    withTempSrcAndDestFiles { (src, dest) =>
+      writeFile(src, "new content")
+      writeFile(dest, "old content")
+
+      fsClient.copyFileAtomically(src, dest, true /* overwrite */ )
+      assert(readFile(dest).trim == "new content")
+    }
+  }
+
+  test("copyFileAtomically with non-existent source") {
+    withTempSrcAndDestFiles { (src, dest) =>
+      intercept[FileNotFoundException] {
+        fsClient.copyFileAtomically(src, dest, false /* overwrite */ )
+      }
     }
   }
 }

@@ -20,7 +20,7 @@ import java.io.File
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
 
@@ -38,7 +38,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /**
  * Test suite for `io.delta.kernel.Table.checkpoint(engine, version)`
  */
-class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
+class CreateCheckpointSuite extends CheckpointBase {
 
   ///////////
   // Tests //
@@ -390,10 +390,12 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
       verifyResults(tablePath, expResults, checkpointVersion)
     }
   }
+}
 
-  ////////////////////
-  // Helper methods //
-  ///////////////////
+/**
+ *  Helper methods for suites that do checkpoint operations
+ */
+trait CheckpointBase extends AnyFunSuite with WriteUtils {
   def addData(path: String, alternateBetweenAddsAndRemoves: Boolean, numberIter: Int): Unit = {
     Seq.range(0, numberIter).foreach { version =>
       if (version % 2 == 1 && alternateBetweenAddsAndRemoves) {

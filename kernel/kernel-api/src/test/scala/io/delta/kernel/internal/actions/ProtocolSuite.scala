@@ -284,6 +284,11 @@ class ProtocolSuite extends AnyFunSuite {
     // expect the dependency features also to be supported
     Set("icebergCompatV2") ->
       (2, 7, Set[String](), Set[String]("icebergCompatV2", "columnMapping")),
+    Set("variantShredding-preview") -> (
+      3,
+      7,
+      Set[String]("variantType", "variantShredding-preview"),
+      Set[String]("variantType", "variantShredding-preview")),
     Set("rowTracking") -> (
       1,
       7,

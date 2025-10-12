@@ -62,22 +62,11 @@ class RowTrackingBackfillCloneConflictsSuite extends RowTrackingBackfillConflict
     }
   }
 
-  private def createAndChainBackfillObservers(): (TransactionObserver, TransactionObserver) = {
-    // This observes the transaction in [[BackfillCommand]] that does manual state
-    // transitions to make the concurrency testing framework happy in other Suites.
-    val manualTransitionsBackfillObserver = new TransactionObserver(
-      OptimisticTransactionPhases.forName("manual-transitions-backfill-observer"))
-
+  private def createUpdateMetadataBackfillObserver(): TransactionObserver = {
     // This observes the transaction in [[alterDeltaTableCommands]] after the backfill
     // that tries to update the table's metadata.
-    val updateMetadataBackfillObserver = new TransactionObserver(
+    new TransactionObserver(
       OptimisticTransactionPhases.forName("update-metadata-backfill-observer"))
-
-    // Chain observers
-    manualTransitionsBackfillObserver.setNextObserver(
-      updateMetadataBackfillObserver, autoAdvance = true)
-
-    (manualTransitionsBackfillObserver, updateMetadataBackfillObserver)
   }
 
   test("Backfill fails from conflict with CLONE") {
@@ -95,16 +84,12 @@ class RowTrackingBackfillCloneConflictsSuite extends RowTrackingBackfillConflict
                 // The upgradeProtocolBackfillObserver observes the transaction in
                 // [[RowTrackingBackfillCommands]] that adds the Row tracking table feature support.
                 case (upgradeProtocolBackfillObserver :: Nil) =>
-                  val (manualTransitionsBackfillObserver, updateMetadataBackfillObserver) =
-                    createAndChainBackfillObservers()
+                  val updateMetadataBackfillObserver = createUpdateMetadataBackfillObserver()
                   upgradeProtocolBackfillObserver.setNextObserver(
-                    manualTransitionsBackfillObserver, autoAdvance = true)
+                    updateMetadataBackfillObserver, autoAdvance = true)
 
                   // Prepare and commit Row Tracking table feature support transaction.
                   prepareAndCommitWithNextObserverSet(upgradeProtocolBackfillObserver)
-
-                  // Prepare and commit Manual State Transitions transaction.
-                  prepareAndCommitWithNextObserverSet(manualTransitionsBackfillObserver)
 
                   val Seq(cloneFuture) =
                     runFunctionsWithOrderingFromObserver(Seq(cloneTransaction)) {
@@ -156,16 +141,12 @@ class RowTrackingBackfillCloneConflictsSuite extends RowTrackingBackfillConflict
                 // The upgradeProtocolBackfillObserver observes the transaction in
                 // [[RowTrackingBackfillCommands]] that adds the Row tracking table feature support.
                 case (upgradeProtocolBackfillObserver :: Nil) =>
-                  val (manualTransitionsBackfillObserver, updateMetadataBackfillObserver) =
-                    createAndChainBackfillObservers()
+                  val updateMetadataBackfillObserver = createUpdateMetadataBackfillObserver()
                   upgradeProtocolBackfillObserver.setNextObserver(
-                    manualTransitionsBackfillObserver, autoAdvance = true)
+                    updateMetadataBackfillObserver, autoAdvance = true)
 
                   // Prepare and commit Row Tracking table feature support transaction.
                   prepareAndCommitWithNextObserverSet(upgradeProtocolBackfillObserver)
-
-                  // Prepare and commit Manual State Transitions transaction.
-                  prepareAndCommitWithNextObserverSet(manualTransitionsBackfillObserver)
 
                   val Seq(cloneFuture) =
                     runFunctionsWithOrderingFromObserver(Seq(cloneTransaction)) {

@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import java.util.*;
@@ -29,6 +30,10 @@ import java.util.function.Predicate;
  * table metadata.
  */
 public class TableConfig<T> {
+
+  public static final String MIN_PROTOCOL_READER_VERSION_KEY = "delta.minReaderVersion";
+
+  public static final String MIN_PROTOCOL_WRITER_VERSION_KEY = "delta.minWriterVersion";
 
   //////////////////
   // TableConfigs //
@@ -242,6 +247,20 @@ public class TableConfig<T> {
           true);
 
   /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg
+   * Compatibility V3 protocol. TODO: add the delta protocol link once updated
+   * [https://github.com/delta-io/delta/issues/4574]
+   */
+  public static final TableConfig<Boolean> ICEBERG_COMPAT_V3_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergCompatV3",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
    * The number of columns to collect stats on for data skipping. A value of -1 means collecting
    * stats for all columns.
    *
@@ -271,6 +290,85 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
+   * Compatibility V3 ({@code icebergCompatWriterV3}) protocol. V2 is skipped to align with the
+   * iceberg v3 spec.
+   */
+  public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V3_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergWriterCompatV3",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  public static class UniversalFormats {
+
+    /**
+     * The value that enables uniform exports to Iceberg for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     *
+     * <p>{@link #ICEBERG_COMPAT_V2_ENABLED but also be set to true} to fully enable this feature.
+     */
+    public static final String FORMAT_ICEBERG = "iceberg";
+    /**
+     * The value to use to enable uniform exports to Hudi for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     */
+    public static final String FORMAT_HUDI = "hudi";
+  }
+
+  private static final Collection<String> ALLOWED_UNIFORM_FORMATS =
+      Collections.unmodifiableList(
+          Arrays.asList(UniversalFormats.FORMAT_HUDI, UniversalFormats.FORMAT_ICEBERG));
+
+  /** Table config that allows for translation of Delta metadata to other table formats metadata. */
+  public static final TableConfig<Set<String>> UNIVERSAL_FORMAT_ENABLED_FORMATS =
+      new TableConfig<>(
+          "delta.universalFormat.enabledFormats",
+          null,
+          TableConfig::parseStringSet,
+          value -> ALLOWED_UNIFORM_FORMATS.containsAll(value),
+          String.format("each value must in the the set: %s", ALLOWED_UNIFORM_FORMATS),
+          true);
+
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Variant Shredding
+   * Preview protocol.
+   *
+   * @see <a
+   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md">
+   *     Delta-Variant Shredding Protocol</a>
+   */
+  public static final TableConfig<Boolean> VARIANT_SHREDDING_ENABLED =
+      new TableConfig<>(
+          "delta.enableVariantShredding",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  public static final TableConfig<String> MATERIALIZED_ROW_ID_COLUMN_NAME =
+      new TableConfig<>(
+          "delta.rowTracking.materializedRowIdColumnName",
+          null,
+          v -> v,
+          value -> true,
+          "need to be a string.",
+          false);
+
+  public static final TableConfig<String> MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME =
+      new TableConfig<>(
+          "delta.rowTracking.materializedRowCommitVersionColumnName",
+          null,
+          v -> v,
+          value -> true,
+          "need to be a string.",
+          false);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -291,9 +389,15 @@ public class TableConfig<T> {
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
+              addConfig(this, ICEBERG_COMPAT_V3_ENABLED);
               addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
+              addConfig(this, ICEBERG_WRITER_COMPAT_V3_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
               addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
+              addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);
+              addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
+              addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
+              addConfig(this, VARIANT_SHREDDING_ENABLED);
             }
           });
 
@@ -312,13 +416,19 @@ public class TableConfig<T> {
    * @throws InvalidConfigurationValueException if any of the properties are invalid
    * @throws UnknownConfigurationException if any of the properties are unknown
    */
-  public static Map<String, String> validateDeltaProperties(Map<String, String> newProperties) {
+  public static Map<String, String> validateAndNormalizeDeltaProperties(
+      Map<String, String> newProperties) {
     Map<String, String> validatedProperties = new HashMap<>();
     for (Map.Entry<String, String> kv : newProperties.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
 
-      if (key.startsWith("delta.")) {
+      boolean isTableFeatureOverrideKey =
+          key.startsWith(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX);
+      boolean isTableConfigKey = key.startsWith("delta.");
+      // TableFeature override properties validation is handled separately in TransactionBuilder.
+      boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;
+      if (shouldValidateProperties) {
         // If it is a delta table property, make sure it is a supported property and editable
         if (!VALID_PROPERTIES.containsKey(key)) {
           throw DeltaErrors.unknownConfigurationException(kv.getKey());
@@ -332,8 +442,8 @@ public class TableConfig<T> {
         tableConfig.validate(value);
         validatedProperties.put(tableConfig.getKey(), value);
       } else {
-        // allow unknown properties to be set
-        validatedProperties.put(key, value);
+        // allow unknown properties to be set (and preserve their original case!)
+        validatedProperties.put(kv.getKey(), value);
       }
     }
     return validatedProperties;
@@ -405,5 +515,18 @@ public class TableConfig<T> {
     if (!validator.test(parsedValue)) {
       throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
     }
+  }
+
+  private static Set<String> parseStringSet(String value) {
+    if (value == null || value.isEmpty()) {
+      return Collections.emptySet();
+    }
+    String[] formats = value.split(",");
+    Set<String> config = new HashSet<>();
+
+    for (String format : formats) {
+      config.add(format.trim());
+    }
+    return config;
   }
 }

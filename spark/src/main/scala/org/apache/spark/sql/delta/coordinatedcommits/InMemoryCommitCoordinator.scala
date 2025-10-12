@@ -83,9 +83,7 @@ class InMemoryCommitCoordinator(val batchSize: Long)
   private[coordinatedcommits] val perTableMap = new ConcurrentHashMap[Path, PerTableData]()
 
   private[coordinatedcommits] def withWriteLock[T](logPath: Path)(operation: => T): T = {
-    val tableData = Option(perTableMap.get(logPath)).getOrElse {
-      throw new IllegalArgumentException(s"Unknown table $logPath.")
-    }
+    val tableData = perTableMap.computeIfAbsent(logPath, _ => new PerTableData())
     val lock = tableData.lock.writeLock()
     lock.lock()
     try {
@@ -96,10 +94,7 @@ class InMemoryCommitCoordinator(val batchSize: Long)
   }
 
   private[coordinatedcommits] def withReadLock[T](logPath: Path)(operation: => T): T = {
-    val tableData = perTableMap.get(logPath)
-    if (tableData == null) {
-      throw new IllegalArgumentException(s"Unknown table $logPath.")
-    }
+    val tableData = perTableMap.computeIfAbsent(logPath, _ => new PerTableData())
     val lock = tableData.lock.readLock()
     lock.lock()
     try {
@@ -135,7 +130,7 @@ class InMemoryCommitCoordinator(val batchSize: Long)
     withWriteLock[CommitResponse](logPath) {
       val tableData = perTableMap.get(logPath)
       val expectedVersion = tableData.maxCommitVersion + 1
-      if (commitVersion != expectedVersion) {
+      if (commitVersion != expectedVersion && tableData.maxCommitVersion != -1) {
         throw new JCommitFailedException(
           commitVersion < expectedVersion,
           commitVersion < expectedVersion,
@@ -237,7 +232,8 @@ class InMemoryCommitCoordinator(val batchSize: Long)
  * The [[InMemoryCommitCoordinatorBuilder]] class is responsible for creating singleton instances of
  * [[InMemoryCommitCoordinator]] with the specified batchSize.
  */
-case class InMemoryCommitCoordinatorBuilder(batchSize: Long) extends CommitCoordinatorBuilder {
+case class InMemoryCommitCoordinatorBuilder(batchSize: Long)
+    extends CatalogOwnedCommitCoordinatorBuilder {
   private lazy val inMemoryStore = new InMemoryCommitCoordinator(batchSize)
 
   /** Name of the commit-coordinator */
@@ -245,6 +241,11 @@ case class InMemoryCommitCoordinatorBuilder(batchSize: Long) extends CommitCoord
 
   /** Returns a commit-coordinator based on the given conf */
   def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+    inMemoryStore
+  }
+
+  /** Returns a commit-coordinator based on the given catalog name */
+  def buildForCatalog(spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
     inMemoryStore
   }
 }

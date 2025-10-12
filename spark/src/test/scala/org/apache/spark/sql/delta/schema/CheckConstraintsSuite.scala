@@ -74,6 +74,25 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  test("Checking incorrect constraints added through table property in CREATE TABLE errors out") {
+    val tableName = "test_tbl"
+    withTable(tableName) {
+      sql(
+        s"""
+           |CREATE TABLE $tableName (
+           |id INT,
+           |event_date DATE
+           |) USING DELTA
+           |TBLPROPERTIES('delta.constraints.ch' = 'event_date < 2025-06-12');""".stripMargin)
+
+      val e = intercept[AnalysisException] {
+        sql(s"INSERT INTO $tableName VALUES(1, '2025-06-11')")
+      }
+      errorContains(e.getMessage,
+        "Cannot resolve \"(event_date < ((2025 - 6) - 12))\" due to data type mismatch")
+    }
+  }
+
   test("constraint must be boolean") {
     withTestTable { table =>
       checkError(

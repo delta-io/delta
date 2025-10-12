@@ -74,7 +74,7 @@ There are two types of APIs provided by the Delta Lake project.
 
 Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e., newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forward compatibility as new features are introduced to the transaction protocol (i.e., an older version of Delta Lake may not be able to read a table produced by a newer version).
 
-Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/core/src/test/scala/org/apache/spark/sql/delta/ActionSerializerSuite.scala).
+Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/spark/src/test/scala/org/apache/spark/sql/delta/ActionSerializerSuite.scala).
 
 ## Roadmap
 

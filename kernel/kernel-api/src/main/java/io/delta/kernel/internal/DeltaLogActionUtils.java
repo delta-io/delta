@@ -31,8 +31,10 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.ActionsIterator;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
@@ -89,7 +91,7 @@ public class DeltaLogActionUtils {
    *
    * @param tablePath path for the given table
    * @param startVersion start version of the range (inclusive)
-   * @param endVersion end version of the range (inclusive)
+   * @param endVersionOpt end version of the range (inclusive)
    * @return the list of commit files in increasing order between startVersion and endVersion
    * @throws TableNotFoundException if the table does not exist or if it is not a delta table
    * @throws KernelException if a commit file does not exist for any of the versions in the provided
@@ -97,11 +99,20 @@ public class DeltaLogActionUtils {
    * @throws KernelException if provided an invalid version range
    */
   public static List<FileStatus> getCommitFilesForVersionRange(
-      Engine engine, Path tablePath, long startVersion, long endVersion) {
+      Engine engine, Path tablePath, long startVersion, Optional<Long> endVersionOpt) {
+    logger.info(
+        "{}: Getting the commit files for versions [{}, {}]",
+        tablePath,
+        startVersion,
+        endVersionOpt);
+
     // Validate arguments
-    if (startVersion < 0 || endVersion < startVersion) {
-      throw invalidVersionRange(startVersion, endVersion);
-    }
+    endVersionOpt.ifPresent(
+        endVersion -> {
+          if (startVersion < 0 || endVersion < startVersion) {
+            throw invalidVersionRange(startVersion, endVersion);
+          }
+        });
 
     // Get any available commit files within the version range
     final List<FileStatus> commitFiles =
@@ -110,7 +121,7 @@ public class DeltaLogActionUtils {
                 Collections.singleton(DeltaLogFileType.COMMIT),
                 tablePath,
                 startVersion,
-                Optional.of(endVersion),
+                endVersionOpt,
                 false /* mustBeRecreatable */)
             .toInMemoryList();
 
@@ -118,12 +129,12 @@ public class DeltaLogActionUtils {
     // This can be due to (1) an empty directory, (2) no valid delta files in the directory,
     // (3) only delta files less than startVersion prefix (4) only delta files after endVersion
     if (commitFiles.isEmpty()) {
-      throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersion);
+      throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersionOpt);
     }
 
     // Verify commit files found
     // (check that they are continuous and start with startVersion and end with endVersion)
-    verifyDeltaVersions(commitFiles, startVersion, endVersion, tablePath);
+    verifyDeltaVersions(commitFiles, startVersion, endVersionOpt, tablePath);
 
     return commitFiles;
   }
@@ -140,7 +151,6 @@ public class DeltaLogActionUtils {
    */
   public static CloseableIterator<ColumnarBatch> readCommitFiles(
       Engine engine, List<FileStatus> commitFiles, StructType readSchema) {
-
     return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty())
         .map(
             actionWrapper -> {
@@ -218,27 +228,57 @@ public class DeltaLogActionUtils {
         startVersion,
         endVersionOpt);
 
+    // This variable is used to help determine if we should throw an error if the table history is
+    // not reconstructable. Only commit and checkpoint files are applicable.
     // Must be final to be used in lambda
-    final AtomicBoolean hasReturnedAnElement = new AtomicBoolean(false);
+    final AtomicBoolean hasReturnedCommitOrCheckpoint = new AtomicBoolean(false);
 
     return listLogDir(engine, tablePath, startVersion)
         .breakableFilter(
             fs -> {
-              if (fileTypes.contains(DeltaLogFileType.COMMIT)
-                  && FileNames.isCommitFile(getName(fs.getPath()))) {
+              String fileName = getName(fs.getPath());
+              if (fileTypes.contains(DeltaLogFileType.COMMIT) && FileNames.isCommitFile(fileName)) {
+                // Here, we do nothing (we will consume this file).
+              } else if (fileTypes.contains(DeltaLogFileType.LOG_COMPACTION)
+                  && FileNames.isLogCompactionFile(fileName)) {
                 // Here, we do nothing (we will consume this file).
               } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
-                  && FileNames.isCheckpointFile(getName(fs.getPath()))
+                  && FileNames.isCheckpointFile(fileName)
                   && fs.getSize() > 0) {
                 // Checkpoint files of 0 size are invalid but may be ignored silently when read,
                 // hence we ignore them so that we never pick up such checkpoints.
+                // Here, we do nothing (we will consume this file).
+              } else if (fileTypes.contains(DeltaLogFileType.CHECKSUM)
+                  && FileNames.isChecksumFile(fileName)) {
                 // Here, we do nothing (we will consume this file).
               } else {
                 logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
                 return BreakableFilterResult.EXCLUDE; // Here, we exclude and filter out this file.
               }
 
-              final long fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
+              final long fileVersion;
+              if (FileNames.isLogCompactionFile(fileName)) {
+                Tuple2<Long, Long> compactionVersions =
+                    FileNames.logCompactionVersions(new Path(fs.getPath()));
+                // We use start version here. Below this is used to determine if we should stop
+                // listing because we've listed past the required version. But with a log compaction
+                // file, if the end version is passed the requested version, we don't want to stop,
+                // we just won't use the compaction file.
+                fileVersion = compactionVersions._1;
+
+                // Now check if the compaction end version is too far in the future, and don't
+                // include this file if it is
+                if (endVersionOpt.isPresent()) {
+                  final long endVersion = endVersionOpt.get();
+                  if (compactionVersions._2 > endVersion) {
+                    logger.debug(
+                        "Excluding compaction file as it covers past the end version {}", fileName);
+                    return BreakableFilterResult.EXCLUDE;
+                  }
+                }
+              } else {
+                fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
+              }
 
               if (fileVersion < startVersion) {
                 throw new RuntimeException(
@@ -251,9 +291,10 @@ public class DeltaLogActionUtils {
                 final long endVersion = endVersionOpt.get();
 
                 if (fileVersion > endVersion) {
-                  if (mustBeRecreatable && !hasReturnedAnElement.get()) {
+                  if (mustBeRecreatable && !hasReturnedCommitOrCheckpoint.get()) {
                     final long earliestVersion =
-                        DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
+                        DeltaHistoryManager.getEarliestRecreatableCommit(
+                            engine, logPath, Optional.empty());
                     throw DeltaErrors.versionBeforeFirstAvailableCommit(
                         tablePath.toString(), endVersion, earliestVersion);
                   } else {
@@ -266,9 +307,90 @@ public class DeltaLogActionUtils {
                 }
               }
 
-              hasReturnedAnElement.set(true);
+              if (FileNames.isCommitFile(fileName)
+                  || FileNames.isCheckpointFile(fileName)
+                  || FileNames.isLogCompactionFile(fileName)) {
+                hasReturnedCommitOrCheckpoint.set(true);
+              }
 
               return BreakableFilterResult.INCLUDE;
+            });
+  }
+
+  /**
+   * Returns the delta actions from the delta files provided in commitFiles. Reads and returns the
+   * actions requested in actionSet. In addition, this function does a few key things:
+   *
+   * <ul>
+   *   <li>Performs protocol validations: we always read the protocol action. If we see a protocol
+   *       action, we validate that it is compatible with Kernel. If the protocol action was not
+   *       requested in actionSet, we remove it from the returned columnar batches.
+   *   <li>Adds commit version column: the first column in the returned batches will be the commit
+   *       version
+   *   <li>Add commit timestamp column: the second column in the returned batches will be the
+   *       timestamp column. This timestamp is the inCommitTimestamp if it is available, otherwise
+   *       it is the file modification time for the commit file.
+   * </ul>
+   *
+   * <p>For the returned columnar batches:
+   *
+   * <ul>
+   *   <li>Each row within the same batch is guaranteed to have the same commit version
+   *   <li>The batch commit versions are monotonically increasing
+   *   <li>The top-level columns include "version", "timestamp", and the actions requested in
+   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
+   *       respectively. The remaining columns are based on the actions requested and each have the
+   *       schema found in {@code DeltaAction.schema}.
+   *   <li>It is possible for a row to be all null
+   * </ul>
+   */
+  public static CloseableIterator<ColumnarBatch> getActionsFromCommitFilesWithProtocolValidation(
+      Engine engine,
+      String tablePath,
+      List<FileStatus> commitFiles,
+      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    // Create a new action set which is a super set of the requested actions.
+    // The extra actions are needed either for checks or to extract
+    // extra information. We will strip out the extra actions before
+    // returning the result.
+    Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
+    copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    // commitInfo is needed to extract the inCommitTimestamp of delta files, this is used in
+    // ActionsIterator to resolve the timestamp when available
+    copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
+    // Determine whether the additional actions were in the original set.
+    boolean shouldDropProtocolColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    boolean shouldDropCommitInfoColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
+
+    StructType readSchema =
+        new StructType(
+            copySet.stream()
+                .map(action -> new StructField(action.colName, action.schema, true))
+                .collect(Collectors.toList()));
+    logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
+
+    return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema)
+        .map(
+            batch -> {
+              int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
+              ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+              for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
+                if (!protocolVector.isNullAt(rowId)) {
+                  Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+                  TableFeatures.validateKernelCanReadTheTable(protocol, tablePath);
+                }
+              }
+              ColumnarBatch batchToReturn = batch;
+              if (shouldDropProtocolColumn) {
+                batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
+              }
+              int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
+              if (shouldDropCommitInfoColumn) {
+                batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
+              }
+              return batchToReturn;
             });
   }
 
@@ -302,7 +424,7 @@ public class DeltaLogActionUtils {
   static void verifyDeltaVersions(
       List<FileStatus> commitFiles,
       long expectedStartVersion,
-      long expectedEndVersion,
+      Optional<Long> expectedEndVersionOpt,
       Path tablePath) {
 
     List<Long> commitVersions =
@@ -326,10 +448,13 @@ public class DeltaLogActionUtils {
           commitVersions.isEmpty() ? Optional.empty() : Optional.of(commitVersions.get(0)));
     }
 
-    if (!Objects.equals(ListUtils.getLast(commitVersions), expectedEndVersion)) {
-      throw endVersionNotFound(
-          tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
-    }
+    expectedEndVersionOpt.ifPresent(
+        expectedEndVersion -> {
+          if (!Objects.equals(ListUtils.getLast(commitVersions), expectedEndVersion)) {
+            throw endVersionNotFound(
+                tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
+          }
+        });
   }
 
   /**

@@ -237,16 +237,22 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
     val baseDir = dataPath.toString
     val conf = spark.sparkContext.broadcast(serializableConf)
     val partitionSchema = convertTargetTable.partitionSchema
+    val enforceRelativePathCheck = enforceRelativePath
 
     {
       convertTargetTable.fileManifest.allFiles.mapPartitions { targetFile =>
         val basePath = new Path(baseDir)
         val fs = basePath.getFileSystem(conf.value.value)
         targetFile.map(ConvertUtils.createAddFile(
-          _, basePath, fs, SQLConf.get, Some(partitionSchema)))
+          _, basePath, fs, SQLConf.get, Some(partitionSchema), !enforceRelativePathCheck))
       }
     }
   }
+
+  /**
+   * All data file paths are required to be relative to the table path when true
+   */
+  def enforceRelativePath: Boolean = true
 
   def sizeInBytes: Long = convertTargetTable.sizeInBytes
 
@@ -276,22 +282,28 @@ case class CloneParquetSource(
     .getOrElse(s"parquet.`${tableIdentifier.table}`")
 }
 
+case class TablePolicies(
+    hasRowPolicies: Boolean,
+    hasColumnPolicies: Boolean
+)
+
 /**
  * A iceberg table source to be cloned from
  */
 case class CloneIcebergSource(
-  tableIdentifier: TableIdentifier,
-  sparkTable: Option[Table],
-  deltaSnapshot: Option[Snapshot],
+  metadataLocation: String,
+  tableNameOpt: Option[String],
+  tablePoliciesOpt: Option[TablePolicies],
+  deltaSnapshotOpt: Option[Snapshot],
   spark: SparkSession) extends CloneConvertedSource(spark) {
 
   override lazy val convertTargetTable: ConvertTargetTable =
-    ConvertUtils.getIcebergTable(spark, tableIdentifier.table, sparkTable, deltaSnapshot)
+    ConvertUtils.getIcebergTable(spark, metadataLocation, deltaSnapshotOpt)
 
   override def format: String = CloneSourceFormat.ICEBERG
 
   override def name: String =
-    sparkTable.map(_.name()).getOrElse(s"iceberg.`${tableIdentifier.table}`")
+    tableNameOpt.getOrElse(s"iceberg.`$metadataLocation`")
 
   override def catalogTable: Option[CatalogTable] = None
 }

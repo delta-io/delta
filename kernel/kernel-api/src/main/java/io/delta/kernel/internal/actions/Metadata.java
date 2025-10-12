@@ -23,6 +23,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -103,6 +104,8 @@ public class Metadata {
       ArrayValue partitionColumns,
       Optional<Long> createdTime,
       MapValue configurationMapValue) {
+    ensureNoMetadataColumns(schema);
+
     this.id = requireNonNull(id, "id is null");
     this.name = name;
     this.description = requireNonNull(description, "description is null");
@@ -127,9 +130,33 @@ public class Metadata {
                         .collect(Collectors.toList())));
   }
 
+  /**
+   * Returns a new metadata object that has a new configuration which is the combination of its
+   * current configuration and {@code configuration}.
+   *
+   * <p>For overlapping keys the values from {@code configuration} take precedence.
+   */
   public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
     newConfiguration.putAll(configuration);
+    return withReplacedConfiguration(newConfiguration);
+  }
+
+  /**
+   * Returns a new metadata object that has a new configuration which does not contain any of the
+   * keys provided in {@code keysToUnset}.
+   */
+  public Metadata withConfigurationKeysUnset(Set<String> keysToUnset) {
+    Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
+    keysToUnset.forEach(newConfiguration::remove);
+    return withReplacedConfiguration(newConfiguration);
+  }
+
+  /**
+   * Returns a new Metadata object with the configuration provided with newConfiguration (any prior
+   * configuration is replaced).
+   */
+  public Metadata withReplacedConfiguration(Map<String, String> newConfiguration) {
     return new Metadata(
         this.id,
         this.name,
@@ -240,6 +267,18 @@ public class Metadata {
   }
 
   /**
+   * The full schema (including partition columns) with the field names converted to their physical
+   * names (column names used in the data files) based on the table's column mapping mode. When
+   * column mapping mode is ID, fieldId metadata is preserved in the field metadata; all column
+   * metadata is otherwise removed.
+   */
+  public StructType getPhysicalSchema() {
+    ColumnMapping.ColumnMappingMode mappingMode =
+        ColumnMapping.getColumnMappingMode(getConfiguration());
+    return ColumnMapping.convertToPhysicalSchema(schema, schema, mappingMode);
+  }
+
+  /**
    * Filter out the key-value pair matches exactly with the old properties.
    *
    * @param newProperties the new properties to be filtered
@@ -310,5 +349,15 @@ public class Metadata {
       partitionColumnNames.add(partitionColName.toLowerCase(Locale.ROOT));
     }
     return Collections.unmodifiableSet(partitionColumnNames);
+  }
+
+  /** Helper method to ensure that a table schema never contains metadata columns. */
+  private void ensureNoMetadataColumns(StructType schema) {
+    for (StructField field : schema.fields()) {
+      if (field.isMetadataColumn()) {
+        throw new IllegalArgumentException(
+            "Table schema cannot contain metadata columns: " + field.getName());
+      }
+    }
   }
 }

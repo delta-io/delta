@@ -108,7 +108,8 @@ public interface JsonHandler {
    *
    * @param filePath Fully qualified destination file path
    * @param data Iterator of {@link Row} objects where each row should be serialized as JSON and
-   *     written as separate line in the destination file.
+   *     written as separate line in the destination file. It is the responsibility of the
+   *     implementation to close this iterator.
    * @param overwrite If {@code true}, the file is overwritten if it already exists. If {@code
    *     false} and a file exists {@link FileAlreadyExistsException} is thrown.
    * @throws FileAlreadyExistsException if the file already exists and {@code overwrite} is false.

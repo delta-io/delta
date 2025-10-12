@@ -19,12 +19,23 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.InvalidConfigurationValueException
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.util.ColumnMappingSuiteBase
-import io.delta.kernel.types.{IntegerType, StringType, StructType}
+import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
+import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructField, StructType}
 
-class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
+import org.scalatest.funsuite.AnyFunSuite
+
+class DeltaColumnMappingTransactionBuilderV1Suite extends DeltaColumnMappingSuiteBase
+    with WriteUtils {}
+
+class DeltaColumnMappingTransactionBuilderV2Suite extends DeltaColumnMappingSuiteBase
+    with WriteUtilsWithV2Builders {}
+
+trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
+    with ColumnMappingSuiteBase {
 
   val simpleTestSchema = new StructType()
     .add("a", StringType.STRING, true)
@@ -86,8 +97,30 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("b"), 2)
 
+      assert(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(getMetadata(
+        engine,
+        tablePath)) == 2)
+
       val protocol = getProtocol(engine, tablePath)
       assert(protocol.getMinReaderVersion == 2 && protocol.getMinWriterVersion == 7)
+    }
+  }
+
+  test("new table with existing column mappings in schema writes COLUMN_MAPPING_MAX_COLUMN_ID") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
+      val fieldMetadata = FieldMetadata.builder()
+        .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+        .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-0").build()
+      val structField = new StructField("col_name", IntegerType.INTEGER, false, fieldMetadata)
+      val schema = new StructType(Seq(structField).asJava)
+      createEmptyTable(engine, tablePath, schema, tableProperties = props)
+
+      val structtype = getMetadata(engine, tablePath).getSchema
+      assertColumnMapping(structtype.get("col_name"), 1)
+      assert(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(getMetadata(
+        engine,
+        tablePath)) == 1)
     }
   }
 
@@ -189,7 +222,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
         verifyCMTestSchemaHasValidColumnMappingInfo(
           getMetadata(engine, tablePath),
           isNewTable = true,
-          enableIcebergComaptV2 = withIcebergCompatV2)
+          enableIcebergCompatV2 = withIcebergCompatV2)
       }
     }
   }
@@ -209,6 +242,21 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
       assert(getMetadataActionFromCommit(engine, table, version = 0).isDefined)
       assert(getMetadataActionFromCommit(engine, table, version = 1).isEmpty)
       assert(getMetadataActionFromCommit(engine, table, version = 2).isEmpty)
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"test writing data into a column mapping enabled table is blocked: $cmMode") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+        createEmptyTable(engine, tablePath, testSchema, tableProperties = props)
+
+        val ex = intercept[UnsupportedOperationException] {
+          appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches1))
+        }
+        assert(ex.getMessage.contains(
+          "Writing into column mapping enabled table is not supported yet."))
+      }
     }
   }
 }

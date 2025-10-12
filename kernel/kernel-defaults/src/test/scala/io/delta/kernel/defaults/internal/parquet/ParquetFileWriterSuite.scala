@@ -351,7 +351,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
             (
               Option(stats.getMinValues.get(col(column))).map(_.getValue).orNull,
               Option(stats.getMaxValues.get(col(column))).map(_.getValue).orNull,
-              Option(stats.getNullCounts.get(col(column))).orNull)
+              Option(stats.getNullCount.get(col(column))).orNull)
 
           assert(getStats("col_0") === expFltStats)
           assert(getStats("col_1") === expDblStats)
@@ -391,7 +391,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
         assert(fileStatus.getStatistics.isPresent)
         assert(fileStatus.getStatistics.get().getMinValues.size() === expStatsColCount)
         assert(fileStatus.getStatistics.get().getMaxValues.size() === expStatsColCount)
-        assert(fileStatus.getStatistics.get().getNullCounts.size() === expStatsColCount)
+        assert(fileStatus.getStatistics.get().getNullCount.size() === expStatsColCount)
 
         // Convert to TestRow for comparison with the actual values computing using Spark.
         fileStatus.toTestRow(statsColumns)

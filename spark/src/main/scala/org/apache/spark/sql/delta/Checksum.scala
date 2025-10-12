@@ -518,7 +518,7 @@ trait RecordChecksum extends DeltaLogging {
     // `minSetTransactionRetentionTimestamp` is set. So passing this as None here explicitly.
     // We can also ignore file retention because that only affects [[RemoveFile]] actions.
     val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = 0,
+      minFileRetentionTimestamp = None,
       minSetTransactionRetentionTimestamp = None)
 
     logReplay.append(attemptVersion - 1, oldSetTransactions.toIterator)
@@ -547,7 +547,7 @@ trait RecordChecksum extends DeltaLogging {
 
     // We only work with DomainMetadata, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = 0,
+      minFileRetentionTimestamp = None,
       minSetTransactionRetentionTimestamp = None)
 
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC)
@@ -612,7 +612,7 @@ trait RecordChecksum extends DeltaLogging {
 
     // We only work with AddFile, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = 0,
+      minFileRetentionTimestamp = None,
       minSetTransactionRetentionTimestamp = None)
 
     logReplay.append(attemptVersion - 1, oldAllFiles.map(normalizePath).toIterator)
@@ -629,7 +629,11 @@ object RecordChecksum {
     DeltaOperations.ComputeStats(Seq.empty).name,
     // Backfill/Tagging re-adds existing AddFiles without changing the underlying data files.
     // Incremental commits should ignore backfill commits.
-    DeltaOperations.RowTrackingBackfill().name
+    DeltaOperations.RowTrackingBackfill().name,
+    // Same as Backfill.
+    DeltaOperations.RowTrackingUnBackfill().name,
+    // Dropping a feature may re-add existing AddFiles without changing the underlying data files.
+    DeltaOperations.OP_DROP_FEATURE
   )
 
   // Operations where we should ignore RemoveFiles in the incremental checksum computation.

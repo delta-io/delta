@@ -25,6 +25,7 @@ import io.delta.kernel.engine._
 import io.delta.kernel.metrics.MetricsReport
 
 import org.apache.hadoop.conf.Configuration
+import org.slf4j.LoggerFactory
 
 /**
  * Test utilities for testing the Kernel-API created [[MetricsReports]]s.
@@ -33,6 +34,8 @@ import org.apache.hadoop.conf.Configuration
  * to mock both file listings AND file contents.
  */
 trait MetricsReportTestUtils extends TestUtils {
+
+  private val logger = LoggerFactory.getLogger(classOf[MetricsReportTestUtils])
 
   override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
     {
@@ -54,8 +57,10 @@ trait MetricsReportTestUtils extends TestUtils {
     // Initialize a buffer for any metric reports and wrap the engine so that they are recorded
     val reports = ArrayBuffer.empty[MetricsReport]
     if (expectException) {
-      val e = intercept[Exception](
-        f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine)))
+      val e = intercept[Exception] {
+        f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
+      }
+      logger.warn("Caught exception:", e)
       (reports, Some(e))
     } else {
       f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
