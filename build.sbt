@@ -672,23 +672,27 @@ lazy val spark = (project in file("spark-combined"))
       allMappings.groupBy(_._2).map(_._2.last).toSeq
     },
     
-    // Test sources and resources from original spark/ directory
-    Test / unmanagedSourceDirectories := Seq(
-      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "scala",
-      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "java"
-    ),
+    // Test sources and resources from original spark/ directory (delta-spark-v1's directory)
+    Test / unmanagedSourceDirectories := {
+      val sparkDir = (`delta-spark-v1` / baseDirectory).value
+      Seq(
+        sparkDir / "src" / "test" / "scala",
+        sparkDir / "src" / "test" / "java"
+      )
+    },
     Test / unmanagedResourceDirectories := Seq(
-      baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources"
+      (`delta-spark-v1` / baseDirectory).value / "src" / "test" / "resources"
     ),
-    Test / resourceDirectory := baseDirectory.value.getParentFile / "spark" / "src" / "test" / "resources",
+    Test / resourceDirectory := (`delta-spark-v1` / baseDirectory).value / "src" / "test" / "resources",
     
     // Include spark-version-specific test sources
     Test / unmanagedSourceDirectories ++= {
       val sparkVer = sparkVersion.value
+      val sparkDir = (`delta-spark-v1` / baseDirectory).value
       if (sparkVer.startsWith("3.5")) {
-        Seq(baseDirectory.value.getParentFile / "spark" / "src" / "test" / "scala-spark-3.5")
+        Seq(sparkDir / "src" / "test" / "scala-spark-3.5")
       } else if (sparkVer.startsWith("4.0")) {
-        Seq(baseDirectory.value.getParentFile / "spark" / "src" / "test" / "scala-spark-master")
+        Seq(sparkDir / "src" / "test" / "scala-spark-master")
       } else {
         Seq.empty
       }
