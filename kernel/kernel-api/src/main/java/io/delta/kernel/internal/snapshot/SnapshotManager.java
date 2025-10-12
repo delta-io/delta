@@ -280,12 +280,14 @@ public class SnapshotManager {
         // We either (a) determined this checkpoint version from the _LAST_CHECKPOINT file, or (b)
         // found the last complete checkpoint before our versionToLoad. In either case, we didn't
         // see the checkpoint file in the listing.
+        // TODO: throw a more specific error based on case (a) or (b)
         throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointVersionOpt.get());
       } else {
         // Either no files found OR no *delta* files found even when listing from 0. This means that
         // the delta table does not exist yet.
         throw new TableNotFoundException(
-            tablePath.toString(), format("No delta files found in the directory: %s", logPath));
+            tablePath.toString(), 
+            "No complete checkpoint found and no delta files found. This may indicate a corrupted Delta table.");
       }
     }
 
@@ -406,8 +408,7 @@ public class SnapshotManager {
     // Check that we have found at least one checkpoint or delta file
     if (!latestCompleteCheckpointOpt.isPresent() && allDeltasAfterCheckpoint.isEmpty()) {
       throw new InvalidTableException(
-          tablePath.toString(), 
-          "No complete checkpoint found and no delta files found. This may indicate a corrupted or incomplete Delta table.");
+          tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
     final Optional<ParsedPublishedDeltaData> deltaAtCheckpointVersionOpt =
@@ -419,7 +420,7 @@ public class SnapshotManager {
     if (latestCompleteCheckpointOpt.isPresent() && !deltaAtCheckpointVersionOpt.isPresent()) {
       throw new InvalidTableException(
           tablePath.toString(),
-          String.format("Missing delta file for version %d. Every checkpoint must have a corresponding delta file at the same version.", latestCompleteCheckpointVersion));
+          String.format("Missing delta file for version %s", latestCompleteCheckpointVersion));
     }
 
     // Check that the $newVersion we actually loaded is the desired $versionToLoad
@@ -487,11 +488,8 @@ public class SnapshotManager {
                   if (newCheckpointFileStatuses.size() != newCheckpointPaths.size()) {
                     final String msg =
                         format(
-                            "Checkpoint at version %d appears to be corrupted. Expected to find %d checkpoint files but only found %d. "
-                                + "Missing files:\n%s\nAvailable checkpoint files:\n%s",
-                            latestCompleteCheckpoint.version,
-                            newCheckpointPaths.size(),
-                            newCheckpointFileStatuses.size(),
+                            "Seems like the checkpoint is corrupted. Failed in getting the file "
+                                + "information for:\n%s\namong\n%s",
                             newCheckpointPaths.stream()
                                 .map(Path::toString)
                                 .collect(Collectors.joining("\n - ")),
