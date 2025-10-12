@@ -147,9 +147,12 @@ public class SnapshotManager {
   public static void verifyDeltaVersionsContiguous(List<Long> versions, Path tablePath) {
     for (int i = 1; i < versions.size(); i++) {
       if (versions.get(i) != versions.get(i - 1) + 1) {
+        long expectedVersion = versions.get(i - 1) + 1;
+        long actualVersion = versions.get(i);
         throw new InvalidTableException(
             tablePath.toString(),
-            String.format("Missing delta files: versions are not contiguous: (%s)", versions));
+            String.format("Missing delta files: versions are not contiguous. Expected version %d after version %d, but found version %d. All versions: %s", 
+                expectedVersion, versions.get(i - 1), actualVersion, versions));
       }
     }
   }
@@ -283,7 +286,7 @@ public class SnapshotManager {
         // Either no files found OR no *delta* files found even when listing from 0. This means that
         // the delta table does not exist yet.
         throw new TableNotFoundException(
-            tablePath.toString(), format("No delta files found in the directory: %s", logPath));
+            tablePath.toString(), format("No delta files found in the directory: %s OR no delta files found even when listing from 0. The delta table does not exist.", logPath));
       }
     }
 
@@ -404,7 +407,7 @@ public class SnapshotManager {
     // Check that we have found at least one checkpoint or delta file
     if (!latestCompleteCheckpointOpt.isPresent() && allDeltasAfterCheckpoint.isEmpty()) {
       throw new InvalidTableException(
-          tablePath.toString(), "No complete checkpoint found and no delta files found");
+          tablePath.toString(), "No complete checkpoint found and no delta files found. This may indicate a corrupted or incomplete Delta table.");
     }
 
     final Optional<ParsedPublishedDeltaData> deltaAtCheckpointVersionOpt =
@@ -416,7 +419,7 @@ public class SnapshotManager {
     if (latestCompleteCheckpointOpt.isPresent() && !deltaAtCheckpointVersionOpt.isPresent()) {
       throw new InvalidTableException(
           tablePath.toString(),
-          String.format("Missing delta file for version %s", latestCompleteCheckpointVersion));
+          String.format("Missing delta file for version %d. Every checkpoint must have a corresponding delta file at the same version.", latestCompleteCheckpointVersion));
     }
 
     // Check that the $newVersion we actually loaded is the desired $versionToLoad
@@ -446,8 +449,11 @@ public class SnapshotManager {
         throw new InvalidTableException(
             tablePath.toString(),
             String.format(
-                "Cannot compute snapshot. Missing delta file version %d.",
-                latestCompleteCheckpointVersion + 1));
+                "Cannot compute snapshot. Missing delta file version %d. Expected delta files to start from version %d after checkpoint version %d, but found delta file at version %d.",
+                latestCompleteCheckpointVersion + 1,
+                latestCompleteCheckpointVersion + 1,
+                latestCompleteCheckpointVersion,
+                allDeltasAfterCheckpoint.get(0).getVersion()));
       }
 
       // Note: We have already asserted above that $versionToLoad equals $newVersion.
@@ -481,8 +487,11 @@ public class SnapshotManager {
                   if (newCheckpointFileStatuses.size() != newCheckpointPaths.size()) {
                     final String msg =
                         format(
-                            "Seems like the checkpoint is corrupted. Failed in getting the file "
-                                + "information for:\n%s\namong\n%s",
+                            "Checkpoint at version %d appears to be corrupted. Expected to find %d checkpoint files but only found %d. "
+                                + "Missing files:\n%s\nAvailable checkpoint files:\n%s",
+                            latestCompleteCheckpoint.version,
+                            newCheckpointPaths.size(),
+                            newCheckpointFileStatuses.size(),
                             newCheckpointPaths.stream()
                                 .map(Path::toString)
                                 .collect(Collectors.joining("\n - ")),
