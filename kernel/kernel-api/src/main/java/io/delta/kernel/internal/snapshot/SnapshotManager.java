@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal.snapshot;
 
-import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
@@ -27,33 +26,31 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
+import io.delta.kernel.internal.files.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay;
+import io.delta.kernel.internal.table.SnapshotFactory;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class SnapshotManager {
 
-  /**
-   * The latest {@link SnapshotHint} for this table. The initial value inside the AtomicReference is
-   * `null`.
-   */
-  private final AtomicReference<SnapshotHint> latestSnapshotHint;
-
   private final Path tablePath;
   private final Path logPath;
 
   public SnapshotManager(Path tablePath) {
-    this.latestSnapshotHint = new AtomicReference<>();
     this.tablePath = tablePath;
     this.logPath = new Path(tablePath, "_delta_log");
   }
@@ -72,12 +69,15 @@ public class SnapshotManager {
    * @throws TableNotFoundException if the table does not exist
    * @throws InvalidTableException if the table is in an invalid state
    */
-  public Snapshot buildLatestSnapshot(Engine engine, SnapshotQueryContext snapshotContext)
+  public SnapshotImpl buildLatestSnapshot(Engine engine, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     final LogSegment logSegment =
-        getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */);
-
-    snapshotContext.setVersion(logSegment.getVersion());
+        snapshotContext
+            .getSnapshotMetrics()
+            .loadLogSegmentTotalDurationTimer
+            .time(() -> getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */));
+    snapshotContext.setResolvedVersion(logSegment.getVersion());
+    snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
     return createSnapshot(logSegment, engine, snapshotContext);
   }
@@ -95,7 +95,14 @@ public class SnapshotManager {
       Engine engine, long version, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     final LogSegment logSegment =
-        getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */);
+        snapshotContext
+            .getSnapshotMetrics()
+            .loadLogSegmentTotalDurationTimer
+            .time(
+                () -> getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */));
+
+    snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
+    snapshotContext.setResolvedVersion(logSegment.getVersion());
 
     return createSnapshot(logSegment, engine, snapshotContext);
   }
@@ -110,32 +117,21 @@ public class SnapshotManager {
    * @throws TableNotFoundException if the table does not exist
    * @throws InvalidTableException if the table is in an invalid state
    */
-  public Snapshot getSnapshotForTimestamp(
-      Engine engine, long millisSinceEpochUTC, SnapshotQueryContext snapshotContext)
+  public SnapshotImpl getSnapshotForTimestamp(
+      Engine engine,
+      SnapshotImpl latestSnapshot,
+      long millisSinceEpochUTC,
+      SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
-    long versionToRead =
-        snapshotContext
-            .getSnapshotMetrics()
-            .timestampToVersionResolutionTimer
-            .time(
-                () ->
-                    DeltaHistoryManager.getActiveCommitAtTimestamp(
-                            engine,
-                            logPath,
-                            millisSinceEpochUTC,
-                            true /* mustBeRecreatable */,
-                            false /* canReturnLastCommit */,
-                            false /* canReturnEarliestCommit */)
-                        .getVersion());
-    logger.info(
-        "{}: Took {} ms to fetch version at timestamp {}",
-        tablePath,
-        snapshotContext.getSnapshotMetrics().timestampToVersionResolutionTimer.totalDurationMs(),
-        millisSinceEpochUTC);
-    // We update the query context version as soon as we resolve timestamp --> version
-    snapshotContext.setVersion(versionToRead);
+    final long versionToLoad =
+        SnapshotFactory.resolveTimestampToSnapshotVersion(
+            engine,
+            snapshotContext,
+            latestSnapshot,
+            millisSinceEpochUTC,
+            Collections.emptyList() /* logDatas */);
 
-    return getSnapshotAt(engine, versionToRead, snapshotContext);
+    return getSnapshotAt(engine, versionToLoad, snapshotContext);
   }
 
   ////////////////////
@@ -158,67 +154,32 @@ public class SnapshotManager {
     }
   }
 
-  /**
-   * Updates the current `latestSnapshotHint` with the `newHint` if and only if the newHint is newer
-   * (i.e. has a later table version).
-   *
-   * <p>Must be thread-safe.
-   */
-  private void registerHint(SnapshotHint newHint) {
-    latestSnapshotHint.updateAndGet(
-        currHint -> {
-          if (currHint == null) return newHint; // the initial reference value is null
-          if (newHint.getVersion() > currHint.getVersion()) return newHint;
-          return currHint;
-        });
-  }
-
   private SnapshotImpl createSnapshot(
       LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
-    final String startingFromStr =
-        initSegment
-            .getCheckpointVersionOpt()
-            .map(v -> format("starting from checkpoint version %s.", v))
-            .orElse(".");
-    logger.info("{}: Loading version {} {}", tablePath, initSegment.getVersion(), startingFromStr);
+    final Lazy<LogSegment> lazyLogSegment = new Lazy<>(() -> initSegment);
 
-    long startTimeMillis = System.currentTimeMillis();
+    final Lazy<Optional<CRCInfo>> lazyCrcInfo =
+        SnapshotFactory.createLazyChecksumFileLoaderWithMetrics(
+            engine, lazyLogSegment, snapshotContext.getSnapshotMetrics());
 
-    LogReplay logReplay =
-        new LogReplay(
-            logPath,
-            tablePath,
-            initSegment.getVersion(),
-            engine,
-            initSegment,
-            Optional.ofNullable(latestSnapshotHint.get()),
-            snapshotContext.getSnapshotMetrics());
+    final ProtocolMetadataLogReplay.Result protocolMetadataResult =
+        ProtocolMetadataLogReplay.loadProtocolAndMetadata(
+            engine, tablePath, initSegment, lazyCrcInfo, snapshotContext.getSnapshotMetrics());
 
-    assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
+    // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
+    final LogReplay logReplay = new LogReplay(engine, tablePath, lazyLogSegment, lazyCrcInfo);
 
     final SnapshotImpl snapshot =
         new SnapshotImpl(
             tablePath,
-            initSegment,
+            initSegment.getVersion(),
+            lazyLogSegment,
             logReplay,
-            logReplay.getProtocol(),
-            logReplay.getMetadata(),
-            snapshotContext);
-
-    // Push snapshot report to engine
-    engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshot.getSnapshotReport()));
-
-    logger.info(
-        "{}: Took {}ms to construct the snapshot (loading protocol and metadata) for {} {}",
-        tablePath,
-        System.currentTimeMillis() - startTimeMillis,
-        initSegment.getVersion(),
-        startingFromStr);
-
-    final SnapshotHint hint =
-        new SnapshotHint(snapshot.getVersion(), snapshot.getProtocol(), snapshot.getMetadata());
-
-    registerHint(hint);
+            protocolMetadataResult.protocol,
+            protocolMetadataResult.metadata,
+            DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
+            snapshotContext,
+            Optional.empty() /* inCommitTimestampOpt */);
 
     return snapshot;
   }
@@ -238,10 +199,20 @@ public class SnapshotManager {
    *   <li>Third, process and validate this list of _delta_log files to yield a {@code LogSegment}.
    * </ol>
    */
-  @VisibleForTesting
   public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+    return getLogSegmentForVersion(engine, versionToLoadOpt, Collections.emptyList());
+  }
+
+  /**
+   * [delta-io/delta#4765]: Right now, we only support sorted and contiguous ratified commit log
+   * data.
+   */
+  public LogSegment getLogSegmentForVersion(
+      Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogDatas) {
+    final long versionToLoad = versionToLoadOpt.orElse(Long.MAX_VALUE);
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
+    final long logSegmentBuildingStartTimeMillis = System.currentTimeMillis();
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Step 1: Find the latest checkpoint version. If $versionToLoadOpt is empty, use the version //
@@ -273,11 +244,19 @@ public class SnapshotManager {
     // Step 3: List the files from $startVersion to $versionToLoad //
     /////////////////////////////////////////////////////////////////
 
-    final long startTimeMillis = System.currentTimeMillis();
+    Set<DeltaLogFileType> fileTypes =
+        new HashSet<>(
+            Arrays.asList(
+                DeltaLogFileType.COMMIT,
+                DeltaLogFileType.CHECKPOINT,
+                DeltaLogFileType.CHECKSUM,
+                DeltaLogFileType.LOG_COMPACTION));
+
+    final long listingStartTimeMillis = System.currentTimeMillis();
     final List<FileStatus> listedFileStatuses =
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
-                new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT)),
+                fileTypes,
                 tablePath,
                 listFromStartVersion,
                 versionToLoadOpt,
@@ -287,7 +266,7 @@ public class SnapshotManager {
     logger.info(
         "{}: Took {}ms to list the files after starting checkpoint",
         tablePath,
-        System.currentTimeMillis() - startTimeMillis);
+        System.currentTimeMillis() - listingStartTimeMillis);
 
     ////////////////////////////////////////////////////////////////////////
     // Step 4: Perform some basic validations on the listed file statuses //
@@ -310,19 +289,45 @@ public class SnapshotManager {
 
     logDebugFileStatuses("listedFileStatuses", listedFileStatuses);
 
-    ////////////////////////////////////////////////////////////////////////////
-    // Step 5: Partition $listedFileStatuses into the checkpoints and deltas. //
-    ////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Step 5: Partition $listedFileStatuses into the checkpoints, deltas, and compactions. //
+    //////////////////////////////////////////////////////////////////////////////////////////
 
-    final Tuple2<List<FileStatus>, List<FileStatus>> listedCheckpointAndDeltaFileStatuses =
-        ListUtils.partition(
-            listedFileStatuses,
-            fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()));
-    final List<FileStatus> listedCheckpointFileStatuses = listedCheckpointAndDeltaFileStatuses._1;
-    final List<FileStatus> listedDeltaFileStatuses = listedCheckpointAndDeltaFileStatuses._2;
+    final Map<Class<? extends ParsedLogData>, List<ParsedLogData>> partitionedFiles =
+        listedFileStatuses.stream()
+            .map(ParsedLogData::forFileStatus)
+            .collect(
+                Collectors.groupingBy(
+                    ParsedLogData::getGroupByCategoryClass,
+                    LinkedHashMap::new, // Ensure order is maintained
+                    Collectors.toList()));
 
+    final List<ParsedPublishedDeltaData> allPublishedDeltas =
+        partitionedFiles.getOrDefault(ParsedPublishedDeltaData.class, Collections.emptyList())
+            .stream()
+            .map(ParsedPublishedDeltaData.class::cast)
+            .collect(Collectors.toList());
+
+    final List<FileStatus> listedCheckpointFileStatuses =
+        partitionedFiles.getOrDefault(ParsedCheckpointData.class, Collections.emptyList()).stream()
+            .map(ParsedLogData::getFileStatus)
+            .collect(Collectors.toList());
+
+    final List<FileStatus> listedCompactionFileStatuses =
+        partitionedFiles.getOrDefault(ParsedLogCompactionData.class, Collections.emptyList())
+            .stream()
+            .map(ParsedLogData::getFileStatus)
+            .collect(Collectors.toList());
+
+    final List<FileStatus> listedChecksumFileStatuses =
+        partitionedFiles.getOrDefault(ParsedChecksumData.class, Collections.emptyList()).stream()
+            .map(ParsedLogData::getFileStatus)
+            .collect(Collectors.toList());
+
+    logDebugParsedLogDatas("allPublishedDeltas", allPublishedDeltas);
     logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
-    logDebugFileStatuses("listedDeltaFileStatuses", listedDeltaFileStatuses);
+    logDebugFileStatuses("listedCompactionFileStatuses", listedCompactionFileStatuses);
+    logDebugFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatuses);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 6: Determine the latest complete checkpoint version. The intuition here is that we //
@@ -357,75 +362,87 @@ public class SnapshotManager {
     // Step 7: Grab all deltas in range [$latestCompleteCheckpointVersion + 1, $versionToLoad] //
     /////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<FileStatus> deltasAfterCheckpoint =
-        listedDeltaFileStatuses.stream()
+    final List<ParsedDeltaData> allDeltasAfterCheckpoint =
+        getAllDeltasAfterCheckpointWithCatalogPriority(
+            allPublishedDeltas, parsedLogDatas, latestCompleteCheckpointVersion, versionToLoad);
+
+    logDebugParsedLogDatas("allDeltasAfterCheckpoint", allDeltasAfterCheckpoint);
+
+    //////////////////////////////////////////////////////////////////////////////////
+    // Step 8: Grab all compactions in range [$latestCompleteCheckpointVersion + 1, //
+    //         $versionToLoad]                                                      //
+    //////////////////////////////////////////////////////////////////////////////////
+
+    final List<FileStatus> compactionsAfterCheckpoint =
+        listedCompactionFileStatuses.stream()
             .filter(
                 fs -> {
-                  final long deltaVersion = FileNames.deltaVersion(new Path(fs.getPath()));
-                  return latestCompleteCheckpointVersion + 1 <= deltaVersion
-                      && deltaVersion <= versionToLoadOpt.orElse(Long.MAX_VALUE);
+                  final Tuple2<Long, Long> compactionVersions =
+                      FileNames.logCompactionVersions(new Path(fs.getPath()));
+                  return latestCompleteCheckpointVersion + 1 <= compactionVersions._1
+                      && compactionVersions._2 <= versionToLoad;
                 })
             .collect(Collectors.toList());
 
-    logDebugFileStatuses("deltasAfterCheckpoint", deltasAfterCheckpoint);
+    logDebugFileStatuses("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
 
     ////////////////////////////////////////////////////////////////////
-    // Step 8: Determine the version of the snapshot we can now load. //
+    // Step 9: Determine the version of the snapshot we can now load. //
     ////////////////////////////////////////////////////////////////////
-
-    final List<Long> deltaVersionsAfterCheckpoint =
-        deltasAfterCheckpoint.stream()
-            .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
-            .collect(Collectors.toList());
 
     final long newVersion =
-        deltaVersionsAfterCheckpoint.isEmpty()
+        allDeltasAfterCheckpoint.isEmpty()
             ? latestCompleteCheckpointVersion
-            : ListUtils.getLast(deltaVersionsAfterCheckpoint);
+            : ListUtils.getLast(allDeltasAfterCheckpoint).getVersion();
 
     logger.info("New version to load: {}", newVersion);
 
     /////////////////////////////////////////////
-    // Step 9: Perform some basic validations. //
+    // Step 10: Perform some basic validations. //
     /////////////////////////////////////////////
 
     // Check that we have found at least one checkpoint or delta file
-    if (!latestCompleteCheckpointOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
+    if (!latestCompleteCheckpointOpt.isPresent() && allDeltasAfterCheckpoint.isEmpty()) {
       throw new InvalidTableException(
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
+    final Optional<ParsedPublishedDeltaData> deltaAtCheckpointVersionOpt =
+        allPublishedDeltas.stream()
+            .filter(x -> x.getVersion() == latestCompleteCheckpointVersion)
+            .findFirst();
+
     // Check that, for a checkpoint at version N, there's a delta file at N, too.
-    if (latestCompleteCheckpointOpt.isPresent()
-        && listedDeltaFileStatuses.stream()
-            .map(x -> FileNames.deltaVersion(new Path(x.getPath())))
-            .noneMatch(v -> v == latestCompleteCheckpointVersion)) {
+    if (latestCompleteCheckpointOpt.isPresent() && !deltaAtCheckpointVersionOpt.isPresent()) {
       throw new InvalidTableException(
           tablePath.toString(),
           String.format("Missing delta file for version %s", latestCompleteCheckpointVersion));
     }
 
     // Check that the $newVersion we actually loaded is the desired $versionToLoad
-    versionToLoadOpt.ifPresent(
-        versionToLoad -> {
-          if (newVersion < versionToLoad) {
-            throw DeltaErrors.versionToLoadAfterLatestCommit(
-                tablePath.toString(), versionToLoad, newVersion);
-          } else if (newVersion > versionToLoad) {
-            throw new IllegalStateException(
-                String.format(
-                    "%s: Expected to load version %s but actually loaded version %s",
-                    tablePath, versionToLoad, newVersion));
-          }
-        });
+    if (versionToLoadOpt.isPresent()) {
+      if (newVersion < versionToLoad) {
+        throw DeltaErrors.versionToLoadAfterLatestCommit(
+            tablePath.toString(), versionToLoad, newVersion);
+      } else if (newVersion > versionToLoad) {
+        throw new IllegalStateException(
+            String.format(
+                "%s: Expected to load version %s but actually loaded version %s",
+                tablePath, versionToLoad, newVersion));
+      }
+    }
 
-    if (!deltasAfterCheckpoint.isEmpty()) {
+    if (!allDeltasAfterCheckpoint.isEmpty()) {
       // Check that the delta versions are contiguous
-      verifyDeltaVersionsContiguous(deltaVersionsAfterCheckpoint, tablePath);
+      verifyDeltaVersionsContiguous(
+          // TODO: refactor `verifyDeltaVersionsContiguous` to operate on ParsedLogData so we can
+          //      avoid making an entirely new list here
+          allDeltasAfterCheckpoint.stream().map(x -> x.getVersion()).collect(Collectors.toList()),
+          tablePath);
 
       // Check that the delta versions start with $latestCompleteCheckpointVersion + 1. If they
       // don't, then we have a gap in between the checkpoint and the first delta file.
-      if (!deltaVersionsAfterCheckpoint.get(0).equals(latestCompleteCheckpointVersion + 1)) {
+      if (allDeltasAfterCheckpoint.get(0).getVersion() != latestCompleteCheckpointVersion + 1) {
         throw new InvalidTableException(
             tablePath.toString(),
             String.format(
@@ -444,7 +461,7 @@ public class SnapshotManager {
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 10: Grab the actual checkpoint file statuses for latestCompleteCheckpointVersion. //
+    // Step 11: Grab the actual checkpoint file statuses for latestCompleteCheckpointVersion. //
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     final List<FileStatus> latestCompleteCheckpointFileStatuses =
@@ -479,26 +496,101 @@ public class SnapshotManager {
                 })
             .orElse(Collections.emptyList());
 
+    ////////////////////////////////////////////////////////
+    // Step 12: Calculate the remaining LogSegment params //
+    ////////////////////////////////////////////////////////
+
+    // If our LogSegment has deltas (allDeltasAfterCheckpoint), we use the last delta.
+    // Else, our LogSegment only has a checkpoint, and we have checked above that if there's a
+    // checkpoint then the `deltaAtCheckpointVersionOpt` exists.
+    final FileStatus deltaAtEndVersion =
+        allDeltasAfterCheckpoint.isEmpty()
+            ? deltaAtCheckpointVersionOpt.get().getFileStatus()
+            : ListUtils.getLast(allDeltasAfterCheckpoint).getFileStatus();
+
+    final Optional<Long> maxPublishedDeltaVersion =
+        allPublishedDeltas.stream().map(ParsedPublishedDeltaData::getVersion).max(Long::compareTo);
+
+    Optional<FileStatus> lastSeenChecksumFile = Optional.empty();
+    if (!listedChecksumFileStatuses.isEmpty()) {
+      FileStatus latestChecksum = ListUtils.getLast(listedChecksumFileStatuses);
+      long checksumVersion = FileNames.checksumVersion(new Path(latestChecksum.getPath()));
+      if (checksumVersion >= latestCompleteCheckpointVersion) {
+        lastSeenChecksumFile = Optional.of(latestChecksum);
+      }
+    }
+
     ///////////////////////////////////////////////////
-    // Step 11: Construct the LogSegment and return. //
+    // Step 13: Construct the LogSegment and return. //
     ///////////////////////////////////////////////////
 
-    logger.info("Successfully constructed LogSegment at version {}", newVersion);
-
-    final long lastCommitTimestamp =
-        ListUtils.getLast(listedDeltaFileStatuses).getModificationTime();
+    logger.info(
+        "Successfully constructed LogSegment at version {}, took {}ms",
+        newVersion,
+        System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
 
     return new LogSegment(
         logPath,
         newVersion,
-        deltasAfterCheckpoint,
+        allDeltasAfterCheckpoint.stream()
+            .map(ParsedLogData::getFileStatus)
+            .collect(Collectors.toList()),
+        compactionsAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
-        lastCommitTimestamp);
+        deltaAtEndVersion,
+        lastSeenChecksumFile,
+        maxPublishedDeltaVersion);
   }
 
   /////////////////////////
   // getLogSegment utils //
   /////////////////////////
+
+  /**
+   * Filters and concats (a) a list of published Deltas (from cloud LIST call), and (b) a list of
+   * {@link ParsedLogData} injected by the {@link TableManager}, to return a new list of all Deltas
+   * since the latest complete checkpoint, up to and including the target version to load.
+   *
+   * <ul>
+   *   <li>Assumes that {@code allPublishedDeltas} is sorted and contiguous.
+   *   <li>Assumes that {@code parsedLogDatas} is sorted and contiguous.
+   *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link
+   *       ParsedCatalogCommitData} (written to file).
+   *   <li>If there is both a published Delta and a ratified staged commit for the same version,
+   *       prioritizes the ratified staged commit
+   * </ul>
+   */
+  private List<ParsedDeltaData> getAllDeltasAfterCheckpointWithCatalogPriority(
+      List<ParsedPublishedDeltaData> allPublishedDeltas,
+      List<ParsedLogData> parsedLogDatas,
+      long latestCompleteCheckpointVersion,
+      long versionToLoad) {
+    final List<ParsedDeltaData> allPublishedDeltasAfterCheckpoint =
+        allPublishedDeltas.stream()
+            .filter(ParsedLogData::isFile)
+            .filter(
+                x ->
+                    latestCompleteCheckpointVersion < x.getVersion()
+                        && x.getVersion() <= versionToLoad)
+            .collect(Collectors.toList());
+
+    if (parsedLogDatas.isEmpty()) {
+      return allPublishedDeltasAfterCheckpoint;
+    }
+
+    final List<ParsedDeltaData> allRatifiedCommitsAfterCheckpoint =
+        parsedLogDatas.stream()
+            .filter(x -> x instanceof ParsedCatalogCommitData && x.isFile())
+            .filter(
+                x ->
+                    latestCompleteCheckpointVersion < x.getVersion()
+                        && x.getVersion() <= versionToLoad)
+            .map(ParsedCatalogCommitData.class::cast)
+            .collect(Collectors.toList());
+
+    return LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
+        allPublishedDeltasAfterCheckpoint, allRatifiedCommitsAfterCheckpoint);
+  }
 
   /**
    * Determine the starting checkpoint version that is at or before `versionToLoadOpt`. If no
@@ -539,11 +631,19 @@ public class SnapshotManager {
   private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
     if (logger.isDebugEnabled()) {
       logger.debug(
-          String.format(
-              "%s: %s",
-              varName,
-              Arrays.toString(
-                  fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray())));
+          "{}: {}",
+          varName,
+          Arrays.toString(
+              fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray()));
+    }
+  }
+
+  private void logDebugParsedLogDatas(String varName, List<? extends ParsedLogData> logDatas) {
+    if (logger.isDebugEnabled()) {
+      logger.debug(
+          "{}:\n  {}",
+          varName,
+          logDatas.stream().map(Object::toString).collect(Collectors.joining("\n  ")));
     }
   }
 }

@@ -15,6 +15,11 @@
  */
 package io.delta.kernel.internal.metrics;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.MetricsReporter;
 import io.delta.kernel.metrics.SnapshotReport;
 import java.util.Optional;
 
@@ -30,35 +35,55 @@ public class SnapshotQueryContext {
 
   /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a latest snapshot query */
   public static SnapshotQueryContext forLatestSnapshot(String tablePath) {
-    return new SnapshotQueryContext(tablePath, Optional.empty(), Optional.empty());
+    return new SnapshotQueryContext(
+        tablePath, Optional.empty(), Optional.empty(), Optional.empty());
   }
 
   /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a AS OF VERSION query */
   public static SnapshotQueryContext forVersionSnapshot(String tablePath, long version) {
-    return new SnapshotQueryContext(tablePath, Optional.of(version), Optional.empty());
+    return new SnapshotQueryContext(
+        tablePath, Optional.of(version), Optional.empty(), Optional.empty());
   }
 
   /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a AS OF TIMESTAMP query */
   public static SnapshotQueryContext forTimestampSnapshot(String tablePath, long timestamp) {
-    return new SnapshotQueryContext(tablePath, Optional.empty(), Optional.of(timestamp));
+    return new SnapshotQueryContext(
+        tablePath, Optional.empty(), Optional.empty(), Optional.of(timestamp));
   }
 
   private final String tablePath;
-  private Optional<Long> version;
+
+  /** The version provided in a time-travel-by-version query, if any. */
+  private final Optional<Long> providedVersion;
+
+  /** The timestamp provided in a time-travel-by-timestamp query, if any. */
   private final Optional<Long> providedTimestamp;
+
   private final SnapshotMetrics snapshotMetrics = new SnapshotMetrics();
+
+  /** The table version that this snapshot is actually resolved to. */
+  private Optional<Long> resolvedVersion;
+
+  private Optional<Long> checkpointVersion;
 
   /**
    * @param tablePath the table path for the table being queried
    * @param providedVersion the provided version for a time-travel-by-version query, empty if this
    *     is not a time-travel-by-version query
+   * @param checkpointVersion the version of the checkpoint used for this snapshot, empty if no
+   *     checkpoint was used or if this is a failed snapshot construction
    * @param providedTimestamp the provided timestamp for a time-travel-by-timestamp query, empty if
    *     this is not a time-travel-by-timestamp query
    */
   private SnapshotQueryContext(
-      String tablePath, Optional<Long> providedVersion, Optional<Long> providedTimestamp) {
+      String tablePath,
+      Optional<Long> providedVersion,
+      Optional<Long> checkpointVersion,
+      Optional<Long> providedTimestamp) {
     this.tablePath = tablePath;
-    this.version = providedVersion;
+    this.providedVersion = providedVersion;
+    this.resolvedVersion = providedVersion;
+    this.checkpointVersion = checkpointVersion;
     this.providedTimestamp = providedTimestamp;
   }
 
@@ -66,8 +91,12 @@ public class SnapshotQueryContext {
     return tablePath;
   }
 
-  public Optional<Long> getVersion() {
-    return version;
+  public Optional<Long> getResolvedVersion() {
+    return resolvedVersion;
+  }
+
+  public Optional<Long> getCheckpointVersion() {
+    return checkpointVersion;
   }
 
   public Optional<Long> getProvidedTimestamp() {
@@ -78,20 +107,52 @@ public class SnapshotQueryContext {
     return snapshotMetrics;
   }
 
+  public String getQueryDisplayStr() {
+    final String resolvedVersionStr =
+        resolvedVersion.map(v -> String.format(" (RESOLVED TO VERSION %d)", v)).orElse("");
+
+    if (providedVersion.isPresent()) {
+      return "AS OF VERSION " + resolvedVersion.get();
+    } else if (providedTimestamp.isPresent()) {
+      return "AS OF TIMESTAMP " + providedTimestamp.get() + resolvedVersionStr;
+    } else {
+      return "LATEST SNAPSHOT" + resolvedVersionStr;
+    }
+  }
+
   /**
-   * Updates the {@code version} stored in this snapshot context. This version should be updated
-   * upon version resolution for non time-travel-by-version queries. For latest snapshot queries
-   * this is after log segment construction. For time-travel by timestamp queries this is after
-   * timestamp to version resolution.
+   * Set the resolved version that was actually loaded for this snapshot query.
+   *
+   * <p>For AS OF TIMESTAMP queries, this should be set upon timestamp-to-version resolution.
+   *
+   * <p>For AS OF LATEST queries, this should be set after log segment construction, when we learn
+   * what the latest version of the table really is.
    */
-  public void setVersion(long updatedVersion) {
-    version = Optional.of(updatedVersion);
+  public void setResolvedVersion(long resolvedVersion) {
+    this.resolvedVersion = Optional.of(resolvedVersion);
+  }
+
+  /** Updates the {@code checkpointVersion} stored in this snapshot context. */
+  public void setCheckpointVersion(Optional<Long> checkpointVersion) {
+    requireNonNull(checkpointVersion, "checkpointVersion cannot be null");
+    checkArgument(
+        !checkpointVersion.isPresent() || checkpointVersion.get() >= 0,
+        "Invalid checkpoint version: %s",
+        checkpointVersion);
+    this.checkpointVersion = checkpointVersion;
+  }
+
+  /** Creates a {@link SnapshotReport} and pushes it to any {@link MetricsReporter}s. */
+  public void recordSnapshotErrorReport(Engine engine, Exception e) {
+    SnapshotReport snapshotReport = SnapshotReportImpl.forError(this, e);
+    engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));
   }
 
   @Override
   public String toString() {
     return String.format(
-        "SnapshotQueryContext(tablePath=%s, version=%s, providedTimestamp=%s, snapshotMetric=%s)",
-        tablePath, version, providedTimestamp, snapshotMetrics);
+        "SnapshotQueryContext(tablePath=%s, version=%s, providedTimestamp=%s, "
+            + "checkpointVersion=%s, snapshotMetric=%s)",
+        tablePath, resolvedVersion, providedTimestamp, checkpointVersion, snapshotMetrics);
   }
 }

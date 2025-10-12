@@ -341,7 +341,9 @@ abstract class ConvertToDeltaCommandBase(
           if (partitionSchema.isDefined) {
             throw DeltaErrors.partitionSchemaInIcebergTables
           }
-          ConvertUtils.getIcebergTable(spark, target.targetDir, None, None, collectStats)
+          ConvertUtils.getIcebergTable(
+            spark, target.targetDir, deltaSnapshotOpt = None, collectStats
+          )
         case other =>
           throw DeltaErrors.convertNonParquetTablesException(tableIdentifier, other)
       }
@@ -393,7 +395,7 @@ abstract class ConvertToDeltaCommandBase(
       )
       metrics("numConvertedFiles") += numFiles
       sendDriverMetrics(spark, metrics)
-      val (committedVersion, postCommitSnapshot) = txn.commitLarge(
+      txn.commitLarge(
         spark,
         addFilesIter,
         Some(txn.protocol),

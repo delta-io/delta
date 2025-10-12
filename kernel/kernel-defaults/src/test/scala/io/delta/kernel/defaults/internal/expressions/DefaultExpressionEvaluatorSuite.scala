@@ -15,11 +15,13 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import java.lang.{Boolean => BooleanJ}
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Integer => IntegerJ, Long => LongJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
+
+import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
@@ -31,6 +33,7 @@ import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
+import io.delta.kernel.types.CollationIdentifier.SPARK_UTF8_BINARY
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -93,7 +96,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
   }
 
-  SIMPLE_TYPES.foreach { dataType =>
+  PRIMITIVE_TYPES.foreach { dataType =>
     test(s"evaluate expression: column of type $dataType") {
       val batchSize = 78;
       val batchSchema = new StructType().add("col1", dataType)
@@ -256,7 +259,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkBooleanVectors(actOutputVector, expOutputVector)
   }
 
-  test("evaluate expression: coalesce") {
+  test("evaluate expression: coalesce (boolean columns)") {
     val col1 = booleanVector(Seq[BooleanJ](true, null, null, null))
     val col2 = booleanVector(Seq[BooleanJ](false, false, null, null))
     val col3 = booleanVector(Seq[BooleanJ](true, true, true, null))
@@ -284,7 +287,63 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val expOutputVector3 = booleanVector(Seq[BooleanJ](true, false, true, null))
     val actOutputVector3 = evaluator(schema, coalesceEpxr3, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOutputVector3, expOutputVector3)
+  }
 
+  test("evaluate expression: coalesce (long columns)") {
+    val longCol1 = longVector(Seq(1L, null, null, 4L))
+    val longCol2 = longVector(Seq(null, 2L, null, 5L))
+    val longCol3 = longVector(Seq(100L, null, 3L, null))
+    val longSchema = new StructType()
+      .add("longCol1", LongType.LONG)
+      .add("longCol2", LongType.LONG)
+      .add("longCol3", LongType.LONG)
+    val longBatch =
+      new DefaultColumnarBatch(longCol1.getSize, longSchema, Array(longCol1, longCol2, longCol3))
+    val longCoalesceExpr = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("longCol1"), new Column("longCol2"), new Column("longCol3")))
+    val expLongOutput = longVector(Seq(1L, 2L, 3L, 4L))
+    val actLongOutput = evaluator(longSchema, longCoalesceExpr, LongType.LONG).eval(longBatch)
+    checkLongVectors(actLongOutput, expLongOutput)
+  }
+
+  test("evaluate expression: coalesce (string columns)") {
+    val strCol1 = stringVector(Seq("a", null, null, "d"))
+    val strCol2 = stringVector(Seq("null", "b", null, null))
+    val strCol3 = stringVector(Seq(null, null, "c", "abc"))
+    val strSchema = new StructType()
+      .add("strCol1", StringType.STRING)
+      .add("strCol2", StringType.STRING)
+      .add("strCol3", StringType.STRING)
+    val strBatch =
+      new DefaultColumnarBatch(strCol1.getSize, strSchema, Array(strCol1, strCol2, strCol3))
+    val strCoalesceExpr = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("strCol1"), new Column("strCol2"), new Column("strCol3")))
+    val expStrOutput = stringVector(Seq("a", "b", "c", "d"))
+    val actStrOutput = evaluator(strSchema, strCoalesceExpr, StringType.STRING).eval(strBatch)
+    checkStringVectors(actStrOutput, expStrOutput)
+  }
+
+  test("evaluate expression: coalesce (timestamp columns)") {
+    val tsCol1 = timestampVector(Seq(1000L, null, null, 4000L))
+    val tsCol2 = timestampVector(Seq(null, 2000L, null, 5000L))
+    val tsCol3 = timestampVector(Seq(10000L, null, 3000L, null))
+    val tsSchema = new StructType()
+      .add("tsCol1", TimestampType.TIMESTAMP)
+      .add("tsCol2", TimestampType.TIMESTAMP)
+      .add("tsCol3", TimestampType.TIMESTAMP)
+    val tsBatch =
+      new DefaultColumnarBatch(tsCol1.getSize, tsSchema, Array(tsCol1, tsCol2, tsCol3))
+    val tsCoalesceExpr = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("tsCol1"), new Column("tsCol2"), new Column("tsCol3")))
+    val expTsOutput = timestampVector(Seq(1000L, 2000L, 3000L, 4000L))
+    val actTsOutput = evaluator(tsSchema, tsCoalesceExpr, TimestampType.TIMESTAMP).eval(tsBatch)
+    checkLongVectors(actTsOutput, expTsOutput)
+  }
+
+  test("evaluate expression: coalesce (unequal column types)") {
     def checkUnsupportedTypes(
         col1Type: DataType,
         col2Type: DataType,
@@ -311,24 +370,110 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       LongType.LONG,
       IntegerType.INTEGER,
       "Coalesce is only supported for arguments of the same type")
-    // TODO support other types besides boolean
-    checkUnsupportedTypes(
-      IntegerType.INTEGER,
-      IntegerType.INTEGER,
-      "Coalesce is only supported for boolean type expressions")
+  }
+
+  test("evaluate expression: ADD (column and literal)") {
+    val col1 = longVector(Seq(1, 2, 3, 4, null))
+    val schema = new StructType().add("col1", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    // ADD with literal
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), Literal.ofLong(10L)))
+    val expOutputVector = longVector(Seq(11, 12, 13, 14, null))
+    val actOutputVector = evaluator(schema, addExpr, LongType.LONG).eval(batch)
+    checkLongVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: ADD (column and column)") {
+    val col1 = longVector(Seq(1, 2, null, 4, null))
+    val col2 = longVector(Seq(null, 20, 30, 40, null))
+    val schema = new StructType()
+      .add("col1", LongType.LONG)
+      .add("col2", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    // ADD with two columns
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2")))
+    val expOutputVector = longVector(Seq(null, 22, null, 44, null))
+    val actOutputVector = evaluator(schema, addExpr, LongType.LONG).eval(batch)
+    checkLongVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: ADD (more than two operands)") {
+    val col1 = longVector(Seq(1, 2, null, 4, null))
+    val col2 = longVector(Seq(null, 20, 30, 40, null))
+    val col3 = longVector(Seq(5, null, 15, null, 25))
+    val schema = new StructType()
+      .add("col1", LongType.LONG)
+      .add("col2", LongType.LONG)
+      .add("col3", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2, col3))
+
+    // ADD with three columns
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2"), new Column("col3")))
+    val e =
+      intercept[UnsupportedOperationException] {
+        evaluator(schema, addExpr, LongType.LONG).eval(batch)
+      }
+    assert(e.getMessage.contains("ADD requires exactly two arguments: left and right operands"))
+  }
+
+  test("evaluate expression: ADD (unequal operand types") {
+    val col1 = longVector(Seq(1, 2, null, 4, null))
+    val col2 = floatVector(Seq(1.0f, 2.0f, 3.0f, 4.0f, null))
+    val schema = new StructType()
+      .add("col1", LongType.LONG)
+      .add("col2", FloatType.FLOAT)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    // ADD with two columns of different types
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2")))
+    val e =
+      intercept[UnsupportedOperationException] {
+        evaluator(schema, addExpr, LongType.LONG).eval(batch)
+      }
+    assert(e.getMessage.contains("ADD is only supported for arguments of the same type"))
+  }
+
+  test("evaluate expression: ADD (unsupported types)") {
+    val col1 = stringVector(Seq("a", "b", null, "d", null))
+    val col2 = stringVector(Seq("x", "y", "z", "w", null))
+    val schema = new StructType()
+      .add("col1", StringType.STRING)
+      .add("col2", StringType.STRING)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    // ADD with two columns of unsupported types
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2")))
+    val e =
+      intercept[UnsupportedOperationException] {
+        evaluator(schema, addExpr, StringType.STRING).eval(batch)
+      }
+    assert(e.getMessage.contains(
+      "ADD is only supported for numeric types: byte, short, int, long, float, double"))
   }
 
   test("evaluate expression: TIMEADD with TIMESTAMP columns") {
-    val timestampColumn = timestampVector(Seq[Long](
+    val timestampColumn = timestampVector(Seq(
       1577836800000000L, // 2020-01-01 00:00:00.000
       1577836800123456L, // 2020-01-01 00:00:00.123456
       -1 // Representing null
     ))
 
-    val durationColumn = longVector(Seq[Long](
+    val durationColumn = longVector(Seq(
       1000, // 1 second in milliseconds
       100, // 0.1 second in milliseconds
-      -1): _*)
+      -1))
 
     val schema = new StructType()
       .add("timestamp", TimestampType.TIMESTAMP)
@@ -344,13 +489,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "TIMEADD",
       util.Arrays.asList(new Column("timestamp"), new Column("duration")))
 
-    val expectedTimestamps = Seq[Long](
+    val expOutputVector = timestampVector(Seq(
       1577836801000000L, // 2020-01-01 00:00:01.000
       1577836800123456L + 100000, // 2020-01-01 00:00:00.123556
       -1 // Null should propagate
-    )
-
-    val expOutputVector = timestampVector(expectedTimestamps)
+    ))
     val actOutputVector = evaluator(schema, timeAddExpr, TimestampType.TIMESTAMP).eval(batch)
 
     checkTimestampVectors(actOutputVector, expOutputVector)
@@ -634,116 +777,451 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "LIKE expression has invalid escape sequence"))
   }
 
+  private val SPARK_UTF8_LCASE = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
   test("evaluate expression: starts with") {
-    val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
-    val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
-    val schema = new StructType()
-      .add("col1", StringType.STRING)
-      .add("col2", StringType.STRING)
-    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+    Seq(
+      // collation
+      None,
+      Some(SPARK_UTF8_BINARY)).foreach {
+      collationIdentifier =>
+        val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
+        val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
+        val schema = new StructType()
+          .add("col1", StringType.STRING)
+          .add("col2", new StringType(SPARK_UTF8_LCASE))
+        val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
 
-    val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"))
-    val expOutputVectorLiteral =
-      booleanVector(Seq[BooleanJ](false, false, true, false, null, null, false))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        schema,
-        startsWithExpressionLiteral,
-        BooleanType.BOOLEAN).eval(input),
-      expOutputVectorLiteral)
+        val startsWithExpressionLiteral =
+          startsWith(new Column("col1"), Literal.ofString("t%"), collationIdentifier)
+        val expOutputVectorLiteral =
+          booleanVector(Seq[BooleanJ](false, false, true, false, null, null, false))
+        checkBooleanVectors(
+          new DefaultExpressionEvaluator(
+            schema,
+            startsWithExpressionLiteral,
+            BooleanType.BOOLEAN).eval(input),
+          expOutputVectorLiteral)
 
-    val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null))
-    val allNullVector =
-      booleanVector(Seq[BooleanJ](null, null, null, null, null, null, null))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        schema,
-        startsWithExpressionNullLiteral,
-        BooleanType.BOOLEAN).eval(input),
-      allNullVector)
+        val startsWithExpressionNullLiteral =
+          startsWith(new Column("col1"), Literal.ofString(null), collationIdentifier)
+        val allNullVector =
+          booleanVector(Seq[BooleanJ](null, null, null, null, null, null, null))
+        checkBooleanVectors(
+          new DefaultExpressionEvaluator(
+            schema,
+            startsWithExpressionNullLiteral,
+            BooleanType.BOOLEAN).eval(input),
+          allNullVector)
 
-    // Two literal expressions on both sides
-    val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"), Literal.ofString("A"))
-    val allTrueVector = booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        schema,
-        startsWithExpressionAlwaysTrue,
-        BooleanType.BOOLEAN).eval(input),
-      allTrueVector)
+        // Two literal expressions on both sides
+        val startsWithExpressionAlwaysTrue =
+          startsWith(Literal.ofString("ABC"), Literal.ofString("A"), collationIdentifier)
+        val allTrueVector = booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true))
+        checkBooleanVectors(
+          new DefaultExpressionEvaluator(
+            schema,
+            startsWithExpressionAlwaysTrue,
+            BooleanType.BOOLEAN).eval(input),
+          allTrueVector)
 
-    val startsWithExpressionAlwaysFalse =
-      startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"))
-    val allFalseVector =
-      booleanVector(Seq[BooleanJ](false, false, false, false, false, false, false))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        schema,
-        startsWithExpressionAlwaysFalse,
-        BooleanType.BOOLEAN).eval(input),
-      allFalseVector)
+        val startsWithExpressionAlwaysFalse =
+          startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"), collationIdentifier)
+        val allFalseVector =
+          booleanVector(Seq[BooleanJ](false, false, false, false, false, false, false))
+        checkBooleanVectors(
+          new DefaultExpressionEvaluator(
+            schema,
+            startsWithExpressionAlwaysFalse,
+            BooleanType.BOOLEAN).eval(input),
+          allFalseVector)
 
-    // scalastyle:off nonascii
-    val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
-    val schemaUnicode = new StructType().add("col", StringType.STRING)
-    val inputUnicode =
-      new DefaultColumnarBatch(colUnicode.getSize, schemaUnicode, Array(colUnicode))
-    val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"))
-    val expOutputVectorLiteralUnicode = booleanVector(Seq[BooleanJ](true, true, false))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        schemaUnicode,
-        startsWithExpressionUnicode,
-        BooleanType.BOOLEAN).eval(inputUnicode),
-      expOutputVectorLiteralUnicode)
+        // scalastyle:off nonascii
+        val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
+        val schemaUnicode = new StructType().add("col", StringType.STRING)
+        val inputUnicode =
+          new DefaultColumnarBatch(colUnicode.getSize, schemaUnicode, Array(colUnicode))
+        val startsWithExpressionUnicode =
+          startsWith(new Column("col"), Literal.ofString("中"), collationIdentifier)
+        val expOutputVectorLiteralUnicode = booleanVector(Seq[BooleanJ](true, true, false))
+        checkBooleanVectors(
+          new DefaultExpressionEvaluator(
+            schemaUnicode,
+            startsWithExpressionUnicode,
+            BooleanType.BOOLEAN).eval(inputUnicode),
+          expOutputVectorLiteralUnicode)
 
-    // scalastyle:off nonascii
-    val colSurrogatePair = stringVector(Seq[String]("💕😉💕", "😉💕", "💕"))
-    val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
-    val inputSurrogatePair =
-      new DefaultColumnarBatch(colSurrogatePair.getSize, schemaUnicode, Array(colSurrogatePair))
-    val startsWithExpressionSurrogatePair = startsWith(new Column("col"), Literal.ofString("💕"))
-    val expOutputVectorLiteralSurrogatePair = booleanVector(Seq[BooleanJ](true, false, true))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        schemaSurrogatePair,
-        startsWithExpressionSurrogatePair,
-        BooleanType.BOOLEAN).eval(inputSurrogatePair),
-      expOutputVectorLiteralSurrogatePair)
+        // scalastyle:off nonascii
+        val colSurrogatePair = stringVector(Seq[String]("💕😉💕", "😉💕", "💕"))
+        val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
+        val inputSurrogatePair =
+          new DefaultColumnarBatch(colSurrogatePair.getSize, schemaUnicode, Array(colSurrogatePair))
+        val startsWithExpressionSurrogatePair =
+          startsWith(new Column("col"), Literal.ofString("💕"), collationIdentifier)
+        val expOutputVectorLiteralSurrogatePair = booleanVector(Seq[BooleanJ](true, false, true))
+        checkBooleanVectors(
+          new DefaultExpressionEvaluator(
+            schemaSurrogatePair,
+            startsWithExpressionSurrogatePair,
+            BooleanType.BOOLEAN).eval(inputSurrogatePair),
+          expOutputVectorLiteralSurrogatePair)
 
-    val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"))
-    val e = intercept[UnsupportedOperationException] {
-      new DefaultExpressionEvaluator(
-        schema,
-        startsWithExpressionExpression,
-        BooleanType.BOOLEAN).eval(input)
+        val startsWithExpressionExpression =
+          startsWith(new Column("col1"), new Column("col2"), collationIdentifier)
+        val e = intercept[UnsupportedOperationException] {
+          new DefaultExpressionEvaluator(
+            schema,
+            startsWithExpressionExpression,
+            BooleanType.BOOLEAN).eval(input)
+        }
+        assert(e.getMessage.contains("'STARTS_WITH' expects literal as the second input"))
+
+        def checkUnsupportedTypes(colType: DataType, literalType: DataType): Unit = {
+          val schema = new StructType()
+            .add("col", colType)
+          val expr = startsWith(new Column("col"), Literal.ofNull(literalType), collationIdentifier)
+          val input = new DefaultColumnarBatch(5, schema, Array(testColumnVector(5, colType)))
+
+          val e = intercept[UnsupportedOperationException] {
+            new DefaultExpressionEvaluator(
+              schema,
+              expr,
+              BooleanType.BOOLEAN).eval(input)
+          }
+          assert(e.getMessage.contains("'STARTS_WITH' expects STRING type inputs"))
+        }
+
+        checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
+        checkUnsupportedTypes(LongType.LONG, LongType.LONG)
+        checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER)
+        checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
+        checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
+        checkUnsupportedTypes(StringType.STRING, LongType.LONG)
     }
-    assert(e.getMessage.contains("'STARTS_WITH' expects literal as the second input"))
+  }
 
-    def checkUnsupportedTypes(colType: DataType, literalType: DataType): Unit = {
-      val schema = new StructType()
-        .add("col", colType)
-      val expr = startsWith(new Column("col"), Literal.ofNull(literalType))
-      val input = new DefaultColumnarBatch(5, schema, Array(testColumnVector(5, colType)))
+  test("evaluate expression: starts with (unsupported collations)") {
+    Seq(
+      Some(SPARK_UTF8_LCASE),
+      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB")),
+      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1"))).foreach {
+      collationIdentifier =>
+        val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
+        val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
+        val schema = new StructType()
+          .add("col1", new StringType(SPARK_UTF8_LCASE))
+          .add("col2", StringType.STRING)
+        val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+        val startsWithExpressionLiteral =
+          startsWith(new Column("col1"), Literal.ofString("t%"), collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionLiteral,
+          input,
+          collationIdentifier.get)
+
+        val startsWithExpressionNullLiteral =
+          startsWith(new Column("col1"), Literal.ofString(null), collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionNullLiteral,
+          input,
+          collationIdentifier.get)
+
+        // Two literal expressions on both sides
+        val startsWithExpressionAlwaysTrue =
+          startsWith(Literal.ofString("ABC"), Literal.ofString("A"), collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionAlwaysTrue,
+          input,
+          collationIdentifier.get)
+
+        val startsWithExpressionAlwaysFalse =
+          startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"), collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionAlwaysFalse,
+          input,
+          collationIdentifier.get)
+
+        // scalastyle:off nonascii
+        val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
+        val schemaUnicode = new StructType().add("col", StringType.STRING)
+        val inputUnicode =
+          new DefaultColumnarBatch(colUnicode.getSize, schemaUnicode, Array(colUnicode))
+        val startsWithExpressionUnicode =
+          startsWith(new Column("col"), Literal.ofString("中"), collationIdentifier)
+        checkUnsupportedCollation(
+          schemaUnicode,
+          startsWithExpressionUnicode,
+          inputUnicode,
+          collationIdentifier.get)
+
+        // scalastyle:off nonascii
+        val colSurrogatePair = stringVector(Seq[String]("💕😉💕", "😉💕", "💕"))
+        val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
+        val inputSurrogatePair =
+          new DefaultColumnarBatch(
+            colSurrogatePair.getSize,
+            schemaSurrogatePair,
+            Array(colSurrogatePair))
+        val startsWithExpressionSurrogatePair =
+          startsWith(new Column("col"), Literal.ofString("💕"), collationIdentifier)
+        checkUnsupportedCollation(
+          schemaSurrogatePair,
+          startsWithExpressionSurrogatePair,
+          inputSurrogatePair,
+          collationIdentifier.get)
+    }
+  }
+
+  test("evaluate expression: basic case for in expression") {
+    // Test with string values
+    val col1 = stringVector(Seq[String]("one", "two", "three", "four", null, "five"))
+    val schema = new StructType().add("col1", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    // Basic case for string: col1 IN ("one", "three", "five")
+    val inExpressionBasic = in(
+      new Column("col1"),
+      Literal.ofString("one"),
+      Literal.ofString("three"),
+      Literal.ofString("five"))
+    val expOutputBasic = booleanVector(Seq[BooleanJ](true, false, true, false, null, true))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        inExpressionBasic,
+        BooleanType.BOOLEAN).eval(input),
+      expOutputBasic)
+
+    // IN test with no matches: col1 IN ("six", "seven")
+    val inExpressionNoMatch = in(
+      new Column("col1"),
+      Literal.ofString("six"),
+      Literal.ofString("seven"))
+    val expOutputNoMatch = booleanVector(Seq[BooleanJ](false, false, false, false, null, false))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        inExpressionNoMatch,
+        BooleanType.BOOLEAN).eval(input),
+      expOutputNoMatch)
+
+    // IN test with NULL in list: col1 IN ("one", NULL, "three"), returns null if no matches.
+    val inExpressionWithNull = in(
+      new Column("col1"),
+      Literal.ofString("one"),
+      Literal.ofString(null),
+      Literal.ofString("three"))
+    val expOutputWithNull = booleanVector(Seq[BooleanJ](true, null, true, null, null, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        inExpressionWithNull,
+        BooleanType.BOOLEAN).eval(input),
+      expOutputWithNull)
+
+    // Test with float values: col IN (1.5f, 2.5f, 3.5f)
+    val floatCol = floatVector(Seq[FloatJ](1.5f, 2.5f, 3.5f, 4.5f, null))
+    val floatSchema = new StructType().add("floatCol", FloatType.FLOAT)
+    val floatInput = new DefaultColumnarBatch(floatCol.getSize, floatSchema, Array(floatCol))
+
+    val inExpressionFloat = in(
+      new Column("floatCol"),
+      Literal.ofFloat(1.5f),
+      Literal.ofFloat(2.5f),
+      Literal.ofFloat(3.5f))
+    val expOutputFloat = booleanVector(Seq[BooleanJ](true, true, true, false, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        floatSchema,
+        inExpressionFloat,
+        BooleanType.BOOLEAN).eval(floatInput),
+      expOutputFloat)
+
+    // Test with double values: col IN (1.1, 2.2, null)
+    val doubleCol = doubleVector(Seq[DoubleJ](1.1, 2.2, 3.3, 4.4, null))
+    val doubleSchema = new StructType().add("doubleCol", DoubleType.DOUBLE)
+    val doubleInput = new DefaultColumnarBatch(doubleCol.getSize, doubleSchema, Array(doubleCol))
+
+    val inExpressionDouble = in(
+      new Column("doubleCol"),
+      Literal.ofDouble(1.1),
+      Literal.ofDouble(2.2),
+      Literal.ofNull(DoubleType.DOUBLE))
+    val expOutputDouble = booleanVector(Seq[BooleanJ](true, true, null, null, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        doubleSchema,
+        inExpressionDouble,
+        BooleanType.BOOLEAN).eval(doubleInput),
+      expOutputDouble)
+
+    // Test with byte values: col IN (0, 1)
+    val byteCol = byteVector(Seq[java.lang.Byte](null, 0.toByte, 0.toByte, 1.toByte, 2.toByte))
+    val byteSchema = new StructType().add("byteCol", ByteType.BYTE)
+    val byteInput = new DefaultColumnarBatch(byteCol.getSize, byteSchema, Array(byteCol))
+
+    val inExpressionByte = in(
+      new Column("byteCol"),
+      Literal.ofByte(0.toByte),
+      Literal.ofByte(1.toByte))
+    // Expected: [null, true, true, true, false] for values [null, 0, 0, 1, 2]
+    val expOutputByte = booleanVector(Seq[BooleanJ](null, true, true, true, false))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        byteSchema,
+        inExpressionByte,
+        BooleanType.BOOLEAN).eval(byteInput),
+      expOutputByte)
+  }
+
+  test("evaluate expression: in with incompatible types") {
+    // Test error cases - incompatible types
+    def checkIncompatibleTypes(valueType: DataType, listElementType: DataType): Unit = {
+      val valueSchema = new StructType().add("col", valueType)
+      val valueVector = testColumnVector(3, valueType)
+      val valueInput = new DefaultColumnarBatch(3, valueSchema, Array(valueVector))
+
+      val incompatibleInExpr = in(
+        new Column("col"),
+        Literal.ofNull(listElementType))
 
       val e = intercept[UnsupportedOperationException] {
         new DefaultExpressionEvaluator(
-          schema,
-          expr,
-          BooleanType.BOOLEAN).eval(input)
+          valueSchema,
+          incompatibleInExpr,
+          BooleanType.BOOLEAN).eval(valueInput)
       }
-      assert(e.getMessage.contains("'STARTS_WITH' expects STRING type inputs"))
+      assert(
+        e.getMessage.contains("IN expression requires all list elements to match the value type"))
     }
 
-    checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
-    checkUnsupportedTypes(LongType.LONG, LongType.LONG)
-    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER)
-    checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
-    checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
-    checkUnsupportedTypes(StringType.STRING, LongType.LONG)
+    // Test incompatible type combinations
+    checkIncompatibleTypes(StringType.STRING, IntegerType.INTEGER)
+    checkIncompatibleTypes(IntegerType.INTEGER, StringType.STRING)
+    checkIncompatibleTypes(BooleanType.BOOLEAN, StringType.STRING)
   }
 
-  test("evaluate expression: comparators (=, <, <=, >, >=)") {
+  test("evaluate expression: in with collation") {
+    Seq(
+      None, // no collation
+      Some(SPARK_UTF8_BINARY) // UTF8_BINARY collation
+    ).foreach { collationIdentifier =>
+      val col1 = stringVector(Seq[String]("Test", "test", "TEST", null))
+      val schema = new StructType().add("col1", StringType.STRING)
+      val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+      // Test with basic case
+      val inExpressionBasic = in(
+        new Column("col1"),
+        collationIdentifier,
+        Literal.ofString("test"),
+        Literal.ofString("other"))
+      val expectedOutput = booleanVector(Seq[BooleanJ](false, true, false, null))
+      checkBooleanVectors(
+        new DefaultExpressionEvaluator(
+          schema,
+          inExpressionBasic,
+          BooleanType.BOOLEAN).eval(input),
+        expectedOutput)
+
+      // Test with NULL in list
+      val inExpressionWithNull = in(
+        new Column("col1"),
+        collationIdentifier,
+        Literal.ofString("Test"),
+        Literal.ofString(null))
+      val expOutputWithNull = booleanVector(Seq[BooleanJ](true, null, null, null))
+      checkBooleanVectors(
+        new DefaultExpressionEvaluator(
+          schema,
+          inExpressionWithNull,
+          BooleanType.BOOLEAN).eval(input),
+        expOutputWithNull)
+    }
+  }
+
+  test("evaluate expression: in with unsupported collations") {
+    val col1 = stringVector(Seq[String]("Test", "test"))
+    val schema = new StructType().add("col1", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    val inExpressionUnsupported = in(
+      new Column("col1"),
+      Some(SPARK_UTF8_LCASE),
+      Literal.ofString("test"))
+
+    checkUnsupportedCollation(
+      schema,
+      inExpressionUnsupported,
+      input,
+      SPARK_UTF8_LCASE)
+  }
+
+  test("evaluate expression: in with non-literal list elements") {
+    val schema = new StructType().add("col1", IntegerType.INTEGER).add("col2", IntegerType.INTEGER)
+    val input = new DefaultColumnarBatch(
+      2,
+      schema,
+      Array(
+        testColumnVector(2, IntegerType.INTEGER),
+        testColumnVector(2, IntegerType.INTEGER)))
+
+    // Try to create IN with non-literal (Column) in the list
+    val nonLiteralInExpr = new Predicate(
+      "IN",
+      List[Expression](
+        new Column("col1"),
+        new Column("col2"), // This should cause an error
+        Literal.ofInt(1)).asJava)
+
+    val e = intercept[UnsupportedOperationException] {
+      new DefaultExpressionEvaluator(schema, nonLiteralInExpr, BooleanType.BOOLEAN).eval(input)
+    }
+    assert(e.getMessage.contains("IN expression requires all list elements to be literals"))
+  }
+
+  test("evaluate expression: in expression handling null") {
+    val col1 = testColumnVector(6, StringType.STRING) // [null, "1", null, "3", null, "5"]
+    val schema = new StructType().add("col1", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    // Test all null semantics scenarios:
+    // 1. NULL value with non-null list -> NULL
+    // 2. Non-null value matches -> TRUE
+    // 3. Non-null value no match, no nulls in list -> FALSE
+    // 4. Non-null value no match, but nulls in list -> NULL
+
+    // Case: value IN (match, null) -> [null, true, null, null, null, null]
+    val inExprMatchWithNull = in(new Column("col1"), Literal.ofString("1"), Literal.ofString(null))
+    val expectedMatchWithNull = booleanVector(Seq[BooleanJ](null, true, null, null, null, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(schema, inExprMatchWithNull, BooleanType.BOOLEAN).eval(input),
+      expectedMatchWithNull)
+
+    // Case: value IN (no_match1, no_match2) -> [null, false, null, false, null, false]
+    val inExprNoMatch = in(new Column("col1"), Literal.ofString("x"), Literal.ofString("y"))
+    val expectedNoMatch = booleanVector(Seq[BooleanJ](null, false, null, false, null, false))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(schema, inExprNoMatch, BooleanType.BOOLEAN).eval(input),
+      expectedNoMatch)
+
+    // Case: value IN (no_match, null) -> [null, null, null, null, null, null]
+    val inExprNoMatchWithNull =
+      in(new Column("col1"), Literal.ofString("x"), Literal.ofString(null))
+    val expectedNoMatchWithNull = booleanVector(Seq[BooleanJ](null, null, null, null, null, null))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        inExprNoMatchWithNull,
+        BooleanType.BOOLEAN).eval(input),
+      expectedNoMatchWithNull)
+  }
+
+  test("evaluate expression: comparators (=, <, <=, >, >=, 'IS NOT DISTINCT FROM')") {
     val ASCII_MAX_CHARACTER = '\u007F'
     val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
 
@@ -891,12 +1369,114 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       case (small1, big, small2, nullLit) =>
         comparatorToExpResults.foreach {
           case (comparator, expectedResults) =>
-            testComparator(comparator, small1, big, expectedResults(0))
-            testComparator(comparator, big, small1, expectedResults(1))
-            testComparator(comparator, small1, small2, expectedResults(2))
-            testComparator(comparator, small1, nullLit, expectedResults(3))
-            testComparator(comparator, nullLit, big, expectedResults(4))
-            testComparator(comparator, nullLit, nullLit, expectedResults(5))
+            val testCases = Seq(
+              (small1, big),
+              (big, small1),
+              (small1, small2),
+              (small1, nullLit),
+              (nullLit, big),
+              (nullLit, nullLit))
+            testCases.zip(expectedResults).foreach { case ((left, right), expected) =>
+              testComparator(comparator, left, right, expected)
+            }
+
+            // Predicate with collation is supported only for comparisons between StringTypes
+            val allStringTypes = Seq(small1, big, small2, nullLit).forall {
+              literal => literal.getDataType.isInstanceOf[StringType]
+            }
+            if (allStringTypes) {
+              Seq(
+                SPARK_UTF8_BINARY,
+                SPARK_UTF8_LCASE,
+                CollationIdentifier.fromString("ICU.sr_Cyrl_SRB"),
+                CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")).foreach {
+                collationIdentifier =>
+                  testCases.zip(expectedResults).foreach { case ((left, right), expected) =>
+                    testCollatedComparator(comparator, left, right, expected, collationIdentifier)
+                  }
+              }
+            }
+        }
+    }
+  }
+
+  test("check Predicate with collation comparing invalid types") {
+    Seq(
+      // predicateName
+      "=",
+      "<",
+      "<=",
+      ">",
+      ">=",
+      "IS NOT DISTINCT FROM",
+      "STARTS_WITH").foreach {
+      predicateName =>
+        Seq(
+          // (expr1, expr2, schema)
+          (
+            Literal.ofString("apple"),
+            Literal.ofInt(1),
+            new StructType()),
+          (
+            Literal.ofString("apple"),
+            Literal.ofLong(1L),
+            new StructType()),
+          (
+            Literal.ofFloat(2.3f),
+            Literal.ofString("apple"),
+            new StructType()),
+          (
+            Literal.ofDouble(2.3),
+            Literal.ofBoolean(false),
+            new StructType()),
+          (
+            new Column(Array("col1", "col11")),
+            Literal.ofString("apple"),
+            new StructType()
+              .add(
+                "col1",
+                new StructType()
+                  .add("col11", IntegerType.INTEGER))),
+          (
+            new Column(Array("col1", "col11")),
+            Literal.ofBoolean(false),
+            new StructType()
+              .add(
+                "col1",
+                new StructType()
+                  .add("col11", StringType.STRING))),
+          (
+            new Column(Array("col1", "col11")),
+            Literal.ofBoolean(false),
+            new StructType()
+              .add(
+                "col1",
+                new StructType()
+                  .add("col11", new StringType(SPARK_UTF8_LCASE)))),
+          (
+            new Column(Array("col1", "col11")),
+            new Column(Array("col1", "col12")),
+            new StructType()
+              .add(
+                "col1",
+                new StructType()
+                  .add("col11", DoubleType.DOUBLE)
+                  .add("col12", FloatType.FLOAT)))).foreach {
+          case (expr1: Expression, expr2: Expression, schema: StructType) =>
+            val expr = comparator(
+              predicateName,
+              expr1,
+              expr2,
+              Some(SPARK_UTF8_BINARY))
+            val input = zeroColumnBatch(rowCount = 1)
+
+            val e = intercept[UnsupportedOperationException] {
+              new DefaultExpressionEvaluator(
+                schema,
+                expr,
+                BooleanType.BOOLEAN).eval(input)
+            }
+            assert(e.getMessage.contains("expects STRING type inputs"))
         }
     }
   }
@@ -1398,6 +1978,52 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   private def evaluator(inputSchema: StructType, expression: Expression, outputType: DataType)
       : DefaultExpressionEvaluator = {
     new DefaultExpressionEvaluator(inputSchema, expression, outputType)
+  }
+
+  private def checkUnsupportedCollation(
+      schema: StructType,
+      expression: Expression,
+      input: ColumnarBatch,
+      collationIdentifier: CollationIdentifier): Unit = {
+    val e = intercept[UnsupportedOperationException] {
+      evaluator(schema, expression, BooleanType.BOOLEAN).eval(input)
+    }
+    assert(e.getMessage.contains(
+      s"""Unsupported collation: "$collationIdentifier".
+         | Default Engine supports just "$SPARK_UTF8_BINARY"
+         | collation.""".stripMargin.replace("\n", "")))
+
+  }
+
+  private def testCollatedComparator(
+      comparatorName: String,
+      left: Expression,
+      right: Expression,
+      expResult: BooleanJ,
+      collationIdentifier: CollationIdentifier): Unit = {
+    val collatedPredicate = comparator(comparatorName, left, right, Some(collationIdentifier))
+    val batch = zeroColumnBatch(rowCount = 1)
+
+    if (collationIdentifier.isSparkUTF8BinaryCollation) {
+      val outputVector = evaluator(
+        batch.getSchema,
+        collatedPredicate,
+        BooleanType.BOOLEAN).eval(batch)
+
+      assert(outputVector.getSize === 1)
+      assert(outputVector.getDataType === BooleanType.BOOLEAN)
+      assert(
+        outputVector.isNullAt(0) === (expResult == null),
+        s"Unexpected null value for Predicate with collation: $collatedPredicate")
+      if (expResult != null) {
+        assert(
+          outputVector.getBoolean(0) === expResult,
+          s"""Unexpected value for Predicate with collation: $collatedPredicate,
+             | expected: $expResult, actual: ${outputVector.getBoolean(0)}""".stripMargin)
+      }
+    } else {
+      checkUnsupportedCollation(batch.getSchema, collatedPredicate, batch, collationIdentifier)
+    }
   }
 
   private def testComparator(

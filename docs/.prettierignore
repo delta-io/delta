@@ -1,0 +1,7 @@
+coverage
+public
+dist
+.astro
+pnpm-lock.yaml
+.DS_Store
+src/content/**/*.mdx

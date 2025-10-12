@@ -20,6 +20,7 @@ import java.nio.file.FileAlreadyExistsException
 import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTableFile
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 
@@ -28,9 +29,11 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultParquetHandlerSuite extends AnyFunSuite with ParquetSuiteBase {
 
-  val parquetHandler = new DefaultParquetHandler(new Configuration {
-    set("delta.kernel.default.parquet.reader.batch-size", "10")
-  })
+  val parquetHandler = new DefaultParquetHandler(
+    new HadoopFileIO(
+      new Configuration {
+        set("delta.kernel.default.parquet.reader.batch-size", "10")
+      }))
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Tests for `writeParquetFileAtomically`. Test for `writeParquetFiles` are covered in

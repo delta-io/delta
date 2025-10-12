@@ -196,4 +196,16 @@ trait TypeWideningAlterTableTests
       ))
     )
   }
+
+  test("type widening with user-defined type in table") {
+    val dataWithUDT =
+      (1 to 10).map(x => Tuple2(x.toByte, new TestUDT.MyDenseVector(Array(x*0.5, x*2.0))))
+    append(dataWithUDT.toDF("a", "udt"))
+    sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+  }
+
+  test("type widening with null type in table") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a byte, n VOID) USING DELTA")
+    sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+  }
 }

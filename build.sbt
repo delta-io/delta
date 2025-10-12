@@ -52,10 +52,11 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
-val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
+val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+kernelSpark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
@@ -63,21 +64,10 @@ sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
-val flinkVersion = "1.16.1"
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
-
-// Versions for Hive 3
-val hadoopVersionForHive3 = "3.1.0"
-val hiveVersion = "3.1.2"
-val tezVersion = "0.9.2"
-
-// Versions for Hive 2
-val hadoopVersionForHive2 = "2.7.2"
-val hive2Version = "2.3.3"
-val tezVersionForHive2 = "0.8.4"
 
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
@@ -90,7 +80,7 @@ crossScalaVersions := Nil
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
 val targetJvm = settingKey[String]("Target JVM version")
-Global / targetJvm := "8"
+Global / targetJvm := "11"
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
 lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
@@ -197,7 +187,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   case LATEST_RELEASED_SPARK_VERSION => Seq(
     scalaVersion := default_scala_version.value,
     crossScalaVersions := all_scala_versions,
-    targetJvm := "8",
+    targetJvm := "11",
     // For adding staged Spark RC versions, e.g.:
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
@@ -212,7 +202,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     scalaVersion := scala213,
     crossScalaVersions := Seq(scala213),
     targetJvm := "17",
-    resolvers += "Spark master staging" at "https://repository.apache.org/content/groups/snapshots/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
     Antlr4 / antlr4Version := "4.13.1",
@@ -231,7 +220,9 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
       "-Dlog4j.configurationFile=log4j2_spark_master.properties"
     ),
-
+    // For Delta Connect tests we create a Spark Distribution from the classpath. For this to work
+    // dependencies on other modules need to be exposed as a JAR, and not as a directory of classes.
+    exportJars := true,
     // Java-/Scala-/Uni-Doc Settings
     // This isn't working yet against Spark Master.
     // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
@@ -326,63 +317,37 @@ lazy val connectClient = (project in file("spark-connect/client"))
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
-
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.spark" %% "spark-common-utils" % sparkVersion.value % "test",
-      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests"
     ),
-    (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
-    (Test / resourceGenerators) += Def.task {
-      val location = url("https://dist.apache.org/repos/dist/release/spark/spark-4.0.0-preview1/spark-4.0.0-preview1-bin-hadoop3.tgz")
-      val destDir = (Test / resourceManaged).value / "spark"
-      if (!destDir.exists()) {
-        IO.createDirectory(destDir)
-        val files = mutable.Buffer.empty[File]
-        Using(new BufferedInputStream(location.openStream())) { bi =>
-          Using(new GzipCompressorInputStream(bi)) { gi =>
-            Using(new TarArchiveInputStream(gi)) { ti =>
-              var entry = ti.getNextEntry
-              while (entry != null) {
-                val dest = destDir / entry.getName
-                if (entry.isDirectory) {
-                  dest.mkdirs()
-                } else {
-                  files += dest
-                  Using(Files.newOutputStream(dest.toPath)) { os =>
-                    IOUtils.copy(ti, os)
-                  }
-
-                  val perms = new util.HashSet[PosixFilePermission]()
-                  perms.add(PosixFilePermission.OWNER_EXECUTE)
-                  perms.add(PosixFilePermission.OWNER_READ)
-                  perms.add(PosixFilePermission.OWNER_WRITE)
-                  Files.setPosixFilePermissions(dest.toPath, perms)
-                }
-                entry = ti.getNextEntry
-              }
-            }
-          }
+    (Test / javaOptions) += {
+      // Create a (mini) Spark Distribution based on the server classpath.
+      val serverClassPath = (connectServer / Compile / fullClasspath).value
+      val distributionDir = crossTarget.value / "test-dist"
+      if (!distributionDir.exists()) {
+        val jarsDir = distributionDir / "jars"
+        IO.createDirectory(jarsDir)
+        // Create symlinks for all dependencies.
+        serverClassPath.distinct.foreach { entry =>
+          val jarFile = entry.data.toPath
+          val linkedJarFile = jarsDir / entry.data.getName
+          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
         }
-        files
-      } else {
-        destDir.get()
+        // Create a symlink for the log4j properties
+        val confDir = distributionDir / "conf"
+        IO.createDirectory(confDir)
+        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2_spark_master.properties"
+        val linkedLog4jProps = confDir / "log4j2.properties"
+        Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
       }
-    }.taskValue,
-    (Test / resourceGenerators) += Def.task {
-      val src = url("https://repository.apache.org/content/groups/public/org/apache/spark/spark-connect_2.13/4.0.0-preview1/spark-connect_2.13-4.0.0-preview1.jar")
-      val dest = (Test / resourceManaged).value / "spark-connect.jar"
-      if (!dest.exists()) {
-        src #> dest !;
-        Seq(dest)
-      } else {
-        dest.get()
-      }
-    }.taskValue
+      // Return the location of the distribution directory.
+      "-Ddelta.spark.home=" + distributionDir
+    },
+    // Required for testing addFeatureSupport/dropFeatureSupport.
+    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -427,6 +392,34 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
+    excludeDependencies ++= Seq(
+      // Exclude connect common because a properly shaded version of it is included in the
+      // spark-connect jar. Including it causes classpath problems.
+      ExclusionRule("org.apache.spark", "spark-connect-common_2.13"),
+      // Exclude connect shims because we have spark-core on the classpath. The shims are only
+      // needed for the client. Including it causes classpath problems.
+      ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
+    ),
+    // Required for testing addFeatureSupport/dropFeatureSupport.
+    Test / envVars += ("DELTA_TESTING", "1"),
+  )
+
+lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
+  .disablePlugins(ScalafmtPlugin)
+  .settings (
+    name := "delta-suite-generator",
+    commonSettings,
+    scalaStyleSettings,
+    libraryDependencies ++= Seq(
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.11.0",
+      "org.scalameta" %% "scalameta" % "4.13.5",
+      "org.scalameta" %% "scalafmt-core" % "3.9.6",
+      "commons-cli" % "commons-cli" % "1.9.0",
+      "commons-codec" % "commons-codec" % "1.17.2",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    ),
+    Compile / mainClass := Some("io.delta.suitegenerator.ModularSuiteGenerator"),
+    Test / baseDirectory := (ThisBuild / baseDirectory).value,
   )
 
 lazy val spark = (project in file("spark"))
@@ -571,7 +564,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.2.2",
+      "io.delta" %% "delta-sharing-client" % "1.2.4",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -608,7 +601,12 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
-      "org.assertj" % "assertj-core" % "3.26.3" % "test"
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
+      // JMH dependencies allow writing micro-benchmarks for testing performance of components.
+      // JMH has framework to define benchmarks and takes care of many common functionalities
+      // such as warm runs, cold runs, defining benchmark parameter variables etc.
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test"
     ),
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.
@@ -662,6 +660,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
            |""".stripMargin)
       Seq(file)
     },
+    MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
@@ -683,6 +682,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javafmtCheckSettings,
     scalafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
+    // This allows generating tables with unsupported test table features in delta-spark
+    Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
@@ -705,10 +706,57 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
     ),
+    MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
+
+
+lazy val kernelSpark = (project in file("kernel-spark"))
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(spark % "test->test")
+  .dependsOn(goldenTables % "test")
+  .settings(
+    name := "kernel-spark",
+    commonSettings,
+    javafmtCheckSettings,
+    skipReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
+    ),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+  )
+  // TODO to enable unit doc for kernelSpark.
+
+lazy val unity = (project in file("unity"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi % "compile->compile;test->test")
+  .dependsOn(kernelDefaults % "test->test")
+  .dependsOn(storage)
+  .settings (
+    name := "delta-unity",
+    commonSettings,
+    javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
+    scalaStyleSettings,
+    scalafmtCheckSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    ),
+    unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
+  ).configureUnidoc()
 
 // TODO javastyle tests
 // TODO unidoc
@@ -718,6 +766,7 @@ lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
     commonSettings,
+    exportJars := true,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
@@ -946,232 +995,6 @@ lazy val hudi = (project in file("hudi"))
     Compile / packageBin := assembly.value
   )
 
-lazy val hive = (project in file("connectors/hive"))
-  .dependsOn(standaloneCosmetic)
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings (
-    name := "delta-hive",
-    commonSettings,
-    releaseSettings,
-
-    // Minimal dependencies to compile the codes. This project doesn't run any tests so we don't
-    // need any runtime dependencies.
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client" % hadoopVersionForHive3 % "provided",
-      "org.apache.hive" % "hive-exec" % hiveVersion % "provided" classifier "core",
-      "org.apache.hive" % "hive-metastore" % hiveVersion % "provided"
-    ),
-  )
-
-lazy val hiveAssembly = (project in file("connectors/hive-assembly"))
-  .dependsOn(hive)
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings(
-    name := "delta-hive-assembly",
-    Compile / unmanagedJars += (hive / Compile / packageBin / packageBin).value,
-    commonSettings,
-    skipReleaseSettings,
-
-    assembly / logLevel := Level.Info,
-    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
-    assembly / test := {},
-    assembly / assemblyMergeStrategy := {
-      // Discard `module-info.class` to fix the `different file contents found` error.
-      // TODO Upgrade SBT to 1.5 which will do this automatically
-      case "module-info.class" => MergeStrategy.discard
-      // Discard unused `parquet.thrift` so that we don't conflict the file used by the user
-      case "parquet.thrift" => MergeStrategy.discard
-      // Discard the jackson service configs that we don't need. These files are not shaded so
-      // adding them may conflict with other jackson version used by the user.
-      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
-      case x => MergeStrategy.first
-    },
-    // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
-    Compile / packageBin := assembly.value
-  )
-
-lazy val hiveTest = (project in file("connectors/hive-test"))
-  .dependsOn(goldenTables % "test")
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings (
-    name := "hive-test",
-    // Make the project use the assembly jar to ensure we are testing the assembly jar that users
-    // will use in real environment.
-    Compile / unmanagedJars += (hiveAssembly / Compile / packageBin / packageBin).value,
-    commonSettings,
-    skipReleaseSettings,
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client" % hadoopVersionForHive3 % "provided",
-      "org.apache.hive" % "hive-exec" % hiveVersion % "provided" classifier "core" excludeAll(
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule(organization = "com.google.protobuf")
-      ),
-      "org.apache.hive" % "hive-metastore" % hiveVersion % "provided"  excludeAll(
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule("org.apache.hive", "hive-exec")
-      ),
-      "org.apache.hive" % "hive-cli" % hiveVersion % "test" excludeAll(
-        ExclusionRule("ch.qos.logback", "logback-classic"),
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
-        ExclusionRule("org.apache.hive", "hive-exec"),
-        ExclusionRule("com.google.guava", "guava"),
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule(organization = "com.google.protobuf")
-      ),
-      "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test"
-    )
-  )
-
-lazy val hiveMR = (project in file("connectors/hive-mr"))
-  .dependsOn(hiveTest % "test->test")
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings (
-    name := "hive-mr",
-    commonSettings,
-    skipReleaseSettings,
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client" % hadoopVersionForHive3 % "provided",
-      "org.apache.hive" % "hive-exec" % hiveVersion % "provided" excludeAll(
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
-      ),
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersionForHive3 % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % hadoopVersionForHive3 % "test",
-      "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % hadoopVersionForHive3 % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-yarn-server-tests" % hadoopVersionForHive3 % "test" classifier "tests",
-      "org.apache.hive" % "hive-cli" % hiveVersion % "test" excludeAll(
-        ExclusionRule("ch.qos.logback", "logback-classic"),
-        ExclusionRule("com.google.guava", "guava"),
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
-      ),
-      "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test"
-    )
-  )
-
-lazy val hiveTez = (project in file("connectors/hive-tez"))
-  .dependsOn(hiveTest % "test->test")
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings (
-    name := "hive-tez",
-    commonSettings,
-    skipReleaseSettings,
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client" % hadoopVersionForHive3 % "provided" excludeAll (
-        ExclusionRule(organization = "com.google.protobuf")
-        ),
-      "com.google.protobuf" % "protobuf-java" % "2.5.0",
-      "org.apache.hive" % "hive-exec" % hiveVersion % "provided" classifier "core" excludeAll(
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule(organization = "com.google.protobuf")
-      ),
-      "org.jodd" % "jodd-core" % "3.5.2",
-      "org.apache.hive" % "hive-metastore" % hiveVersion % "provided" excludeAll(
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule("org.apache.hive", "hive-exec")
-      ),
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersionForHive3 % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % hadoopVersionForHive3 % "test",
-      "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % hadoopVersionForHive3 % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-yarn-server-tests" % hadoopVersionForHive3 % "test" classifier "tests",
-      "org.apache.hive" % "hive-cli" % hiveVersion % "test" excludeAll(
-        ExclusionRule("ch.qos.logback", "logback-classic"),
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
-        ExclusionRule("org.apache.hive", "hive-exec"),
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule(organization = "com.google.protobuf")
-      ),
-      "org.apache.hadoop" % "hadoop-yarn-common" % hadoopVersionForHive3 % "test",
-      "org.apache.hadoop" % "hadoop-yarn-api" % hadoopVersionForHive3 % "test",
-      "org.apache.tez" % "tez-mapreduce" % tezVersion % "test",
-      "org.apache.tez" % "tez-dag" % tezVersion % "test",
-      "org.apache.tez" % "tez-tests" % tezVersion % "test" classifier "tests",
-      "com.esotericsoftware" % "kryo-shaded" % "4.0.2" % "test",
-      "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test"
-    )
-  )
-
-
-lazy val hive2MR = (project in file("connectors/hive2-mr"))
-  .dependsOn(goldenTables % "test")
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings (
-    name := "hive2-mr",
-    commonSettings,
-    skipReleaseSettings,
-    Compile / unmanagedJars ++= Seq(
-      (hiveAssembly / Compile / packageBin / packageBin).value, // delta-hive assembly
-      (hiveTest / Test / packageBin / packageBin).value
-    ),
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client" % hadoopVersionForHive2 % "provided",
-      "org.apache.hive" % "hive-exec" % hive2Version % "provided" excludeAll(
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
-      ),
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersionForHive2 % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % hadoopVersionForHive2 % "test",
-      "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % hadoopVersionForHive2 % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-yarn-server-tests" % hadoopVersionForHive2 % "test" classifier "tests",
-      "org.apache.hive" % "hive-cli" % hive2Version % "test" excludeAll(
-        ExclusionRule("ch.qos.logback", "logback-classic"),
-        ExclusionRule("com.google.guava", "guava"),
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm")
-      ),
-      "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test"
-    )
-  )
-
-lazy val hive2Tez = (project in file("connectors/hive2-tez"))
-  .dependsOn(goldenTables % "test")
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings (
-    name := "hive2-tez",
-    commonSettings,
-    skipReleaseSettings,
-    Compile / unmanagedJars ++= Seq(
-      (hiveAssembly / Compile / packageBin / packageBin).value,
-      (hiveTest / Test / packageBin / packageBin).value
-    ),
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client" % hadoopVersionForHive2 % "provided" excludeAll (
-        ExclusionRule(organization = "com.google.protobuf")
-        ),
-      "com.google.protobuf" % "protobuf-java" % "2.5.0",
-      "org.apache.hive" % "hive-exec" % hive2Version % "provided" classifier "core" excludeAll(
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule(organization = "com.google.protobuf")
-      ),
-      "org.jodd" % "jodd-core" % "3.5.2",
-      "org.apache.hive" % "hive-metastore" % hive2Version % "provided" excludeAll(
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule("org.apache.hive", "hive-exec")
-      ),
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersionForHive2 % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-mapreduce-client-hs" % hadoopVersionForHive2 % "test",
-      "org.apache.hadoop" % "hadoop-mapreduce-client-jobclient" % hadoopVersionForHive2 % "test" classifier "tests",
-      "org.apache.hadoop" % "hadoop-yarn-server-tests" % hadoopVersionForHive2 % "test" classifier "tests",
-      "org.apache.hive" % "hive-cli" % hive2Version % "test" excludeAll(
-        ExclusionRule("ch.qos.logback", "logback-classic"),
-        ExclusionRule("org.pentaho", "pentaho-aggdesigner-algorithm"),
-        ExclusionRule("org.apache.hive", "hive-exec"),
-        ExclusionRule(organization = "org.eclipse.jetty"),
-        ExclusionRule(organization = "com.google.protobuf")
-      ),
-      "org.apache.hadoop" % "hadoop-yarn-common" % hadoopVersionForHive2 % "test",
-      "org.apache.hadoop" % "hadoop-yarn-api" % hadoopVersionForHive2 % "test",
-      "org.apache.tez" % "tez-mapreduce" % tezVersionForHive2 % "test",
-      "org.apache.tez" % "tez-dag" % tezVersionForHive2 % "test",
-      "org.apache.tez" % "tez-tests" % tezVersionForHive2 % "test" classifier "tests",
-      "com.esotericsoftware" % "kryo-shaded" % "4.0.2" % "test",
-      "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test"
-    )
-  )
-
 /**
  * We want to publish the `standalone` project's shaded JAR (created from the
  * build/sbt standalone/assembly command).
@@ -1181,7 +1004,7 @@ lazy val hive2Tez = (project in file("connectors/hive2-tez"))
  *
  * So, we create an impostor, cosmetic project used only for publishing.
  *
- * build/sbt standaloneCosmetic/package
+ * build/sbt standalone/package
  * - creates connectors/standalone/target/scala-2.12/delta-standalone-original-shaded_2.12-0.2.1-SNAPSHOT.jar
  *   (this is the shaded JAR we want)
  *
@@ -1454,122 +1277,6 @@ lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
     )
   )
 
-def flinkScalaVersion(scalaBinaryVersion: String): String = {
-  scalaBinaryVersion match {
-    // Flink doesn't support 2.13. We return 2.12 so that we can resolve the dependencies but we
-    // will not publish Flink connector with Scala 2.13.
-    case "2.13" => "2.12"
-    case _ => scalaBinaryVersion
-  }
-}
-
-lazy val flink = (project in file("connectors/flink"))
-  .dependsOn(standaloneCosmetic % "provided")
-  .dependsOn(kernelApi)
-  .dependsOn(kernelDefaults)
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
-  .settings (
-    name := "delta-flink",
-    commonSettings,
-    releaseSettings,
-    flinkMimaSettings,
-    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
-    autoScalaLibrary := false, // exclude scala-library from dependencies
-    Test / publishArtifact := false,
-    pomExtra :=
-      <url>https://github.com/delta-io/delta</url>
-        <scm>
-          <url>git@github.com:delta-io/delta.git</url>
-          <connection>scm:git:git@github.com:delta-io/delta.git</connection>
-        </scm>
-        <developers>
-          <developer>
-            <id>pkubit-g</id>
-            <name>Paweł Kubit</name>
-            <url>https://github.com/pkubit-g</url>
-          </developer>
-          <developer>
-            <id>kristoffSC</id>
-            <name>Krzysztof Chmielewski</name>
-            <url>https://github.com/kristoffSC</url>
-          </developer>
-        </developers>,
-    crossPaths := false,
-    libraryDependencies ++= Seq(
-      "org.apache.flink" % "flink-parquet" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
-      "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
-      "org.apache.flink" % "flink-connector-files" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-table-runtime" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-scala_2.12" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-connector-hive_2.12" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-table-planner_2.12" % flinkVersion % "provided",
-
-      "org.apache.flink" % "flink-connector-files" % flinkVersion % "test" classifier "tests",
-      "org.apache.flink" % "flink-runtime-web" % flinkVersion % "test",
-      "org.apache.flink" % "flink-sql-gateway-api" % flinkVersion % "test",
-      "org.apache.flink" % "flink-connector-test-utils" % flinkVersion % "test",
-      "org.apache.flink" % "flink-clients" % flinkVersion % "test",
-      "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test" classifier "tests",
-      "org.mockito" % "mockito-inline" % "4.11.0" % "test",
-      "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
-      "org.junit.vintage" % "junit-vintage-engine" % "5.8.2" % "test",
-      "org.mockito" % "mockito-junit-jupiter" % "4.11.0" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "io.github.artsok" % "rerunner-jupiter" % "2.1.6" % "test",
-
-      // Exclusions due to conflicts with Flink's libraries from table planer, hive, calcite etc.
-      "org.apache.hive" % "hive-metastore" % "3.1.2" % "test" excludeAll(
-        ExclusionRule("org.apache.avro", "avro"),
-        ExclusionRule("org.slf4j", "slf4j-log4j12"),
-        ExclusionRule("org.pentaho"),
-        ExclusionRule("org.apache.hbase"),
-        ExclusionRule("org.apache.hbase"),
-        ExclusionRule("co.cask.tephra"),
-        ExclusionRule("com.google.code.findbugs", "jsr305"),
-        ExclusionRule("org.eclipse.jetty.aggregate", "module: 'jetty-all"),
-        ExclusionRule("org.eclipse.jetty.orbit", "javax.servlet"),
-        ExclusionRule("org.apache.parquet", "parquet-hadoop-bundle"),
-        ExclusionRule("com.tdunning", "json"),
-        ExclusionRule("javax.transaction", "transaction-api"),
-        ExclusionRule("'com.zaxxer", "HikariCP"),
-      ),
-      // Exclusions due to conflicts with Flink's libraries from table planer, hive, calcite etc.
-      "org.apache.hive" % "hive-exec" % "3.1.2" % "test" classifier "core" excludeAll(
-        ExclusionRule("'org.apache.avro", "avro"),
-        ExclusionRule("org.slf4j", "slf4j-log4j12"),
-        ExclusionRule("org.pentaho"),
-        ExclusionRule("com.google.code.findbugs", "jsr305"),
-        ExclusionRule("org.apache.calcite.avatica"),
-        ExclusionRule("org.apache.calcite"),
-        ExclusionRule("org.apache.hive", "hive-llap-tez"),
-        ExclusionRule("org.apache.logging.log4j"),
-        ExclusionRule("com.google.protobuf", "protobuf-java"),
-      ),
-    ),
-    // generating source java class with version number to be passed during commit to the DeltaLog as engine info
-    // (part of transaction's metadata)
-    Compile / sourceGenerators += Def.task {
-      val file = (Compile / sourceManaged).value / "io" / "delta" / "flink" / "internal" / "Meta.java"
-      IO.write(file,
-        s"""package io.delta.flink.internal;
-           |
-           |public final class Meta {
-           |    public static final String FLINK_VERSION = "${flinkVersion}";
-           |    public static final String CONNECTOR_VERSION = "${version.value}";
-           |}
-           |""".stripMargin)
-      Seq(file)
-    },
-
-    // Unidoc settings
-    unidocSourceFilePatterns += SourceFilePattern("io/delta/flink/"),
-    // TODO: this is the config that was used before archiving connectors but it has
-    //  standalone-specific import orders
-    javaCheckstyleSettings("dev/connectors-checkstyle.xml")
-  ).configureUnidoc()
-
 /**
  * Get list of python files and return the mapping between source files and target paths
  * in the generated package JAR.
@@ -1598,7 +1305,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, kernelSpark, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

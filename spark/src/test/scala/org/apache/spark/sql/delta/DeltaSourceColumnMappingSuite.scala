@@ -334,7 +334,9 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
     }
   }
 
-  test("column mapping + streaming: blocking workflow - drop column") {
+  test(
+    "column mapping + streaming: blocking workflow - drop column"
+  ) {
     val schemaAlterQuery = "DROP COLUMN value"
     val schemaRestoreQuery = "ADD COLUMN (value string)"
 
@@ -403,7 +405,8 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       if (isCdcTest) {
         checkStreamStartBlocked(df2, checkpointDir, ExpectGenericSchemaIncompatibleFailure)
       } else {
-        checkStreamStartBlocked(df2, checkpointDir, ExpectStreamStartInCompatibleSchemaFailure)
+        val expectedError = ExpectStreamStartInCompatibleSchemaFailure
+        checkStreamStartBlocked(df2, checkpointDir, expectedError)
       }
 
       // Case 2 - Specifically we use startingVersion=0 to simulate serving the entire table's data
@@ -432,6 +435,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       }
     }
   }
+
 
   test("column mapping + streaming: blocking workflow - rename column") {
     val schemaAlterQuery = "RENAME COLUMN value TO value2"

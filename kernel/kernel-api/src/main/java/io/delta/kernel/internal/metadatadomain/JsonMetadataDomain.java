@@ -100,9 +100,9 @@ public abstract class JsonMetadataDomain {
    */
   protected static <T> Optional<T> fromSnapshot(
       SnapshotImpl snapshot, Class<T> clazz, String domainName) {
-    return Optional.ofNullable(snapshot.getDomainMetadataMap().get(domainName))
-        .filter(domainMetadata -> !domainMetadata.isRemoved())
-        .map(domainMetadata -> fromJsonConfiguration(domainMetadata.getConfiguration(), clazz));
+    return snapshot
+        .getDomainMetadata(domainName)
+        .map(config -> fromJsonConfiguration(config, clazz));
   }
 
   /**

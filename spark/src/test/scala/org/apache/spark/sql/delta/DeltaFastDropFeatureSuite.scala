@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.DeltaReorgTableCommand
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
@@ -626,11 +627,14 @@ class DeltaFastDropFeatureSuite
       !protocol.readerFeatureNames.contains(DeletionVectorsTableFeature.name))
   }
 
-  private def validateTombstones(log: DeltaLog): Unit = {
+  private def validateTombstones(
+      log: DeltaLog,
+      expectedDVTombstoneCount: Option[Int] = None): Unit = {
     import org.apache.spark.sql.delta.implicits._
 
     val snapshot = log.update()
-    val dvPath = DeletionVectorDescriptor.urlEncodedPath(col("deletionVector"), log.dataPath)
+    val dvPath = DeletionVectorDescriptor
+      .urlEncodedRelativePathIfExists(col("deletionVector"), log.dataPath)
     val isDVTombstone = DeletionVectorDescriptor.isDeletionVectorPath(col("path"))
     val isInlineDeletionVector = DeletionVectorDescriptor.isInline(col("deletionVector"))
 
@@ -639,7 +643,8 @@ class DeltaFastDropFeatureSuite
       .filter("deletionVector IS NOT NULL")
       .filter(not(isInlineDeletionVector))
       .filter(not(isDVTombstone))
-      .select(dvPath)
+      .select(dvPath.as("path"))
+      .filter(col("path").isNotNull)
       .distinct()
       .as[String]
 
@@ -651,8 +656,10 @@ class DeltaFastDropFeatureSuite
 
     val dvTombstonesSet = dvTombstones.collect().toSet
 
-    assert(dvTombstonesSet.nonEmpty)
+    assert(dvTombstonesSet.nonEmpty || expectedDVTombstoneCount === Some(0))
+    assert(dvTombstonesSet.map(new Path(_)).forall(_.getParent.isRoot))
     assert(uniqueDvsFromParquetRemoveFiles.collect().toSet === dvTombstonesSet)
+    expectedDVTombstoneCount.foreach(expected => assert(dvTombstonesSet.size === expected))
   }
 
   for (withCommitLarge <- BOOLEAN_DOMAIN)
@@ -721,6 +728,48 @@ class DeltaFastDropFeatureSuite
       sql(s"ALTER TABLE delta.`${dir.getAbsolutePath}` DROP FEATURE deletionVectors")
 
       validateTombstones(deltaLog)
+    }
+  }
+  for (isShallowClone <- Seq(true))
+  test(s"We do not create redundant DV tombstones after cloning " +
+      s"isShallowClone: $isShallowClone") {
+    withTempPaths(2) { case Seq(sourceDir, targetDir) =>
+      val sourceLog = DeltaLog.forTable(spark, sourceDir.getAbsolutePath)
+      val targetLog = DeltaLog.forTable(spark, targetDir.getAbsolutePath)
+
+      createTableWithDeletionVectors(sourceLog)
+
+      io.delta.tables.DeltaTable.forPath(sourceLog.dataPath.toString).clone(
+        target = targetDir.getCanonicalPath,
+        isShallow = isShallowClone)
+
+      // We should not create any DV tombstones at this point since the shallow cloned table
+      // references the source table's data files.
+      val expectedDVTombstoneCount1 = Some(0)
+      dropDeletionVectors(targetLog)
+      validateTombstones(targetLog, expectedDVTombstoneCount1)
+
+      // Re-enable DVs in the target table.
+      sql(
+        s"""ALTER TABLE delta.`${targetDir.getAbsolutePath}`
+           |SET TBLPROPERTIES (
+           |delta.feature.${DeletionVectorsTableFeature.name} = 'enabled',
+           |${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key} = 'true'
+           |)""".stripMargin)
+
+      // Deleting rows causes shallow clone tables to create local files.
+      withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+        val targetTable = io.delta.tables.DeltaTable.forPath(targetDir.toString)
+        targetTable.delete("id > 20 and id <= 30")
+        assert(targetLog.update().numDeletionVectorsOpt === Some(2L))
+      }
+
+      sql(s"ALTER TABLE delta.`${targetDir.getAbsolutePath}` DROP FEATURE deletionVectors")
+
+      // Verify that the DV tombstones created exactly match the unique DV paths
+      // found in files with DVs.
+      val expectedDVTombstoneCount2 = Some(1)
+      validateTombstones(targetLog, expectedDVTombstoneCount2)
     }
   }
 

@@ -20,7 +20,7 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, ExpressionTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
@@ -38,16 +38,20 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, StringType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
-  private final val supportedFileFormats = Seq("json", "parquet")
+class LegacyCheckpointV2ReadSuite extends AbstractCheckpointV2ReadSuite
+    with TestUtilsWithLegacyKernelAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
 
-  override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
-    {
-      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-      set("delta.kernel.default.parquet.reader.batch-size", "2");
-      set("delta.kernel.default.json.reader.batch-size", "2");
-    }
-  })
+class CheckpointV2ReadSuite extends AbstractCheckpointV2ReadSuite
+    with TestUtilsWithTableManagerAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
+
+trait AbstractCheckpointV2ReadSuite extends AnyFunSuite with ExpressionTestUtils {
+  self: AbstractTestUtils =>
+
+  private final val supportedFileFormats = Seq("json", "parquet")
 
   def createSourceTable(
       tbl: String,
@@ -68,8 +72,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       ckptVersionExpected: Option[Int] = None,
       expectV2CheckpointFormat: Boolean = true): Unit = {
     // Create a snapshot from Spark connector and from kernel.
-    val snapshot = latestSnapshot(path)
-    val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
+    val snapshotImpl = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, path)
 
     // Validate metadata/protocol loaded correctly from top-level v2 checkpoint file.
     val expectedMetadataId =
@@ -83,7 +86,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       snapshotFromSpark.protocol.readerFeatureNames)
     assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toSet ==
       snapshotFromSpark.protocol.writerFeatureNames)
-    assert(snapshot.getVersion() == snapshotFromSpark.version)
+    assert(snapshotImpl.getVersion() == snapshotFromSpark.version)
 
     // Validate that snapshot read from most recent checkpoint. For most cases, given a checkpoint
     // interval of 2, this will be the most recent even version.
@@ -97,7 +100,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       .contains(expectV2CheckpointFormat))
 
     // Validate AddFiles from sidecars found against Spark connector.
-    val scan = snapshot.getScanBuilder().build()
+    val scan = snapshotImpl.getScanBuilder().build()
     val foundFiles =
       collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
         _.getPath.split('/').last).toSet
@@ -112,8 +115,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
   test("v2 checkpoint support") {
     supportedFileFormats.foreach { format =>
       withTempDir { path =>
-        val tbl = "tbl"
-        withTable(tbl) {
+        withTempTable { tbl =>
           // Create table.
           withSQLConf(
             DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
@@ -151,8 +153,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
   test("v2 checkpoint support with multiple sidecars") {
     supportedFileFormats.foreach { format =>
       withTempDir { path =>
-        val tbl = "tbl"
-        withTable(tbl) {
+        withTempTable { tbl =>
           // Create table.
           withSQLConf(
             DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
@@ -176,65 +177,6 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
           checkTable(
             path = path.toString,
             expectedAnswer = (3 to 8).map(i => TestRow(i, (i - 1 + 'a').toChar.toString)))
-        }
-      }
-    }
-  }
-
-  test("v2 checkpoint support with an empty sidecar") {
-    supportedFileFormats.foreach { format =>
-      withTempDir { path =>
-        val tbl = "tbl"
-        withTable(tbl) {
-          // Create table.
-          withSQLConf(
-            DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
-            DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
-            "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-            createSourceTable(tbl, path.toString, "CLUSTER")
-          }
-
-          // Evalute Spark result before updating sidecar.
-          val snapshotFromSpark = DeltaLog.forTable(spark, path.toString).update()
-          snapshotFromSpark.allFiles.collect()
-
-          // Remove all data from one of the sidecar files.
-          val sidecarFolderPath =
-            new Path(DeltaLog.forTable(spark, path.toString).logPath, "_sidecars")
-          val tmpPath = new Path(new Path(path.toString), "_tmp")
-          val sidecarCkptPath = new Path(new File(sidecarFolderPath.toUri).listFiles()
-            .filter(f => !f.getName.endsWith(".crc")).head.toURI).toUri
-          // Create new empty sidecar file, then move it to the sidecar filepath. Delete the sidecar
-          // checksum file to prevent corruption check.
-          spark.createDataFrame(
-            spark.sparkContext.parallelize(Seq.empty[Row]),
-            new StructType()
-              .add(
-                "add",
-                new StructType()
-                  .add("path", StringType)
-                  .add("partitionValues", MapType(StringType, StringType))
-                  .add("size", LongType)
-                  .add("modificationTime", LongType)
-                  .add("dataChange", BooleanType))
-              .add(
-                "remove",
-                new StructType()
-                  .add("path", StringType)))
-            .coalesce(1)
-            .write.mode("append").parquet(tmpPath.toString)
-          val oldPath =
-            new File(tmpPath.toString).listFiles().filter(_.getName.endsWith(".parquet")).head
-          oldPath.renameTo(new File(sidecarCkptPath))
-          val parent = new Path(sidecarCkptPath).getParent
-          val name = "." + new Path(sidecarCkptPath).getName + ".crc"
-          new File(new Path(parent, name).toUri).delete()
-
-          // Validate snapshot and data.
-          validateSnapshot(
-            path.toString,
-            DeltaLog.forTable(spark, path.toString).update(),
-            strictFileValidation = false)
         }
       }
     }
@@ -281,8 +223,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
 
   test("compatibility checkpoint with sidecar files") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         // Create checkpoint with sidecars.
         withSQLConf(
           DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> "parquet",
@@ -313,8 +254,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
 
   test("read from table with partition predicates") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         // Create source table with schema (a INT, b STRING) partitioned by a.
         createSourceTable(tbl, path.toString, "PARTITIONED")
 

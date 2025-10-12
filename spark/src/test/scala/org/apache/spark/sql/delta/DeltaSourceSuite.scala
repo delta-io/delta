@@ -25,6 +25,7 @@ import java.util.concurrent.TimeoutException
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
@@ -183,7 +184,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         userSpecifiedSchema = Some(StructType.fromDDL("value STRING")),
         className = "delta",
         options = Map("path" -> inputDir.getCanonicalPath))
-      Dataset.ofRows(spark, StreamingRelation(v1DataSource))
+      DataFrameUtils.ofRows(spark, StreamingRelation(v1DataSource))
     }
   }
 

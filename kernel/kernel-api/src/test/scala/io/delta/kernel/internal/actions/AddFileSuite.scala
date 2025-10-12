@@ -23,11 +23,12 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.utils.DataFileStatistics.deserializeFromJson
+import io.delta.kernel.statistics.DataFileStatistics
 
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.must.Matchers
 
-class AddFileSuite extends AnyFunSuite {
+class AddFileSuite extends AnyFunSuite with Matchers {
 
   /**
    * Generate a Row representing an AddFile action with provided fields.
@@ -49,6 +50,7 @@ class AddFileSuite extends AnyFunSuite {
     }
 
     AddFile.createAddFileRow(
+      null,
       path,
       stringStringMapValue(partitionValues.asJava),
       size.asInstanceOf[JLong],
@@ -58,7 +60,7 @@ class AddFileSuite extends AnyFunSuite {
       toJavaOptional(tags.map(_.asJava).map(stringStringMapValue)),
       toJavaOptional(baseRowId.asInstanceOf[Option[JLong]]),
       toJavaOptional(defaultRowCommitVersion.asInstanceOf[Option[JLong]]),
-      deserializeFromJson(stats.getOrElse("")))
+      DataFileStatistics.deserializeFromJson(stats.getOrElse(""), null))
   }
 
   test("getters can read AddFile's fields from the backing row") {
@@ -85,7 +87,7 @@ class AddFileSuite extends AnyFunSuite {
     assert(addFile.getBaseRowId === Optional.of(30L))
     assert(addFile.getDefaultRowCommitVersion === Optional.of(40L))
     // DataFileStatistics doesn't have an equals() override, so we need to compare the string
-    assert(addFile.getStats.get().toString === "{\"numRecords\":100}")
+    assert(addFile.getStats(null).get().serializeAsJson(null) === "{\"numRecords\":100}")
     assert(addFile.getNumRecords === Optional.of(100L))
   }
 
@@ -120,29 +122,53 @@ class AddFileSuite extends AnyFunSuite {
   }
 
   test("toString() prints all fields of AddFile") {
-    val addFileRow = generateTestAddFileRow(
-      path = "test/path",
-      partitionValues = Map("col1" -> "val1"),
-      size = 100L,
-      modificationTime = 1234L,
-      dataChange = false,
-      tags = Option(Map("tag1" -> "value1")),
-      baseRowId = Option(12345L),
-      defaultRowCommitVersion = Option(67890L),
-      stats = Option("{\"numRecords\":10000}"))
-    val addFile = new AddFile(addFileRow)
-    val expectedString = "AddFile{" +
-      "path='test/path', " +
-      "partitionValues={col1=val1}, " +
-      "size=100, " +
-      "modificationTime=1234, " +
-      "dataChange=false, " +
-      "deletionVector=Optional.empty, " +
-      "tags=Optional[{tag1=value1}], " +
-      "baseRowId=Optional[12345], " +
-      "defaultRowCommitVersion=Optional[67890], " +
-      "stats=Optional[{\"numRecords\":10000}]}"
-    assert(addFile.toString == expectedString)
+    Seq(true, false).foreach { dvPresent =>
+      val deletionVector = if (dvPresent) {
+        Some(new DeletionVectorDescriptor(
+          "storage",
+          "s",
+          Optional.of(1),
+          25,
+          35))
+      } else {
+        None
+      }
+
+      val addFileRow = generateTestAddFileRow(
+        path = "test/path",
+        partitionValues = Map("col1" -> "val1"),
+        size = 100L,
+        modificationTime = 1234L,
+        dataChange = false,
+        tags = Option(Map("tag1" -> "value1")),
+        baseRowId = Option(12345L),
+        defaultRowCommitVersion = Option(67890L),
+        stats = Option("{\"numRecords\":10000}"),
+        deletionVector = deletionVector)
+
+      val addFile = new AddFile(addFileRow)
+
+      val deletionVectorString = if (dvPresent) {
+        "Optional[DeletionVectorDescriptor(storageType=storage," +
+          " pathOrInlineDv=s, offset=Optional[1], sizeInBytes=25, cardinality=35)]"
+      } else {
+        "Optional.empty"
+      }
+
+      val expectedString = "AddFile{" +
+        "path='test/path', " +
+        "partitionValues={col1=val1}, " +
+        "size=100, " +
+        "modificationTime=1234, " +
+        "dataChange=false, " +
+        s"deletionVector=$deletionVectorString, " +
+        "tags=Optional[{tag1=value1}], " +
+        "baseRowId=Optional[12345], " +
+        "defaultRowCommitVersion=Optional[67890], " +
+        "stats={\"numRecords\":10000}}"
+
+      assert(addFile.toString == expectedString)
+    }
   }
 
   test("equals() compares AddFile instances correctly") {
@@ -177,10 +203,26 @@ class AddFileSuite extends AnyFunSuite {
       baseRowId = Option(12345L),
       stats = Option("{\"numRecords\":100}"))
 
+    // Create a AddFile with deletion vector value
+    val addFileRowDeletionVector = generateTestAddFileRow(
+      path = "test/path",
+      size = 100L,
+      partitionValues = Map("x" -> "0"),
+      baseRowId = Option(12345L),
+      deletionVector = Some(
+        new DeletionVectorDescriptor(
+          "storage",
+          "s",
+          Optional.of(1),
+          25,
+          35)),
+      stats = Option("{\"numRecords\":100}"))
+
     val addFile1 = new AddFile(addFileRow1)
     val addFile2 = new AddFile(addFileRow2)
     val addFileDiffPath = new AddFile(addFileRowDiffPath)
     val addFileDiffPartition = new AddFile(addFileRowDiffPartition)
+    val addFileDeletionVector = new AddFile(addFileRowDeletionVector)
 
     // Test equality
     assert(addFile1 === addFile2)
@@ -189,6 +231,7 @@ class AddFileSuite extends AnyFunSuite {
     assert(addFile2 != addFileDiffPath)
     assert(addFile2 != addFileDiffPartition)
     assert(addFileDiffPath != addFileDiffPartition)
+    assert(addFileDeletionVector != addFileDiffPartition)
 
     // Test null and different type
     assert(!addFile1.equals(null))
@@ -218,5 +261,106 @@ class AddFileSuite extends AnyFunSuite {
 
     // Hash code should be consistent across multiple calls
     assert(addFile1.hashCode === addFile1.hashCode)
+  }
+
+  // Tests for toRemoveFileRow
+  test("toRemoveFileRow: handles AddFile with all required fields") {
+    val addFile = new AddFile(generateTestAddFileRow(
+      path = "/path/to/file",
+      dataChange = false))
+
+    def verify(
+        result: RemoveFile,
+        expDataChange: Boolean,
+        expDeletionTimestamp: Option[Long]): Unit = {
+      assert(result.getPath === "/path/to/file")
+      if (expDeletionTimestamp.isDefined) {
+        assert(result.getDeletionTimestamp.get() === expDeletionTimestamp.get)
+      }
+      assert(result.getDataChange === expDataChange)
+      assert(result.getExtendedFileMetadata === Optional.of(true))
+      assert(VectorUtils.toJavaMap[String, String](result.getPartitionValues.get()).asScala ===
+        Map.empty[String, String])
+      assert(result.getSize === Optional.of(10L))
+      assert(result.getStatsJson === Optional.empty())
+      assert(result.getTags === Optional.empty())
+      assert(result.getBaseRowId === Optional.empty())
+      assert(result.getDefaultRowCommitVersion === Optional.empty())
+    }
+
+    val result1 = new RemoveFile(addFile.toRemoveFileRow(true, Optional.empty()))
+    verify(result1, expDataChange = true, expDeletionTimestamp = None)
+
+    val result2 = new RemoveFile(addFile.toRemoveFileRow(false, Optional.empty()))
+    verify(result2, expDataChange = false, expDeletionTimestamp = None)
+
+    val result3 = new RemoveFile(addFile.toRemoveFileRow(true, Optional.of(100L)))
+    verify(result3, expDataChange = true, expDeletionTimestamp = Some(100L))
+  }
+
+  test("toRemoveFileRow: handles AddFile with optional fields present") {
+    val addFile = new AddFile(generateTestAddFileRow(
+      path = "/path/to/file",
+      partitionValues = Map("a" -> "1"),
+      size = 100L,
+      modificationTime = 200L,
+      dataChange = true,
+      deletionVector = None,
+      tags = Some(Map("tag1" -> "value1")),
+      baseRowId = Some(67890L),
+      defaultRowCommitVersion = Some(2823L),
+      stats = Some("{\"numRecords\":100}")))
+
+    val result = new RemoveFile(addFile.toRemoveFileRow(false, Optional.of(200L)))
+
+    assert(result.getPath === "/path/to/file")
+    assert(VectorUtils.toJavaMap[String, String](result.getPartitionValues.get()).asScala ===
+      Map("a" -> "1"))
+    assert(result.getSize === Optional.of(100L))
+    assert(result.getDeletionTimestamp === Optional.of(200L))
+    assert(result.getDataChange === false)
+    assert(result.getDeletionVector === Optional.empty())
+    assert(VectorUtils.toJavaMap[String, String](result.getTags.get()).asScala ===
+      Map[String, String]("tag1" -> "value1"))
+    assert(result.getBaseRowId === Optional.of(67890L))
+    assert(result.getDefaultRowCommitVersion === Optional.of(2823L))
+    assert(result.getStatsJson === Optional.of("{\"numRecords\":100}"))
+  }
+
+  test("toRemoveFileRow: DV is converted properly") {
+    val addFile = new AddFile(generateTestAddFileRow(
+      path = "/path/to/file",
+      partitionValues = Map("a" -> "1"),
+      size = 100L,
+      modificationTime = 200L,
+      dataChange = true,
+      deletionVector = Some(
+        new DeletionVectorDescriptor(
+          "storage",
+          "s",
+          Optional.of(1),
+          25,
+          35)),
+      tags = Some(Map("tag1" -> "value1")),
+      baseRowId = Some(67890L),
+      defaultRowCommitVersion = Some(2823L),
+      stats = Some("{\"numRecords\":100}")))
+
+    val result = new RemoveFile(addFile.toRemoveFileRow(true, Optional.of(200L)))
+
+    assert(result.getPath === "/path/to/file")
+    assert(VectorUtils.toJavaMap[String, String](result.getPartitionValues.get()).asScala ===
+      Map[String, String]("a" -> "1"))
+    assert(result.getSize.get() === 100L)
+    assert(result.getDeletionTimestamp.get() === 200L)
+    assert(result.getDataChange === true)
+    assert(result.getDeletionVector === Optional.of(
+      new DeletionVectorDescriptor("storage", "s", Optional.of(1), 25, 35)))
+    assert(VectorUtils.toJavaMap[String, String](result.getTags.get()).asScala ===
+      Map[String, String]("tag1" -> "value1"))
+    assert(result.getBaseRowId === Optional.of(67890L))
+    assert(result.getDefaultRowCommitVersion === Optional.of(2823L))
+    assert(result.getStatsJson === Optional.of("{\"numRecords\":100}"))
+
   }
 }

@@ -19,23 +19,25 @@ package org.apache.spark.sql.delta.commands.convert
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, SerializableFileStatus, Snapshot => DeltaSnapshot}
 import org.apache.spark.sql.delta.DeltaErrors.cloneFromIcebergSourceWithPartitionEvolution
 import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PARTITION_SPECS
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{BaseTable, DataFile, DataFiles, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
+import org.apache.iceberg.{BaseTable, DataFile, DataFiles, DeleteFile, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
+import org.apache.iceberg.types.Type.TypeID
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.StructType
 
+
 class IcebergFileManifest(
     spark: SparkSession,
-    table: Table,
+    table: IcebergTableLike,
     partitionSchema: StructType,
     convertStats: Boolean = true) extends ConvertTargetFileManifest with LoggingShims {
 
@@ -56,6 +58,12 @@ class IcebergFileManifest(
 
   private val partitionEvolutionEnabled =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
+
+  private val statsAllowTypes: Set[TypeID] = IcebergStatsUtils.typesAllowStatsConversion(spark)
+  private val allowPartialStatsConverted: Boolean =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_CLONE_ICEBERG_ALLOW_PARTIAL_STATS
+    )
 
   val basePath = table.location()
 
@@ -92,14 +100,8 @@ class IcebergFileManifest(
       return spark.emptyDataset[ConvertTargetFile]
     }
 
-    // We do not support Iceberg Merge-On-Read using delete files and will by default
-    // throw errors when encountering them. This flag will bypass the check and ignore the delete
-    // files, and in other words, generating a CORRUPTED table. We keep this flag only for
-    // backward compatibility. No new use cases of this flag should be allowed.
-    val unsafeConvertMorTable =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
     val hasMergeOnReadDeletionFiles = table.currentSnapshot().deleteManifests(table.io()).size() > 0
-    if (hasMergeOnReadDeletionFiles && !unsafeConvertMorTable) {
+    if (hasMergeOnReadDeletionFiles) {
       throw new UnsupportedOperationException(
         s"Cannot support convert Iceberg table with row-level deletes." +
           s"Please trigger an Iceberg compaction and retry the command.")
@@ -125,22 +127,16 @@ class IcebergFileManifest(
     }
 
     val shouldConvertStats = convertStats
+    val partialStatsConvertedEnabled = allowPartialStatsConverted
+    val statsAllowTypesSet = statsAllowTypes
 
     val shouldCheckPartitionEvolution = !partitionEvolutionEnabled
     val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
     val tableSpecsSize = table.specs().size()
 
-    val manifestFiles = localTable
-      .currentSnapshot()
-      .dataManifests(localTable.io())
-      .asScala
-      .map(new ManifestFileWrapper(_))
-      .toSeq
+    val dataFiles = loadIcebergFiles()
 
-    spark
-      .createDataset(manifestFiles)
-      .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
-      .map { dataFile: DataFileWrapper =>
+    dataFiles.map { dataFile: DataFileWrapper =>
         if (shouldCheckPartitionEvolution) {
           IcebergFileManifest.validateLimitedPartitionEvolution(
             dataFile.specId,
@@ -159,11 +155,36 @@ class IcebergFileManifest(
             Some(convertPartition.toDelta(dataFile.partition()))
           } else None,
           stats = if (shouldConvertStats) {
-            IcebergStatsUtils.icebergStatsToDelta(localTable.schema, dataFile)
+            IcebergStatsUtils.icebergStatsToDelta(
+              localTable.schema,
+              dataFile,
+              statsAllowTypesSet,
+              shouldSkipForFile = (df: DataFile) => {
+                !partialStatsConvertedEnabled && IcebergStatsUtils.hasPartialStats(df)
+              }
+            )
           } else None
         )
       }
       .cache()
+  }
+
+  private def loadIcebergFiles(): (
+    Dataset[DataFileWrapper]
+  ) = {
+    val localTable = table
+    val manifestFiles =
+          localTable
+            .currentSnapshot()
+            .dataManifests(localTable.io())
+            .asScala
+            .map(new ManifestFileWrapper(_))
+            .toSeq
+    val dataFiles =
+          spark
+            .createDataset(manifestFiles)
+            .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+    dataFiles
   }
 
 

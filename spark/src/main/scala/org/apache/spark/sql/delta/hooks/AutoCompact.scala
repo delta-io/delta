@@ -86,7 +86,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
   private[hooks] def shouldSkipAutoCompact(
       autoCompactTypeOpt: Option[AutoCompactType],
       spark: SparkSession,
-      txn: DeltaTransaction): Boolean = {
+      txn: CommittedTransaction): Boolean = {
     // If auto compact type is empty, then skip compaction
     if (autoCompactTypeOpt.isEmpty) return true
 
@@ -97,21 +97,15 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
 
   }
 
-  override def run(
-      spark: SparkSession,
-      txn: DeltaTransaction,
-      committedVersion: Long,
-      postCommitSnapshot: Snapshot,
-      actions: Seq[Action]): Unit = {
+  override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     val conf = spark.sessionState.conf
-    val autoCompactTypeOpt = getAutoCompactType(conf, postCommitSnapshot.metadata)
+    val autoCompactTypeOpt = getAutoCompactType(conf, txn.postCommitSnapshot.metadata)
     // Skip Auto Compact if current transaction is not qualified or the table is not qualified
     // based on the value of autoCompactTypeOpt.
     if (shouldSkipAutoCompact(autoCompactTypeOpt, spark, txn)) return
     compactIfNecessary(
         spark,
         txn,
-        postCommitSnapshot,
         OP_TYPE,
         maxDeletedRowsRatio = None)
   }
@@ -122,8 +116,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
    */
   private[delta] def compactIfNecessary(
       spark: SparkSession,
-      txn: DeltaTransaction,
-      postCommitSnapshot: Snapshot,
+      txn: CommittedTransaction,
       opType: String,
       maxDeletedRowsRatio: Option[Double]
   ): Seq[OptimizeMetrics] = {
@@ -131,8 +124,6 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
     val autoCompactRequest = AutoCompactUtils.prepareAutoCompactRequest(
       spark,
       txn,
-      postCommitSnapshot,
-      txn.partitionsAddedToOpt.map(_.toSet),
       opType,
       maxDeletedRowsRatio)
     if (autoCompactRequest.shouldCompact) {

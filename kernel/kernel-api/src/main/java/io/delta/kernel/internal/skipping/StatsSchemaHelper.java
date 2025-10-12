@@ -43,6 +43,13 @@ public class StatsSchemaHelper {
   // Public static fields and methods
   //////////////////////////////////////////////////////////////////////////////////
 
+  /* Delta statistics field names for file statistics */
+  public static final String NUM_RECORDS = "numRecords";
+  public static final String MIN = "minValues";
+  public static final String MAX = "maxValues";
+  public static final String NULL_COUNT = "nullCount";
+  public static final String TIGHT_BOUNDS = "tightBounds";
+
   /**
    * Returns true if the given literal is skipping-eligible. Delta tracks min/max stats for a
    * limited set of data types and only literals of those types are skipping eligible.
@@ -51,36 +58,64 @@ public class StatsSchemaHelper {
     return isSkippingEligibleDataType(literal.getDataType());
   }
 
+  /** Returns true if the given data type is eligible for MIN/MAX data skipping. */
+  public static boolean isSkippingEligibleDataType(DataType dataType) {
+    return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
+        ||
+        // DecimalType is eligible but since its string includes scale + precision it needs to
+        // be matched separately
+        dataType instanceof DecimalType;
+  }
+
   /**
    * Returns the expected statistics schema given a table schema.
    *
    * <p>Here is an example of a data schema along with the schema of the statistics that would be
    * collected.
    *
-   * <p>Data Schema: {{{ |-- a: struct (nullable = true) | |-- b: struct (nullable = true) | | |--
-   * c: long (nullable = true) }}}
+   * <p>Data Schema:
    *
-   * <p>Collected Statistics: {{{ |-- stats: struct (nullable = true) | |-- numRecords: long
-   * (nullable = false) | |-- minValues: struct (nullable = false) | | |-- a: struct (nullable =
-   * false) | | | |-- b: struct (nullable = false) | | | | |-- c: long (nullable = true) | |--
-   * maxValues: struct (nullable = false) | | |-- a: struct (nullable = false) | | | |-- b: struct
-   * (nullable = false) | | | | |-- c: long (nullable = true) | |-- nullCount: struct (nullable =
-   * false) | | |-- a: struct (nullable = false) | | | |-- b: struct (nullable = false) | | | | |--
-   * c: long (nullable = true) }}}
+   * <pre>
+   * |-- a: struct (nullable = true)
+   * |  |-- b: struct (nullable = true)
+   * |  |  |-- c: long (nullable = true)
+   * </pre>
+   *
+   * <p>Collected Statistics:
+   *
+   * <pre>
+   * |-- stats: struct (nullable = true)
+   * |  |-- numRecords: long (nullable = false)
+   * |  |-- minValues: struct (nullable = false)
+   * |  |  |-- a: struct (nullable = false)
+   * |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |-- c: long (nullable = true)
+   * |  |-- maxValues: struct (nullable = false)
+   * |  |  |-- a: struct (nullable = false)
+   * |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |-- c: long (nullable = true)
+   * |  |-- nullCount: struct (nullable = false)
+   * |  |  |-- a: struct (nullable = false)
+   * |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |-- c: long (nullable = true)
+   * |  |-- tightBounds: boolean (nullable = true)
+   * </pre>
    */
   public static StructType getStatsSchema(StructType dataSchema) {
     StructType statsSchema = new StructType().add(NUM_RECORDS, LongType.LONG, true);
+
     StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
     if (minMaxStatsSchema.length() > 0) {
-      statsSchema =
-          statsSchema
-              .add(MIN, getMinMaxStatsSchema(dataSchema), true)
-              .add(MAX, getMinMaxStatsSchema(dataSchema), true);
+      statsSchema = statsSchema.add(MIN, minMaxStatsSchema, true).add(MAX, minMaxStatsSchema, true);
     }
+
     StructType nullCountSchema = getNullCountSchema(dataSchema);
     if (nullCountSchema.length() > 0) {
-      statsSchema = statsSchema.add(NULL_COUNT, getNullCountSchema(dataSchema), true);
+      statsSchema = statsSchema.add(NULL_COUNT, nullCountSchema, true);
     }
+
+    statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
+
     return statsSchema;
   }
 
@@ -200,12 +235,6 @@ public class StatsSchemaHelper {
   // Private static fields and methods
   //////////////////////////////////////////////////////////////////////////////////
 
-  /* Delta statistics field names for file statistics */
-  private static final String NUM_RECORDS = "numRecords";
-  private static final String MIN = "minValues";
-  private static final String MAX = "maxValues";
-  private static final String NULL_COUNT = "nullCount";
-
   private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES =
       new HashSet<String>() {
         {
@@ -221,15 +250,6 @@ public class StatsSchemaHelper {
           add("string");
         }
       };
-
-  /** Returns true if the given data type is eligible for MIN/MAX data skipping. */
-  private static boolean isSkippingEligibleDataType(DataType dataType) {
-    return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
-        ||
-        // DecimalType is eligible but since its string includes scale + precision it needs to
-        // be matched separately
-        dataType instanceof DecimalType;
-  }
 
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means

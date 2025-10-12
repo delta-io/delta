@@ -15,12 +15,14 @@
  */
 package io.delta.kernel.internal
 
+import java.lang.{Long => JLong}
 import java.util.{Arrays, Collections, Optional}
 
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, CheckpointMetaData, SidecarFile}
@@ -69,6 +71,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       logSegment: LogSegment,
       expectedVersion: Long,
       expectedDeltas: Seq[FileStatus],
+      expectedCompactions: Seq[FileStatus],
       expectedCheckpoints: Seq[FileStatus],
       expectedCheckpointVersion: Option[Long],
       expectedLastCommitTimestamp: Long): Unit = {
@@ -77,6 +80,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(logSegment.getVersion == expectedVersion)
     assert(expectedDeltas.map(f => (f.getPath, f.getSize, f.getModificationTime)) sameElements
       logSegment.getDeltas.asScala.map(f => (f.getPath, f.getSize, f.getModificationTime)))
+    assert(expectedCompactions.map(f => (f.getPath, f.getSize, f.getModificationTime)) sameElements
+      logSegment.getCompactions.asScala.map(f => (f.getPath, f.getSize, f.getModificationTime)))
 
     val expectedCheckpointStatuses = expectedCheckpoints
       .map(f => (f.getPath, f.getSize, f.getModificationTime)).sortBy(_._1)
@@ -92,7 +97,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           logSegment.getCheckpointVersionOpt.get == v)
       case None => assert(!logSegment.getCheckpointVersionOpt.isPresent())
     }
-    assert(expectedLastCommitTimestamp == logSegment.getLastCommitTimestamp)
+    assert(expectedLastCommitTimestamp == logSegment.getDeltaFileAtEndVersion.getModificationTime)
   }
 
   /**
@@ -117,7 +122,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       numParts: Int = -1,
       startCheckpoint: Optional[java.lang.Long] = Optional.empty(),
       versionToLoad: Optional[java.lang.Long] = Optional.empty(),
-      v2CheckpointSpec: Seq[(Long, Boolean, Int)] = Seq.empty): Unit = {
+      v2CheckpointSpec: Seq[(Long, Boolean, Int)] = Seq.empty,
+      compactionVersions: Seq[(Long, Long)] = Seq.empty): Unit = {
     val deltas = deltaFileStatuses(deltaVersions)
     val singularCheckpoints = singularCheckpointFileStatuses(checkpointVersions)
     val multiCheckpoints = multiCheckpointFileStatuses(multiCheckpointVersions, numParts)
@@ -131,6 +137,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     topLevelFileTypes.foreach { topLevelFileType =>
       val v2Checkpoints =
         v2CheckpointFileStatuses(v2CheckpointSpec, topLevelFileType)
+
       val checkpointFiles = v2Checkpoints.flatMap {
         case (topLevelCheckpointFile, sidecars) =>
           Seq(topLevelCheckpointFile) ++ sidecars
@@ -155,10 +162,16 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         }
       }.getOrElse((Seq.empty, Seq.empty))
 
+      val compactions = compactedFileStatuses(compactionVersions)
+      val mockSidecarParquetHandler = if (expectedSidecars.nonEmpty) {
+        new MockSidecarParquetHandler(expectedSidecars, expectedV2Checkpoint.head.getPath)
+      } else {
+        new BaseMockParquetHandler {}
+      }
       val logSegment = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(
-          listFromProvider(deltas ++ checkpointFiles)("/"),
-          new MockSidecarParquetHandler(expectedSidecars),
+          deltas ++ compactions ++ checkpointFiles,
+          mockSidecarParquetHandler,
           new MockSidecarJsonHandler(expectedSidecars)),
         versionToLoad)
 
@@ -175,11 +188,18 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           multiCheckpointFileStatuses(Seq(v), numParts)
         }
       }.getOrElse(Seq.empty)
+      val expectedCompactions = compactedFileStatuses(
+        compactionVersions.filter { case (s, e) =>
+          // we can only use a compaction if it starts after the checkpoint and ends at or before
+          // the version we're trying to load
+          s > expectedCheckpointVersion.getOrElse(-1L) && e <= versionToLoad.orElse(Long.MaxValue)
+        })
 
       checkLogSegment(
         logSegment,
         expectedVersion = versionToLoad.orElse(deltaVersions.max),
         expectedDeltas = expectedDeltas,
+        expectedCompactions = expectedCompactions,
         expectedCheckpoints = expectedCheckpoints,
         expectedCheckpointVersion = expectedCheckpointVersion,
         expectedLastCommitTimestamp = versionToLoad.orElse(deltaVersions.max) * 10)
@@ -195,6 +215,19 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       checkpointVersions = Seq.empty,
       multiCheckpointVersions = Seq.empty,
       versionToLoad = versionToLoad)
+  }
+
+  /** Simple test with only json and compactions */
+  def testWithCompactionsNoCheckpoint(
+      deltaVersions: Seq[Long],
+      compactionVersions: Seq[(Long, Long)],
+      versionToLoad: Optional[java.lang.Long] = Optional.empty()): Unit = {
+    testWithCheckpoints(
+      deltaVersions,
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
+      versionToLoad = versionToLoad,
+      compactionVersions = compactionVersions)
   }
 
   /**
@@ -416,6 +449,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         logSegment,
         expectedVersion = 24,
         expectedDeltas = deltaFileStatuses(21L until 25L),
+        expectedCompactions = Seq.empty,
         expectedCheckpoints = singularCheckpointFileStatuses(Seq(20L)),
         expectedCheckpointVersion = Some(20),
         expectedLastCommitTimestamp = 240L)
@@ -687,6 +721,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         expectedVersion = deltaVersions.max,
         expectedDeltas = deltaFileStatuses(
           deltaVersions.filter(_ > checkpointVersion.getOrElse(-1L))),
+        expectedCompactions = Seq.empty,
         expectedCheckpoints = checkpoints,
         expectedCheckpointVersion = checkpointVersion,
         expectedLastCommitTimestamp = deltaVersions.max * 10)
@@ -702,34 +737,85 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
     assert(exMsg.contains("Missing checkpoint at version 1"))
   }
+
+  test("One compaction") {
+    testWithCompactionsNoCheckpoint(
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((0, 4)))
+
+    testWithCompactionsNoCheckpoint(
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((0, 4)),
+      versionToLoad = Optional.of(4))
+  }
+
+  test("Compaction extends too far") {
+    testWithCompactionsNoCheckpoint(
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((3, 5)),
+      versionToLoad = Optional.of(4))
+  }
+
+  test("Compaction after checkpoint") {
+    testWithCheckpoints(
+      deltaVersions = 0L until 6L,
+      checkpointVersions = Seq(2),
+      multiCheckpointVersions = Seq.empty,
+      compactionVersions = Seq((3, 5)))
+  }
+
+  test("Compaction starting before checkpoint") {
+    testWithCheckpoints(
+      deltaVersions = 0L until 6L,
+      checkpointVersions = Seq(2),
+      multiCheckpointVersions = Seq.empty,
+      compactionVersions = Seq((1, 5)))
+  }
+
+  test("Compaction starting same as checkpoint") {
+    testWithCheckpoints(
+      deltaVersions = 0L until 5L,
+      checkpointVersions = Seq(2),
+      multiCheckpointVersions = Seq.empty,
+      compactionVersions = Seq((2, 5)))
+  }
 }
 
 trait SidecarIteratorProvider extends VectorTestUtils {
-  def singletonSidecarIterator(sidecars: Seq[FileStatus])
-      : CloseableIterator[ColumnarBatch] = Utils.singletonCloseableIterator(
-    new ColumnarBatch {
-      override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
-      override def getColumnVector(ordinal: Int): ColumnVector = {
-        ordinal match {
-          case 0 => stringVector(sidecars.map(_.getPath)) // path
-          case 1 => longVector(sidecars.map(_.getSize): _*) // size
-          case 2 =>
-            longVector(sidecars.map(_.getModificationTime): _*); // modification time
-        }
-      }
+  private def buildSidecarBatch(sidecars: Seq[FileStatus]): ColumnarBatch = new ColumnarBatch {
+    override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
-      override def getSize: Int = sidecars.length
-    })
+    override def getColumnVector(ordinal: Int): ColumnVector = ordinal match {
+      case 0 => stringVector(sidecars.map(_.getPath)) // path
+      case 1 => longVector(sidecars.map(_.getSize).map(JLong.valueOf)) // size
+      case 2 =>
+        longVector(sidecars.map(_.getModificationTime).map(JLong.valueOf)) // modification time
+    }
+
+    override def getSize: Int = sidecars.length
+  }
+
+  def singletonSidecarParquetIterator(sidecars: Seq[FileStatus], v2CheckpointFileName: String)
+      : CloseableIterator[FileReadResult] = {
+    val batch = buildSidecarBatch(sidecars)
+    Utils.singletonCloseableIterator(new FileReadResult(batch, v2CheckpointFileName))
+  }
+
+  // TODO: [delta-io/delta#4849] extend FileReadResult for JSON read result
+  def singletonSidecarJsonIterator(sidecars: Seq[FileStatus]): CloseableIterator[ColumnarBatch] = {
+    val batch = buildSidecarBatch(sidecars)
+    Utils.singletonCloseableIterator(batch)
+  }
 }
 
-class MockSidecarParquetHandler(sidecars: Seq[FileStatus])
+class MockSidecarParquetHandler(sidecars: Seq[FileStatus], v2CheckpointFileName: String)
     extends BaseMockParquetHandler with SidecarIteratorProvider {
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
-    singletonSidecarIterator(sidecars)
+      predicate: Optional[Predicate]): CloseableIterator[FileReadResult] =
+    singletonSidecarParquetIterator(sidecars, v2CheckpointFileName)
 }
 
 class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
@@ -739,7 +825,7 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
-    singletonSidecarIterator(sidecars)
+    singletonSidecarJsonIterator(sidecars)
 }
 
 class MockReadLastCheckpointFileJsonHandler(
@@ -759,9 +845,9 @@ class MockReadLastCheckpointFileJsonHandler(
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
           ordinal match {
-            case 0 => longVector(lastCheckpointVersion) /* version */
-            case 1 => longVector(100) /* size */
-            case 2 => longVector(1) /* parts */
+            case 0 => longVector(Seq(lastCheckpointVersion)) /* version */
+            case 1 => longVector(Seq(100)) /* size */
+            case 2 => longVector(Seq(1)) /* parts */
           }
         }
 

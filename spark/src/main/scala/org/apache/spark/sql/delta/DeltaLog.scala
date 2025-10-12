@@ -28,6 +28,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions._
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
@@ -189,7 +190,7 @@ class DeltaLog private(
   def loadIndex(
       index: DeltaLogFileIndex,
       schema: StructType = Action.logSchema): DataFrame = {
-    Dataset.ofRows(spark, indexToRelation(index, schema))
+    DataFrameUtils.ofRows(spark, indexToRelation(index, schema))
   }
 
   /* ------------------ *
@@ -299,8 +300,10 @@ class DeltaLog private(
    */
   def getChanges(
       startVersion: Long,
+      catalogTableOpt: Option[CatalogTable] = None,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(startVersion, failOnDataLoss).map { case (version, status) =>
+    getChangeLogFiles(
+        startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
       (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
     }
   }
@@ -308,8 +311,13 @@ class DeltaLog private(
   private[sql] def getChanges(
       startVersion: Long,
       endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
       failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(startVersion, endVersion, failOnDataLoss).map { case (version, status) =>
+    getChangeLogFiles(
+        startVersion,
+        endVersion,
+        catalogTableOpt,
+        failOnDataLoss).map { case (version, status) =>
       (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
     }
   }
@@ -317,6 +325,7 @@ class DeltaLog private(
   private[sql] def getChangeLogFiles(
       startVersion: Long,
       endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
       failOnDataLoss: Boolean): Iterator[(Long, FileStatus)] = {
     implicit class IteratorWithStopAtHelper[T](underlying: Iterator[T]) {
       // This method is used to stop the iterator when the condition is met.
@@ -333,7 +342,7 @@ class DeltaLog private(
       }
     }
 
-    getChangeLogFiles(startVersion, failOnDataLoss)
+    getChangeLogFiles(startVersion, catalogTableOpt, failOnDataLoss)
       // takeWhile always looks at one extra item, which can trigger unnecessary work. Instead, we
       // stop if we've seen the item we believe should be the last interesting item, without
       // examining the one that follows.
@@ -350,8 +359,10 @@ class DeltaLog private(
    */
   def getChangeLogFiles(
       startVersion: Long,
+      catalogTableOpt: Option[CatalogTable] = None,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltasWithVersion = CoordinatedCommitsUtils.commitFilesIterator(this, startVersion)
+    val deltasWithVersion = CoordinatedCommitsUtils.commitFilesIterator(
+      this, catalogTableOpt, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltasWithVersion.map { case (status, version) =>
@@ -559,7 +570,7 @@ class DeltaLog private(
       fileIndex,
       bucketSpec = None,
       dropNullTypeColumnsFromSchema = dropNullTypeColumnsFromSchema)
-    Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
+    DataFrameUtils.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
   /**
@@ -623,7 +634,9 @@ class DeltaLog private(
     HadoopFsRelation(
       fileIndex,
       partitionSchema = DeltaTableUtils.removeInternalDeltaMetadata(
-        spark, snapshot.metadata.partitionSchema),
+        spark,
+        DeltaTableUtils.removeInternalWriterMetadata(spark, snapshot.metadata.partitionSchema)
+      ),
       // We pass all table columns as `dataSchema` so that Spark will preserve the partition
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
@@ -816,7 +829,7 @@ object DeltaLog extends DeltaLogging {
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
     if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
-      forTable(spark, new Path(tableName.table))
+      forTable(spark, new Path(tableName.table), clock)
     } else {
       forTable(spark, spark.sessionState.catalog.getTableMetadata(tableName), clock)
     }
@@ -844,6 +857,14 @@ object DeltaLog extends DeltaLogging {
       clock: Clock): DeltaLog =
     apply(spark, rawPath, options = Map.empty, initialCatalogTable, clock)
 
+
+  /** Helper for creating a log for the table. */
+  private[delta] def forTable(
+      spark: SparkSession,
+      dataPath: Path,
+      options: Map[String, String],
+      catalogTable: Option[CatalogTable]): DeltaLog =
+    apply(spark, logPathFor(dataPath), options, catalogTable, new SystemClock)
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: String): (DeltaLog, Snapshot) =

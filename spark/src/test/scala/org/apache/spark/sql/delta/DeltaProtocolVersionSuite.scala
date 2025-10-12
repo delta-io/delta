@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.redirect.{PathBasedRedirectSpec, RedirectReaderWriter, RedirectWriterOnly, TableRedirect}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -157,8 +158,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     withTempDir { path =>
       val log = createTableWithProtocol(Protocol(1, 1), path)
       assert(log.snapshot.protocol === Protocol(1, 1))
-      log.upgradeProtocol(Action.supportedProtocolVersion())
-      assert(log.snapshot.protocol === Action.supportedProtocolVersion())
+      log.upgradeProtocol(Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature)))
+      assert(log.snapshot.protocol === Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature)))
     }
   }
 
@@ -2312,7 +2315,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 1,
               "minWriterVersion" -> 2,
               "supportedFeatures" -> List("appendOnly", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
 
       // Upgrade protocol
@@ -2330,7 +2334,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "minReaderVersion" -> 1,
           "minWriterVersion" -> 3,
           "supportedFeatures" -> List("appendOnly", "checkConstraints", "invariants")
-        )))
+        ),
+        "operationName" -> "SET TBLPROPERTIES"))
 
       // Add feature
       assert(captureProtocolChangeEventBlob {
@@ -2348,7 +2353,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "minWriterVersion" -> 7,
           "supportedFeatures" ->
             List("appendOnly", "checkConstraints", "deletionVectors", "invariants")
-        )))
+        ),
+        "operationName" -> "SET TBLPROPERTIES"))
     }
   }
 
@@ -2365,7 +2371,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 1,
               "minWriterVersion" -> 2,
               "supportedFeatures" -> List("appendOnly", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
 
       // Clone table to invoke commitLarge
@@ -2380,7 +2387,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 3,
               "minWriterVersion" -> 7,
               "supportedFeatures" -> List("appendOnly", "deletionVectors", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
     }
   }
@@ -3248,6 +3256,30 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  for {
+    propertyName <- Seq("delta.enableRowTracking", "DELTA.enableRowTracking",
+      "delta.ENABLEROWTRACKING", "DELTA.ENABLEROWTRACKING")
+  } test(s"Drop a table property using drop feature should fail" +
+    s" - with propertyName=$propertyName") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      val command = AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        propertyName)
+
+      val e = intercept[DeltaTableFeatureException] {
+        command.run(spark)
+      }
+      checkError(
+        e,
+        "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY",
+        parameters = Map("property" -> propertyName)
+      )
+    }
+  }
+
   protected def testProtocolVersionDowngrade(
       initialMinReaderVersion: Int,
       initialMinWriterVersion: Int,
@@ -3763,8 +3795,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       downgradeFailsWithException: Option[String] = None,
       featureExpectedAtTheEnd: Boolean = false): Unit = {
     val featureName = VacuumProtocolCheckTableFeature.name
-    withTempDir { dir =>
-      val deltaLog = DeltaLog.forTable(spark, dir)
+    withTempTable(createTable = false) { tableName =>
+      // Register a temporary InMemory-CC builder to support CatalogOwned table creation.
+      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1)
+      )
       val finalAdditionalTableProperty = if (enableFeatureInitially) {
         additionalTableProperties ++
           Seq((s"$FEATURE_PROP_PREFIX${featureName}", "supported"))
@@ -3777,14 +3814,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         additionalTablePropertyString = s", $additionalTablePropertyString"
       }
       sql(
-        s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
+        s"""CREATE TABLE $tableName (id bigint) USING delta
            |TBLPROPERTIES (
            |  delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
            |  delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION
            |  $additionalTablePropertyString
            |)""".stripMargin)
 
-      val protocol = deltaLog.update().protocol
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+      val protocol = snapshot.protocol
       assert(protocol.minReaderVersion ==
         (if (enableFeatureInitially) TABLE_FEATURES_MIN_READER_VERSION else 1))
       assert(protocol.minWriterVersion ==
@@ -3814,11 +3852,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   test("Removing VacuumProtocolCheckTableFeature should fail when dependent feature " +
-      "Coordinated Commits is enabled") {
+      "Catalog Owned is enabled") {
     testRemoveVacuumProtocolCheckTableFeature(
       enableFeatureInitially = true,
       additionalTableProperties = Seq(
-        (s"$FEATURE_PROP_PREFIX${CoordinatedCommitsTableFeature.name}", "supported")),
+        (s"$FEATURE_PROP_PREFIX${CatalogOwnedTableFeature.name}", "supported")),
       downgradeFailsWithException = Some("DELTA_FEATURE_DROP_DEPENDENT_FEATURE"),
       featureExpectedAtTheEnd = true)
   }
@@ -4160,6 +4198,67 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
   // ---- End Coordinated Commits Drop Feature Tests ----
+
+  private def testRedirectFeature(
+      redirectFeature: TableFeature,
+      tableRedirect: TableRedirect,
+      enableFastDrop: Boolean,
+      unsetTableProperty: Boolean): Unit = {
+    withSQLConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key -> enableFastDrop.toString) {
+      test(s"drop ${redirectFeature.name} with fast drop - " +
+        s"enableFastDrop=$enableFastDrop, unsetTableProperty=$unsetTableProperty") {
+        withTempDir { dir =>
+          spark.sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+          val deltaLog = DeltaLog.forTable(spark, dir)
+
+          val redirectSpec = new PathBasedRedirectSpec("sourcePath", "targetPath")
+          tableRedirect.add(
+            deltaLog,
+            catalogTableOpt = None,
+            PathBasedRedirectSpec.REDIRECT_TYPE,
+            redirectSpec)
+
+          if (unsetTableProperty) {
+            sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` UNSET TBLPROPERTIES " +
+              s"('${tableRedirect.config.key}')")
+          }
+
+          val featureName = redirectFeature.name
+          // Both RedirectReaderWriterFeature and RedirectWriterOnlyFeature can be immediately
+          // dropped as they don't require history truncation. This is because there is no
+          // associated action with the features.
+          AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
+            .run(spark)
+
+          val snapshot = deltaLog.update()
+          // Writer feature is removed from the writer features set.
+          assert(!snapshot.protocol.writerFeatureNames.contains(featureName))
+          // Reader feature is removed from the reader features set.
+          assert(!snapshot.protocol.readerFeatureNames.contains(featureName))
+          assert(tableRedirect.config.fromMetaData(snapshot.metadata).isEmpty)
+
+          assertPropertiesAndShowTblProperties(deltaLog)
+
+          // Running the command again should throw an exception.
+          val e = intercept[DeltaTableFeatureException] {
+            AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
+              .run(spark)
+          }
+          assert(e.getErrorClass == "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
+        }
+      }
+    }
+  }
+
+  BOOLEAN_DOMAIN.foreach { unsetTableProperty =>
+    BOOLEAN_DOMAIN.foreach { enableFastDrop =>
+      // Test both writer-only and reader writer redirect feature.
+      testRedirectFeature(
+        RedirectWriterOnlyFeature, RedirectWriterOnly, enableFastDrop, unsetTableProperty)
+      testRedirectFeature(
+        RedirectReaderWriterFeature, RedirectReaderWriter, enableFastDrop, unsetTableProperty)
+    }
+  }
 
   // Create a table for testing that has an unsupported feature.
   private def withTestTableWithUnsupportedWriterFeature(

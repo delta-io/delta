@@ -51,9 +51,9 @@ import org.apache.spark.sql.types.TimestampType
  * This class is copied from [[org.apache.iceberg.spark.TypeToSparkType]] to
  * add custom type casting. Currently, it supports the following casting
  * * Iceberg TIME -> Spark Long
- *
  */
-class TypeToSparkTypeWithCustomCast extends TypeUtil.SchemaVisitor[DataType] {
+class TypeToSparkTypeWithCustomCast(castTimeType: Boolean)
+  extends TypeUtil.SchemaVisitor[DataType] {
 
   val METADATA_COL_ATTR_KEY = "__metadata_col";
 
@@ -93,9 +93,14 @@ class TypeToSparkTypeWithCustomCast extends TypeUtil.SchemaVisitor[DataType] {
       case FLOAT => FloatType
       case DOUBLE => DoubleType
       case DATE => DateType
-      // This line is changed to allow casting TIME to Spark Long.
+      // Changed to allow casting TIME to Spark Long.
       // The result is microseconds since midnight.
-      case TIME => LongType
+      case TIME =>
+        if (castTimeType) {
+          LongType
+        } else {
+          throw new UnsupportedOperationException("Spark does not support time fields")
+        }
       case TIMESTAMP =>
         val ts = primitive.asInstanceOf[Types.TimestampType]
         if (ts.shouldAdjustToUTC()) {

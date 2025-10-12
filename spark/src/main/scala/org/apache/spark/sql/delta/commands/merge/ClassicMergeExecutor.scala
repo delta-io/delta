@@ -141,7 +141,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         deltaTxn,
         dataSkippedFiles,
         columnsToDrop)
-    val targetDF = Dataset.ofRows(spark, targetPlan)
+    val targetDF = DataFrameUtils.ofRows(spark, targetPlan)
       .withColumn(ROW_ID_COL, monotonically_increasing_id())
       .withColumn(FILE_NAME_COL, input_file_name())
 
@@ -173,6 +173,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       .as[(Long, Long)]
       .collect()
       .head
+
+    checkSourcePlanIsNotCached(spark, getMergeSource.df.queryExecution.logical)
 
     val hasMultipleMatches = multipleMatchCount > 0
     throwErrorOnMultipleMatches(hasMultipleMatches, spark)
@@ -321,7 +323,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       filesToRewrite,
       columnsToDrop = Nil)
     val baseTargetDF = RowTracking.preserveRowTrackingColumns(
-      dfWithoutRowTrackingColumns = Dataset.ofRows(spark, targetPlan),
+      dfWithoutRowTrackingColumns = DataFrameUtils.ofRows(spark, targetPlan),
       snapshot = deltaTxn.snapshot)
 
     val joinType = if (writeUnmodifiedRows) {
@@ -341,6 +343,10 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       } else {
         "fullOuter"
       }
+    }
+
+    if (joinType == "fullOuter" || joinType == "leftOuter") {
+      secondSourceScanWasFullScan = true
     }
 
     logDebug(s"""writeAllChanges using $joinType join:
@@ -435,14 +441,17 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Seq())
 
     // Generate output columns.
+    val needSetRowTrackingFieldIdForUniform = IcebergCompat.isGeqEnabled(deltaTxn.metadata, 3)
     val outputCols = generateWriteAllChangesOutputCols(
       targetWriteCols,
       rowIdColumnExpressionOpt,
       rowCommitVersionColumnExpressionOpt,
       outputColNames,
       noopCopyExprs,
+      writeUnmodifiedRows,
       clausesWithPrecompConditions,
-      cdcEnabled
+      cdcEnabled,
+      needSetRowTrackingFieldIdForUniform
     )
 
     val preOutputDF = if (cdcEnabled) {
@@ -453,7 +462,9 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
           noopCopyExprs,
           rowIdColumnExpressionOpt.map(_.name),
           rowCommitVersionColumnExpressionOpt.map(_.name),
-          deduplicateCDFDeletes)
+          deduplicateCDFDeletes,
+          needSetRowTrackingFieldIdForUniform = needSetRowTrackingFieldIdForUniform
+      )
     } else {
       // change data capture is off, just output the normal data
       joinedAndPrecomputedConditionsDF
@@ -469,6 +480,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
 
     // Write to Delta
     val newFiles = writeFiles(spark, deltaTxn, outputDF)
+
+    checkSourcePlanIsNotCached(spark, getMergeSource.df.queryExecution.logical)
 
     // Update metrics
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)

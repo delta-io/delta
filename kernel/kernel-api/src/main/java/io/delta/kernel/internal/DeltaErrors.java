@@ -17,10 +17,14 @@ package io.delta.kernel.internal;
 
 import static java.lang.String.format;
 
+import io.delta.kernel.commit.CommitFailedException;
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.TypeChange;
 import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
@@ -28,6 +32,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /** Contains methods to create user-facing Delta exceptions. */
 public final class DeltaErrors {
@@ -96,12 +101,12 @@ public final class DeltaErrors {
   }
 
   public static KernelException noCommitFilesFoundForVersionRange(
-      String tablePath, long startVersion, long endVersion) {
+      String tablePath, long startVersion, Optional<Long> endVersionOpt) {
     String message =
         String.format(
             "%s: Requested table changes between [%s, %s] but no log files found in the requested"
                 + " version range.",
-            tablePath, startVersion, endVersion);
+            tablePath, startVersion, endVersionOpt);
     return new KernelException(message);
   }
 
@@ -200,6 +205,10 @@ public final class DeltaErrors {
     return new KernelException("Kernel doesn't support writing data of type: " + dataType);
   }
 
+  public static KernelException unsupportedStatsDataType(DataType dataType) {
+    return new KernelException("Kernel doesn't support writing stats data of type: " + dataType);
+  }
+
   public static KernelException unsupportedPartitionDataType(String colName, DataType dataType) {
     String msgT = "Kernel doesn't support writing data with partition column (%s) of type: %s";
     return new KernelException(format(msgT, colName, dataType));
@@ -214,6 +223,11 @@ public final class DeltaErrors {
     return new KernelException(msg);
   }
 
+  public static KernelException conflictWithReservedInternalColumnName(String columnName) {
+    return new KernelException(
+        format("Cannot use column name '%s' because it is reserved for internal use", columnName));
+  }
+
   public static KernelException invalidColumnName(String columnName, String unsupportedChars) {
     return new KernelException(
         format(
@@ -224,6 +238,10 @@ public final class DeltaErrors {
   public static KernelException requiresSchemaForNewTable(String tablePath) {
     return new TableNotFoundException(
         tablePath, "Must provide a new schema to write to a new table.");
+  }
+
+  public static KernelException requireSchemaForReplaceTable() {
+    return new KernelException("Must provide a new schema for REPLACE TABLE");
   }
 
   public static KernelException tableAlreadyExists(String tablePath, String message) {
@@ -238,17 +256,126 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
   }
 
-  public static KernelException missingNumRecordsStatsForIcebergCompatV2(
-      DataFileStatus dataFileStatus) {
+  public static KernelException statsTypeMismatch(
+      String fieldName, DataType expected, DataType actual) {
+    String msgFormat =
+        "Type mismatch for field '%s' when writing statistics: expected %s, but found %s";
+    return new KernelException(format(msgFormat, fieldName, expected, actual));
+  }
+
+  public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
+    return new KernelException(
+        format("Column '%s' was not found in the table schema: %s", column, tableSchema));
+  }
+
+  public static KernelException overlappingTablePropertiesSetAndUnset(Set<String> violatingKeys) {
+    return new KernelException(
+        format(
+            "Cannot set and unset the same table property in the same transaction. "
+                + "Properties set and unset: %s",
+            violatingKeys));
+  }
+
+  /// Start: icebergCompat exceptions
+  public static KernelException icebergCompatMissingNumRecordsStats(
+      String compatVersion, DataFileStatus dataFileStatus) {
     throw new KernelException(
         format(
-            "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s", dataFileStatus));
+            "%s compatibility requires 'numRecords' statistic.\n DataFileStatus: %s",
+            compatVersion, dataFileStatus));
   }
+
+  public static KernelException icebergCompatIncompatibleVersionEnabled(
+      String compatVersion, String incompatibleIcebergCompatVersion) {
+    throw new KernelException(
+        format(
+            "%s: Only one IcebergCompat version can be enabled. Incompatible version enabled: %s",
+            compatVersion, incompatibleIcebergCompatVersion));
+  }
+
+  public static KernelException icebergCompatUnsupportedTypeColumns(
+      String compatVersion, List<DataType> dataTypes) {
+    throw new KernelException(
+        format("%s does not support the data types: %s.", compatVersion, dataTypes));
+  }
+
+  public static KernelException icebergCompatUnsupportedTypeWidening(
+      String compatVersion, TypeChange typeChange) {
+    throw new KernelException(
+        format(
+            "%s does not support type widening present in table: %s.", compatVersion, typeChange));
+  }
+
+  public static KernelException icebergCompatUnsupportedTypePartitionColumn(
+      String compatVersion, DataType dataType) {
+    throw new KernelException(
+        format(
+            "%s does not support the data type '%s' for a partition column.",
+            compatVersion, dataType));
+  }
+
+  public static KernelException icebergCompatIncompatibleTableFeatures(
+      String compatVersion, Set<TableFeature> incompatibleFeatures) {
+    throw new KernelException(
+        format(
+            "Table features %s are incompatible with %s.",
+            incompatibleFeatures.stream()
+                .map(TableFeature::featureName)
+                .collect(Collectors.toList()),
+            compatVersion));
+  }
+
+  public static KernelException icebergCompatRequiredFeatureMissing(
+      String compatVersion, String feature) {
+    throw new KernelException(
+        format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
+  }
+
+  public static KernelException enablingIcebergCompatFeatureOnExistingTable(String key) {
+    return new KernelException(
+        String.format(
+            "Cannot enable %s on an existing table. "
+                + "Enablement is only supported upon table creation.",
+            key));
+  }
+
+  public static KernelException icebergWriterCompatInvalidPhysicalName(List<String> invalidFields) {
+    return new KernelException(
+        String.format(
+            "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
+                + "'col-[fieldId]', but this is not true for the following fields %s",
+            invalidFields));
+  }
+
+  public static KernelException disablingIcebergCompatFeatureOnExistingTable(String key) {
+    return new KernelException(
+        String.format("Disabling %s on an existing table is not allowed.", key));
+  }
+
+  // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
     String msgT = "Missing partition column '%s' in the data to be written to the table '%s'.";
     return new KernelException(format(msgT, partitionColumn, tablePath));
+  }
+
+  public static KernelException enablingClusteringOnPartitionedTableNotAllowed(
+      String tablePath, Set<String> partitionColNames, List<Column> clusteringCols) {
+    return new KernelException(
+        String.format(
+            "Cannot enable clustering on a partitioned table '%s'. "
+                + "Existing partition columns: '%s', Clustering columns: '%s'.",
+            tablePath, partitionColNames, clusteringCols));
+  }
+
+  public static RuntimeException nonRetryableCommitException(
+      int attempt, long commitAsVersion, CommitFailedException cause) {
+    throw new RuntimeException(
+        String.format(
+            "Commit attempt %d for version %d failed with a non-retryable exception.",
+            attempt, commitAsVersion),
+        cause);
   }
 
   public static KernelException concurrentTransaction(
@@ -313,6 +440,58 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException rowTrackingRequiredForRowIdHighWatermark(
+      String tablePath, String rowIdHighWatermark) {
+    return new KernelException(
+        String.format(
+            "Cannot assign a row id high water mark (`%s`) to a table `%s` that does not support "
+                + "`rowTracking` table feature. Please enable the `rowTracking` table feature.",
+            rowIdHighWatermark, tablePath));
+  }
+
+  public static KernelException cannotToggleRowTrackingOnExistingTable() {
+    return new KernelException("Row tracking support cannot be changed once the table is created.");
+  }
+
+  public static KernelException missingRowTrackingColumnRequested(String columnName) {
+    return new KernelException(
+        String.format(
+            "Row tracking is not enabled, but row tracking column '%s' was requested.",
+            columnName));
+  }
+
+  public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot modify append-only table. Table `%s` has configuration %s=true.",
+            tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
+  }
+
+  public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
+    return new KernelException(
+        String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
+  }
+
+  public static InvalidTableException tableWithIctMissingCommitInfo(String dataPath, long version) {
+    return new InvalidTableException(
+        dataPath,
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "the CommitInfo action in every commit. However, the CommitInfo action is "
+                + "missing from commit version %d.",
+            version));
+  }
+
+  public static InvalidTableException tableWithIctMissingIct(String dataPath, long version) {
+    return new InvalidTableException(
+        dataPath,
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "inCommitTimestamp in the CommitInfo action. However, this field has not been "
+                + "set in commit version %d.",
+            version));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

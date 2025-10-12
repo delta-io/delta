@@ -17,18 +17,21 @@
 package org.apache.spark.sql.delta.test
 
 import java.io.File
+import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.SnapshotDescriptor
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import io.delta.storage.commit.{CommitResponse, GetCommitsResponse, UpdatedActions}
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -66,7 +69,17 @@ object DeltaTestImplicits {
             // If neither metadata nor protocol is explicitly passed, then use default Metadata and
             // with the maximum protocol.
             txn.updateMetadataForNewTable(Metadata())
-            txn.updateProtocol(Action.supportedProtocolVersion())
+            val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
+              TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+                .contains("supported")
+            if (enableCatalogOwnedByDefault) {
+              txn.updateProtocol(Action.supportedProtocolVersion())
+            } else {
+              txn.updateProtocol(Action.supportedProtocolVersion(
+                // CatalogOwnedTableFeature is enabled by protocol only without metadata, and should
+                // not be enabled by default.
+                featuresToExclude = Seq(CatalogOwnedTableFeature)))
+            }
         }
         txn.commit(otherActions, op)
       } else {
@@ -91,6 +104,21 @@ object DeltaTestImplicits {
 
     def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
       DeltaLog.forTable(spark, new Path(dataPath.getCanonicalPath), clock)
+    }
+  }
+
+  implicit class DeltaHistoryManagerTestHelper(history: DeltaHistoryManager) {
+    def checkVersionExists(version: Long): Unit = {
+      history.checkVersionExists(version, catalogTableOpt = None)
+    }
+
+    def getActiveCommitAtTime(
+        timestamp: Long,
+        canReturnLastCommit: Boolean): DeltaHistoryManager.Commit = {
+      history.getActiveCommitAtTime(
+        new Timestamp(timestamp),
+        catalogTableOpt = None,
+        canReturnLastCommit)
     }
   }
 
@@ -159,6 +187,24 @@ object DeltaTestImplicits {
     def upgradeProtocol(snapshot: Snapshot, newVersion: Protocol): Unit = {
       deltaLog.upgradeProtocol(None, snapshot, newVersion)
     }
+
+    /**
+     * Test helper method for getChangeLogFiles that provides catalogTableOpt = None
+     * for backward compatibility with existing unit tests.
+     */
+    def getChangeLogFiles(startVersion: Long): Iterator[(Long, FileStatus)] = {
+      deltaLog.getChangeLogFiles(startVersion, catalogTableOpt = None)
+    }
+
+    /**
+     * Test helper method for getChanges that provides catalogTableOpt = None for backward
+     * compatibility with existing unit tests.
+     */
+    def getChanges(
+        startVersion: Long,
+        failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
+      deltaLog.getChanges(startVersion, catalogTableOpt = None, failOnDataLoss)
+    }
   }
 
   implicit class DeltaTableV2ObjectTestHelper(dt: DeltaTableV2.type) {
@@ -171,9 +217,7 @@ object DeltaTestImplicits {
 
     def apply(spark: SparkSession, tableDir: File, clock: Clock): DeltaTableV2 = {
       val tablePath = new Path(tableDir.getAbsolutePath)
-      new DeltaTableV2(spark, tablePath, catalogTable = None, None, None, Map.empty) {
-        override lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, tablePath, clock)
-      }
+      DeltaTableV2.testOnlyApplyWithCustomDeltaLog(spark, tablePath, clock)
     }
   }
 
@@ -214,6 +258,33 @@ object DeltaTestImplicits {
       fileFilter: AddFile => Boolean = af => true): Unit = {
       StatisticsCollection.recompute(
         spark, deltaLog, catalogTable = None, predicates, fileFilter)
+    }
+  }
+
+  implicit class CDCReaderObjectTestHelper(cdcReader: CDCReader.type) {
+
+    /**
+     * Test helper method for changesToBatchDF that provides catalogTableOpt = None
+     * for backward compatibility with existing unit tests.
+     */
+    def changesToBatchDF(
+        deltaLog: DeltaLog,
+        start: Long,
+        end: Long,
+        spark: SparkSession,
+        readSchemaSnapshot: Option[Snapshot] = None,
+        useCoarseGrainedCDC: Boolean = false,
+        startVersionSnapshot: Option[SnapshotDescriptor] = None
+    ): org.apache.spark.sql.DataFrame = {
+      cdcReader.changesToBatchDF(
+        deltaLog,
+        start,
+        end,
+        spark,
+        catalogTableOpt = None,
+        readSchemaSnapshot,
+        useCoarseGrainedCDC,
+        startVersionSnapshot)
     }
   }
 }

@@ -17,7 +17,10 @@ package io.delta.kernel.internal.actions
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.tablefeatures.TableFeatures
+import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.types.{ArrayType, IntegerType, StringType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -281,6 +284,11 @@ class ProtocolSuite extends AnyFunSuite {
     // expect the dependency features also to be supported
     Set("icebergCompatV2") ->
       (2, 7, Set[String](), Set[String]("icebergCompatV2", "columnMapping")),
+    Set("variantShredding-preview") -> (
+      3,
+      7,
+      Set[String]("variantType", "variantShredding-preview"),
+      Set[String]("variantType", "variantShredding-preview")),
     Set("rowTracking") -> (
       1,
       7,
@@ -369,4 +377,25 @@ class ProtocolSuite extends AnyFunSuite {
         assert(merged.getWriterFeatures.asScala === expWriterFeatures)
       }
   })
+
+  test("extract protocol from the row representation") {
+    val ordinalToValue: Map[Integer, Object] = Map(
+      Integer.valueOf(0) -> Integer.valueOf(42),
+      Integer.valueOf(1) -> Integer.valueOf(43),
+      Integer.valueOf(2) -> VectorUtils.buildArrayValue(
+        List("foo").asJava,
+        StringType.STRING).asInstanceOf[Object],
+      Integer.valueOf(3) -> VectorUtils.buildArrayValue(
+        List("bar").asJava,
+        StringType.STRING).asInstanceOf[Object])
+    val row = new GenericRow(
+      new StructType().add("minReaderVersion", IntegerType.INTEGER)
+        .add("minWriterVersion", IntegerType.INTEGER)
+        .add("readerFeatures", new ArrayType(StringType.STRING, true))
+        .add("writerFeatures", new ArrayType(StringType.STRING, true)),
+      ordinalToValue.asJava)
+
+    val expected = new Protocol(42, 43, Set("foo").asJava, Set("bar").asJava)
+    assert(Protocol.fromRow(row) === expected)
+  }
 }

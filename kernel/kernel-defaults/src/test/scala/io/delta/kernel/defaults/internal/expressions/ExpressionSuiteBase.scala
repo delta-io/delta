@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.createPredicate
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.expressions._
@@ -60,12 +61,37 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     new Predicate("like", children.asJava)
   }
 
-  protected def startsWith(left: Expression, right: Expression): Predicate = {
-    new Predicate("starts_with", left, right)
+  protected def startsWith(
+      left: Expression,
+      right: Expression,
+      collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
+    createPredicate(
+      "starts_with",
+      List(left, right).asJava,
+      optionToJava(collationIdentifier))
   }
 
-  protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
-    new Predicate(symbol, left, right)
+  protected def comparator(
+      symbol: String,
+      left: Expression,
+      right: Expression,
+      collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
+    createPredicate(symbol, List(left, right).asJava, optionToJava(collationIdentifier))
+  }
+
+  protected def in(value: Expression, inList: Expression*): In = {
+    new In(value, inList.toList.asJava)
+  }
+
+  protected def in(
+      value: Expression,
+      collationIdentifier: Option[CollationIdentifier],
+      inList: Expression*): In = {
+    if (collationIdentifier.isDefined) {
+      new In(value, inList.toList.asJava, collationIdentifier.get)
+    } else {
+      new In(value, inList.toList.asJava)
+    }
   }
 
   protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
@@ -77,6 +103,18 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
         assert(
           actual.getBoolean(rowId) === expected.getBoolean(rowId),
           s"unexpected value at $rowId")
+      }
+    }
+  }
+
+  protected def checkLongVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getDataType === expected.getDataType)
+    assert(actual.getSize === expected.getSize)
+    Seq.range(0, actual.getSize).foreach { rowId =>
+      if (expected.isNullAt(rowId)) {
+        assert(actual.isNullAt(rowId), s"Expected null at row $rowId")
+      } else {
+        assert(actual.getLong(rowId) === expected.getLong(rowId), s"Unexpected value at row $rowId")
       }
     }
   }

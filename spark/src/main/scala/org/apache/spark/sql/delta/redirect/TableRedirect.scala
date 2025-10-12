@@ -473,7 +473,8 @@ object RedirectFeature {
     val catalogTableOpt = redirectConfig.spec match {
       case pathRedirect: PathBasedRedirectSpec =>
         withUpdateTableRedirectDDL(updateTableRedirectDDL = true) {
-          import spark.sessionState.analyzer.CatalogAndIdentifier
+          val analyzer = spark.sessionState.analyzer
+          import analyzer.CatalogAndIdentifier
           val CatalogAndIdentifier(catalog, ident) = Seq("delta", pathRedirect.destPath)
           catalog.asTableCatalog.loadTable(ident).asInstanceOf[DeltaTableV2].catalogTable
         }
@@ -489,6 +490,10 @@ object RedirectFeature {
     mapper.readValue(configString, classOf[TableRedirectConfiguration])
   }
 
+  /**
+   * Get the current `TableRedirectConfiguration` object from the table properties.
+   * Note that the redirect-reader-writer takes precedence over redirect-writer-only.
+   */
   def getRedirectConfiguration(
       properties: Map[String, String]): Option[TableRedirectConfiguration] = {
     properties.get(DeltaConfigs.REDIRECT_READER_WRITER.key)
@@ -513,13 +518,12 @@ object RedirectFeature {
     }
   }
 
-  /** Get the current `TableRedirectConfiguration` object from the snapshot. */
+  /**
+   * Get the current `TableRedirectConfiguration` object from the snapshot.
+   * Note that the redirect-reader-writer takes precedence over redirect-writer-only.
+   */
   def getRedirectConfiguration(snapshot: Snapshot): Option[TableRedirectConfiguration] = {
-    if (RedirectWriterOnly.isFeatureSupported(snapshot)) {
-      RedirectWriterOnly.getRedirectConfiguration(snapshot.metadata)
-    } else {
-      RedirectReaderWriter.getRedirectConfiguration(snapshot.metadata)
-    }
+    getRedirectConfiguration(snapshot.metadata.configuration)
   }
 
   /** Determines whether `configs` contains redirect configuration. */

@@ -29,6 +29,21 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
       expectedAnswer = (2L until 10L).map(TestRow(_)))
   }
 
+  test("end-to-end usage: reading a table with dv with space in the root path") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath + "spark test"
+      spark.sql(s"""CREATE TABLE tbl (
+          id int
+        ) USING delta LOCATION '$target'
+        TBLPROPERTIES ('delta.enableDeletionVectors' = true) """)
+      spark.sql("INSERT INTO tbl VALUES (1),(2),(3),(4),(5)")
+      spark.sql("DELETE FROM tbl WHERE id = 1")
+      checkTable(
+        path = target,
+        expectedAnswer = Seq(TestRow(2), TestRow(3), TestRow(4), TestRow(5)))
+    }
+  }
+
   test("end-to-end usage: reading a table with dv with checkpoint") {
     checkTable(
       path = getTestResourceFilePath("basic-dv-with-checkpoint"),

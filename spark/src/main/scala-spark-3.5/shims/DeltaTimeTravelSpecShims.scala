@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.SparkSession
+
 object DeltaTimeTravelSpecShims {
 
   /**
@@ -36,6 +38,7 @@ object DeltaTimeTravelSpecShims {
    * @param newSpecOpt: The new [[DeltaTimeTravelSpec]] to be applied to the table
    */
   def validateTimeTravelSpec(
+      spark: SparkSession,
       currSpecOpt: Option[DeltaTimeTravelSpec],
       newSpecOpt: Option[DeltaTimeTravelSpec]): Unit = {
     if (currSpecOpt.nonEmpty && newSpecOpt.nonEmpty) {

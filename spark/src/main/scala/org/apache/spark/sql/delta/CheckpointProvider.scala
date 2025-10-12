@@ -20,6 +20,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.SnapshotManagement.checkpointV2ThreadPool
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -236,7 +237,7 @@ object CheckpointProvider extends DeltaLogging {
       val relation = DeltaLog.indexToRelation(
         spark, checkpointFileIndex(Seq(fileStatus)), deltaLogOptions, Action.logSchema)
       import implicits._
-      val rows = Dataset.ofRows(spark, relation)
+      val rows = DataFrameUtils.ofRows(spark, relation)
         .select("checkpointMetadata", "sidecar")
         .where("checkpointMetadata.version is not null or sidecar.path is not null")
         .as[(CheckpointMetadata, SidecarFile)]
