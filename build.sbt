@@ -743,7 +743,8 @@ lazy val spark = (project in file("spark-combined"))
       opts.withWorkingDirectory(sparkDir)
     },
 
-    // Configurations to speed up tests and reduce memory footprint
+    // Set user.dir explicitly for cross-platform compatibility
+    // Note: commonSettings already includes standard test javaOptions, we only add user.dir here
     Test / javaOptions ++= {
       val sparkDir = (`delta-spark-v1` / baseDirectory).value
       // Print debug info (will show during SBT loading)
@@ -752,15 +753,7 @@ lazy val spark = (project in file("spark-combined"))
         // Explicitly set user.dir for cross-platform compatibility
         // On some platforms, withWorkingDirectory doesn't update user.dir  
         // Use delta-spark-v1's baseDirectory (which is spark/) for clarity
-        s"-Duser.dir=$sparkDir",
-      "-Dspark.ui.enabled=false",
-      "-Dspark.ui.showConsoleProgress=false",
-      "-Dspark.databricks.delta.snapshotPartitions=2",
-      "-Dspark.sql.shuffle.partitions=5",
-      "-Ddelta.log.cacheSize=3",
-      "-Dspark.databricks.delta.delta.log.cacheSize=3",
-      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-      "-Xmx1024m"
+        s"-Duser.dir=$sparkDir"
       )
     },
 
