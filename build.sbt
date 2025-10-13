@@ -620,28 +620,6 @@ lazy val spark = (project in file("spark-combined"))
       }
     },
     
-    // No prod code in this module
-    Compile / sources := Seq.empty,
-    
-    // Copy all classes from dependencies to classes directory for MiMa
-    Compile / compile := {
-      val _ = (Compile / compile).value
-      val classesDir = (Compile / classDirectory).value
-      val v1Classes = (`delta-spark-v1` / Compile / classDirectory).value
-      val v2Classes = (`delta-spark-v2` / Compile / classDirectory).value
-      val storageClasses = (storage / Compile / classDirectory).value
-      
-      // Ensure classes directory exists
-      IO.createDirectory(classesDir)
-      
-      // Copy all classes (shaded classes override v1 classes)
-      IO.copyDirectory(v1Classes, classesDir, overwrite = false, preserveLastModified = true)
-      IO.copyDirectory(storageClasses, classesDir, overwrite = false, preserveLastModified = true)
-      IO.copyDirectory(v2Classes, classesDir, overwrite = true, preserveLastModified = true)
-      
-      sbt.internal.inc.Analysis.Empty
-    },
-    
     // Package combined classes: FULL v1 (with DeltaLog) + v2 + shaded + storage
     // Note: v2 only depends on v1-shaded (without DeltaLog) at compile time,
     //       but final jar includes full v1 for users
@@ -655,6 +633,15 @@ lazy val spark = (project in file("spark-combined"))
 
       // Remove duplicates by path (keep the last occurrence, which is from shaded)
       allMappings.groupBy(_._2).map(_._2.last).toSeq
+      // Ensure classes directory exists
+      IO.createDirectory(classesDir)
+
+      // Copy all classes (shaded classes override v1 classes)
+      IO.copyDirectory(v1Classes, classesDir, overwrite = false, preserveLastModified = true)
+      IO.copyDirectory(storageClasses, classesDir, overwrite = false, preserveLastModified = true)
+      IO.copyDirectory(v2Classes, classesDir, overwrite = true, preserveLastModified = true)
+
+      sbt.internal.inc.Analysis.Empty
     },
     
     // Test sources and resources from original spark/ directory (delta-spark-v1's directory)
