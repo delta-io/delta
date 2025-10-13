@@ -58,7 +58,6 @@ val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 `delta-spark-v1` / sparkVersion := getSparkVersion()
 `delta-spark-v2` / sparkVersion := getSparkVersion()
-`delta-spark-shaded` / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
@@ -650,10 +649,10 @@ lazy val spark = (project in file("spark-combined"))
       val v1Full = (`delta-spark-v1` / Compile / packageBin / mappings).value  // Full v1 with DeltaLog
       val v2 = (`delta-spark-v2` / Compile / packageBin / mappings).value
       val storageClasses = (storage / Compile / packageBin / mappings).value  // Add storage classes
-      
+
       // Merge all mappings, shaded classes override v1 classes if there are conflicts
-      val allMappings = v1Full ++ v2 ++ storageClasses ++
-      
+      val allMappings = v1Full ++ v2 ++ storageClasses
+
       // Remove duplicates by path (keep the last occurrence, which is from shaded)
       allMappings.groupBy(_._2).map(_._2.last).toSeq
     },
