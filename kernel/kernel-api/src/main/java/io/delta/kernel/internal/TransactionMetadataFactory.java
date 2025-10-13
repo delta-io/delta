@@ -126,7 +126,7 @@ public class TransactionMetadataFactory {
                 true /* isCreateOrReplace */,
                 clusteringColumns,
                 false /* isSchemaEvolution */,
-                requiredCatalogTableProperties)
+                committerOpt)
             .finalOutput;
     checkState(
         output.newMetadata.isPresent() && output.newProtocol.isPresent(),
@@ -179,7 +179,7 @@ public class TransactionMetadataFactory {
                 true /* isCreateOrReplace */,
                 clusteringColumns,
                 false /* isSchemaEvolution */,
-                requiredCatalogTableProperties)
+                Optional.of(readSnapshot.getCommitter()))
             .finalOutput;
     // TODO: reconsider whether we should always commit a new Protocol action regardless of whether
     //   there is a protocol upgrade
@@ -249,7 +249,7 @@ public class TransactionMetadataFactory {
             false /* isCreateOrReplace */,
             clusteringColumns,
             newSchema.isPresent() /* isSchemaEvolution */,
-            getRequiredCatalogTablePropertiesIfApplicable(readSnapshot.getCommitter()))
+            Optional.of(readSnapshot.getCommitter()))
         .finalOutput;
   }
 
@@ -297,7 +297,6 @@ public class TransactionMetadataFactory {
    *     <p>This class may apply additional updates to transform the {@code initialNewMetadata} the
    *     final output (e.g. auto-enabling column mapping for iceberg compat, adding column mapping
    *     metadata to the schema, etc.)
-   * @param requiredCatalogTableProperties Will be empty if table is filesystem-managed
    */
   private TransactionMetadataFactory(
       String tablePath,
@@ -308,7 +307,7 @@ public class TransactionMetadataFactory {
       boolean isCreateOrReplace,
       Optional<List<Column>> userProvidedLogicalClusteringColumns,
       boolean isSchemaEvolution,
-      Map<String, String> requiredCatalogTableProperties) {
+      Optional<Committer> committerOpt) {
     checkArgument(
         (initialNewMetadata.isPresent() && initialNewProtocol.isPresent())
             || latestSnapshotOpt.isPresent(),
@@ -334,7 +333,7 @@ public class TransactionMetadataFactory {
     updateColumnMappingMetadataAndResolveClusteringColumns(userProvidedLogicalClusteringColumns);
     updateRowTrackingMetadata();
     validateMetadataChangeAndApplyTypeWidening();
-    validateRequiredCatalogTablePropertiesSet(requiredCatalogTableProperties);
+    validateRequiredCatalogTablePropertiesSet(committerOpt);
     this.finalOutput = new Output(newProtocol, newMetadata, physicalNewClusteringColumns);
   }
 
@@ -715,8 +714,15 @@ public class TransactionMetadataFactory {
    * invalid value during UPDATE, or set to an invalid value during CREATE or REPLACE, we will
    * detect and fail.
    */
-  private void validateRequiredCatalogTablePropertiesSet(
-      Map<String, String> requiredCatalogTableProperties) {
+  private void validateRequiredCatalogTablePropertiesSet(Optional<Committer> committerOpt) {
+    if (!committerOpt.isPresent()) {
+      return;
+    }
+
+    final Committer committer = committerOpt.get();
+    final Map<String, String> requiredCatalogTableProperties =
+        getRequiredCatalogTablePropertiesIfApplicable(committer);
+
     if (requiredCatalogTableProperties.isEmpty()) {
       return;
     }
@@ -736,7 +742,9 @@ public class TransactionMetadataFactory {
 
     if (!missingOrViolatingProperties.isEmpty()) {
       throw DeltaErrors.metadataMissingRequiredCatalogTableProperty(
-          missingOrViolatingProperties, requiredCatalogTableProperties);
+          committer.getClass().getName(),
+          missingOrViolatingProperties,
+          requiredCatalogTableProperties);
     }
   }
 

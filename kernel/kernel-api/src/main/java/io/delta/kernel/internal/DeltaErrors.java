@@ -496,6 +496,7 @@ public final class DeltaErrors {
   }
 
   public static KernelException metadataMissingRequiredCatalogTableProperty(
+      String committerClassName,
       Map<String, String> missingOrViolatingProperties,
       Map<String, String> requiredCatalogTableProperties) {
     final String details =
@@ -510,8 +511,8 @@ public final class DeltaErrors {
             .collect(Collectors.joining(", "));
     return new KernelException(
         String.format(
-            "Metadata is missing or has incorrect values for required catalog properties: %s.",
-            details));
+            "[%s] Metadata is missing or has incorrect values for required catalog properties: %s.",
+            committerClassName, details));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */
