@@ -16,11 +16,16 @@
 
 package org.apache.spark.sql.delta
 
+import scala.concurrent.duration.Duration
+
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.concurrency.PhaseLockingTestMixin
+import org.apache.spark.sql.delta.concurrency.TransactionExecutionTestMixin
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.util.ThreadUtils
 
 trait MergeIntoNotMatchedBySourceWithCDCMixin extends MergeIntoSuiteBaseMixin {
   import testImplicits._
@@ -424,7 +429,10 @@ trait MergeIntoNotMatchedBySourceCDCPart2Tests extends MergeIntoNotMatchedBySour
     cdc = Seq.empty)
 }
 
-trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
+trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
+  with PhaseLockingTestMixin
+  with TransactionExecutionTestMixin {
+  
   import testImplicits._
 
   // Test analysis errors with NOT MATCHED BY SOURCE clauses.
@@ -579,6 +587,44 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
           "operationMetrics.numTargetFilesRemoved",
           "operationMetrics.numTargetFilesAdded"),
         Seq(("MERGE", "1", "0")).toDF())
+    }
+  }
+
+  test("concurrent disjoint not matched by source filter") {
+    withTempDir { tempDir =>
+      val source = s"$tempDir/source"
+      val target = s"$tempDir/target"
+      spark.range(10)
+        .withColumn("part", col("id") % 4)
+        .coalesce(1)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(target)
+      spark.range(0).withColumn("part", lit(0)).write.format("delta").save(source)
+
+      // Only the single file in part=3 partition should be deleted and no others touched
+      val merge1 = () => {
+        executeMerge(
+          tgt = s"delta.`$target` t",
+          src = s"delta.`$source` s",
+          cond = "t.id = s.id AND t.part = 3",
+          clauses = deleteNotMatched("part = 3"))
+        Array.empty[Row]
+      }
+
+      val merge2 = () => {
+        executeMerge(
+          tgt = s"delta.`$target` t",
+          src = s"delta.`$source` s",
+          cond = "t.id = s.id AND t.part = 4",
+          clauses = deleteNotMatched("part = 4"))
+        Array.empty[Row]
+      }
+
+      // Simply check that this succeeds without an error
+      val future = runTxnsWithOrder__A_Start__B__A_end_without_observer_on_B(merge1, merge2)
+      ThreadUtils.awaitResult(future, Duration.Inf)
     }
   }
 }
