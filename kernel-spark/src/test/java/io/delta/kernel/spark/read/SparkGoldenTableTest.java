@@ -29,10 +29,8 @@ import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Expression;
@@ -52,21 +50,10 @@ import scala.Function0;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class SparkGoldenTableTest extends SparkDsv2TestBase {
 
-  private SparkSession localSpark;
-
   @BeforeAll
-  public void setUp(@TempDir File tempDir) {
-    SparkConf conf =
-        new SparkConf()
-            .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
-            .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
-            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .set(
-                "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-            .setMaster("local[*]")
-            .setAppName("SparkGoldenTableTest");
-    localSpark = SparkSession.builder().config(conf).getOrCreate();
+  public void setUpDsv2Catalog(@TempDir File tempDir) {
+    spark.conf().set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog");
+    spark.conf().set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath());
   }
 
   @Test
@@ -548,7 +535,7 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
 
     // Read table, drop unsupported column `as_timestamp`
     String tablePath = goldenTablePath("data-reader-partition-values");
-    Dataset<Row> full = localSpark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+    Dataset<Row> full = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
 
     List<String> projectedCols = new ArrayList<>();
     for (String f : full.schema().fieldNames()) {
@@ -619,8 +606,8 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
       if (hasOnlyDeltaLogSubdir(tablePath)) {
         continue;
       }
-      Dataset<Row> df = localSpark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
-      Dataset<Row> df2 = localSpark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+      Dataset<Row> df = spark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
+      Dataset<Row> df2 = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
       assertEquals(df.schema(), df2.schema(), "Schema mismatch for table: " + tableName);
       // Convert to Java collections for JUnit assertions
       Row[] actualRowArray1 = (Row[]) df.collect();
@@ -656,7 +643,7 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
 
-    Dataset<Row> df = localSpark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+    Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
     Function0<Dataset<Row>> dfFunc =
         new Function0<Dataset<Row>>() {
           @Override
