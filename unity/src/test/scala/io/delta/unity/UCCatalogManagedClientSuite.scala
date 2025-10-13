@@ -55,22 +55,6 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     new UCCatalogManagedClient(ucClient)
   }
 
-  /** Helper method with reasonable defaults */
-  private def loadSnapshot(
-      ucCatalogManagedClient: UCCatalogManagedClient,
-      engine: Engine = defaultEngine,
-      ucTableId: String = "ucTableId",
-      tablePath: String = "tablePath",
-      versionToLoad: Optional[java.lang.Long] = emptyLongOpt,
-      timestampToLoad: Optional[java.lang.Long] = emptyLongOpt): SnapshotImpl = {
-    ucCatalogManagedClient.loadSnapshot(
-      engine,
-      ucTableId,
-      tablePath,
-      versionToLoad,
-      timestampToLoad).asInstanceOf[SnapshotImpl]
-  }
-
   /**
    * If present, loads the given `versionToLoad`, else loads the maxRatifiedVersion of 2.
    *
@@ -342,8 +326,6 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 }
 
 object UCCatalogManagedClientSuite {
-
-  private val emptyLongOpt = Optional.empty[java.lang.Long]()
 
   private def javaLongOpt(value: Long): Optional[java.lang.Long] = {
     Optional.of(value)

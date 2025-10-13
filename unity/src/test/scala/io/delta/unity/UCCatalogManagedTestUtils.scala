@@ -24,6 +24,8 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.commit.PublishMetadata
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
@@ -37,6 +39,23 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
   val fakeURI = new URI("s3://bucket/table")
   val baseTestTablePath = "/path/to/table"
   val baseTestLogPath = "/path/to/table/_delta_log"
+  val emptyLongOpt = Optional.empty[java.lang.Long]()
+
+  /** Helper method with reasonable defaults */
+  def loadSnapshot(
+      ucCatalogManagedClient: UCCatalogManagedClient,
+      engine: Engine = defaultEngine,
+      ucTableId: String = "ucTableId",
+      tablePath: String = "tablePath",
+      versionToLoad: Optional[java.lang.Long] = emptyLongOpt,
+      timestampToLoad: Optional[java.lang.Long] = emptyLongOpt): SnapshotImpl = {
+    ucCatalogManagedClient.loadSnapshot(
+      engine,
+      ucTableId,
+      tablePath,
+      versionToLoad,
+      timestampToLoad).asInstanceOf[SnapshotImpl]
+  }
 
   def hadoopCommitFileStatus(version: Long): HadoopFileStatus = {
     val filePath = FileNames.stagedCommitFile(baseTestLogPath, version)
