@@ -16,12 +16,14 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.sql.AbstractSparkSessionExtension
+import org.apache.spark.sql.delta.catalog.AbstractDeltaCatalog
+
 import java.io.{FileNotFoundException, PrintWriter, StringWriter}
 import java.net.URI
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Locale
-
 import scala.sys.process.Process
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -29,7 +31,6 @@ import scala.sys.process.Process
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
@@ -38,7 +39,6 @@ import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, Inva
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
-import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.json4s.JString
 import org.scalatest.GivenWhenThen
@@ -1969,9 +1969,9 @@ trait DeltaErrorsSuiteBase
       }
 
       checkError(e, "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG", "56038", Map(
-        "sparkSessionExtensionName" -> classOf[DeltaSparkSessionExtension].getName,
+        "sparkSessionExtensionName" -> classOf[AbstractSparkSessionExtension].getName,
         "catalogKey" -> SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
-        "catalogClassName" -> classOf[DeltaCatalog].getName
+        "catalogClassName" -> classOf[AbstractDeltaCatalog].getName
       ))
     }
     {
