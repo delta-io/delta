@@ -639,6 +639,10 @@ lazy val spark = (project in file("spark-combined"))
       }
     },
     
+    // Include Python files in the JAR (using default packageBin for classes, then adding Python files)
+    Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
+      listPythonFiles(baseDirectory.value.getParentFile / "python"),
+    
     // Test sources and resources from original spark/ directory (delta-spark-v1's directory)
     Test / unmanagedSourceDirectories := {
       val sparkDir = (`delta-spark-v1` / baseDirectory).value
