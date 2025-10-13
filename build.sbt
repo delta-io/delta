@@ -617,7 +617,7 @@ lazy val spark = (project in file("spark-combined"))
     // Override projectDependencies to exclude internal modules
     projectDependencies := {
       projectDependencies.value.filterNot { dep =>
-        dep.name.startsWith("delta-spark-v") || dep.name == "delta-spark-shaded"
+        dep.name.startsWith("delta-spark-v")
       }
     },
     
@@ -1864,7 +1864,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, `delta-spark-v1`, `delta-spark-v1-shaded`, `delta-spark-v2`, `delta-spark-shaded`, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, `delta-spark-v1`, `delta-spark-v1-shaded`, `delta-spark-v2`, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
