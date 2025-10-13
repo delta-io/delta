@@ -345,16 +345,15 @@ lazy val connectClient = (project in file("spark-connect/client"))
         IO.createDirectory(jarsDir)
         // Create symlinks for all dependencies.
         // Use a set to track already created symlink names to avoid duplicates
+        // (e.g., multiple 'classes' directories from different modules)
         val createdLinks = scala.collection.mutable.Set[String]()
         serverClassPath.distinct.foreach { entry =>
           val jarFile = entry.data.toPath
           val fileName = entry.data.getName
-          // Only create symlink if we haven't created one with this name yet
+          // Only create symlink for the first occurrence of each filename
           if (!createdLinks.contains(fileName)) {
             val linkedJarFile = jarsDir / fileName
-            if (!Files.exists(linkedJarFile.toPath)) {
-              Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
-            }
+            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
             createdLinks += fileName
           }
         }
@@ -363,10 +362,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
         IO.createDirectory(confDir)
         val log4jProps = (spark / Test / resourceDirectory).value / "log4j2_spark_master.properties"
         val linkedLog4jProps = confDir / "log4j2.properties"
-        // Only create symlink if it doesn't already exist
-        if (!linkedLog4jProps.exists()) {
-          Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
-        }
+        Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
       }
       // Return the location of the distribution directory.
       "-Ddelta.spark.home=" + distributionDir
