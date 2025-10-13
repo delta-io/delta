@@ -22,6 +22,7 @@ import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -264,6 +265,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
               "Index mismatch at index %d: dsv1=%d, dsv2=%d",
               i, deltaFile.index(), kernelFile.getIndex()));
 
+      // Sentinel files have null AddFile and null RemoveFile.
       String deltaPath = deltaFile.add() != null ? deltaFile.add().path() : null;
       String kernelPath =
           kernelFile.getAddFile() != null ? kernelFile.getAddFile().getPath() : null;
@@ -279,6 +281,88 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   // ================================================================================================
+  // Tests for commits with no data file changes
+  // ================================================================================================
+
+  /**
+   * Parameterized test that verifies both DSv1 and DSv2 handle commits with no ADD or REMOVE
+   * actions correctly. Such commits only contain METADATA, PROTOCOL, or other non-data changes.
+   */
+  @ParameterizedTest
+  @MethodSource("emptyVersionScenarios")
+  public void testGetFileChanges_EmptyVersions(
+      ScenarioSetup scenarioSetup,
+      List<Long> expectedEmptyVersions,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_empty_versions_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Execute the scenario-specific setup
+    scenarioSetup.setup(testTableName, tempDir);
+
+    // Read from version 0 (start of the table) to capture all changes
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    boolean isInitialSnapshot = false;
+    scala.Option<DeltaSourceOffset> endOffset = scala.Option.empty();
+
+    // Test DSv1 DeltaSource
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
+        createDeltaSource(deltaLog, testTablePath);
+
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // Test DSv2 SparkMicroBatchStream
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+
+      // Compare results
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  /** Provides test scenarios with various types of empty versions (no ADD/REMOVE actions). */
+  private static Stream<Arguments> emptyVersionScenarios() {
+    return Stream.of(
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("ALTER TABLE %s SET TBLPROPERTIES ('test.property' = 'value1')", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3')", tableName);
+                },
+            Arrays.asList(2L),
+            "Single metadata-only version"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+                  sql("ALTER TABLE %s SET TBLPROPERTIES ('p1' = 'v1')", tableName);
+                  sql("ALTER TABLE %s SET TBLPROPERTIES ('p2' = 'v2')", tableName);
+                  sql("ALTER TABLE %s SET TBLPROPERTIES ('p3' = 'v3')", tableName);
+                },
+            Arrays.asList(2L),
+            "Multiple consecutive metadata-only versions"));
+  }
+
+  // ================================================================================================
   // Tests for REMOVE file handling
   // ================================================================================================
 
@@ -289,8 +373,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   @ParameterizedTest
   @MethodSource("removeFileScenarios")
   public void testGetFileChanges_OnRemoveFile_throwError(
-      RemoveScenarioSetup scenarioSetup, String testDescription, @TempDir File tempDir)
-      throws Exception {
+      ScenarioSetup scenarioSetup, String testDescription, @TempDir File tempDir) throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName =
         "test_remove_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
@@ -368,7 +451,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     return Stream.of(
         // Simple DELETE scenario
         Arguments.of(
-            (RemoveScenarioSetup)
+            (ScenarioSetup)
                 (tableName, tempDir) -> {
                   sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
                   sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
@@ -378,7 +461,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
         // Many ADDs followed by REMOVE
         Arguments.of(
-            (RemoveScenarioSetup)
+            (ScenarioSetup)
                 (tableName, tempDir) -> {
                   // Create 10 versions with ADDs (50 rows each)
                   for (int i = 0; i < 10; i++) {
@@ -396,7 +479,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
         // UPDATE scenario (generates REMOVE + ADD pairs)
         Arguments.of(
-            (RemoveScenarioSetup)
+            (ScenarioSetup)
                 (tableName, tempDir) -> {
                   sql(
                       "INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3'), (4, 'User4'), (5, 'User5')",
@@ -408,7 +491,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
         // MERGE scenario (generates REMOVE + ADD for matched, ADD for not matched)
         Arguments.of(
-            (RemoveScenarioSetup)
+            (ScenarioSetup)
                 (tableName, tempDir) -> {
                   sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
 
@@ -431,9 +514,13 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             "MERGE: Matched (REMOVE+ADD) and not matched (ADD)"));
   }
 
-  /** Functional interface for setting up a test scenario that generates REMOVE actions. */
+  // ================================================================================================
+  // Helper methods
+  // ================================================================================================
+
+  /** Functional interface for setting up test scenarios. */
   @FunctionalInterface
-  interface RemoveScenarioSetup {
+  interface ScenarioSetup {
     /**
      * Set up the test scenario by executing SQL statements.
      *
@@ -442,10 +529,6 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
      */
     void setup(String tableName, File tempDir) throws Exception;
   }
-
-  // ================================================================================================
-  // Helper methods
-  // ================================================================================================
 
   /** Helper method to execute SQL with String.format. */
   private static void sql(String query, Object... args) {

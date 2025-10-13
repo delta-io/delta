@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.utils;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
@@ -176,9 +177,10 @@ public class StreamingHelper {
     }
 
     Row addFileRow = StructRow.fromStructVector(addVector, rowId);
-    if (addFileRow == null) {
-      return Optional.empty();
-    }
+    checkState(
+        addFileRow != null,
+        "Failed to extract AddFile struct from batch at rowId=%d.",
+        rowId);
 
     AddFile addFile = new AddFile(addFileRow);
     return addFile.getDataChange() ? Optional.of(addFile) : Optional.empty();
@@ -195,9 +197,10 @@ public class StreamingHelper {
     }
 
     Row removeFileRow = StructRow.fromStructVector(removeVector, rowId);
-    if (removeFileRow == null) {
-      return Optional.empty();
-    }
+    checkState(
+        removeFileRow != null,
+        "Failed to extract RemoveFile struct from batch at rowId=%d.",
+        rowId);
 
     RemoveFile removeFile = new RemoveFile(removeFileRow);
     return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();

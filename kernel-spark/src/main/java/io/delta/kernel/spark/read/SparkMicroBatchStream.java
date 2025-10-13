@@ -179,6 +179,8 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       while (actionsIter.hasNext()) {
         ColumnarBatch batch = actionsIter.next();
         if (batch.getSize() == 0) {
+          // TODO(#5318): this shouldn't happen, empty commits will still have a non-empty row
+          // with the version set. Make sure the kernel API is explicit about this.
           continue;
         }
         long version = StreamingHelper.getVersion(batch);
