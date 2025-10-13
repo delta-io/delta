@@ -97,8 +97,11 @@ trait AbstractTestUtils
     .builder()
     .appName("Spark Test Writer for Delta Kernel")
     .config("spark.master", "local")
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    // Use Legacy* classes because kernelDefaults depends on delta-spark-v1 to avoid circular deps
+    .config("spark.sql.extensions", "io.delta.sql.LegacyDeltaSparkSessionExtension")
+    .config(
+      "spark.sql.catalog.spark_catalog",
+      "org.apache.spark.sql.delta.catalog.LegacyDeltaCatalog")
     // Set this conf to empty string so that the golden tables generated
     // using with the test-prefix (i.e. there is no DELTA_TESTING set) can still work
     .config(DeltaSQLConf.TEST_DV_NAME_PREFIX.key, "")
@@ -181,25 +184,6 @@ trait AbstractTestUtils
      */
     def commitManuallyWithValidation(actions: org.apache.spark.sql.delta.actions.Action*): Unit = {
       txn.commit(actions.toSeq, org.apache.spark.sql.delta.DeltaOperations.ManualUpdate)
-    }
-
-    /**
-     * Test only method to unsafe commit - writes actions directly to transaction log.
-     * Note: This bypasses Delta Spark transaction logic.
-     *
-     * @param tablePath The path to the Delta table
-     * @param version The commit version number
-     * @param actions Sequence of Action objects to write
-     */
-    def commitUnsafe(
-        tablePath: String,
-        version: Long,
-        actions: org.apache.spark.sql.delta.actions.Action*): Unit = {
-      val logPath = new org.apache.hadoop.fs.Path(tablePath, "_delta_log")
-      val commitFile = org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile(logPath, version)
-      val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
-      Files.write(Paths.get(commitFile.toString), commitContent)
-      Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
     }
   }
 
