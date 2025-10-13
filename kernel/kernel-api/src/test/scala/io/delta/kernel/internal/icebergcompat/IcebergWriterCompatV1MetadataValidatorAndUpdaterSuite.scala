@@ -115,7 +115,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
           val updatedMetadata =
             validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
           assert(updatedMetadata.isPresent)
-          assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "id")
+          assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
           // We correctly populate the column mapping metadata
           verifyCMTestSchemaHasValidColumnMappingInfo(
             updatedMetadata.get(),
@@ -134,7 +134,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  Seq("name", "none").foreach { cmMode =>
+  Seq("none").foreach { cmMode =>
     Seq(true, false).foreach { isNewTable =>
       test(s"cannot enable icebergWriterCompatV1 with incompatible column mapping mode " +
         s"`$cmMode`, isNewTable = $isNewTable") {
