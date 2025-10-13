@@ -27,54 +27,6 @@ import java.util.List;
  * Workload specification for read benchmarks. Defines test cases for reading Delta tables at
  * specific versions or latest, with different operation types.
  *
- * <h2>Overview</h2>
- *
- * <p>A ReadSpec represents a single test case that can generate multiple benchmark variants:
- *
- * <ul>
- *   <li><b>read_metadata</b>: Scans table metadata (add/remove files) at the specified version
- *   <li><b>read_data</b>: Reads actual data and validates against expected results (future)
- * </ul>
- *
- * <h2>Spec File Format</h2>
- *
- * <p>On-disk spec files contain only test parameters (minimal):
- *
- * <pre>{@code
- * {
- *   "type": "read",
- *   "version": 5             // optional: specific version, omit for latest
- * }
- * }</pre>
- *
- * <h2>Runtime Enrichment</h2>
- *
- * <p>During loading, the spec is enriched with runtime metadata:
- *
- * <ul>
- *   <li><b>tableInfo</b>: Added from table_info.json in parent directory
- *   <li><b>caseName</b>: Added from the spec directory name
- * </ul>
- *
- * <h2>Variant Generation</h2>
- *
- * <p>When getWorkloadVariants() is called, this spec generates variants:
- *
- * <pre>{@code
- * ReadSpec(type="read", version=5)
- *   → ReadSpec(type="read", version=5, operationType="read_metadata")
- *   → ReadSpec(type="read", version=5, operationType="read_data")  // future
- * }</pre>
- *
- * <h2>Fields</h2>
- *
- * <ul>
- *   <li><b>version</b>: Snapshot version to read (null = latest). From spec file.
- *   <li><b>expected_data</b>: Expected data file for validation (future). From spec file.
- *   <li><b>operationType</b>: Operation variant ("read_metadata", "read_data"). Set during variant
- *       generation, not in spec file.
- * </ul>
- *
  * <h2>Usage</h2>
  *
  * <p>To run this workload, use {@link WorkloadSpec#getRunner(Engine)} to get the appropriate {@link
@@ -91,6 +43,11 @@ public class ReadSpec extends WorkloadSpec {
   /** Expected data file for validating the read data result. From spec file. */
   @JsonProperty("expected_data")
   private String expectedData;
+
+  /** Expected metadata file for validating the read data result. From spec file. */
+  @JsonProperty("expected_metadata")
+  private String expectedMetadata;
+
 
   /**
    * The operation type for this variant ("read_metadata" or "read_data"). Set during variant
@@ -110,12 +67,14 @@ public class ReadSpec extends WorkloadSpec {
       String caseName,
       Long version,
       String expectedData,
+      String expectedMetadata,
       String operationType) {
     super("read");
     this.tableInfo = tableInfo;
     this.version = version;
     this.caseName = caseName;
     this.expectedData = expectedData;
+    this.expectedMetadata = expectedMetadata;
     this.operationType = operationType;
   }
 
@@ -124,12 +83,10 @@ public class ReadSpec extends WorkloadSpec {
     return version;
   }
 
-  /**
-   * @return the full name of this workload, derived from table name, case name, and operation type.
-   */
+  /** @return the full name of this workload, derived from table name, case name, and operation type. */
   @Override
   public String getFullName() {
-    return this.tableInfo.name + "/" + this.caseName + "/read/" + this.operationType;
+    return this.tableInfo.name + "/" + caseName + "/read/" + operationType;
   }
 
   @Override
@@ -147,14 +104,6 @@ public class ReadSpec extends WorkloadSpec {
    * <p>A single ReadSpec test case can generate multiple workload variants, one for each operation
    * type. Each variant is a complete ReadSpec with the operation type set.
    *
-   * <p>Currently generates:
-   *
-   * <ul>
-   *   <li>read_metadata variant - scans table metadata
-   * </ul>
-   *
-   * <p>Future: will also generate read_data variant when implemented.
-   *
    * @return list of ReadSpec variants, each representing a separate workload execution
    */
   @Override
@@ -164,17 +113,13 @@ public class ReadSpec extends WorkloadSpec {
     List<WorkloadSpec> out = new ArrayList<>();
     for (String opType : operationTypes) {
       ReadSpec specVariant =
-          new ReadSpec(this.tableInfo, this.caseName, this.version, this.expectedData, opType);
+          new ReadSpec(tableInfo, caseName, version, expectedData, expectedMetadata, opType);
       out.add(specVariant);
     }
     return out;
   }
 
-  /**
-   * Gets the operation type for this read variant.
-   *
-   * @return the operation type ("read_metadata" or "read_data")
-   */
+  /** @return the operation type ("read_metadata" or "read_data") */
   public String getOperationType() {
     return operationType;
   }

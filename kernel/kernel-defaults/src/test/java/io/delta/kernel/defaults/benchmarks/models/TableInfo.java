@@ -57,18 +57,14 @@ public class TableInfo {
    * Information about the engine used to create this table (e.g., "Apache-Spark/3.5.1
    * Delta-Lake/3.1.0"). Optional field to track which engine/version created the table data.
    */
-  @JsonProperty("engineInfo")
+  @JsonProperty("engine_info")
   public String engineInfo;
 
   /** The root path where the Delta table is stored. */
   @JsonProperty("table_root")
   public String tableRoot;
 
-  /**
-   * Gets the absolute path to the root of the Delta table.
-   *
-   * @return the absolute path to the root of the table
-   */
+  /** @return the absolute path to the root of the table */
   public String getTableRoot() {
     return tableRoot;
   }

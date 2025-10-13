@@ -29,55 +29,6 @@ import java.util.List;
  * Base class for all workload specifications. Workload specifications define test cases and their
  * parameters that can be executed as benchmarks using the corresponding {@link WorkloadRunner}.
  *
- * <h2>Design Overview</h2>
- *
- * <p>The workload system has three conceptual layers:
- *
- * <ol>
- *   <li><b>Spec File (on-disk)</b>: A JSON file defining a test case with minimal parameters (e.g.,
- *       table version, expected results). This is what users write.
- *   <li><b>WorkloadSpec (in-memory)</b>: The deserialized spec enriched with runtime metadata
- *       (table info, case name). This is loaded from the spec file.
- *   <li><b>Benchmark Variants</b>: Multiple executable variations generated from a single spec
- *       (e.g., one spec → read_metadata variant + read_data variant). Each variant becomes a
- *       separate JMH benchmark run.
- * </ol>
- *
- * <h2>Workflow</h2>
- *
- * <pre>
- * spec.json (on disk)
- *     ↓ fromJsonPath()
- * WorkloadSpec + tableInfo + caseName
- *     ↓ getWorkloadVariants()
- * List&lt;WorkloadSpec&gt; (with operation types set)
- *     ↓ getRunner()
- * WorkloadRunner instances (ready to execute)
- * </pre>
- *
- * <h2>Fields</h2>
- *
- * <ul>
- *   <li><b>type</b>: The workload type (e.g., "read"). Used by Jackson for polymorphic
- *       deserialization to instantiate the correct subclass.
- *   <li><b>tableInfo</b>: Runtime metadata about the table (name, description, root path). Set
- *       during loading, not present in spec files.
- *   <li><b>caseName</b>: The test case name. Set during loading from the directory name, not
- *       present in spec files.
- * </ul>
- *
- * <h2>Extending</h2>
- *
- * <p>To add a new workload type:
- *
- * <ol>
- *   <li>Create a subclass of WorkloadSpec (e.g., WriteSpec)
- *   <li>Add test-specific fields (e.g., writeMode, numRecords)
- *   <li>Override getWorkloadVariants() to generate operation variants
- *   <li>Override getRunner() to return appropriate WorkloadRunner instances
- *   <li>Register the subclass in @JsonSubTypes annotation
- * </ol>
- *
  * <p>This class uses Jackson annotations to support polymorphic deserialization based on the "type"
  * field in the JSON.
  */
