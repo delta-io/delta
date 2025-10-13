@@ -23,10 +23,10 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.commit.CatalogCommitter;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.commit.PublishMetadata;
-import io.delta.kernel.commit.SupportsPublishing;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.CommitInfo;
@@ -200,7 +200,7 @@ public class SnapshotImpl implements Snapshot {
   public void publish(Engine engine) throws PublishFailedException {
     final List<ParsedCatalogCommitData> allCatalogCommits = getLogSegment().getAllCatalogCommits();
     final boolean isFileSystemBasedTable = !TableFeatures.isCatalogManagedSupported(protocol);
-    final boolean committerSupportsPublishing = committer instanceof SupportsPublishing;
+    final boolean isCatalogCommitter = committer instanceof CatalogCommitter;
 
     if (!allCatalogCommits.isEmpty()) {
       if (isFileSystemBasedTable) {
@@ -208,7 +208,7 @@ public class SnapshotImpl implements Snapshot {
             "Cannot have catalog commits on a filesystem-managed table");
       }
 
-      if (!committerSupportsPublishing) {
+      if (!isCatalogCommitter) {
         throw new UnsupportedOperationException( // This case should also be impossible
             "Cannot publish: committer does not support publishing");
       }
@@ -218,7 +218,7 @@ public class SnapshotImpl implements Snapshot {
         return;
       }
 
-      if (!committerSupportsPublishing) {
+      if (!isCatalogCommitter) {
         logger.info("Publishing not applicable: committer does not support publishing");
         return;
       }
@@ -244,7 +244,7 @@ public class SnapshotImpl implements Snapshot {
     final PublishMetadata publishMetadata =
         new PublishMetadata(version, logPath.toString(), catalogCommitsToPublish);
 
-    ((SupportsPublishing) committer).publish(engine, publishMetadata);
+    ((CatalogCommitter) committer).publish(engine, publishMetadata);
   }
 
   ///////////////////
