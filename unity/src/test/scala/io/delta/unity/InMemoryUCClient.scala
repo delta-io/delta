@@ -97,14 +97,10 @@ object InMemoryUCClient {
         throw new IllegalArgumentException(s"Version must be non-negative, but got: $version")
       }
 
-      // Remove all commits with version <= the specified version
       val indexToRemove = commits.lastIndexWhere(_.getVersion <= version)
       if (indexToRemove >= 0) {
         commits.remove(0, indexToRemove + 1)
       }
-
-      // Note: We don't update maxRatifiedVersion as it represents the highest version
-      // that has been ratified, regardless of what commits we retain in memory
     }
   }
 }
