@@ -199,6 +199,7 @@ trait AbstractTestUtils
       val commitFile = FileNames.unsafeDeltaFile(logPath, version)
       val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
       Files.write(Paths.get(commitFile.toString), commitContent)
+      // Generate crc file for this commit version.
       Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
     }
   }
