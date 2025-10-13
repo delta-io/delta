@@ -45,7 +45,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
-import scala.Function0;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class SparkGoldenTableTest extends SparkDsv2TestBase {
@@ -545,19 +544,8 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
     }
     Dataset<Row> df = full.selectExpr(projectedCols.toArray(new String[0]));
 
-    Function0<Dataset<Row>> dfFunc =
-        new Function0<Dataset<Row>>() {
-          @Override
-          public Dataset<Row> apply() {
-            return df;
-          }
-        };
-    scala.collection.immutable.Seq<Row> expectedSeq =
-        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
-    // Convert to Java collections for JUnit assertions
-    Row[] actualRowArray = (Row[]) df.collect();
-    List<Row> actualRows = new ArrayList<>(Arrays.asList(actualRowArray));
-    assertEquals(expected.size(), actualRows.size(), "Row count mismatch");
+    Row[] actualRows = (Row[]) df.collect();
+    assertEquals(expected.size(), actualRows.length, "Row count mismatch");
   }
 
   @Test
@@ -609,13 +597,10 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
       Dataset<Row> df = spark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
       Dataset<Row> df2 = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
       assertEquals(df.schema(), df2.schema(), "Schema mismatch for table: " + tableName);
-      // Convert to Java collections for JUnit assertions
-      Row[] actualRowArray1 = (Row[]) df.collect();
-      Row[] actualRowArray2 = (Row[]) df2.collect();
-      List<Row> actualRows1 = new ArrayList<>(Arrays.asList(actualRowArray1));
-      List<Row> actualRows2 = new ArrayList<>(Arrays.asList(actualRowArray2));
+      Row[] actualRows1 = (Row[]) df.collect();
+      Row[] actualRows2 = (Row[]) df2.collect();
       assertEquals(
-          actualRows1.size(), actualRows2.size(), "Row count mismatch for table: " + tableName);
+          actualRows1.length, actualRows2.length, "Row count mismatch for table: " + tableName);
     }
   }
 
@@ -642,22 +627,9 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
 
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
-
     Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
-    Function0<Dataset<Row>> dfFunc =
-        new Function0<Dataset<Row>>() {
-          @Override
-          public Dataset<Row> apply() {
-            return df;
-          }
-        };
-
-    scala.collection.immutable.Seq<Row> expectedSeq =
-        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
-    // Convert to Java collections for JUnit assertions
-    Row[] actualRowArray = (Row[]) df.collect();
-    List<Row> actualRows = new ArrayList<>(Arrays.asList(actualRowArray));
-    assertEquals(expected.size(), actualRows.size(), "Row count mismatch");
+    Row[] actualRows = (Row[]) df.collect();
+    assertEquals(expected.size(), actualRows.length, "Row count mismatch");
   }
 
   private String goldenTablePath(String name) {
