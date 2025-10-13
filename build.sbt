@@ -589,6 +589,25 @@ lazy val spark = (project in file("spark-combined"))
     sparkMimaSettings,
     releaseSettings, // Published as delta-spark.jar
     crossSparkSettings(),
+
+    // Copy all classes from dependencies to classes directory for MiMa
+    Compile / compile := {
+      val _ = (Compile / compile).value
+      val classesDir = (Compile / classDirectory).value
+      val v1Classes = (`delta-spark-v1` / Compile / classDirectory).value
+      val v2Classes = (`delta-spark-v2` / Compile / classDirectory).value
+      val storageClasses = (storage / Compile / classDirectory).value
+
+      // Ensure classes directory exists
+      IO.createDirectory(classesDir)
+
+      // Copy all classes (shaded classes override v1 classes)
+      IO.copyDirectory(v1Classes, classesDir, overwrite = false, preserveLastModified = true)
+      IO.copyDirectory(storageClasses, classesDir, overwrite = false, preserveLastModified = true)
+      IO.copyDirectory(v2Classes, classesDir, overwrite = true, preserveLastModified = true)
+
+      sbt.internal.inc.Analysis.Empty
+    },
     
     // Remove internal module dependencies from published pom.xml and ivy.xml
     // Users should only depend on delta-spark jar, not internal modules
@@ -630,18 +649,6 @@ lazy val spark = (project in file("spark-combined"))
 
       // Merge all mappings, shaded classes override v1 classes if there are conflicts
       val allMappings = v1Full ++ v2 ++ storageClasses
-
-      // Remove duplicates by path (keep the last occurrence, which is from shaded)
-      allMappings.groupBy(_._2).map(_._2.last).toSeq
-      // Ensure classes directory exists
-      IO.createDirectory(classesDir)
-
-      // Copy all classes (shaded classes override v1 classes)
-      IO.copyDirectory(v1Classes, classesDir, overwrite = false, preserveLastModified = true)
-      IO.copyDirectory(storageClasses, classesDir, overwrite = false, preserveLastModified = true)
-      IO.copyDirectory(v2Classes, classesDir, overwrite = true, preserveLastModified = true)
-
-      sbt.internal.inc.Analysis.Empty
     },
     
     // Test sources and resources from original spark/ directory (delta-spark-v1's directory)
