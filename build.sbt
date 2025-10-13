@@ -938,6 +938,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
   .dependsOn(goldenTables % "test")
+  .dependsOn(`delta-spark-v1` % "test") // Use local delta-spark-v1 instead of published version
   .settings(
     name := "delta-kernel-defaults",
     commonSettings,
@@ -959,7 +960,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
-      "io.delta" %% "delta-spark" % "3.3.2" % "test",
+      // Removed external delta-spark dependency - now using local delta-spark-v1
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
