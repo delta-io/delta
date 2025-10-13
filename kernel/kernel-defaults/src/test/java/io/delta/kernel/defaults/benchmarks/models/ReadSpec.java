@@ -40,15 +40,6 @@ public class ReadSpec extends WorkloadSpec {
   @JsonProperty("version")
   private Long version;
 
-  /** Expected data file for validating the read data result. From spec file. */
-  @JsonProperty("expected_data")
-  private String expectedData;
-
-  /** Expected metadata file for validating the read data result. From spec file. */
-  @JsonProperty("expected_metadata")
-  private String expectedMetadata;
-
-
   /**
    * The operation type for this variant ("read_metadata" or "read_data"). Set during variant
    * generation via getWorkloadVariants(), not present in spec files.
@@ -62,19 +53,11 @@ public class ReadSpec extends WorkloadSpec {
   }
 
   // Copy constructor
-  public ReadSpec(
-      TableInfo tableInfo,
-      String caseName,
-      Long version,
-      String expectedData,
-      String expectedMetadata,
-      String operationType) {
+  public ReadSpec(TableInfo tableInfo, String caseName, Long version, String operationType) {
     super("read");
     this.tableInfo = tableInfo;
     this.version = version;
     this.caseName = caseName;
-    this.expectedData = expectedData;
-    this.expectedMetadata = expectedMetadata;
     this.operationType = operationType;
   }
 
@@ -83,7 +66,9 @@ public class ReadSpec extends WorkloadSpec {
     return version;
   }
 
-  /** @return the full name of this workload, derived from table name, case name, and operation type. */
+  /**
+   * @return the full name of this workload, derived from table name, case name, and operation type.
+   */
   @Override
   public String getFullName() {
     return this.tableInfo.name + "/" + caseName + "/read/" + operationType;
@@ -112,8 +97,7 @@ public class ReadSpec extends WorkloadSpec {
     String[] operationTypes = {"read_metadata"};
     List<WorkloadSpec> out = new ArrayList<>();
     for (String opType : operationTypes) {
-      ReadSpec specVariant =
-          new ReadSpec(tableInfo, caseName, version, expectedData, expectedMetadata, opType);
+      ReadSpec specVariant = new ReadSpec(tableInfo, caseName, version, opType);
       out.add(specVariant);
     }
     return out;
