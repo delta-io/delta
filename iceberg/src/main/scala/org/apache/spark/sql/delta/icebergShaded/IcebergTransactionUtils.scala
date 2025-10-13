@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern
 import org.apache.spark.sql.delta.util.TimestampFormatter
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
+import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, MetadataUpdate, PartitionSpec, Schema => IcebergSchema}
 import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
@@ -230,10 +230,13 @@ object IcebergTransactionUtils
    * @param conf: Hadoop Configuration
    * @return
    */
-  def createHiveCatalog(conf : Configuration) : HiveCatalog = {
+  def createHiveCatalog(
+      conf: Configuration,
+      metadataUpdates: java.util.ArrayList[MetadataUpdate]
+        = new java.util.ArrayList[MetadataUpdate]()) : HiveCatalog = {
     val catalog = new HiveCatalog()
     catalog.setConf(conf)
-    catalog.initialize("spark_catalog", Map.empty[String, String].asJava)
+    catalog.initialize("spark_catalog", Map.empty[String, String].asJava, metadataUpdates)
     catalog
   }
 
