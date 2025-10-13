@@ -19,6 +19,7 @@ package io.delta.kernel.defaults.catalogManaged
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.{Operation, TableManager, Transaction}
+import io.delta.kernel.commit.Committer
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
@@ -29,27 +30,37 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
+class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
+
+  val catalogManagedFeaturePropMap = Map("delta.feature.catalogOwned-preview" -> "supported")
+  val validRequiredCatalogPropMap = Map(
+    customCatalogCommitter.REQUIRED_PROPERTY_KEY -> customCatalogCommitter.REQUIRED_PROPERTY_VALUE)
+  val invalidRequiredCatalogPropMap = Map(
+    customCatalogCommitter.REQUIRED_PROPERTY_KEY -> "invalid")
 
   case class CatalogManagedTestCase(
       testName: String,
-      operationType: String, // "CREATE", "UPDATE", or "REPLACE"
+      /** "CREATE", "UPDATE", or "REPLACE" */
+      operationType: String,
       initialTableProperties: Map[String, String] = Map.empty,
       transactionProperties: Map[String, String],
-      expectedSuccess: Boolean,
+      /** only applicable to UPDATE */
+      removedPropertyKeys: Set[String] = Set.empty,
+      /** create table for UPDATE/REPLACE */
+      createInitialTableCommitter: Committer = customCatalogCommitter,
+      expectedSuccess: Boolean = true,
       expectedExceptionMessage: Option[String] = None,
-      expectedIctEnabled: Boolean = false,
-      expectedCatalogManagedSupported: Boolean = false)
+      /** only applicable if SUCCESS */
+      expectedIctEnabled: Boolean = true,
+      /** only applicable if SUCCESS */
+      expectedCatalogManagedSupported: Boolean = true)
 
   val catalogManagedTestCases = Seq(
     // ===== CREATE cases =====
     CatalogManagedTestCase(
       testName = "CREATE: set catalogManaged=supported => enables catalogManaged and ICT",
       operationType = "CREATE",
-      transactionProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
-      expectedSuccess = true,
-      expectedIctEnabled = true,
-      expectedCatalogManagedSupported = true),
+      transactionProperties = catalogManagedFeaturePropMap),
     CatalogManagedTestCase(
       testName = "ILLEGAL CREATE: set catalogManaged=supported and explicitly disable ICT => THROW",
       operationType = "CREATE",
@@ -65,26 +76,17 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
       testName = "UPDATE: set catalogManaged=supported => enables catalogManaged and ICT",
       operationType = "UPDATE",
       initialTableProperties = Map.empty, // Start with basic table
-      transactionProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
-      expectedSuccess = true,
-      expectedIctEnabled = true,
-      expectedCatalogManagedSupported = true),
+      transactionProperties = catalogManagedFeaturePropMap),
     CatalogManagedTestCase(
       testName = "UPDATE: set catalogManaged=supported => enables ICT if previously disabled",
       operationType = "UPDATE",
       initialTableProperties = Map("delta.enableInCommitTimestamps" -> "false"),
-      transactionProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
-      expectedSuccess = true,
-      expectedIctEnabled = true,
-      expectedCatalogManagedSupported = true),
+      transactionProperties = catalogManagedFeaturePropMap),
     CatalogManagedTestCase(
       testName = "UPDATE: set catalogManaged=supported and ICT already enabled => Okay",
       operationType = "UPDATE",
       initialTableProperties = Map("delta.enableInCommitTimestamps" -> "true"),
-      transactionProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
-      expectedSuccess = true,
-      expectedIctEnabled = true,
-      expectedCatalogManagedSupported = true),
+      transactionProperties = catalogManagedFeaturePropMap),
     CatalogManagedTestCase(
       testName = "ILLEGAL UPDATE: set catalogManaged=supported and disable ICT => THROW",
       operationType = "UPDATE",
@@ -98,7 +100,7 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
     CatalogManagedTestCase(
       testName = "ILLEGAL UPDATE: catalogManaged already supported, then disable ICT => THROW",
       operationType = "UPDATE",
-      initialTableProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
+      initialTableProperties = catalogManagedFeaturePropMap,
       transactionProperties = Map("delta.enableInCommitTimestamps" -> "false"),
       expectedSuccess = false,
       expectedExceptionMessage =
@@ -108,7 +110,6 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
       operationType = "UPDATE",
       initialTableProperties = Map.empty,
       transactionProperties = Map(),
-      expectedSuccess = true,
       expectedIctEnabled = false,
       expectedCatalogManagedSupported = false),
 
@@ -116,27 +117,115 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
     CatalogManagedTestCase(
       testName = "REPLACE: normal replace should succeed on a catalogManaged table",
       operationType = "REPLACE",
-      initialTableProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
-      transactionProperties = Map(),
-      expectedSuccess = true,
-      expectedIctEnabled = true,
-      expectedCatalogManagedSupported = true),
+      initialTableProperties = catalogManagedFeaturePropMap,
+      transactionProperties = Map()),
     CatalogManagedTestCase(
       testName = "ILLEGAL REPLACE: set catalogManaged=supported => THROW",
       operationType = "REPLACE",
       initialTableProperties = Map.empty,
-      transactionProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
+      transactionProperties = catalogManagedFeaturePropMap,
       expectedSuccess = false,
       expectedExceptionMessage =
         Some("Cannot enable the catalogManaged feature during a REPLACE command.")),
     CatalogManagedTestCase(
       testName = "ILLEGAL REPLACE: catalogManaged already supported, then disable ICT => THROW",
       operationType = "REPLACE",
-      initialTableProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
+      initialTableProperties = catalogManagedFeaturePropMap,
       transactionProperties = Map("delta.enableInCommitTimestamps" -> "false"),
       expectedSuccess = false,
       expectedExceptionMessage =
-        Some("Cannot disable inCommitTimestamp on a catalogManaged table")))
+        Some("Cannot disable inCommitTimestamp on a catalogManaged table")),
+
+    // ===== Required catalog table property cases: Txn allowed to not explicitly set value =====
+    CatalogManagedTestCase(
+      testName = "CREATE: User does not explicitly set catalog property => auto-set",
+      operationType = "CREATE",
+      transactionProperties = catalogManagedFeaturePropMap
+    ), // <-- Missing, will be auto-set
+    CatalogManagedTestCase(
+      testName = "REPLACE: User does not explicitly set catalog property => auto-set",
+      operationType = "REPLACE",
+      initialTableProperties = catalogManagedFeaturePropMap,
+      transactionProperties = Map.empty
+    ), // <-- Missing, will be auto-set
+    CatalogManagedTestCase(
+      testName = "UPDATE: Normal updates succeed",
+      operationType = "UPDATE",
+      initialTableProperties = catalogManagedFeaturePropMap ++ validRequiredCatalogPropMap,
+      transactionProperties = Map("zip" -> "zap")
+    ), // <-- Just testing that normal updates succee
+
+    // ===== Required catalog table property cases: User can input correct value =====
+    CatalogManagedTestCase(
+      testName = "CREATE: Can set required catalog property to correct value",
+      operationType = "CREATE",
+      transactionProperties =
+        catalogManagedFeaturePropMap ++ validRequiredCatalogPropMap
+    ), // <-- Set to valid
+    CatalogManagedTestCase(
+      testName = "REPLACE: Can set required catalog property to correct value",
+      operationType = "REPLACE",
+      initialTableProperties = catalogManagedFeaturePropMap,
+      transactionProperties = validRequiredCatalogPropMap
+    ), // <-- Set to valid
+    CatalogManagedTestCase(
+      testName = "UPDATE: Can set required catalog property to correct value",
+      operationType = "UPDATE",
+      initialTableProperties = catalogManagedFeaturePropMap,
+      transactionProperties = validRequiredCatalogPropMap
+    ), // <-- Set to valid
+
+    // ===== Required catalog table property case: User cannot remove or input incorrect value =====
+    CatalogManagedTestCase(
+      testName = "ILLEGAL CREATE: Set required catalog property to incorrect value => THROW",
+      operationType = "CREATE",
+      transactionProperties =
+        catalogManagedFeaturePropMap ++ invalidRequiredCatalogPropMap, // <-- Set to invalid
+      expectedSuccess = false),
+    CatalogManagedTestCase(
+      testName = "ILLEGAL REPLACE: Set required catalog property to incorrect value => THROW",
+      operationType = "REPLACE",
+      initialTableProperties = catalogManagedFeaturePropMap,
+      transactionProperties = invalidRequiredCatalogPropMap, // <-- Set to invalid
+      expectedSuccess = false,
+      expectedExceptionMessage =
+        Some("Metadata is missing or has incorrect values for required catalog properties")),
+    CatalogManagedTestCase(
+      testName = "ILLEGAL UPDATE: Set required catalog property to incorrect value => THROW",
+      operationType = "UPDATE",
+      initialTableProperties = catalogManagedFeaturePropMap,
+      transactionProperties = invalidRequiredCatalogPropMap, // <-- Set to invalid
+      expectedSuccess = false,
+      expectedExceptionMessage =
+        Some("Metadata is missing or has incorrect values for required catalog properties")),
+    CatalogManagedTestCase(
+      testName = "ILLEGAL UPDATE: Remove required catalog property => THROW",
+      operationType = "UPDATE",
+      initialTableProperties = catalogManagedFeaturePropMap ++ validRequiredCatalogPropMap,
+      transactionProperties = Map.empty,
+      removedPropertyKeys = Set(customCatalogCommitter.REQUIRED_PROPERTY_KEY), // <-- Removed!
+      expectedSuccess = false,
+      expectedExceptionMessage =
+        Some("Metadata is missing or has incorrect values for required catalog properties")),
+
+    // ===== Required catalog table property case: Existing table invalid =====
+    CatalogManagedTestCase(
+      testName = "REPLACE: On existing table with incorrect required catalog property => sets it",
+      operationType = "REPLACE",
+      initialTableProperties =
+        catalogManagedFeaturePropMap ++ invalidRequiredCatalogPropMap, // <-- Set to invalid
+      createInitialTableCommitter = committerUsingPutIfAbsent, // allow creating the invalid table
+      transactionProperties = Map.empty),
+    CatalogManagedTestCase(
+      testName = "UPDATE: On existing table with incorrect required catalog property => throws",
+      operationType = "UPDATE",
+      initialTableProperties =
+        catalogManagedFeaturePropMap ++ invalidRequiredCatalogPropMap, // <-- Set to invalid
+      createInitialTableCommitter = committerUsingPutIfAbsent, // allow creating the invalid table
+      transactionProperties = Map.empty,
+      expectedSuccess = false,
+      expectedExceptionMessage =
+        Some("Metadata is missing or has incorrect values for required catalog properties")))
 
   catalogManagedTestCases.foreach { testCase =>
     test(testCase.testName) {
@@ -149,7 +238,7 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
           TableManager
             .buildCreateTableTransaction(tablePath, schema, "engineInfo")
             .withTableProperties(testCase.initialTableProperties.asJava)
-            .withCommitter(committerUsingPutIfAbsent)
+            .withCommitter(testCase.createInitialTableCommitter)
             .build(defaultEngine)
             .commit(defaultEngine, emptyIterable[Row])
         }
@@ -164,22 +253,28 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
             TableManager
               .buildCreateTableTransaction(tablePath, schema, "engineInfo")
               .withTableProperties(testCase.transactionProperties.asJava)
-              .withCommitter(committerUsingPutIfAbsent)
+              .withCommitter(customCatalogCommitter)
 
           case "UPDATE" =>
-            TableManager
+            val updateBuilder = TableManager
               .loadSnapshot(tablePath)
-              .withCommitter(committerUsingPutIfAbsent)
+              .withCommitter(customCatalogCommitter)
               .build(defaultEngine)
               .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
               .withTablePropertiesAdded(testCase.transactionProperties.asJava)
+
+            if (testCase.removedPropertyKeys.nonEmpty) {
+              updateBuilder.withTablePropertiesRemoved(testCase.removedPropertyKeys.asJava)
+            } else {
+              updateBuilder
+            }
 
           case "REPLACE" =>
             val replaceSchema = schema.add("col2", IntegerType.INTEGER)
 
             TableManager
               .loadSnapshot(tablePath)
-              .withCommitter(committerUsingPutIfAbsent)
+              .withCommitter(customCatalogCommitter)
               .build(defaultEngine)
               .asInstanceOf[SnapshotImpl]
               .buildReplaceTableTransaction(replaceSchema, "engineInfo")
@@ -213,8 +308,12 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
           // If catalogManaged is supported, ICT feature should also be supported
           if (testCase.expectedCatalogManagedSupported) {
             assert(protocol.supportsFeature(TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE))
-          }
 
+            assert(
+              customCatalogCommitter
+                .getRequiredTableProperties
+                .asScala.toSet.subsetOf(snapshot.getTableProperties.asScala.toSet))
+          }
         } else {
           // Transaction building should fail
           val exception = intercept[Exception] {

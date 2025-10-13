@@ -18,17 +18,31 @@ package io.delta.kernel.commit;
 
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
+import java.util.Collections;
+import java.util.Map;
 
 /**
- * Mixin interface for {@link Committer} implementations that support publishing catalog commits to
- * the Delta log. Applicable only to catalog-managed tables.
+ * {@link Committer} sub-interface for catalog-managed tables. Provides catalog-specific operations
+ * not applicable to filesystem-managed tables.
  */
 @Experimental
-public interface SupportsPublishing extends Committer {
+public interface CatalogCommitter extends Committer {
 
   /**
-   * Publishes catalog commits to the Delta log. Applicable only to catalog-managed tables. This
-   * method should never be invoked on filesystem-managed tables.
+   * Returns required catalog table properties that must be set in the Delta metadata.
+   *
+   * <p>These properties are automatically injected during CREATE and REPLACE operations and cannot
+   * be changed or removed by users. Any attempt to set these properties to different values or
+   * remove them will result in a validation error.
+   *
+   * @return a map of required catalog properties
+   */
+  default Map<String, String> getRequiredTableProperties() {
+    return Collections.emptyMap();
+  }
+
+  /**
+   * Publishes catalog commits to the Delta log. Applicable only to catalog-managed tables.
    *
    * <p>Publishing is the act of copying ratified catalog commits to the Delta log as published
    * Delta files (e.g., {@code _delta_log/00000000000000000001.json}).
