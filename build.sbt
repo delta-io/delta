@@ -574,34 +574,15 @@ lazy val `delta-spark-v2` = (project in file("kernel-spark"))
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
 
-// ============================================================
-// Module 4: delta-spark-shaded (optional delegation layer)
-// ============================================================
-lazy val `delta-spark-shaded` = (project in file("spark-shaded"))
-  .dependsOn(`delta-spark-v1`)     // Full v1 for delegation if needed
-  .dependsOn(`delta-spark-v2`)
-  .settings(
-    name := "delta-spark-shaded",
-    commonSettings,
-    skipReleaseSettings, // Not published
-    
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-    ),
-    
-    // This module contains delegation code like:
-    // - DeltaCatalog (delegates to V1 or V2)
-    // - DeltaSparkSessionExtension (registers both)
-  )
 
 // ============================================================
 // Module 5: delta-spark (final published module - combined v1+v2+shaded)
 // ============================================================
 lazy val spark = (project in file("spark-combined"))
-  .dependsOn(`delta-spark-shaded`)  // Direct dependency on shaded (for delegation classes)
+  .dependsOn(`delta-spark-v1`)
+  .dependsOn(`delta-spark-v2`)// Direct dependency on shaded (for delegation classes)
   .dependsOn(storage)  // Explicit dependency on storage
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-spark",
     commonSettings,
@@ -620,7 +601,7 @@ lazy val spark = (project in file("spark-combined"))
           case e: Elem if e.label == "dependency" =>
             val artifactId = (e \ "artifactId").text
             // Remove delta-spark-v1, delta-spark-v2, delta-spark-v1-shaded, delta-spark-shaded from pom
-            if (artifactId.startsWith("delta-spark-v") || artifactId == "delta-spark-shaded") {
+            if (artifactId.startsWith("delta-spark-v")) {
               Seq.empty
             } else {
               Seq(n)
@@ -649,7 +630,6 @@ lazy val spark = (project in file("spark-combined"))
       val classesDir = (Compile / classDirectory).value
       val v1Classes = (`delta-spark-v1` / Compile / classDirectory).value
       val v2Classes = (`delta-spark-v2` / Compile / classDirectory).value
-      val shadedClasses = (`delta-spark-shaded` / Compile / classDirectory).value
       val storageClasses = (storage / Compile / classDirectory).value
       
       // Ensure classes directory exists
@@ -659,7 +639,6 @@ lazy val spark = (project in file("spark-combined"))
       IO.copyDirectory(v1Classes, classesDir, overwrite = false, preserveLastModified = true)
       IO.copyDirectory(storageClasses, classesDir, overwrite = false, preserveLastModified = true)
       IO.copyDirectory(v2Classes, classesDir, overwrite = true, preserveLastModified = true)
-      IO.copyDirectory(shadedClasses, classesDir, overwrite = true, preserveLastModified = true)
       
       sbt.internal.inc.Analysis.Empty
     },
@@ -670,11 +649,10 @@ lazy val spark = (project in file("spark-combined"))
     Compile / packageBin / mappings := {
       val v1Full = (`delta-spark-v1` / Compile / packageBin / mappings).value  // Full v1 with DeltaLog
       val v2 = (`delta-spark-v2` / Compile / packageBin / mappings).value
-      val shaded = (`delta-spark-shaded` / Compile / packageBin / mappings).value
       val storageClasses = (storage / Compile / packageBin / mappings).value  // Add storage classes
       
       // Merge all mappings, shaded classes override v1 classes if there are conflicts
-      val allMappings = v1Full ++ v2 ++ storageClasses ++ shaded
+      val allMappings = v1Full ++ v2 ++ storageClasses ++
       
       // Remove duplicates by path (keep the last occurrence, which is from shaded)
       allMappings.groupBy(_._2).map(_._2.last).toSeq
@@ -741,13 +719,9 @@ lazy val spark = (project in file("spark-combined"))
     // Fork tests to ensure javaOptions are applied
     Test / fork := true,
     
-    // Set working directory for forked tests to spark/ directory  
-    // Note: withWorkingDirectory sets the process working directory, but Java's user.dir
-    // system property might not update automatically, so we also set it in javaOptions
     Test / forkOptions := {
       val sparkDir = (Test / baseDirectory).value
       val opts = (Test / forkOptions).value
-      println(s"[Delta Build] Setting Test/forkOptions workingDirectory to: $sparkDir")
       opts.withWorkingDirectory(sparkDir)
     },
 
