@@ -639,18 +639,6 @@ lazy val spark = (project in file("spark-combined"))
       }
     },
     
-    // Package combined classes: FULL v1 (with DeltaLog) + v2 + shaded + storage
-    // Note: v2 only depends on v1-shaded (without DeltaLog) at compile time,
-    //       but final jar includes full v1 for users
-    Compile / packageBin / mappings := {
-      val v1Full = (`delta-spark-v1` / Compile / packageBin / mappings).value  // Full v1 with DeltaLog
-      val v2 = (`delta-spark-v2` / Compile / packageBin / mappings).value
-      val storageClasses = (storage / Compile / packageBin / mappings).value  // Add storage classes
-
-      // Merge all mappings, shaded classes override v1 classes if there are conflicts
-      val allMappings = v1Full ++ v2 ++ storageClasses
-    },
-    
     // Test sources and resources from original spark/ directory (delta-spark-v1's directory)
     Test / unmanagedSourceDirectories := {
       val sparkDir = (`delta-spark-v1` / baseDirectory).value
