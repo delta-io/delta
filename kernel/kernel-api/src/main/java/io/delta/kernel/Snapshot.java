@@ -113,7 +113,7 @@ public interface Snapshot {
    * checkpointing.
    *
    * @param engine the engine to use for publishing commits
-   * @see io.delta.kernel.commit.SupportsPublishing#publish
+   * @see io.delta.kernel.commit.CatalogCommitter#publish
    * @throws PublishFailedException if the publish operation fails
    */
   // TODO: Return a new Snapshot reflecting the published state
