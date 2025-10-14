@@ -67,6 +67,7 @@ public class CommitMetadata {
   private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
+  private final Optional<Long> maxKnownPublishedDeltaVersion;
 
   public CommitMetadata(
       long version,
@@ -76,7 +77,8 @@ public class CommitMetadata {
       Supplier<Map<String, String>> committerProperties,
       Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
       Optional<Protocol> newProtocolOpt,
-      Optional<Metadata> newMetadataOpt) {
+      Optional<Metadata> newMetadataOpt,
+      Optional<Long> maxKnownPublishedDeltaVersion) {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
@@ -88,6 +90,8 @@ public class CommitMetadata {
     this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
+    this.maxKnownPublishedDeltaVersion =
+        requireNonNull(maxKnownPublishedDeltaVersion, "maxKnownPublishedDeltaVersion is null");
 
     checkArgument(
         readPandMOpt.isPresent() || newProtocolOpt.isPresent(),
@@ -164,6 +168,23 @@ public class CommitMetadata {
    */
   public Optional<Metadata> getNewMetadataOpt() {
     return newMetadataOpt;
+  }
+
+  /**
+   * Returns the maximum known published delta version at commit time.
+   *
+   * <p>This is a best-effort API that returns what was actually seen during Snapshot and
+   * Transaction construction, not the authoritative maximum published delta version in the log.
+   *
+   * <p>{@code Optional.empty()} means "we don't know" - not necessarily that no deltas have been
+   * published.
+   *
+   * <p>{@code Optional.of(-1)} means it is known that there are no published deltas.
+   *
+   * @return the maximum known published delta version, or empty if unknown
+   */
+  public Optional<Long> getMaxKnownPublishedDeltaVersion() {
+    return maxKnownPublishedDeltaVersion;
   }
 
   /**

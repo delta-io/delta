@@ -305,7 +305,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 ucTableId,
                 tablePath.toUri(),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
-                Optional.empty() /* lastKnownBackfilledVersion */, // TODO: take this in as a hint
+                commitMetadata.getMaxKnownPublishedDeltaVersion(),
                 false /* isDisown */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new));
