@@ -114,7 +114,6 @@ public class CommitRangeImpl implements CommitRange {
   public CloseableIterator<io.delta.kernel.CommitActions> getCommits(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     validateParameters(engine, startSnapshot, actionSet);
-    // For each commit file, get actions and convert to CommitActions
     return toCloseableIterator(getDeltaFiles().iterator())
         .map(commitFile -> convertToCommitActions(engine, commitFile, actionSet));
   }
@@ -156,8 +155,7 @@ public class CommitRangeImpl implements CommitRange {
     long version = versionVector.getLong(0 /*RowId*/);
     long timestamp = timestampVector.getLong(0 /*RowId*/);
 
-    // Put the first batch back, then remove metadata columns from all batches
-    CloseableIterator<ColumnarBatch> actionsWithoutMetadata =
+    CloseableIterator<ColumnarBatch> actionsWithoutVersionAndTimestamp =
         toCloseableIterator(Collections.singletonList(firstBatch).iterator())
             .combine(actionsWithMetadata)
             .map(
@@ -166,6 +164,6 @@ public class CommitRangeImpl implements CommitRange {
                         .withDeletedColumnAt(TIMESTAMP_COLUMN_INDEX)
                         .withDeletedColumnAt(VERSION_COLUMN_INDEX));
 
-    return new CommitActionsImpl(version, timestamp, actionsWithoutMetadata);
+    return new CommitActionsImpl(version, timestamp, actionsWithoutVersionAndTimestamp);
   }
 }

@@ -109,6 +109,7 @@ public interface CommitRange {
   /**
    * Returns an iterator of commits in this commit range, where each commit is represented as a
    * {@link CommitActions} object.
+   *
    * @param engine the {@link Engine} to use for reading the Delta log files
    * @param startSnapshot the snapshot for startVersion, required to ensure the table is readable by
    *     Kernel at startVersion
