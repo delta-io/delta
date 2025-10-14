@@ -39,6 +39,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         .commit(engine, CloseableIterable.emptyIterable() /* dataActions */ )
       val tableData0 = new TableData(-1, ArrayBuffer[Commit]())
       ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData0)
+      result0.getPostCommitSnapshot.get().publish(engine) // Should be no-op!
 
       // Step 2: WRITE -- v1.uuid.json
       val txn1 = result0.getPostCommitSnapshot.get()

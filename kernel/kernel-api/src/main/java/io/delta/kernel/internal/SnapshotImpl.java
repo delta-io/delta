@@ -210,7 +210,9 @@ public class SnapshotImpl implements Snapshot {
 
       if (!isCatalogCommitter) {
         throw new UnsupportedOperationException( // This case should also be impossible
-            "Cannot publish: committer does not support publishing");
+            String.format(
+                "[%s] Cannot publish: committer does not support publishing",
+                committer.getClass().getName()));
       }
     } else {
       if (isFileSystemBasedTable) {
@@ -219,7 +221,9 @@ public class SnapshotImpl implements Snapshot {
       }
 
       if (!isCatalogCommitter) {
-        logger.info("Publishing not applicable: committer does not support publishing");
+        logger.info(
+            "[{}] Publishing not applicable: committer does not support publishing",
+            committer.getClass().getName());
         return;
       }
     }
