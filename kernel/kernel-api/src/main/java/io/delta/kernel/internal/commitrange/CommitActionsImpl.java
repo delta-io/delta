@@ -22,9 +22,7 @@ import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.utils.CloseableIterator;
 
-/**
- * Implementation of {@link CommitActions}.
- */
+/** Implementation of {@link CommitActions}. */
 public class CommitActionsImpl implements CommitActions {
 
   private final long version;
