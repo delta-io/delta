@@ -17,24 +17,33 @@
 package io.delta.kernel.internal.commitrange;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
 /** Implementation of {@link CommitRange}. */
 public class CommitRangeImpl implements CommitRange {
+
+  // Column indices for version and timestamp in batches returned by
+  // DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation
+  private static final int VERSION_COLUMN_INDEX = 0;
+  private static final int TIMESTAMP_COLUMN_INDEX = 1;
 
   private final Path dataPath;
   private final Optional<CommitRangeBuilder.CommitBoundary> startBoundaryOpt;
@@ -97,12 +106,7 @@ public class CommitRangeImpl implements CommitRange {
   @Override
   public CloseableIterator<ColumnarBatch> getActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    requireNonNull(engine, "engine cannot be null");
-    requireNonNull(startSnapshot, "startSnapshot cannot be null");
-    requireNonNull(actionSet, "actionSet cannot be null");
-    checkArgument(
-        startSnapshot.getVersion() == startVersion,
-        "startSnapshot must have version = startVersion");
+    validateParameters(engine, startSnapshot, actionSet);
     return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
         engine, dataPath.toString(), deltaFiles, actionSet);
   }
@@ -110,15 +114,59 @@ public class CommitRangeImpl implements CommitRange {
   @Override
   public CloseableIterator<io.delta.kernel.CommitActions> getCommits(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    validateParameters(engine, startSnapshot, actionSet);
+    // For each commit file, get actions and convert to CommitActions
+    return toCloseableIterator(deltaFiles.iterator())
+        .map(commitFile -> convertToCommitActions(engine, commitFile, actionSet));
+  }
+
+  //////////////////////
+  // Private helpers //
+  //////////////////////
+
+  private void validateParameters(
+      Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     requireNonNull(engine, "engine cannot be null");
     requireNonNull(startSnapshot, "startSnapshot cannot be null");
     requireNonNull(actionSet, "actionSet cannot be null");
     checkArgument(
         startSnapshot.getVersion() == startVersion,
         "startSnapshot must have version = startVersion");
+  }
 
-    // Use DeltaLogActionUtils to get commits with protocol validation
-    return DeltaLogActionUtils.getCommitsFromCommitFilesWithProtocolValidation(
-        engine, dataPath.toString(), deltaFiles, actionSet);
+  private io.delta.kernel.CommitActions convertToCommitActions(
+      Engine engine, FileStatus commitFile, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    // Get actions for this single commit file
+    // This returns batches with version and timestamp as the first two columns
+    CloseableIterator<ColumnarBatch> actionsWithMetadata =
+        DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+            engine, dataPath.toString(), Collections.singletonList(commitFile), actionSet);
+
+    if (!actionsWithMetadata.hasNext()) {
+      return new CommitActionsImpl(
+          FileNames.deltaVersion(new Path(commitFile.getPath())),
+          commitFile.getModificationTime(),
+          actionsWithMetadata);
+    }
+
+    // Peek at the first batch to extract version and timestamp, then rewind
+    ColumnarBatch firstBatch = actionsWithMetadata.next();
+    // Extract version and timestamp from first two columns
+    ColumnVector versionVector = firstBatch.getColumnVector(VERSION_COLUMN_INDEX);
+    ColumnVector timestampVector = firstBatch.getColumnVector(TIMESTAMP_COLUMN_INDEX);
+    long version = versionVector.getLong(0 /*RowId*/);
+    long timestamp = timestampVector.getLong(0 /*RowId*/);
+
+    // Put the first batch back, then remove metadata columns from all batches
+    CloseableIterator<ColumnarBatch> actionsWithoutMetadata =
+        toCloseableIterator(Collections.singletonList(firstBatch).iterator())
+            .combine(actionsWithMetadata)
+            .map(
+                batch ->
+                    batch
+                        .withDeletedColumnAt(TIMESTAMP_COLUMN_INDEX)
+                        .withDeletedColumnAt(VERSION_COLUMN_INDEX));
+
+    return new CommitActionsImpl(version, timestamp, actionsWithoutMetadata);
   }
 }

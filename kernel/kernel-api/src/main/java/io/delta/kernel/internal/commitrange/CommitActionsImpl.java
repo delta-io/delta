@@ -21,37 +21,33 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.utils.CloseableIterator;
-import java.util.function.Supplier;
 
 /**
  * Implementation of {@link CommitActions}.
  *
- * <p>This implementation uses lazy loading: the commit file is only read when {@link #getActions()}
- * is called for the first time.
+ * <p>This class wraps a pre-computed actions iterator along with the commit's version and
+ * timestamp.
  */
 public class CommitActionsImpl implements CommitActions {
 
   private final long version;
   private final long timestamp;
-  private final Supplier<CloseableIterator<ColumnarBatch>> actionsSupplier;
+  private final CloseableIterator<ColumnarBatch> actionsIter;
 
-  // Lazily created on first getActions() call
-  private CloseableIterator<ColumnarBatch> actionsIter = null;
   private boolean closed = false;
 
   /**
-   * Creates a CommitActions with a supplier that will be invoked lazily to create the actions
-   * iterator.
+   * Creates a CommitActions with the given version, timestamp, and actions iterator.
    *
    * @param version the commit version
    * @param timestamp the commit timestamp
-   * @param actionsSupplier supplier that creates the actions iterator when called
+   * @param actionsIter the iterator over actions for this commit
    */
   public CommitActionsImpl(
-      long version, long timestamp, Supplier<CloseableIterator<ColumnarBatch>> actionsSupplier) {
+      long version, long timestamp, CloseableIterator<ColumnarBatch> actionsIter) {
     this.version = version;
     this.timestamp = timestamp;
-    this.actionsSupplier = requireNonNull(actionsSupplier, "actionsSupplier cannot be null");
+    this.actionsIter = requireNonNull(actionsIter, "actionsIter cannot be null");
   }
 
   @Override
@@ -70,10 +66,6 @@ public class CommitActionsImpl implements CommitActions {
       throw new IllegalStateException(
           String.format("CommitActions for version %d is already closed", version));
     }
-    if (actionsIter == null) {
-      // Lazy: create iterator only on first call
-      actionsIter = actionsSupplier.get();
-    }
     return actionsIter;
   }
 
@@ -81,10 +73,7 @@ public class CommitActionsImpl implements CommitActions {
   public synchronized void close() throws Exception {
     if (!closed) {
       closed = true;
-      if (actionsIter != null) {
-        // Only close if the iterator was created
-        actionsIter.close();
-      }
+      actionsIter.close();
     }
   }
 }
