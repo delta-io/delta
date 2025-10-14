@@ -96,10 +96,12 @@ object CatalogOwnedTableUtils extends DeltaLogging {
         throw new IllegalStateException(
           "Couldn't locate commit coordinator for: " + catalogTable.identifier)
       }
+      val tableConf =
+        snapshot.metadata.configuration
       TableCommitCoordinatorClient(
         commitCoordinatorClient = cc,
         logPath = snapshot.deltaLog.logPath,
-        tableConf = snapshot.metadata.configuration,
+        tableConf = tableConf,
         hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
         logStore = snapshot.deltaLog.store
       )
@@ -128,17 +130,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       // that the caller is accessing this table by path-based or the calling code path is missing
       // the CatalogTable.
       // TODO: Better error message with proper error code.
-      recordCommitCoordinatorPopulationUsageLog(
-        deltaLog = snapshot.deltaLog,
-        opType = CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
-        snapshot = snapshot,
-        catalogTableOpt,
-        commitCoordinatorOpt = None,
-        includeStackTrace = true,
-        includeAdditionalDiagnostics = true
-      )
-      throw new IllegalStateException(
-        "Path based access is not supported for Catalog-Owned table: " + snapshot.path)
+      logAndThrowPathBasedAccessNotAllowed(snapshot)
     }
   }
 
@@ -298,6 +290,24 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     spark.conf
       .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
       .contains("supported")
+  }
+
+  /**
+   * Helper function to log invalid path-based access and throw the appropriate error.
+   *
+   * @param snapshot The snapshot being processed
+   */
+  private def logAndThrowPathBasedAccessNotAllowed(snapshot: Snapshot): Nothing = {
+    recordCommitCoordinatorPopulationUsageLog(
+      snapshot.deltaLog,
+      opType = CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
+      snapshot,
+      catalogTableOpt = None,
+      commitCoordinatorOpt = None,
+      includeStackTrace = true,
+      includeAdditionalDiagnostics = true
+    )
+    throw DeltaErrors.catalogManagedTablePathBasedAccessNotAllowed(snapshot.path)
   }
 
   /**

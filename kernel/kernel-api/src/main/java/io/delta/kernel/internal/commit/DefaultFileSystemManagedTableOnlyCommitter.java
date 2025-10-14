@@ -26,7 +26,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
@@ -59,12 +59,17 @@ public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
     logger.info("Attempting to commit {}", jsonCommitFile);
 
     try {
-      wrapEngineExceptionThrowsIO(
+      return wrapEngineExceptionThrowsIO(
           () -> {
             engine
                 .getJsonHandler()
                 .writeJsonFileAtomically(jsonCommitFile, finalizedActions, false /* overwrite */);
-            return null;
+
+            final FileStatus writtenDeltaFileStatus =
+                engine.getFileSystemClient().getFileStatus(jsonCommitFile);
+
+            return new CommitResponse(
+                ParsedPublishedDeltaData.forFileStatus(writtenDeltaFileStatus));
           },
           String.format("Write file actions to JSON log file `%s`", jsonCommitFile));
     } catch (FileAlreadyExistsException e) {
@@ -80,9 +85,6 @@ public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
           "Failed to write commit file due to I/O error: " + e.getMessage(),
           e);
     }
-
-    // TODO: [delta-io/delta#5021] Use FileSystemClient::getFileStatus API instead
-    return new CommitResponse(ParsedLogData.forFileStatus(FileStatus.of(jsonCommitFile)));
   }
 
   private void validateProtocol(Protocol protocol) {

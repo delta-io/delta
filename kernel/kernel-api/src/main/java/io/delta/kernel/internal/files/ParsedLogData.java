@@ -26,19 +26,29 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Abstract representation of any valid file type in a Delta log.
+ * Abstract representation of any valid log type in the Delta log.
  *
- * <p>Content may be stored as a file on disk or inline as a columnar batch in memory. Supported log
- * file types include:
+ * <p>Different child classes are used to represent the different log types.
+ *
+ * <p>Any given log type can be written as a file or represented inline and given to Kernel as a
+ * {@link ColumnarBatch}. That is: Kernel just needs to know how to parse and interpret a given log
+ * type (Kernel will of course treat Deltas differently than Checksums) as well as how to get that
+ * log type's bytes. This is why a given log type can be represented as either a file or inline.
+ *
+ * <p>For now, our APIs only allow creating {@link ParsedCatalogCommitData} inline, but we may
+ * change and expand this capability in the future.
+ *
+ * <p>The supported log types are:
  *
  * <ul>
- *   <li>Delta commit files: {@code 00000000000000000001.json}
- *   <li>Checkpoint files: {@code 00000000000000000001.checkpoint.parquet}
+ *   <li>Published Deltas: {@code 00000000000000000001.json}
+ *   <li>Catalog Commits: {@code _staged_commits/00000000000000000001.uuid-1234.json}
+ *   <li>Log compaction files: {@code 00000000000000000001.00000000000000000009.compacted.json}
+ *   <li>Checksum files: {@code 00000000000000000001.crc}
+ *   <li>Classic Checkpoint files: {@code 00000000000000000001.checkpoint.parquet}
  *   <li>V2 checkpoint files: {@code 00000000000000000001.checkpoint.uuid-1234.json}
  *   <li>Multi-part checkpoint files: {@code
  *       00000000000000000001.checkpoint.0000000001.0000000010.parquet}
- *   <li>Log compaction files: {@code 00000000000000000001.00000000000000000009.compacted.json}
- *   <li>Checksum files: {@code 00000000000000000001.crc}
  * </ul>
  */
 // TODO: Move this to be a public API
@@ -49,16 +59,12 @@ public abstract class ParsedLogData {
 
     if (FileNames.isCommitFile(path)) {
       return ParsedDeltaData.forFileStatus(fileStatus);
+    } else if (FileNames.isCheckpointFile(path)) {
+      return ParsedCheckpointData.forFileStatus(fileStatus);
     } else if (FileNames.isLogCompactionFile(path)) {
       return ParsedLogCompactionData.forFileStatus(fileStatus);
     } else if (FileNames.isChecksumFile(path)) {
       return ParsedChecksumData.forFileStatus(fileStatus);
-    } else if (FileNames.isClassicCheckpointFile(path)) {
-      return ParsedClassicCheckpointData.forFileStatus(fileStatus);
-    } else if (FileNames.isV2CheckpointFile(path)) {
-      return ParsedV2CheckpointData.forFileStatus(fileStatus);
-    } else if (FileNames.isMultiPartCheckpointFile(path)) {
-      return ParsedMultiPartCheckpointData.forFileStatus(fileStatus);
     } else {
       throw new IllegalArgumentException("Unknown log file type: " + path);
     }
@@ -122,16 +128,8 @@ public abstract class ParsedLogData {
     return inlineDataOpt.get();
   }
 
-  /**
-   * Returns a human-readable name for the parent category class. Used as a helper utility for
-   * debugging and print statements.
-   */
-  public String getParentCategoryName() {
-    return getParentCategoryClass().getSimpleName();
-  }
-
-  /** Returns the parent category class used for grouping collections of ParsedLogData instances. */
-  public abstract Class<? extends ParsedLogData> getParentCategoryClass();
+  /** Returns the category class used for grouping collections of LISTed ParsedLogData instances. */
+  public abstract Class<? extends ParsedLogData> getGroupByCategoryClass();
 
   /** Protected method for subclasses to override to add output to {@link #toString}. */
   protected void appendAdditionalToStringFields(StringBuilder sb) {

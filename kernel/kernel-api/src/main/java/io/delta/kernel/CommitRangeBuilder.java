@@ -69,6 +69,7 @@ public interface CommitRangeBuilder {
    * @param logData the list of pre-parsed log data, must not be null
    * @return this builder instance configured with the specified log data
    */
+  // TODO: should we change this to take in a ParsedDeltaData instead?
   CommitRangeBuilder withLogData(List<ParsedLogData> logData);
 
   /**

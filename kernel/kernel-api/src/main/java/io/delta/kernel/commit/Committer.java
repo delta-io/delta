@@ -63,6 +63,4 @@ public interface Committer {
   CommitResponse commit(
       Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
       throws CommitFailedException;
-
-  // TODO: API to get the required table properties
 }

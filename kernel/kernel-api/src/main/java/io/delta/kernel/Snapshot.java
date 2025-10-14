@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -101,4 +102,20 @@ public interface Snapshot {
    * @since 3.4.0
    */
   UpdateTableTransactionBuilder buildUpdateTableTransaction(String engineInfo, Operation operation);
+
+  /**
+   * Publishes all catalog commits at this table version. Applicable only to catalog-managed tables.
+   * This method is a no-op for filesystem-managed tables, if the committer doesn't support
+   * publishing, or if there's no catalog commits to publish.
+   *
+   * <p>Publishing copies ratified catalog commits to the Delta log as published Delta files,
+   * reducing catalog storage requirements and enabling some table maintenance operations, like
+   * checkpointing.
+   *
+   * @param engine the engine to use for publishing commits
+   * @see io.delta.kernel.commit.CatalogCommitter#publish
+   * @throws PublishFailedException if the publish operation fails
+   */
+  // TODO: Return a new Snapshot reflecting the published state
+  void publish(Engine engine) throws PublishFailedException;
 }
