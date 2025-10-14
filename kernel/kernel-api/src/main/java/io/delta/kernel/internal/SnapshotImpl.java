@@ -35,6 +35,8 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumUtils;
+import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.fs.Path;
@@ -45,11 +47,14 @@ import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -185,6 +190,11 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
+  public SnapshotStatistics getStatistics() {
+    return new SnapshotStatisticsImpl();
+  }
+
+  @Override
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
         dataPath, version, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
@@ -249,6 +259,36 @@ public class SnapshotImpl implements Snapshot {
         new PublishMetadata(version, logPath.toString(), catalogCommitsToPublish);
 
     ((CatalogCommitter) committer).publish(engine, publishMetadata);
+  }
+
+  @Override
+  public void writeChecksumSimple(Engine engine) throws IOException {
+    if (doesChecksumFileExist()) {
+      logger.info("Skipping writing checksum file: already exists");
+      return;
+    }
+
+    final Optional<CRCInfo> crcInfoOpt = logReplay.getCrcInfoAtSnapshotVersion();
+
+    if (!crcInfoOpt.isPresent()) {
+      throw new IllegalStateException(
+          "Cannot write simple checksum file: no CRC info available for current snapshot");
+    }
+
+    new ChecksumWriter(logPath).writeCheckSum(engine, crcInfoOpt.get());
+  }
+
+  @Override
+  public void writeChecksumFull(Engine engine) throws IOException {
+    if (doesChecksumFileExist()) {
+      logger.info("Skipping writing checksum file: already exists");
+      return;
+    }
+    if (logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
+      writeChecksumSimple(engine);
+      return;
+    }
+    ChecksumUtils.computeStateAndWriteChecksum(engine, getLogSegment());
   }
 
   ///////////////////
@@ -358,5 +398,27 @@ public class SnapshotImpl implements Snapshot {
             () ->
                 new IllegalStateException(
                     "maxPublishedDeltaVersion is unknown. This is required for publishing."));
+  }
+
+  private boolean doesChecksumFileExist() {
+    return getLogSegment()
+        .getLastSeenChecksum()
+        .map(checksumFile -> FileNames.checksumVersion(checksumFile.getPath()) == version)
+        .orElse(false);
+  }
+
+  private class SnapshotStatisticsImpl implements SnapshotStatistics {
+    @Override
+    public ChecksumWriteMode getChecksumWriteMode() {
+      if (doesChecksumFileExist()) {
+        return ChecksumWriteMode.NONE;
+      }
+
+      if (logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
+        return ChecksumWriteMode.SIMPLE;
+      }
+
+      return ChecksumWriteMode.FULL;
+    }
   }
 }

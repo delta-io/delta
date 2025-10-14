@@ -19,8 +19,10 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -94,6 +96,11 @@ public interface Snapshot {
    */
   Map<String, String> getTableProperties();
 
+  /**
+   * @return statistics about this snapshot
+   */
+  SnapshotStatistics getStatistics();
+
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
   ScanBuilder getScanBuilder();
 
@@ -118,4 +125,52 @@ public interface Snapshot {
    */
   // TODO: Return a new Snapshot reflecting the published state
   void publish(Engine engine) throws PublishFailedException;
+
+  /**
+   * Writes a checksum file for this snapshot using pre-computed CRC information.
+   *
+   * <p>This method performs a "simple" checksum write operation that uses CRC information already
+   * loaded in memory for this snapshot. This is the fastest way to write a checksum file as it
+   * doesn't require scanning the delta log.
+   *
+   * <p>Behavior:
+   *
+   * <ul>
+   *   <li>If a checksum file already exists at this version, this method returns immediately
+   *   <li>If CRC information is not available in memory, this method throws {@link
+   *       IllegalStateException}
+   * </ul>
+   *
+   * <p>Use {@link SnapshotStatistics#getChecksumWriteMode()} to determine if this method should be
+   * called. This method should only be used when the mode is {@link
+   * SnapshotStatistics.ChecksumWriteMode#SIMPLE}.
+   *
+   * @param engine the engine to use for writing the checksum file
+   * @throws IOException If an I/O error occurs during checksum computation or writing
+   * @throws IllegalStateException if CRC information is not available for this snapshot
+   */
+  void writeChecksumSimple(Engine engine) throws IOException;
+
+  /**
+   * Writes a checksum file for this snapshot, computing the necessary state if needed.
+   *
+   * <p>This method ensures a checksum file is written for this snapshot version. It intelligently
+   * chooses the most efficient approach:
+   *
+   * <ul>
+   *   <li>If a checksum file already exists at this version, returns immediately
+   *   <li>If CRC information is available in memory, uses the simple write approach
+   *   <li>Otherwise, replays the delta log since the latest checksum (if present) to compute the
+   *       state and write the checksum
+   * </ul>
+   *
+   * <p>This method always succeeds in writing a checksum (unless there's an I/O error) but may be
+   * expensive for large tables when CRC information is not available, as it requires replaying the
+   * delta log since the latest checksum.
+   *
+   * @param engine the engine to use for writing the checksum file and potentially reading the log
+   * @throws IOException If an I/O error occurs during checksum computation or writing
+   * @see SnapshotStatistics#getChecksumWriteMode()
+   */
+  void writeChecksumFull(Engine engine) throws IOException;
 }
