@@ -20,7 +20,9 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
@@ -58,6 +60,10 @@ public class LogSegment {
     final List<FileStatus> deltas = Collections.singletonList(deltaFile);
     final List<FileStatus> checkpoints = Collections.emptyList();
     final List<FileStatus> compactions = Collections.emptyList();
+    final Optional<Long> maxPublishedDeltaVersion =
+        parsedDeltaVersion0 instanceof ParsedPublishedDeltaData
+            ? Optional.of(0L)
+            : Optional.empty();
 
     return new LogSegment(
         logPath,
@@ -65,9 +71,9 @@ public class LogSegment {
         deltas,
         compactions,
         checkpoints,
-        deltaFile,
+        deltaFile /* deltaAtEndVersion */,
         Optional.empty() /* lastSeenChecksum */,
-        Optional.empty() /* maxPublishedDeltaVersion */);
+        maxPublishedDeltaVersion);
   }
 
   private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
@@ -303,6 +309,14 @@ public class LogSegment {
    */
   public List<FileStatus> allFilesWithCompactionsReversed() {
     return deltasCheckpointsCompactionsReversed.get();
+  }
+
+  public List<ParsedCatalogCommitData> getAllCatalogCommits() {
+    return deltas.stream()
+        .map(ParsedDeltaData::forFileStatus)
+        .filter(x -> x instanceof ParsedCatalogCommitData)
+        .map(ParsedCatalogCommitData.class::cast)
+        .collect(Collectors.toList());
   }
 
   /**
