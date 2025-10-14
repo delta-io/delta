@@ -21,14 +21,11 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.utils.CloseableIterator;
 
 /**
- * Represents all actions from a single commit version in a Delta Lake table.
- *
- * <p>This class groups together all the actions (e.g., add, remove, metadata, protocol) that were
- * part of a single atomic commit, along with the commit's version and timestamp.
+ * Represents all actions from a single commit version in a table.
  *
  * <p>The actions iterator must be closed after use to release any underlying resources.
  *
- * @since 3.4.0
+ * @since 4.1.0
  */
 @Evolving
 public interface CommitActions extends AutoCloseable {
@@ -50,9 +47,7 @@ public interface CommitActions extends AutoCloseable {
   /**
    * Returns an iterator over the action batches for this commit.
    *
-   * <p>Each {@link ColumnarBatch} contains actions from this commit only. The schema of each batch
-   * includes the requested action columns (e.g., "add", "remove") as specified in the original
-   * {@link CommitRange#getCommits} call.
+   * <p>Each {@link ColumnarBatch} contains actions from this commit only.
    *
    * <p>Note: All rows within all batches have the same version (returned by {@link #getVersion()}).
    *

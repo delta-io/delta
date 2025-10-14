@@ -24,9 +24,6 @@ import io.delta.kernel.utils.CloseableIterator;
 
 /**
  * Implementation of {@link CommitActions}.
- *
- * <p>This class wraps a pre-computed actions iterator along with the commit's version and
- * timestamp.
  */
 public class CommitActionsImpl implements CommitActions {
 
