@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.typewidening
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.col
@@ -85,6 +86,7 @@ trait TypeWideningCompatibilityTests {
           start,
           end,
           spark,
+          catalogTableOpt = None,
           readSchemaSnapshot = Some(readSchemaSnapshot)
         )
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP)

@@ -21,8 +21,10 @@ import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
+import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
@@ -256,6 +258,33 @@ object DeltaTestImplicits {
       fileFilter: AddFile => Boolean = af => true): Unit = {
       StatisticsCollection.recompute(
         spark, deltaLog, catalogTable = None, predicates, fileFilter)
+    }
+  }
+
+  implicit class CDCReaderObjectTestHelper(cdcReader: CDCReader.type) {
+
+    /**
+     * Test helper method for changesToBatchDF that provides catalogTableOpt = None
+     * for backward compatibility with existing unit tests.
+     */
+    def changesToBatchDF(
+        deltaLog: DeltaLog,
+        start: Long,
+        end: Long,
+        spark: SparkSession,
+        readSchemaSnapshot: Option[Snapshot] = None,
+        useCoarseGrainedCDC: Boolean = false,
+        startVersionSnapshot: Option[SnapshotDescriptor] = None
+    ): org.apache.spark.sql.DataFrame = {
+      cdcReader.changesToBatchDF(
+        deltaLog,
+        start,
+        end,
+        spark,
+        catalogTableOpt = None,
+        readSchemaSnapshot,
+        useCoarseGrainedCDC,
+        startVersionSnapshot)
     }
   }
 }

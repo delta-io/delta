@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.spark.read;
 
+import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
+
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
@@ -31,6 +33,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
+import org.apache.spark.sql.connector.expressions.FieldReference;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.execution.datasources.*;
@@ -42,7 +48,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.collection.JavaConverters;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
-public class SparkScan implements Scan, SupportsReportStatistics {
+public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final String tablePath;
   private final StructType readDataSchema;
@@ -58,7 +64,7 @@ public class SparkScan implements Scan, SupportsReportStatistics {
   private final ZoneId zoneId;
 
   // Planned input files and stats
-  private final List<PartitionedFile> partitionedFiles = new ArrayList<>();
+  private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
   private volatile boolean planned = false;
 
@@ -257,5 +263,50 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
   Configuration getConfiguration() {
     return hadoopConf;
+  }
+
+  @Override
+  public NamedReference[] filterAttributes() {
+    return Arrays.stream(partitionSchema.fields())
+        .map(field -> FieldReference.column(field.name()))
+        .toArray(NamedReference[]::new);
+  }
+
+  @Override
+  public void filter(org.apache.spark.sql.connector.expressions.filter.Predicate[] predicates) {
+
+    // Try to convert runtime predicates to catalyst expressions, then create predicate evaluators
+    List<InterpretedPredicate> evaluators = new ArrayList<>();
+    for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate : predicates) {
+      // only the predicates on partition columns will be converted
+      Optional<Expression> catalystExpr =
+          dsv2PredicateToCatalystExpression(predicate, partitionSchema);
+      if (catalystExpr.isPresent()) {
+        InterpretedPredicate predicateEvaluator =
+            org.apache.spark.sql.catalyst.expressions.Predicate.createInterpreted(
+                catalystExpr.get());
+        evaluators.add(predicateEvaluator);
+      }
+    }
+    if (evaluators.isEmpty()) {
+      return;
+    }
+
+    // Filter existing partitionedFiles with runtime filter evaluators
+    ensurePlanned();
+    List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
+    for (PartitionedFile pf : this.partitionedFiles) {
+      InternalRow partitionValues = pf.partitionValues();
+      boolean allMatch = evaluators.stream().allMatch(evaluator -> evaluator.eval(partitionValues));
+      if (allMatch) {
+        runtimeFilteredPartitionedFiles.add(pf);
+      }
+    }
+
+    // Update partitionedFiles and totalBytes, if any partition is filtered out
+    if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
+      this.partitionedFiles = runtimeFilteredPartitionedFiles;
+      this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
+    }
   }
 }

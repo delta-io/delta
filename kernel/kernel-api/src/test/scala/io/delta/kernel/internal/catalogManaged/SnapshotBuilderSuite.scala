@@ -124,18 +124,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
     assert(exMsg === "protocol and metadata can only be provided if a version is provided")
   }
 
-  test("atTimestamp: time travel by timestamp with logDatas throws UnsupportedOperationException") {
-    val builder = TableManager.loadSnapshot(dataPath.toString)
-      .atTimestamp(0L, mockSnapshotAtTimestamp0)
-      .withLogData(parsedRatifiedStagedCommits(Seq(0)).toList.asJava)
-
-    val exMsg = intercept[UnsupportedOperationException] {
-      builder.build(emptyMockEngine)
-    }.getMessage
-
-    assert(exMsg === "Time travel by timestamp with logDatas is not yet implemented")
-  }
-
   // ===== Committer Tests ===== //
 
   test("withCommitter: null committer throws NullPointerException") {
