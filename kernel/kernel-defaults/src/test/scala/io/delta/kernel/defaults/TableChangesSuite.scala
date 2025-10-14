@@ -23,7 +23,7 @@ import scala.collection.immutable
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
-import io.delta.kernel.data.ColumnarBatch
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
 import io.delta.kernel.engine.Engine
@@ -34,6 +34,7 @@ import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
+import io.delta.kernel.types.{DataType, LongType, StructField}
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile, SetTransaction => SparkSetTransaction}
@@ -262,6 +263,138 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
 
       // Verify that the changes are correctly retrieved using ICT timestamps
       testGetChangesVsSpark(tablePath, 0, 2, FULL_ACTION_SET)
+    }
+  }
+
+  test("getCommits returns CommitActions with correct version and timestamp") {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+
+      // Create commits with known modification times
+      (0 to 2).foreach { i =>
+        spark.range(10).write.format("delta").mode("append").save(tablePath)
+      }
+
+      // Set custom modification times on delta files
+      val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+      val delta0 = new File(FileNames.deltaFile(logPath, 0))
+      val delta1 = new File(FileNames.deltaFile(logPath, 1))
+      val delta2 = new File(FileNames.deltaFile(logPath, 2))
+      delta0.setLastModified(1000)
+      delta1.setLastModified(2000)
+      delta2.setLastModified(3000)
+
+      val commitRange = TableManager.loadCommitRange(tablePath)
+        .withStartBoundary(CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(2))
+        .build(defaultEngine)
+
+      // Use actionSet that excludes COMMITINFO (as it's not data-related)
+      val actionSet = Set(
+        DeltaAction.ADD,
+        DeltaAction.REMOVE,
+        DeltaAction.METADATA,
+        DeltaAction.PROTOCOL,
+        DeltaAction.CDC)
+
+      val commitsIter = commitRange.getCommits(
+        defaultEngine,
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
+        actionSet.asJava)
+
+      val commits = commitsIter.toSeq
+      assert(commits.size == 3)
+
+      // Verify versions
+      assert(commits(0).getVersion == 0)
+      assert(commits(1).getVersion == 1)
+      assert(commits(2).getVersion == 2)
+
+      // Verify timestamps match file modification times (no ICT in this table)
+      assert(commits(0).getTimestamp == 1000)
+      assert(commits(1).getTimestamp == 2000)
+      assert(commits(2).getTimestamp == 3000)
+
+      // Get Spark's results for comparison
+      val sparkChanges = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+
+      // Compare actions with Spark using the new compareCommitActions method
+      compareCommitActions(commits, pruneSparkActionsByActionSet(sparkChanges, actionSet))
+
+      commitsIter.close()
+    }
+  }
+
+  test("getCommits with ICT returns timestamp from inCommitTimestamp") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val startTime = 5000L
+      val clock = new ManualClock(startTime)
+
+      // Version 0 with ICT=5000L
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock,
+        tableProperties = Map("delta.enableInCommitTimestamps" -> "true"))
+
+      // Version 1 with ICT=6000L
+      clock.setTime(startTime + 1000)
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2)),
+        clock = clock)
+
+      // Version 2 with ICT=7000L
+      clock.setTime(startTime + 2000)
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock)
+
+      val commitRange = TableManager.loadCommitRange(tablePath)
+        .withStartBoundary(CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(2))
+        .build(defaultEngine)
+
+      // Use actionSet that excludes COMMITINFO (as it's not data-related)
+      val actionSet = Set(
+        DeltaAction.ADD,
+        DeltaAction.REMOVE,
+        DeltaAction.METADATA,
+        DeltaAction.PROTOCOL,
+        DeltaAction.CDC)
+
+      val commitsIter = commitRange.getCommits(
+        engine,
+        getTableManagerAdapter.getSnapshotAtVersion(engine, tablePath, 0),
+        actionSet.asJava)
+
+      val commits = commitsIter.toSeq
+      assert(commits.size == 3)
+
+      // Verify versions
+      assert(commits(0).getVersion == 0)
+      assert(commits(1).getVersion == 1)
+      assert(commits(2).getVersion == 2)
+
+      // Verify timestamps come from ICT, not file modification times
+      // The file modification times would be much larger (current epoch time)
+      // but our ICT values are in the 5000-7000 range
+      assert(commits(0).getTimestamp == 5000)
+      assert(commits(1).getTimestamp == 6000)
+      assert(commits(2).getTimestamp == 7000)
+
+      // Get Spark's results for comparison
+      val sparkChanges = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+      compareCommitActions(commits, pruneSparkActionsByActionSet(sparkChanges, actionSet))
+      commitsIter.close()
     }
   }
 }
@@ -677,8 +810,8 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
       size: Long,
       tags: Map[String, String]) extends StandardAction
 
-  def standardizeKernelAction(row: Row): Option[StandardAction] = {
-    val actionIdx = (2 until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
+  def standardizeKernelAction(row: Row, startIdx: Int = 2): Option[StandardAction] = {
+    val actionIdx = (startIdx until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
       return None)
 
     row.getSchema.at(actionIdx).getName match {
@@ -830,13 +963,44 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
     }
   }
 
+  /**
+   * Compare actions from CommitActions objects directly with Spark actions.
+   * This automatically extracts version from each commit and standardizes the batches.
+   */
+  def compareCommitActions(
+      commits: Seq[io.delta.kernel.CommitActions],
+      sparkActions: Iterator[(Long, Seq[SparkAction])]): Unit = {
+    // Directly convert CommitActions to StandardActions without adding columns
+    val standardKernelActions: Seq[(Long, StandardAction)] = commits.flatMap { commit =>
+      val version = commit.getVersion
+      commit.getActions.toSeq.flatMap { batch =>
+        batch.getRows.toSeq
+          .map(row => (version, standardizeKernelAction(row, startIdx = 0)))
+          .filter(_._2.nonEmpty)
+          .map(t => (t._1, t._2.get))
+      }
+    }
+
+    val standardSparkActions: Seq[(Long, StandardAction)] =
+      sparkActions.flatMap { case (version, actions) =>
+        actions.map(standardizeSparkAction(_)).flatten.map((version, _))
+      }.toSeq
+
+    assert(
+      standardKernelActions.sameElements(standardSparkActions),
+      s"Kernel actions did not match Spark actions.\n" +
+        s"Kernel actions: ${standardKernelActions.take(5)}\n" +
+        s"Spark actions: ${standardSparkActions.take(5)}")
+  }
+
   def compareActions(
       kernelActions: Seq[ColumnarBatch],
       sparkActions: Iterator[(Long, Seq[SparkAction])]): Unit = {
 
+    // kernelActions has version and timestamp as first two columns
     val standardKernelActions: Seq[(Long, StandardAction)] = {
       kernelActions.flatMap(_.getRows.toSeq)
-        .map(row => (row.getLong(0), standardizeKernelAction(row)))
+        .map(row => (row.getLong(0), standardizeKernelAction(row, startIdx = 2)))
         .filter(_._2.nonEmpty)
         .map(t => (t._1, t._2.get))
     }
