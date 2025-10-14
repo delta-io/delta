@@ -109,22 +109,6 @@ public interface CommitRange {
   /**
    * Returns an iterator of commits in this commit range, where each commit is represented as a
    * {@link CommitActions} object.
-   *
-   * <p>This method provides a higher-level abstraction compared to {@link #getActions}, grouping
-   * actions by commit version. Each {@link CommitActions} object contains:
-   *
-   * <ul>
-   *   <li>The commit version number
-   *   <li>The commit timestamp
-   *   <li>An iterator over columnar batches containing the commit's actions
-   * </ul>
-   *
-   * <p>This API is particularly useful for streaming scenarios where you need to process commits
-   * atomically and track version boundaries explicitly.
-   *
-   * <p>The returned iterator must be closed after use. Each {@link CommitActions} object must also
-   * be closed to release underlying resources.
-   *
    * @param engine the {@link Engine} to use for reading the Delta log files
    * @param startSnapshot the snapshot for startVersion, required to ensure the table is readable by
    *     Kernel at startVersion
