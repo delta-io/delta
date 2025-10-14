@@ -23,7 +23,6 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.exceptions.TableNotFoundException
-import io.delta.kernel.internal.DeltaLogActionUtils
 import io.delta.kernel.internal.DeltaLogActionUtils.listDeltaLogFilesAsIter
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
@@ -64,5 +63,4 @@ class DeltaLogActionUtilsE2ESuite extends AnyFunSuite with TestUtils {
       assert(result.isEmpty)
     }
   }
-
 }
