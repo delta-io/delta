@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.plans.logical.{InsertIntoStatement, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, InsertIntoStatement, LogicalPlan, OverwriteByExpression}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.trees.TreePattern.COMMAND
@@ -43,12 +43,30 @@ class MaybeFallbackV1Connector(session: SparkSession)
         case Streaming(fallback) => fallback
       }
     }
-
     plan.resolveOperatorsDown {
+      // Handle V1 INSERT INTO
       case i @ InsertIntoStatement(table, part, cols, query, overwrite, byName, ifNotExists) =>
         val newTable = replaceKernelWithFallback(table)
         i.copy(table = newTable)
-      case Batch(fallback) => fallback
+
+      // Handle V2 AppendData (DataFrameWriterV2.append)
+      case a @ AppendData(Batch(fallback), _, _, _, _, _) =>
+        // scalastyle:off println
+        println("falling back AppendData")
+        // scalastyle:on println
+        a.copy(table = fallback)
+
+      // Handle V2 OverwriteByExpression (DataFrameWriterV2.overwrite)
+      case o @ OverwriteByExpression(Batch(fallback), _, _, _, _, _, _) =>
+        // scalastyle:off println
+        println("falling back OverwriteByExpression")
+        // scalastyle:on println
+        o.copy(table = fallback)
+
+      // Handle batch reads
+      case Batch(fallback) if !isReadOnly(plan) => fallback
+
+      // Handle streaming
       case Streaming(fallback) if !isReadOnly(plan) => fallback
     }
   }
