@@ -109,14 +109,13 @@ public class CommitRangeImpl implements CommitRange {
         return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
                 engine, dataPath.toString(), getDeltaFiles(), actionSet);
     }
-}
 
   @Override
   public CloseableIterator<io.delta.kernel.CommitActions> getCommits(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     validateParameters(engine, startSnapshot, actionSet);
     // For each commit file, get actions and convert to CommitActions
-    return toCloseableIterator(deltaFiles.iterator())
+    return toCloseableIterator(getDeltaFiles().iterator())
         .map(commitFile -> convertToCommitActions(engine, commitFile, actionSet));
   }
 
