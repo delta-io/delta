@@ -997,10 +997,9 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
       kernelActions: Seq[ColumnarBatch],
       sparkActions: Iterator[(Long, Seq[SparkAction])]): Unit = {
 
-    // kernelActions has version and timestamp as first two columns
     val standardKernelActions: Seq[(Long, StandardAction)] = {
       kernelActions.flatMap(_.getRows.toSeq)
-        .map(row => (row.getLong(0), standardizeKernelAction(row, startIdx = 2)))
+        .map(row => (row.getLong(0), standardizeKernelAction(row)))
         .filter(_._2.nonEmpty)
         .map(t => (t._1, t._2.get))
     }
