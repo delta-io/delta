@@ -810,8 +810,8 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
       size: Long,
       tags: Map[String, String]) extends StandardAction
 
-  def standardizeKernelAction(row: Row, startIdx: Int = 2): Option[StandardAction] = {
-    val actionIdx = (startIdx until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
+  def standardizeKernelAction(row: Row): Option[StandardAction] = {
+    val actionIdx = (2 until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
       return None)
 
     row.getSchema.at(actionIdx).getName match {
