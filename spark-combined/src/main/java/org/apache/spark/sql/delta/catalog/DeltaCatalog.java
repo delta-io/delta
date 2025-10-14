@@ -39,7 +39,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     try {
       // Load table from delegate catalog directly
       Table delegateTable = ((TableCatalog) delegate).loadTable(identifier);
-      System.out.println("using new connector" + identifier);
       // If delegate table is a V1Table and it's a Delta table, return SparkTable
       if (delegateTable instanceof V1Table) {
         V1Table v1Table = (V1Table) delegateTable;
