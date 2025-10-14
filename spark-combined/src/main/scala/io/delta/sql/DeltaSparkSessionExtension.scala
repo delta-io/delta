@@ -16,6 +16,7 @@
 
 package io.delta.sql
 
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 
@@ -26,6 +27,12 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * - V2: io.delta.kernel.spark.*
  */
 class DeltaSparkSessionExtension extends AbstractSparkSessionExtension {
+
+  override def preDeltaAnalysisRule(extensions: SparkSessionExtensions): Unit = {
+    extensions.injectResolutionRule(
+      session => new MaybeFallbackV1Connector(session)
+    )
+  }
 
   /**
    * NoOpRule for binary compatibility with Delta 3.3.0

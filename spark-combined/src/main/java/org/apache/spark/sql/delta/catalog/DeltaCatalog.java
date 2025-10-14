@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.kernel.spark.catalog.SparkTable;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchDatabaseException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
@@ -43,8 +44,8 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       if (delegateTable instanceof V1Table) {
         V1Table v1Table = (V1Table) delegateTable;
         if (DeltaTableUtils.isDeltaTable(v1Table.catalogTable())) {
-          return new io.delta.kernel.spark.table.SparkTable(
-              identifier, v1Table.catalogTable().location().toString());
+          return new SparkTable(
+              identifier, v1Table.catalogTable());
         }
       }
       // Otherwise return the delegate table as-is
