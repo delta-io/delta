@@ -1752,6 +1752,14 @@ trait DeltaErrorsSuiteBase
         "tableName" -> "table_name"
       ))
     }
+    {
+      val path = new Path("a/b")
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.catalogManagedTablePathBasedAccessNotAllowed(path)
+      }
+      checkError(e, "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED", "KD00G",
+        Map("path" -> path.toString))
+    }
   }
 
   // The compiler complains the lambda function is too large if we put all tests in one lambda.

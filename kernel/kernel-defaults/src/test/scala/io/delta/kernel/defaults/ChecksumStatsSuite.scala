@@ -94,7 +94,7 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
       expectedTableSize: Long,
       expectedFileSizeHistogram: FileSizeHistogram): Unit = {
     def verifyCrcExistsAndCorrect(): Unit = {
-      val crcInfo = ChecksumReader.getCRCInfo(
+      val crcInfo = ChecksumReader.tryReadChecksumFile(
         engine,
         FileStatus.of(checksumFile(
           new Path(tablePath + "/_delta_log"),

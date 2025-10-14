@@ -974,10 +974,22 @@ trait DataSkippingReaderBase
       }
     }
 
-    private def areAllLeavesLiteral(e: Expression): Boolean = e match {
-      case _: Literal => true
-      case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
-      case _ => false
+    // We are doing the iterative approach because of stack depth concerns.
+    private[stats] def areAllLeavesLiteral(e: Expression): Boolean = {
+      val stack = scala.collection.mutable.Stack[Expression]()
+      def pushIfNonLiteral(e: Expression): Unit = e match {
+        case _: Literal =>
+        case _ => stack.push(e)
+      }
+      pushIfNonLiteral(e)
+      while (stack.nonEmpty) {
+        val children = stack.pop().children
+        if (children.isEmpty) {
+          return false
+        }
+        children.foreach(pushIfNonLiteral)
+      }
+      true
     }
   }
 

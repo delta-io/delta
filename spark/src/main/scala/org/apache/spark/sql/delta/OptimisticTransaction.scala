@@ -2374,7 +2374,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
     partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
     collectAutoOptimizeStatsAndFinalize(actions, deltaLog.tableId)
-    val commitSizeBytes = jsonActions.map(_.length).sum
+    val commitSizeBytes: Long = jsonActions.map(_.length.toLong).sum
     commitStatsComputer.finalizeAndEmitCommitStats(
       spark,
       attemptVersion,
