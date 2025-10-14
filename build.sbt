@@ -558,6 +558,10 @@ lazy val `delta-spark-v2` = (project in file("kernel-spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
+      // Jackson dependencies needed by kernel-defaults (for Jdk8Module support)
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+
       // Test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
@@ -679,6 +683,11 @@ lazy val spark = (project in file("spark-combined"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      
+      // Jackson dependencies needed by kernel-defaults (for Jdk8Module support)
+      // These are needed because delta-spark-v2 uses kernel-defaults which requires these
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
       
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
