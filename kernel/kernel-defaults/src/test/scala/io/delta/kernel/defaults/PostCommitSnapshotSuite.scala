@@ -23,6 +23,7 @@ import io.delta.kernel.defaults.utils.{TestRow, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.test.MockEngineUtils
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
@@ -286,6 +287,27 @@ class PostCommitSnapshotSuite
 
       // ===== THEN =====
       checkPostCommitSnapshot(engine, result1.getPostCommitSnapshot.get())
+    }
+  }
+
+  ////////////////
+  // Publishing //
+  ////////////////
+
+  test("publishing on a postCommitSnapshot for a filesystem-based table is a no-op") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val result = appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = testSchema,
+        data = seqOfUnpartitionedDataBatch1)
+
+      val postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+
+      assert(!TableFeatures.isCatalogManagedSupported(postCommitSnapshot.getProtocol))
+
+      postCommitSnapshot.publish(engine) // Should not throw -- there are no catalog commits!
     }
   }
 }
