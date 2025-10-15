@@ -44,28 +44,45 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       if (delegateTable instanceof V1Table) {
         V1Table v1Table = (V1Table) delegateTable;
         if (DeltaTableUtils.isDeltaTable(v1Table.catalogTable())) {
-          return new SparkTable(
-              identifier, v1Table.catalogTable());
+          return new SparkTable(identifier, v1Table.catalogTable());
         }
       }
       // Otherwise return the delegate table as-is
       return delegateTable;
+    } catch (NoSuchTableException e) {
+      // Handle path-based tables
+      if (isPathIdentifier(identifier)) {
+        return newDeltaPathTable(identifier);
+      } else if (isIcebergPathIdentifier(identifier)) {
+        return newIcebergPathTable(identifier);
+      } else {
+        // *** KEY FIX: Directly rethrow NoSuchTableException as unchecked ***
+        // This allows saveAsTable to catch it properly
+        // Use uncheckedThrow to bypass Java's checked exception requirement
+        throw uncheckedThrow(e);
+      }
     } catch (AnalysisException e) {
-      // Handle NoSuchTableException and its related exceptions
-      if (e instanceof NoSuchTableException
-          || e instanceof NoSuchNamespaceException
-          || e instanceof NoSuchDatabaseException) {
+      // Handle other AnalysisException subtypes
+      if (e instanceof NoSuchNamespaceException || e instanceof NoSuchDatabaseException) {
         if (isPathIdentifier(identifier)) {
           return newDeltaPathTable(identifier);
         } else if (isIcebergPathIdentifier(identifier)) {
           return newIcebergPathTable(identifier);
         }
       } else if (DeltaTableIdentifier.gluePermissionError(e) && isPathIdentifier(identifier)) {
-        // Handle Glue permission errors for path identifiers
         return newDeltaPathTable(identifier);
       }
-      // Rethrow as RuntimeException since AnalysisException is checked
+      // For other AnalysisException, wrap in RuntimeException
       throw new RuntimeException(e);
     }
+  }
+  
+  /**
+   * Utility method to throw checked exceptions as unchecked.
+   * This is a workaround for Java's checked exception requirement when overriding Scala methods.
+   */
+  @SuppressWarnings("unchecked")
+  private static <E extends Throwable> RuntimeException uncheckedThrow(Throwable e) throws E {
+    throw (E) e;
   }
 }
