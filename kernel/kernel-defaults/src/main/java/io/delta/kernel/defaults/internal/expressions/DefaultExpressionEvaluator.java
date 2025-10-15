@@ -30,9 +30,6 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.internal.skipping.DataSkippingPredicate;
-import io.delta.kernel.internal.skipping.PartitionPredicate;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -80,19 +77,10 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
   private static class ExpressionTransformResult {
     public final Expression expression; // transformed expression
     public final DataType outputType; // output type of the expression
-    public final boolean hasNonUTF8BinaryCollationIgnored;
 
     ExpressionTransformResult(Expression expression, DataType outputType) {
       this.expression = expression;
       this.outputType = outputType;
-      this.hasNonUTF8BinaryCollationIgnored = false;
-    }
-
-    ExpressionTransformResult(
-        Expression expression, DataType outputType, boolean hasNonUTF8BinaryCollationIgnored) {
-      this.expression = expression;
-      this.outputType = outputType;
-      this.hasNonUTF8BinaryCollationIgnored = hasNonUTF8BinaryCollationIgnored;
     }
   }
 
@@ -111,54 +99,23 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
    */
   private static class ExpressionTransformer extends ExpressionVisitor<ExpressionTransformResult> {
     private StructType inputDataSchema;
-    private boolean shouldIgnoreNonUTF8BinaryComparisons;
 
     ExpressionTransformer(StructType inputDataSchema) {
       this.inputDataSchema = requireNonNull(inputDataSchema, "inputDataSchema is null");
-      shouldIgnoreNonUTF8BinaryComparisons = false;
     }
 
     @Override
     ExpressionTransformResult visitAnd(And and) {
-      ExpressionTransformResult leftResult = visit(and.getLeft());
-      ExpressionTransformResult rightResult = visit(and.getRight());
-      Predicate left = validateIsPredicate(and, leftResult);
-      Predicate right = validateIsPredicate(and, rightResult);
-
-      if (left != AlwaysTrue.ALWAYS_TRUE && right != AlwaysTrue.ALWAYS_TRUE) {
-        return new ExpressionTransformResult(
-            new And(left, right),
-            BooleanType.BOOLEAN,
-            leftResult.hasNonUTF8BinaryCollationIgnored
-                || rightResult.hasNonUTF8BinaryCollationIgnored);
-      } else if (left == AlwaysTrue.ALWAYS_TRUE && right == AlwaysTrue.ALWAYS_TRUE) {
-        return new ExpressionTransformResult(AlwaysTrue.ALWAYS_TRUE, BooleanType.BOOLEAN, true);
-      } else if (left == AlwaysTrue.ALWAYS_TRUE) {
-        return new ExpressionTransformResult(
-            right, BooleanType.BOOLEAN, rightResult.hasNonUTF8BinaryCollationIgnored);
-      } else {
-        return new ExpressionTransformResult(
-            left, BooleanType.BOOLEAN, leftResult.hasNonUTF8BinaryCollationIgnored);
-      }
+      Predicate left = validateIsPredicate(and, visit(and.getLeft()));
+      Predicate right = validateIsPredicate(and, visit(and.getRight()));
+      return new ExpressionTransformResult(new And(left, right), BooleanType.BOOLEAN);
     }
 
     @Override
     ExpressionTransformResult visitOr(Or or) {
-      ExpressionTransformResult leftResult = visit(or.getLeft());
-      ExpressionTransformResult rightResult = visit(or.getRight());
-      Predicate left = validateIsPredicate(or, leftResult);
-      Predicate right = validateIsPredicate(or, rightResult);
-
-      boolean hasNonUTF8BinaryCollation =
-          leftResult.hasNonUTF8BinaryCollationIgnored
-              || rightResult.hasNonUTF8BinaryCollationIgnored;
-      if (left == AlwaysTrue.ALWAYS_TRUE || right == AlwaysTrue.ALWAYS_TRUE) {
-        return new ExpressionTransformResult(
-            AlwaysTrue.ALWAYS_TRUE, BooleanType.BOOLEAN, hasNonUTF8BinaryCollation);
-      } else {
-        return new ExpressionTransformResult(
-            new Or(left, right), BooleanType.BOOLEAN, hasNonUTF8BinaryCollation);
-      }
+      Predicate left = validateIsPredicate(or, visit(or.getLeft()));
+      Predicate right = validateIsPredicate(or, visit(or.getRight()));
+      return new ExpressionTransformResult(new Or(left, right), BooleanType.BOOLEAN);
     }
 
     @Override
@@ -182,8 +139,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         case "<":
         case "<=":
         case "IS NOT DISTINCT FROM":
-          Tuple2<Expression, Boolean> result = transformBinaryComparator(predicate);
-          return new ExpressionTransformResult(result._1, BooleanType.BOOLEAN, result._2);
+          return new ExpressionTransformResult(
+              transformBinaryComparator(predicate), BooleanType.BOOLEAN);
         default:
           // We should never reach this based on the ExpressionVisitor
           throw new IllegalStateException(
@@ -256,41 +213,23 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
     @Override
     ExpressionTransformResult visitNot(Predicate predicate) {
-      ExpressionTransformResult childResult = visit(predicate.getChildren().get(0));
-      Predicate child = validateIsPredicate(predicate, childResult);
-
-      if (childResult.hasNonUTF8BinaryCollationIgnored) {
-        return new ExpressionTransformResult(AlwaysTrue.ALWAYS_TRUE, BooleanType.BOOLEAN, true);
-      } else {
-        return new ExpressionTransformResult(
-            new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
-      }
+      Predicate child = validateIsPredicate(predicate, visit(predicate.getChildren().get(0)));
+      return new ExpressionTransformResult(
+          new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
     }
 
     @Override
     ExpressionTransformResult visitIsNotNull(Predicate predicate) {
-      ExpressionTransformResult childResult = visit(predicate.getChildren().get(0));
-      Expression child = childResult.expression;
-
-      if (childResult.hasNonUTF8BinaryCollationIgnored) {
-        return new ExpressionTransformResult(AlwaysTrue.ALWAYS_TRUE, BooleanType.BOOLEAN, true);
-      } else {
-        return new ExpressionTransformResult(
-            new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
-      }
+      Expression child = visit(predicate.getChildren().get(0)).expression;
+      return new ExpressionTransformResult(
+          new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
     }
 
     @Override
     ExpressionTransformResult visitIsNull(Predicate predicate) {
-      ExpressionTransformResult childResult = visit(getUnaryChild(predicate));
-      Expression child = childResult.expression;
-
-      if (childResult.hasNonUTF8BinaryCollationIgnored) {
-        return new ExpressionTransformResult(AlwaysTrue.ALWAYS_TRUE, BooleanType.BOOLEAN, true);
-      } else {
-        return new ExpressionTransformResult(
-            new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
-      }
+      Expression child = visit(getUnaryChild(predicate)).expression;
+      return new ExpressionTransformResult(
+          new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
     }
 
     @Override
@@ -407,83 +346,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
-    @Override
-    ExpressionTransformResult visitDataSkippingPredicate(
-        DataSkippingPredicate dataSkippingPredicate) {
-      if (dataSkippingPredicate.getReferencedCollations().isEmpty()) {
-        return visitScalarExpression(dataSkippingPredicate);
-      }
-
-      Predicate resolvedPredicate = dataSkippingPredicate;
-      boolean hasNonUTF8BinaryCollation = false;
-      String name = dataSkippingPredicate.getName().toUpperCase(Locale.ROOT);
-      switch (name) {
-        case "AND":
-          validateChildrenAreDataSkippingPredicates(dataSkippingPredicate);
-          ExpressionTransformResult leftResult =
-              visitDataSkippingPredicate((DataSkippingPredicate) getLeft(dataSkippingPredicate));
-          ExpressionTransformResult rightResult =
-              visitDataSkippingPredicate((DataSkippingPredicate) getRight(dataSkippingPredicate));
-          if (leftResult.hasNonUTF8BinaryCollationIgnored
-              && rightResult.hasNonUTF8BinaryCollationIgnored) {
-            resolvedPredicate = AlwaysTrue.ALWAYS_TRUE;
-          } else if (!leftResult.hasNonUTF8BinaryCollationIgnored
-              && !rightResult.hasNonUTF8BinaryCollationIgnored) {
-            resolvedPredicate = dataSkippingPredicate;
-          } else if (leftResult.hasNonUTF8BinaryCollationIgnored) {
-            resolvedPredicate = validateIsPredicate(rightResult.expression, rightResult);
-          } else {
-            resolvedPredicate = validateIsPredicate(leftResult.expression, leftResult);
-          }
-          hasNonUTF8BinaryCollation =
-              leftResult.hasNonUTF8BinaryCollationIgnored
-                  || rightResult.hasNonUTF8BinaryCollationIgnored;
-          break;
-
-        case "OR":
-          validateChildrenAreDataSkippingPredicates(dataSkippingPredicate);
-          leftResult =
-              visitDataSkippingPredicate((DataSkippingPredicate) getLeft(dataSkippingPredicate));
-          rightResult =
-              visitDataSkippingPredicate((DataSkippingPredicate) getRight(dataSkippingPredicate));
-
-          if (leftResult.hasNonUTF8BinaryCollationIgnored
-              || rightResult.hasNonUTF8BinaryCollationIgnored) {
-            resolvedPredicate = AlwaysTrue.ALWAYS_TRUE;
-            hasNonUTF8BinaryCollation = true;
-          } else {
-            resolvedPredicate = dataSkippingPredicate;
-            hasNonUTF8BinaryCollation = false;
-          }
-          break;
-
-        case "=":
-        case "<":
-        case "<=":
-        case ">":
-        case ">=":
-        case "IS NOT DISTINCT FROM":
-          hasNonUTF8BinaryCollation =
-              dataSkippingPredicate
-                  .getCollationIdentifier()
-                  .map(id -> !id.isSparkUTF8BinaryCollation())
-                  .orElse(false);
-          resolvedPredicate =
-              hasNonUTF8BinaryCollation ? AlwaysTrue.ALWAYS_TRUE : dataSkippingPredicate;
-          break;
-      }
-
-      ExpressionTransformResult result = visitScalarExpression(resolvedPredicate);
-      return new ExpressionTransformResult(
-          result.expression, result.outputType, hasNonUTF8BinaryCollation);
-    }
-
-    @Override
-    ExpressionTransformResult visitPartitionPredicate(PartitionPredicate partitionPredicate) {
-      shouldIgnoreNonUTF8BinaryComparisons = true;
-      return visitScalarExpression(partitionPredicate);
-    }
-
     private Predicate validateIsPredicate(
         Expression baseExpression, ExpressionTransformResult result) {
       checkArgument(
@@ -495,45 +357,23 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return (Predicate) result.expression;
     }
 
-    private void validateChildrenAreDataSkippingPredicates(
-        DataSkippingPredicate dataSkippingPredicate) {
-      for (Expression child : dataSkippingPredicate.getChildren()) {
-        checkArgument(
-            child instanceof DataSkippingPredicate,
-            "%s: expected children to be DataSkippingPredicate but got %s",
-            dataSkippingPredicate,
-            child);
-      }
-    }
-
-    private Tuple2<Expression, Boolean> transformBinaryComparator(Predicate predicate) {
+    private Expression transformBinaryComparator(Predicate predicate) {
       ExpressionTransformResult leftResult = visit(getLeft(predicate));
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
 
       if (predicate.getCollationIdentifier().isPresent()) {
+        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
+        checkIsUTF8BinaryCollation(predicate, collationIdentifier);
+
         for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
           checkIsStringType(
               dataType,
               predicate,
               format("Predicate %s expects STRING type inputs", predicate.getName()));
         }
-
-        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
-        if (!shouldIgnoreNonUTF8BinaryComparisons) {
-          checkIsUTF8BinaryCollation(predicate, collationIdentifier);
-          return new Tuple2(
-              new Predicate(predicate.getName(), left, right, collationIdentifier), false);
-        } else {
-          if (collationIdentifier.isSparkUTF8BinaryCollation()) {
-            return new Tuple2(
-                new Predicate(predicate.getName(), left, right, collationIdentifier), false);
-          } else {
-            // Ignore non-UTF8_BINARY collation in partition predicates
-            return new Tuple2(AlwaysTrue.ALWAYS_TRUE, true);
-          }
-        }
+        return new Predicate(predicate.getName(), left, right, collationIdentifier);
       }
 
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
@@ -550,13 +390,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           throw unsupportedExpressionException(predicate, msg);
         }
       }
-
-      if (leftResult.hasNonUTF8BinaryCollationIgnored
-          || rightResult.hasNonUTF8BinaryCollationIgnored) {
-        return new Tuple2(AlwaysTrue.ALWAYS_TRUE, true);
-      } else {
-        return new Tuple2(new Predicate(predicate.getName(), left, right), false);
-      }
+      return new Predicate(predicate.getName(), left, right);
     }
   }
 
@@ -890,16 +724,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ColumnVector visitStartsWith(Predicate startsWith) {
       return StartsWithExpressionEvaluator.eval(
           startsWith.getChildren().stream().map(this::visit).collect(toList()));
-    }
-
-    @Override
-    ColumnVector visitDataSkippingPredicate(DataSkippingPredicate dataSkippingPredicate) {
-      throw new UnsupportedOperationException("DataSkippingPredicate expression is not expected.");
-    }
-
-    @Override
-    ColumnVector visitPartitionPredicate(PartitionPredicate partitionPredicate) {
-      throw new UnsupportedOperationException("PartitionPredicate expression is not expected.");
     }
 
     /**

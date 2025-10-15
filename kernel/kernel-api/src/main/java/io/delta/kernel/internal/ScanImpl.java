@@ -25,6 +25,8 @@ import static java.util.stream.Collectors.toMap;
 import io.delta.kernel.Scan;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelEngineException;
+import io.delta.kernel.exceptions.UnsupportedPredicateWithCollation;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -43,6 +45,7 @@ import io.delta.kernel.internal.skipping.PartitionUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.types.CollationIdentifier;
 import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -382,15 +385,20 @@ public class ScanImpl implements Scan {
                 "COALESCE", Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
-    PredicateEvaluator predicateEvaluator =
-        wrapEngineException(
-            () ->
-                engine
-                    .getExpressionHandler()
-                    .getPredicateEvaluator(prunedStatsSchema, filterToEval),
-            "Get the predicate evaluator for data skipping with schema=%s and filter=%s",
-            prunedStatsSchema,
-            filterToEval);
+    PredicateEvaluator predicateEvaluator;
+    try {
+      predicateEvaluator =
+          wrapEngineException(
+              () ->
+                  engine
+                      .getExpressionHandler()
+                      .getPredicateEvaluator(prunedStatsSchema, filterToEval),
+              "Get the predicate evaluator for data skipping with schema=%s and filter=%s",
+              prunedStatsSchema,
+              filterToEval);
+    } catch (UnsupportedPredicateWithCollation e) {
+      return scanFileIter;
+    }
 
     return scanFileIter.map(
         filteredScanFileBatch -> {

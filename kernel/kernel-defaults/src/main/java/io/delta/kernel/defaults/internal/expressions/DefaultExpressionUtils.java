@@ -22,6 +22,7 @@ import static java.lang.String.format;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.exceptions.UnsupportedPredicateWithCollation;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
@@ -532,11 +533,7 @@ class DefaultExpressionUtils {
   static void checkIsUTF8BinaryCollation(
       Predicate predicate, CollationIdentifier collationIdentifier) {
     if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
-      String msg =
-          format(
-              "Unsupported collation: \"%s\". Default Engine supports just" + " \"%s\" collation.",
-              collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
-      throw unsupportedExpressionException(predicate, msg);
+      throw new UnsupportedPredicateWithCollation();
     }
   }
 }

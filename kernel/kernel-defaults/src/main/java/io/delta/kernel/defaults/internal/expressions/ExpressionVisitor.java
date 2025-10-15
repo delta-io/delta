@@ -21,8 +21,6 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static java.util.stream.Collectors.joining;
 
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.internal.skipping.DataSkippingPredicate;
-import io.delta.kernel.internal.skipping.PartitionPredicate;
 import io.delta.kernel.types.CollationIdentifier;
 import java.util.List;
 import java.util.Locale;
@@ -74,17 +72,9 @@ abstract class ExpressionVisitor<R> {
 
   abstract R visitStartsWith(Predicate predicate);
 
-  abstract R visitDataSkippingPredicate(DataSkippingPredicate predicate);
-
-  abstract R visitPartitionPredicate(PartitionPredicate predicate);
-
   final R visit(Expression expression) {
     if (expression instanceof PartitionValueExpression) {
       return visitPartitionValue((PartitionValueExpression) expression);
-    } else if (expression instanceof PartitionPredicate) {
-      return visitPartitionPredicate((PartitionPredicate) expression);
-    } else if (expression instanceof DataSkippingPredicate) {
-      return visitDataSkippingPredicate((DataSkippingPredicate) expression);
     } else if (expression instanceof ScalarExpression) {
       return visitScalarExpression((ScalarExpression) expression);
     } else if (expression instanceof Literal) {
@@ -99,7 +89,7 @@ abstract class ExpressionVisitor<R> {
         String.format("Expression %s is not supported.", expression));
   }
 
-  R visitScalarExpression(ScalarExpression expression) {
+  private R visitScalarExpression(ScalarExpression expression) {
     List<Expression> children = expression.getChildren();
     String name = expression.getName().toUpperCase(Locale.ENGLISH);
     Optional<CollationIdentifier> collationIdentifier = Optional.empty();
