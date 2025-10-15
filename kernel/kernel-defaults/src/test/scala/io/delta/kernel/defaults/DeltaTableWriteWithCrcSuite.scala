@@ -64,11 +64,11 @@ trait WriteUtilsWithPostCommitSnapshotCrcSimpleWrite extends AnyFunSuite with Wr
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
     val txnResult = txn.commit(engine, dataActions)
 
-    txnResult.getPostCommitSnapshot.ifPresent { pcs =>
-      if (pcs.getStatistics.getChecksumWriteMode == ChecksumWriteMode.SIMPLE) {
-        pcs.writeChecksumSimple(engine)
-      }
-    }
+    val postCommitSnapshot = txnResult
+      .getPostCommitSnapshot
+      .orElseThrow(() => new IllegalStateException("Required post-commit snapshot is missing"))
+
+    postCommitSnapshot.writeChecksumSimple(engine)
 
     txnResult
   }
@@ -95,6 +95,7 @@ class DeltaTableWriteWithPostCommitSnapshotCrcSimpleSuite extends DeltaTableWrit
   // so we cannot write CRC files in those cases. See TransactionImpl.buildPostCommitSnapshotOpt.
   // We use `lazy` due to ScalaTest's initialization order.
   lazy val testsToSkip = Set(
+    "create table and configure properties with retries",
     "insert into table - idempotent writes",
     "conflicts - concurrent data append (1) after the losing txn has started",
     "conflicts - concurrent data append (5) after the losing txn has started",
