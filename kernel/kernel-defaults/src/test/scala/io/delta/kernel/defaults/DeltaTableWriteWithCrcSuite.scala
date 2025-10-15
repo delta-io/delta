@@ -22,13 +22,9 @@ import io.delta.kernel.{Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.SnapshotImpl
-import io.delta.kernel.internal.checksum.ChecksumReader
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames.checksumFile
+import io.delta.kernel.statistics.SnapshotStatistics.ChecksumWriteMode
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.{CloseableIterable, FileStatus}
+import io.delta.kernel.utils.CloseableIterable
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -42,7 +38,39 @@ trait WriteUtilsWithCrc extends AnyFunSuite with WriteUtils {
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    executeCrcSimple(txn.commit(engine, dataActions), engine)
+    executeCrcSimpleIfApplicable(txn.commit(engine, dataActions), engine)
+  }
+
+  override def verifyWrittenContent(
+      path: String,
+      expSchema: StructType,
+      expData: Seq[TestRow]): Unit = {
+    super.verifyWrittenContent(path, expSchema, expData)
+    verifyChecksum(path, expectEmptyTable = expData.isEmpty)
+  }
+}
+
+/**
+ * Trait to mixin into a test suite that extends [[WriteUtils]] to use post-commit snapshots for
+ * writing CRC files using the simple CRC write method. This ensures that the checksum write mode is
+ * SIMPLE and uses the post-commit snapshot's writeChecksumSimple method. Note, this requires the
+ * test suite uses [[commitTransaction]] and [[verifyWrittenContent]].
+ */
+trait WriteUtilsWithPostCommitSnapshotCrcSimpleWrite extends AnyFunSuite with WriteUtils {
+
+  override def commitTransaction(
+      txn: Transaction,
+      engine: Engine,
+      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
+    val txnResult = txn.commit(engine, dataActions)
+
+    txnResult.getPostCommitSnapshot.ifPresent { pcs =>
+      if (pcs.getStatistics.getChecksumWriteMode == ChecksumWriteMode.SIMPLE) {
+        pcs.writeChecksumSimple(engine)
+      }
+    }
+
+    txnResult
   }
 
   override def verifyWrittenContent(
@@ -59,3 +87,30 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite
 
 class DeltaReplaceTableWithCrcSuite extends DeltaReplaceTableSuite
     with WriteUtilsWithCrc {}
+
+class DeltaTableWriteWithPostCommitSnapshotCrcSimpleSuite extends DeltaTableWritesSuite
+    with WriteUtilsWithPostCommitSnapshotCrcSimpleWrite {
+
+  // Tests to skip due to known limitation: post-commit snapshots are not yet built after conflicts,
+  // so we cannot write CRC files in those cases. See TransactionImpl.buildPostCommitSnapshotOpt.
+  // We use `lazy` due to ScalaTest's initialization order.
+  lazy val testsToSkip = Set(
+    "insert into table - idempotent writes",
+    "conflicts - concurrent data append (1) after the losing txn has started",
+    "conflicts - concurrent data append (5) after the losing txn has started",
+    "conflicts - concurrent data append (12) after the losing txn has started")
+
+  override protected def test(
+      testName: String,
+      testTags: org.scalatest.Tag*)(
+      testFun: => Any)(implicit pos: org.scalactic.source.Position): Unit = {
+    if (testsToSkip.contains(testName)) {
+      ignore(testName, testTags: _*)(testFun)(pos)
+    } else {
+      super.test(testName, testTags: _*)(testFun)(pos)
+    }
+  }
+}
+
+class DeltaReplaceTableWithPostCommitSnapshotCrcSimpleSuite extends DeltaReplaceTableSuite
+    with WriteUtilsWithPostCommitSnapshotCrcSimpleWrite {}

@@ -96,9 +96,7 @@ public interface Snapshot {
    */
   Map<String, String> getTableProperties();
 
-  /**
-   * @return statistics about this snapshot
-   */
+  /** @return statistics about this snapshot */
   SnapshotStatistics getStatistics();
 
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */

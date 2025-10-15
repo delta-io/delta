@@ -115,7 +115,7 @@ class PostCommitSnapshotSuite
   test("commit at readVersion + 1 (*with* CRC at readVersion) => yields a PCS with CRC") {
     withTempDirAndEngine { (tablePath, engine) =>
       val result0 = createEmptyTable(engine, tablePath, testSchema)
-      executeCrcSimple(result0, engine)
+      result0.getPostCommitSnapshot.get().writeChecksumSimple(engine)
       assert(latestSnapshot(tablePath, engine).getCurrentCrcInfo.isPresent)
 
       val result1 = appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1)

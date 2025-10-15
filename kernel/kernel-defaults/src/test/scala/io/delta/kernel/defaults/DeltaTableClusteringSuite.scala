@@ -78,7 +78,7 @@ trait DeltaTableClusteringSuiteBase extends AnyFunSuite with AbstractWriteUtils 
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    executeCrcSimple(txn.commit(engine, dataActions), engine)
+    executeCrcSimpleIfApplicable(txn.commit(engine, dataActions), engine)
   }
 
   private def verifyClusteringDMAndCRC(

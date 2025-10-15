@@ -881,7 +881,9 @@ trait AbstractTestUtils
         crcInfo.getFileSizeHistogram))
   }
 
-  def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
+  def executeCrcSimpleIfApplicable(
+      result: TransactionCommitResult,
+      engine: Engine): TransactionCommitResult = {
     result.getPostCommitHooks
       .stream()
       .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)

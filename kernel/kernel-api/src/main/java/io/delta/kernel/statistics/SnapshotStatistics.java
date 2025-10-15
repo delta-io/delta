@@ -36,7 +36,8 @@ public interface SnapshotStatistics {
 
     /**
      * Checksum info is not loaded in this Snapshot and requires replaying the delta log since the
-     * latest checksum (if present) to compute. To write it, call {@link Snapshot#writeChecksumFull}.
+     * latest checksum (if present) to compute. To write it, call {@link
+     * Snapshot#writeChecksumFull}.
      */
     FULL
   }
