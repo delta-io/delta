@@ -643,7 +643,6 @@ lazy val spark = (project in file("spark-combined"))
     Test / unmanagedResourceDirectories := Seq(
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
     ),
-    Test / resourceDirectory := (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
     
     // Include spark-version-specific test sources
     Test / unmanagedSourceDirectories ++= {
@@ -692,26 +691,6 @@ lazy val spark = (project in file("spark-combined"))
 
     // Fork tests to ensure javaOptions are applied
     Test / fork := true,
-    
-    Test / forkOptions := {
-      val sparkDir = (Test / baseDirectory).value
-      val opts = (Test / forkOptions).value
-      opts.withWorkingDirectory(sparkDir)
-    },
-
-    // Set user.dir explicitly for cross-platform compatibility
-    // Note: commonSettings already includes standard test javaOptions, we only add user.dir here
-    Test / javaOptions ++= {
-      val sparkDir = (sparkV1 / baseDirectory).value
-      // Print debug info (will show during SBT loading)
-      println(s"[Delta Build] Setting Test/javaOptions user.dir to: $sparkDir")
-      Seq(
-        // Explicitly set user.dir for cross-platform compatibility
-        // On some platforms, withWorkingDirectory doesn't update user.dir  
-        // Use sparkV1's baseDirectory (which is spark/) for clarity
-        s"-Duser.dir=$sparkDir"
-      )
-    },
 
     TestParallelization.settings,
   )
