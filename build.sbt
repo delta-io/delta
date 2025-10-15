@@ -336,18 +336,10 @@ lazy val connectClient = (project in file("spark-connect/client"))
         val jarsDir = distributionDir / "jars"
         IO.createDirectory(jarsDir)
         // Create symlinks for all dependencies.
-        // Use a set to track already created symlink names to avoid duplicates
-        // (e.g., multiple 'classes' directories from different modules)
-        val createdLinks = scala.collection.mutable.Set[String]()
         serverClassPath.distinct.foreach { entry =>
           val jarFile = entry.data.toPath
-          val fileName = entry.data.getName
-          // Only create symlink for the first occurrence of each filename
-          if (!createdLinks.contains(fileName)) {
-            val linkedJarFile = jarsDir / fileName
-            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
-            createdLinks += fileName
-          }
+          val linkedJarFile = jarsDir / entry.data.getName
+          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
         }
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
@@ -446,11 +438,15 @@ lazy val sparkV1 = (project in file("spark"))
     name := "delta-spark-v1",
     commonSettings,
     scalaStyleSettings,
-    // No MiMa check - this is an internal module not published
-    skipReleaseSettings, // Not published
+    skipReleaseSettings, // Internal module - not published to Maven
     crossSparkSettings(),
     
-    // Don't compile tests in sparkV1 - they are compiled in the final spark module
+    // Export as JAR instead of classes directory. This prevents dependent projects
+    // (e.g., connectServer) from seeing multiple 'classes' directories with the same
+    // name in their classpath, which would cause FileAlreadyExistsException.
+    exportJars := true,
+    
+    // Tests are compiled in the final 'spark' module to avoid circular dependencies
     Test / sources := Seq.empty,
     Test / resources := Seq.empty,
     
@@ -504,13 +500,14 @@ lazy val sparkV1 = (project in file("spark"))
 // ============================================================
 lazy val sparkV1Shaded = (project in file("spark-v1-shaded"))
   .dependsOn(sparkV1)
-  .dependsOn(storage)  // Need to explicitly depend on storage for UCClient etc.
+  .dependsOn(storage)
   .settings(
     name := "delta-spark-v1-shaded",
     commonSettings,
-    skipReleaseSettings, // Not published
+    skipReleaseSettings, // Internal module - not published to Maven
+    exportJars := true,  // Export as JAR to avoid classpath conflicts
     
-    // No source code - just repackage sparkV1
+    // No source code - just repackage sparkV1 without DeltaLog classes
     Compile / sources := Seq.empty,
     Test / sources := Seq.empty,
     
@@ -534,7 +531,7 @@ lazy val sparkV1Shaded = (project in file("spark-v1-shaded"))
 // Module 3: sparkV2 (kernel-spark based, depends on v1-shaded)
 // ============================================================
 lazy val sparkV2 = (project in file("kernel-spark"))
-  .dependsOn(sparkV1Shaded) // Only depends on shaded v1 (no DeltaLog)
+  .dependsOn(sparkV1Shaded)
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(goldenTables % "test")
@@ -542,7 +539,9 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     name := "delta-spark-v2",
     commonSettings,
     javafmtCheckSettings,
-    skipReleaseSettings, // Not published
+    skipReleaseSettings, // Internal module - not published to Maven
+    exportJars := true,  // Export as JAR to avoid classpath conflicts
+    
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -571,20 +570,24 @@ lazy val sparkV2 = (project in file("kernel-spark"))
 lazy val spark = (project in file("spark-combined"))
   .dependsOn(sparkV1)
   .dependsOn(sparkV2)
-  .dependsOn(storage)  // Explicit dependency on storage
+  .dependsOn(storage)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
     sparkMimaSettings,
-    releaseSettings, // Published as delta-spark.jar
+    releaseSettings, // Published to Maven as delta-spark.jar
     crossSparkSettings(),
+    
+    // Export as JAR to dependent projects (e.g., connectServer, connectClient).
+    // This prevents classpath conflicts from internal module 'classes' directories.
+    exportJars := true,
 
-    // Internal modules that should not appear in published POM
+    // Internal module artifact names to exclude from published POM
     internalModuleNames := Set("delta-spark-v1", "delta-spark-v1-shaded", "delta-spark-v2"),
 
-    // Copy all classes from dependencies to classes directory for MiMa
+    // Merge all classes from internal modules into final JAR
     Compile / compile := {
       val _ = (Compile / compile).value
       val classesDir = (Compile / classDirectory).value
@@ -592,10 +595,7 @@ lazy val spark = (project in file("spark-combined"))
       val v2Classes = (sparkV2 / Compile / classDirectory).value
       val storageClasses = (storage / Compile / classDirectory).value
 
-      // Ensure classes directory exists
       IO.createDirectory(classesDir)
-
-      // Copy all classes (shaded classes override v1 classes)
       IO.copyDirectory(v1Classes, classesDir, overwrite = false, preserveLastModified = true)
       IO.copyDirectory(storageClasses, classesDir, overwrite = false, preserveLastModified = true)
       IO.copyDirectory(v2Classes, classesDir, overwrite = true, preserveLastModified = true)
@@ -603,8 +603,7 @@ lazy val spark = (project in file("spark-combined"))
       sbt.internal.inc.Analysis.Empty
     },
     
-    // Remove internal module dependencies from published pom.xml and ivy.xml
-    // Users should only depend on delta-spark jar, not internal modules
+    // Exclude internal modules from published POM
     pomPostProcess := { node =>
       val internalModules = internalModuleNames.value
       import scala.xml._
@@ -619,20 +618,18 @@ lazy val spark = (project in file("spark-combined"))
       }).transform(node).head
     },
     
-    // Also remove internal modules from ivy.xml
-    pomIncludeRepository := { _ => false },  // Don't include repositories in pom
+    pomIncludeRepository := { _ => false },
     
-    // Override projectDependencies to exclude internal modules
     projectDependencies := {
       val internalModules = internalModuleNames.value
       projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
     },
     
-    // Include Python files in the JAR (using default packageBin for classes, then adding Python files)
+    // Include Python files in JAR
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
     
-    // Test sources and resources from original spark/ directory (sparkV1's directory)
+    // Test sources from spark/ directory (sparkV1's directory)
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       Seq(
@@ -644,7 +641,7 @@ lazy val spark = (project in file("spark-combined"))
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
     ),
     
-    // Include spark-version-specific test sources
+    // Include Spark-version-specific test sources
     Test / unmanagedSourceDirectories ++= {
       val sparkVer = sparkVersion.value
       val sparkDir = (sparkV1 / baseDirectory).value
@@ -657,18 +654,16 @@ lazy val spark = (project in file("spark-combined"))
       }
     },
     
-    // Set working directory for tests to spark/ (sparkV1's directory)
+    // Tests run in spark/ directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
     
     libraryDependencies ++= Seq(
-      // Provided deps (needed for compile and test)
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
       
-      // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -682,14 +677,8 @@ lazy val spark = (project in file("spark-combined"))
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-
-    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
-
-    // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
-
-    // Fork tests to ensure javaOptions are applied
     Test / fork := true,
 
     TestParallelization.settings,
