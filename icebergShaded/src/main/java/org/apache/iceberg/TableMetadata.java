@@ -41,13 +41,11 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.transforms.Transforms;
 import org.apache.iceberg.types.TypeUtil;
-import org.apache.iceberg.unityCatalog.UnityCatalogTableOperations;
 import org.apache.iceberg.util.LocationUtil;
 import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.PartitionUtil;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.SerializableSupplier;
-import org.apache.spark.sql.SparkSession;
 
 /**
  * Change: L602 add back the deprecated API
@@ -847,24 +845,11 @@ public class TableMetadata implements Serializable {
       List<Snapshot> snapshots, long lastSequenceNumber) {
     ImmutableMap.Builder<Long, Snapshot> builder = ImmutableMap.builder();
     for (Snapshot snap : snapshots) {
-      // When enabling IcebergCompat V3 on an existing Uniform table with row tracking enabled,
-      // we may commit historical snapshots and temporarily lower lastSequenceNumber to construct
-      // older snapshots first. If newer snapshots already exist, this validation would fail. So
-      // we use this flag to bypass this check. After all historical snapshots are committed,
-      // lastSequenceNumber would be advanced to the latest Delta version.
-      Boolean bypassSequenceNumCheck =
-        SparkSession.getActiveSession().map(session ->
-          Boolean.valueOf(
-            session.conf().getOption(UnityCatalogTableOperations.DELTA_SQL_CONF_BYPASS_SEQUENCE_NUMBER_CHECK)
-              .getOrElse(()-> "false")
-          )).getOrElse(() -> false);
-      if (!bypassSequenceNumCheck) {
-        ValidationException.check(
-          snap.sequenceNumber() <= lastSequenceNumber,
-          "Invalid snapshot with sequence number %s greater than last sequence number %s",
-          snap.sequenceNumber(),
-          lastSequenceNumber);
-      }
+      ValidationException.check(
+              snap.sequenceNumber() <= lastSequenceNumber,
+              "Invalid snapshot with sequence number %s greater than last sequence number %s",
+              snap.sequenceNumber(),
+              lastSequenceNumber);
       builder.put(snap.snapshotId(), snap);
     }
     return builder.build();
@@ -1110,19 +1095,11 @@ public class TableMetadata implements Serializable {
           SUPPORTED_TABLE_FORMAT_VERSION);
       // Allow bypassing the format version downgrade check when a RESTORE operation
       // intentionally downgrades an Iceberg table to a lower format version.
-      Boolean bypassFormatVersionDowngradeCheck =
-        SparkSession.getActiveSession().map(session ->
-          Boolean.valueOf(
-            session.conf().getOption(UnityCatalogTableOperations.DELTA_SQL_CONF_BYPASS_FORMAT_VERSION_DOWNGRAGDE_CHECK)
-              .getOrElse(()-> "false")
-          )).getOrElse(() -> false);
-      if (!bypassFormatVersionDowngradeCheck) {
-        Preconditions.checkArgument(
-                newFormatVersion >= formatVersion,
-                "Cannot downgrade v%s table to v%s",
-                formatVersion,
-                newFormatVersion);
-      }
+      Preconditions.checkArgument(
+              newFormatVersion >= formatVersion,
+              "Cannot downgrade v%s table to v%s",
+              formatVersion,
+              newFormatVersion);
 
       if (newFormatVersion == formatVersion) {
         return this;

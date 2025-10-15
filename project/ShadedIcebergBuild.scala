@@ -33,7 +33,6 @@ object ShadedIcebergBuild {
     ExclusionRule("commons-compress"),
     ExclusionRule("commons-lang3"),
     ExclusionRule("commons-codec"),
-    ExclusionRule("org.apache.avro"),
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.databind"),
   )
@@ -74,6 +73,12 @@ object ShadedIcebergBuild {
    *  HiveCatalog, HiveTableOperations: allow metadataUpdates to overwrite schema and partition spec
    */
   def updateMergeStrategy(prev: String => MergeStrategy): String => MergeStrategy = {
+    case PathList("shadedForDelta", "org", "apache", "iceberg", s)
+        if s.matches("TableMetadata(\\$.*)?\\.class") =>
+      MergeStrategy.first
+    case PathList("shadedForDelta", "org", "apache", "iceberg", s)
+      if s.matches("MetadataUpdate(\\$.*)?\\.class") =>
+      MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
       MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec.class") =>
