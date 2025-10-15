@@ -889,7 +889,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
   .dependsOn(goldenTables % "test")
-  .dependsOn(`delta-spark-v1` % "test") // Use local delta-spark-v1 instead of published version
   .settings(
     name := "delta-kernel-defaults",
     commonSettings,
@@ -929,41 +928,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
-
-
-lazy val kernelSpark = (project in file("kernel-spark"))
-  .dependsOn(kernelApi)
-  .dependsOn(kernelDefaults)
-  .dependsOn(goldenTables % "test")
-  .settings(
-    name := "kernel-spark",
-    commonSettings,
-    javafmtCheckSettings,
-    skipReleaseSettings,
-    Test / javaOptions ++= Seq("-ea"),
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-
-      // Using released delta-spark JAR instead of module dependency to break circular dependency
-      "io.delta" %% "delta-spark" % "3.3.2" % "test",
-
-      // Spark test dependencies for QueryTest and other test utilities
-      // Spark version(3.5.6) matches delta-spark's version 3.3.2
-      "org.apache.spark" %% "spark-sql" % "3.5.6" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % "3.5.6" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % "3.5.6" % "test" classifier "tests",
-
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
-    ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
-  )
-  // TODO to enable unit doc for kernelSpark.
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
