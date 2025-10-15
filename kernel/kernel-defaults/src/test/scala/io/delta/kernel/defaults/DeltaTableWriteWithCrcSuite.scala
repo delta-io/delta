@@ -38,7 +38,7 @@ trait WriteUtilsWithCrc extends AnyFunSuite with WriteUtils {
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    executeCrcSimpleIfApplicable(txn.commit(engine, dataActions), engine)
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
   }
 
   override def verifyWrittenContent(

@@ -881,13 +881,15 @@ trait AbstractTestUtils
         crcInfo.getFileSizeHistogram))
   }
 
-  def executeCrcSimpleIfApplicable(
-      result: TransactionCommitResult,
-      engine: Engine): TransactionCommitResult = {
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-      .forEach(hook => hook.threadSafeInvoke(engine))
+  def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
+    val crcSimpleHook = result
+      .getPostCommitHooks
+      .asScala
+      .find(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .getOrElse(throw new IllegalStateException("CRC simple hook not found"))
+
+    crcSimpleHook.threadSafeInvoke(engine)
+
     result
   }
 
