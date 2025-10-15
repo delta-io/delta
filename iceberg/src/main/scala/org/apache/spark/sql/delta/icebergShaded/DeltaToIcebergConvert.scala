@@ -44,6 +44,7 @@ class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable
   private val schemaUtils: IcebergSchemaUtils =
     IcebergSchemaUtils(snapshot.metadata.columnMappingMode == NoMapping)
 
+  def maxFieldId: Int = schemaUtils.maxFieldId(snapshot)
 
   val schema: IcebergSchema = IcebergCompat
     .getEnabledVersion(snapshot.metadata)

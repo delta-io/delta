@@ -45,6 +45,7 @@ trait TypeWideningTestMixin
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
+      .set(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key, "always")
       .set(TableFeatureProtocolUtils.defaultPropertyKey(TimestampNTZTableFeature), "supported")
       // Ensure we don't silently cast test inputs to null on overflow.
       .set(SQLConf.ANSI_ENABLED.key, "true")

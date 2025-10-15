@@ -132,3 +132,7 @@ override.tf.json
 
 # Local Netlify folder
 .netlify
+
+# Ignore kernel benchmark report
+kernel/kernel-defaults/benchmark_report.json
+
