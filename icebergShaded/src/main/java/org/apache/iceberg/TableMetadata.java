@@ -845,19 +845,6 @@ public class TableMetadata implements Serializable {
       List<Snapshot> snapshots, long lastSequenceNumber) {
     ImmutableMap.Builder<Long, Snapshot> builder = ImmutableMap.builder();
     for (Snapshot snap : snapshots) {
-      // BEGIN EDGE
-      // When enabling IcebergCompat V3 on an existing Uniform table with row tracking enabled,
-      // we may commit historical snapshots and temporarily lower lastSequenceNumber to construct
-      // older snapshots first. If newer snapshots already exist, this validation would fail. So
-      // we use this flag to bypass this check. After all historical snapshots are committed,
-      // lastSequenceNumber would be advanced to the latest Delta version.
-      Boolean bypassSequenceNumCheck =
-        SparkSession.getActiveSession().map(session ->
-          Boolean.valueOf(
-            session.conf().getOption(UnityCatalogTableOperations.DELTA_SQL_CONF_BYPASS_SEQUENCE_NUMBER_CHECK)
-              .getOrElse(()-> "false")
-          )).getOrElse(() -> false);
-      // END EDGE
         ValidationException.check(
           snap.sequenceNumber() <= lastSequenceNumber,
           "Invalid snapshot with sequence number %s greater than last sequence number %s",
@@ -1106,16 +1093,6 @@ public class TableMetadata implements Serializable {
           "Cannot upgrade table to unsupported format version: v%s (supported: v%s)",
           newFormatVersion,
           SUPPORTED_TABLE_FORMAT_VERSION);
-      // BEGIN EDGE
-      // Allow bypassing the format version downgrade check when a RESTORE operation
-      // intentionally downgrades an Iceberg table to a lower format version.
-      Boolean bypassFormatVersionDowngradeCheck =
-        SparkSession.getActiveSession().map(session ->
-          Boolean.valueOf(
-            session.conf().getOption(UnityCatalogTableOperations.DELTA_SQL_CONF_BYPASS_FORMAT_VERSION_DOWNGRAGDE_CHECK)
-              .getOrElse(()-> "false")
-          )).getOrElse(() -> false);
-      // END EDGE
         Preconditions.checkArgument(
                 newFormatVersion >= formatVersion,
                 "Cannot downgrade v%s table to v%s",
