@@ -126,9 +126,6 @@ object ShadedIcebergBuild {
     case PathList("org", "slf4j", xs @ _*) =>
       // SLF4J is provided by Spark runtime, exclude from assembly
       MergeStrategy.discard
-    case PathList("org", "apache", "avro", xs @ _*) =>
-      // Avro is provided by Spark runtime, exclude from assembly
-      MergeStrategy.discard
     case x => prev(x)
   }
 }
