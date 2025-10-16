@@ -35,7 +35,6 @@ object ShadedIcebergBuild {
     ExclusionRule("commons-codec"),
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.databind"),
-    ExclusionRule("org.jspecify.annotations"),
   )
 
   val hadoopClientExclusionRules = List.apply(
@@ -126,6 +125,8 @@ object ShadedIcebergBuild {
       MergeStrategy.first
     case PathList("org", "slf4j", xs @ _*) =>
       // SLF4J is provided by Spark runtime, exclude from assembly
+      MergeStrategy.discard
+    case PathList("org", "jspecify", "annotations", xs @ _*) =>
       MergeStrategy.discard
     case x => prev(x)
   }
