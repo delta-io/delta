@@ -1570,34 +1570,37 @@ class DeltaTableTestsMixin:
             self.__intercept(incorrectTimestamp, "timestamp needs to be a string but got int")
 
     def test_create_table_with_cluster_by(self) -> None:
-        with self.tempTable("test"):
+        with self.tempTable() as tableName:
             builder = DeltaTable.create(self.spark)
             self.__test_table_with_cluster_by(
+                tableName,
                 builder,
                 lambda builder: builder.clusterBy(["value2", "value"]),
                 expected=["value", "value2"])
 
     def test_replace_table_with_cluster_by(self) -> None:
-        with self.tempTable("test"):
-            self.spark.sql("CREATE TABLE test (c1 int) USING DELTA")
+        with self.tempTable() as tableName:
+            self.spark.sql(f"CREATE TABLE {tableName} (c1 int) USING DELTA")
             builder = DeltaTable.replace(self.spark)
             self.__test_table_with_cluster_by(
+                tableName,
                 builder,
                 lambda builder: builder.clusterBy("value2", "value"),
                 expected=["value", "value2"])
 
     # type: ignore[arg-type]
     def __test_table_with_cluster_by(self,
+                                     tableName: str,
                                      builder: "JavaObject",
                                      setClusterBy: Callable[["JavaObject"], None],
                                      expected: List[str]) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
-        builder = builder.tableName("test") \
+        builder = builder.tableName(tableName) \
             .addColumns(df.schema) \
             .addColumn("value2", dataType="int")
         setClusterBy(builder)
         deltaTable = builder.execute()
-        self.__verify_table_schema("test",
+        self.__verify_table_schema(tableName,
                                    deltaTable.toDF().schema,
                                    ["key", "value", "value2"],
                                    [StringType(), LongType(), IntegerType()],
