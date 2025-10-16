@@ -274,13 +274,15 @@ public class SnapshotImpl implements Snapshot {
         logger.info("Skipping writing checksum file: input mode was NONE");
         return;
       case SIMPLE:
-        if (!logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
-          throw new IllegalStateException(
-              "Cannot write simple checksum: checksum info not available");
-        }
+        final CRCInfo crcInfo =
+            logReplay
+                .getCrcInfoAtSnapshotVersion()
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Cannot write checksum in mode SIMPLE: info not available"));
 
         logger.info("Executing checksum write in SIMPLE mode");
-        final CRCInfo crcInfo = logReplay.getCrcInfoAtSnapshotVersion().get();
         new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
         return;
       case FULL:
