@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
-import io.delta.sql.AbstractSparkSessionExtension
+import io.delta.sql.AbstractDeltaSparkSessionExtension
 import org.apache.hadoop.fs.{ChecksumException, Path}
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -1878,9 +1878,9 @@ trait DeltaErrorsBase
     val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
     new DeltaAnalysisException(
       errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
-      messageParameters = Array(classOf[AbstractSparkSessionExtension].getName,
+      messageParameters = Array(classOf[AbstractDeltaSparkSessionExtension].getName,
         catalogImplConfig, classOf[AbstractDeltaCatalog].getName,
-        classOf[AbstractSparkSessionExtension].getName,
+        classOf[AbstractDeltaSparkSessionExtension].getName,
         catalogImplConfig, classOf[AbstractDeltaCatalog].getName),
       cause = originalException)
   }

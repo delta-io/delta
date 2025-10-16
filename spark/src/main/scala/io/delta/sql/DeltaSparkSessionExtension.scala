@@ -80,8 +80,8 @@ import org.apache.spark.sql.internal.SQLConf
  *
  * @since 0.4.0
  */
-class LegacyDeltaSparkSessionExtension extends  AbstractSparkSessionExtension
-class AbstractSparkSessionExtension extends (SparkSessionExtensions => Unit) {
+class LegacyDeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension
+class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)

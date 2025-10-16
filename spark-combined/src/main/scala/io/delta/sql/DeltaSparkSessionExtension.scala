@@ -25,7 +25,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * - V1: org.apache.spark.sql.delta.* (full version with DeltaLog)
  * - V2: io.delta.kernel.spark.*
  */
-class DeltaSparkSessionExtension extends AbstractSparkSessionExtension {
+class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
 
   /**
    * NoOpRule for binary compatibility with Delta 3.3.0

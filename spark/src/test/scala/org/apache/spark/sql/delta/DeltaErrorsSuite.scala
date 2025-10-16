@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import io.delta.sql.AbstractSparkSessionExtension
+import io.delta.sql.AbstractDeltaSparkSessionExtension
 import org.apache.spark.sql.delta.catalog.AbstractDeltaCatalog
 
 import java.io.{FileNotFoundException, PrintWriter, StringWriter}
@@ -1977,7 +1977,7 @@ trait DeltaErrorsSuiteBase
       }
 
       checkError(e, "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG", "56038", Map(
-        "sparkSessionExtensionName" -> classOf[AbstractSparkSessionExtension].getName,
+        "sparkSessionExtensionName" -> classOf[AbstractDeltaSparkSessionExtension].getName,
         "catalogKey" -> SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
         "catalogClassName" -> classOf[AbstractDeltaCatalog].getName
       ))
