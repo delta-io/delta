@@ -53,6 +53,27 @@ import java.util.Optional;
 @Evolving
 public interface Snapshot {
 
+  /**
+   * Indicates how a checksum file should be written for this Snapshot. Use with {@link
+   * #writeChecksum(Engine, ChecksumWriteMode)}.
+   */
+  enum ChecksumWriteMode {
+    /** Checksum file already exists at this version, no write needed. */
+    NONE,
+
+    /**
+     * Checksum info is already loaded in this Snapshot and can be written cheaply. This mode uses
+     * pre-computed CRC information already in memory.
+     */
+    SIMPLE,
+
+    /**
+     * Checksum info is not loaded in this Snapshot and requires replaying the delta log since the
+     * latest checksum (if present) to compute. This mode performs full computation and writing.
+     */
+    FULL
+  }
+
   /** @return the file system path to this table */
   String getPath();
 
@@ -125,50 +146,28 @@ public interface Snapshot {
   void publish(Engine engine) throws PublishFailedException;
 
   /**
-   * Writes a checksum file for this snapshot using pre-computed CRC information.
+   * Writes a checksum file for this snapshot using the specified mode.
    *
-   * <p>This method performs a "simple" checksum write operation that uses CRC information already
-   * loaded in memory for this snapshot. This is the fastest way to write a checksum file as it
-   * doesn't require scanning the delta log.
-   *
-   * <p>Behavior:
+   * <p>This method handles checksum writing based on the provided mode:
    *
    * <ul>
-   *   <li>If a checksum file already exists at this version, this method returns immediately
-   *   <li>If CRC information is not available in memory, this method throws {@link
-   *       IllegalStateException}
+   *   <li><b>NONE:</b> No-op, as a checksum file already exists at this version
+   *   <li><b>SIMPLE:</b> Uses pre-computed CRC information already loaded in memory. This is the
+   *       fastest approach but requires CRC info to be available. Throws {@link
+   *       IllegalStateException} if CRC information is not available.
+   *   <li><b>FULL:</b> Computes the necessary state if needed by replaying the delta log since the
+   *       latest checksum (if present). This always succeeds but may be expensive for large tables
+   *       when CRC information is not available.
    * </ul>
    *
-   * <p>Use {@link SnapshotStatistics#getChecksumWriteMode()} to determine if this method should be
-   * called. This method should only be used when the mode is {@link
-   * SnapshotStatistics.ChecksumWriteMode#SIMPLE}.
-   *
-   * @param engine the engine to use for writing the checksum file
-   * @throws IOException If an I/O error occurs during checksum computation or writing
-   * @throws IllegalStateException if CRC information is not available for this snapshot
-   */
-  void writeChecksumSimple(Engine engine) throws IOException;
-
-  /**
-   * Writes a checksum file for this snapshot, computing the necessary state if needed.
-   *
-   * <p>This method ensures a checksum file is written for this snapshot version. It intelligently
-   * chooses the most efficient approach:
-   *
-   * <ul>
-   *   <li>If a checksum file already exists at this version, returns immediately
-   *   <li>If CRC information is available in memory, uses the simple write approach
-   *   <li>Otherwise, replays the delta log since the latest checksum (if present) to compute the
-   *       state and write the checksum
-   * </ul>
-   *
-   * <p>This method always succeeds in writing a checksum (unless there's an I/O error) but may be
-   * expensive for large tables when CRC information is not available, as it requires replaying the
-   * delta log since the latest checksum.
+   * <p>Use {@link SnapshotStatistics#getChecksumWriteMode()} to determine the appropriate mode for
+   * this snapshot.
    *
    * @param engine the engine to use for writing the checksum file and potentially reading the log
+   * @param mode the mode specifying how to write the checksum
    * @throws IOException If an I/O error occurs during checksum computation or writing
+   * @throws IllegalStateException if mode is SIMPLE but CRC information is not available
    * @see SnapshotStatistics#getChecksumWriteMode()
    */
-  void writeChecksumFull(Engine engine) throws IOException;
+  void writeChecksum(Engine engine, ChecksumWriteMode mode) throws IOException;
 }

@@ -16,9 +16,9 @@
 package io.delta.kernel.defaults
 
 import io.delta.kernel.{Operation, TableManager}
+import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.statistics.SnapshotStatistics.ChecksumWriteMode
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -40,7 +40,7 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       val txn0 = TableManager.buildCreateTableTransaction(tablePath, testSchema, "x").build(engine)
       val result0 = txn0.commit(engine, emptyIterable())
       val snapshot0 = result0.getPostCommitSnapshot.get()
-      snapshot0.writeChecksumSimple(engine)
+      snapshot0.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
 
       // WHEN/THEN
       assertCrcExistsAtLatest(engine, tablePath) // this is what we are really testing. trivial.
@@ -56,7 +56,7 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       // ===== THEN =====
       val snapshot0 = result0.getPostCommitSnapshot.get()
       assert(snapshot0.getStatistics.getChecksumWriteMode == ChecksumWriteMode.SIMPLE) // expected
-      snapshot0.writeChecksumSimple(engine) // we can write it!
+      snapshot0.writeChecksum(engine, ChecksumWriteMode.SIMPLE) // we can write it!
       assertCrcExistsAtLatest(engine, tablePath) // it exists now
     }
   }
@@ -67,7 +67,7 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       val txn0 = TableManager.buildCreateTableTransaction(tablePath, testSchema, "xx").build(engine)
       val result0 = txn0.commit(engine, emptyIterable())
       val snapshot0 = result0.getPostCommitSnapshot.get()
-      snapshot0.writeChecksumSimple(engine)
+      snapshot0.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
       assertCrcExistsAtLatest(engine, tablePath)
 
       // ===== WHEN =====
@@ -77,7 +77,7 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       // ===== THEN =====
       val snapshot1 = result1.getPostCommitSnapshot.get()
       assert(snapshot1.getStatistics.getChecksumWriteMode == ChecksumWriteMode.SIMPLE) // expected
-      snapshot1.writeChecksumSimple(engine) // we can write it!
+      snapshot1.writeChecksum(engine, ChecksumWriteMode.SIMPLE) // we can write it!
       assertCrcExistsAtLatest(engine, tablePath) // it exists now
     }
   }
@@ -100,15 +100,18 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
 
       // ===== THEN =====
       assert(snapshot1.getStatistics.getChecksumWriteMode == ChecksumWriteMode.FULL) // expected
-      snapshot1.writeChecksumFull(engine) // we can write it!
+      snapshot1.writeChecksum(engine, ChecksumWriteMode.FULL) // we can write it!
       assertCrcExistsAtLatest(engine, tablePath) // it exists now
     }
   }
 
+  // Some additional context: This tests that even if there is no physical CRC file, a post-commit
+  // snapshot, and even the 20th post-commit snapshot in a continuous sequence of writes, will still
+  // have the CRC info loaded in memory, and thus the mode is SIMPLE.
   test("getChecksumWriteMode: PostCommitSnapshot (starting from CREATE) => always SIMPLE") {
     withTempDirAndEngine { (tablePath, engine) =>
       // ===== GIVEN =====
-      // We do NOT write 00.crc.
+      // Create the table and do NOT write 00.crc.
       var txn = TableManager.buildCreateTableTransaction(tablePath, testSchema, "xx").build(engine)
       var postCommitSnapshot = txn.commit(engine, emptyIterable()).getPostCommitSnapshot.get()
       assert(postCommitSnapshot.getStatistics.getChecksumWriteMode === ChecksumWriteMode.SIMPLE)
@@ -126,28 +129,35 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
 
       // ===== THEN =====
       // We can now write 20.crc via the SIMPLE mode, even though 0 to 19.crc do not exist!
-      postCommitSnapshot.writeChecksumSimple(engine)
+      postCommitSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
       assertCrcExistsAtLatest(engine, tablePath)
     }
   }
 
+  // Some additional context: This tests that when starting from a fresh snapshot with an existing
+  // CRC file (at version 10), all subsequent post-commit snapshots in a continuous sequence will
+  // inherit and maintain the CRC info in memory, making the mode SIMPLE even without intermediate
+  // CRC files being written.
   test("getChecksumWriteMode: PostCommitSnapshot (starting from N>0 with CRC) => always SIMPLE") {
     withTempDirAndEngine { (tablePath, engine) =>
       // ===== GIVEN =====
+      // Create the table and do NOT write 00.crc.
       var txn = TableManager.buildCreateTableTransaction(tablePath, testSchema, "xx").build(engine)
       var postCommitSnapshot = txn.commit(engine, emptyIterable()).getPostCommitSnapshot.get()
       assert(postCommitSnapshot.getStatistics.getChecksumWriteMode === ChecksumWriteMode.SIMPLE)
 
       for (_ <- 1 to 10) {
+        // Commit versions 1-10 without writing CRC files
         txn = postCommitSnapshot.buildUpdateTableTransaction("xx", Operation.WRITE).build(engine)
         postCommitSnapshot = txn.commit(engine, emptyIterable()).getPostCommitSnapshot.get()
       }
 
-      // Versions 0 to 9 do NOT have CRCs. We write 10.crc.
+      // Versions 0 to 9 do NOT have CRCs. Now we write 10.crc.
       assert(postCommitSnapshot.getStatistics.getChecksumWriteMode === ChecksumWriteMode.SIMPLE)
-      postCommitSnapshot.writeChecksumSimple(engine)
+      postCommitSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
 
-      // Now, we re-start our txn write loop, but using a FRESH Snapshot loaded from version 10.
+      // Now, we restart our txn write loop, but using a FRESH Snapshot loaded from version 10.
+      // It will see the 10.crc file.
       var postCommitSnapshot2 = TableManager.loadSnapshot(tablePath).build(engine)
 
       // ===== WHEN =====
@@ -163,26 +173,26 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
 
       // ===== THEN =====
       // We can now write 20.crc via the SIMPLE mode, even though 11 to 19.crc do not exist!
-      postCommitSnapshot2.writeChecksumSimple(engine)
+      postCommitSnapshot2.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
       assertCrcExistsAtLatest(engine, tablePath)
     }
   }
 
-  test("invoking writeChecksumSimple when mode is NONE => no-op") {
+  test("invoking writeChecksum with NONE mode => no-op") {
     withTempDirAndEngine { (tablePath, engine) =>
       val snapshot = TableManager.buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
         .build(engine)
         .commit(engine, emptyIterable())
         .getPostCommitSnapshot.get()
-      snapshot.writeChecksumSimple(engine)
+      snapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
 
       val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
       assert(latestSnapshot.getStatistics.getChecksumWriteMode == ChecksumWriteMode.NONE)
-      latestSnapshot.writeChecksumSimple(engine) // no-op, should not throw
+      latestSnapshot.writeChecksum(engine, ChecksumWriteMode.NONE) // no-op, should not throw
     }
   }
 
-  test("invoking writeChecksum**Simple** when mode is FULL => throws") {
+  test("invoking writeChecksum with SIMPLE mode when actual mode is FULL => throws") {
     withTempDirAndEngine { (tablePath, engine) =>
       TableManager
         .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
@@ -192,32 +202,34 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
 
       assert(latestSnapshot.getStatistics.getChecksumWriteMode == ChecksumWriteMode.FULL)
-      intercept[IllegalStateException] { latestSnapshot.writeChecksumSimple(engine) }
+      intercept[IllegalStateException] {
+        latestSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
+      }
     }
   }
 
-  test("invoking writeChecksumFull when mode is NONE => no-op") {
+  test("invoking writeChecksum with FULL mode when actual mode is NONE => no-op") {
     withTempDirAndEngine { (tablePath, engine) =>
       val snapshot = TableManager.buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
         .build(engine)
         .commit(engine, emptyIterable())
         .getPostCommitSnapshot.get()
-      snapshot.writeChecksumSimple(engine)
+      snapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
 
       val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
       assert(latestSnapshot.getStatistics.getChecksumWriteMode == ChecksumWriteMode.NONE)
 
-      latestSnapshot.writeChecksumFull(engine) // no-op, should not throw
+      latestSnapshot.writeChecksum(engine, ChecksumWriteMode.FULL) // no-op, should not throw
     }
   }
 
-  test("invoking writeChecksumFull when mode is SIMPLE => succeeds") {
+  test("invoking writeChecksum with FULL mode when actual mode is SIMPLE => succeeds") {
     withTempDirAndEngine { (tablePath, engine) =>
       val snapshot = TableManager.buildCreateTableTransaction(tablePath, testSchema, "x")
         .build(engine).commit(engine, emptyIterable()).getPostCommitSnapshot.get()
 
       assert(snapshot.getStatistics.getChecksumWriteMode == ChecksumWriteMode.SIMPLE)
-      snapshot.writeChecksumFull(engine)
+      snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
       assertCrcExistsAtLatest(engine, tablePath)
     }
   }

@@ -23,31 +23,21 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public interface SnapshotStatistics {
 
-  /** Indicates how a checksum file should be written for this Snapshot, if at all. */
-  enum ChecksumWriteMode {
-    /** Checksum file already exists at this version, no write needed. */
-    NONE,
-
-    /**
-     * Checksum info is already loaded in this Snapshot and can be written cheaply. To write it,
-     * call {@link Snapshot#writeChecksumSimple}
-     */
-    SIMPLE,
-
-    /**
-     * Checksum info is not loaded in this Snapshot and requires replaying the delta log since the
-     * latest checksum (if present) to compute. To write it, call {@link
-     * Snapshot#writeChecksumFull}.
-     */
-    FULL
-  }
-
   /**
-   * Indicates how a checksum file should be written for this Snapshot, if at all.
+   * Determines the appropriate mode for writing a checksum file for this Snapshot.
+   *
+   * <p>The returned mode can be passed to {@link Snapshot#writeChecksum} to write the checksum file
+   * using the most efficient approach available:
+   *
+   * <ul>
+   *   <li>{@link Snapshot.ChecksumWriteMode#NONE} - Checksum already exists, no action needed
+   *   <li>{@link Snapshot.ChecksumWriteMode#SIMPLE} - Fast write using in-memory CRC info
+   *   <li>{@link Snapshot.ChecksumWriteMode#FULL} - Requires log replay to compute CRC info
+   * </ul>
    *
    * @return the recommended checksum write mode for this snapshot
    */
-  ChecksumWriteMode getChecksumWriteMode();
+  Snapshot.ChecksumWriteMode getChecksumWriteMode();
 
   // TODO: getNumUnpublishedCatalogCommits
   // TODO: getNumDeltasSinceLastCheckpoint

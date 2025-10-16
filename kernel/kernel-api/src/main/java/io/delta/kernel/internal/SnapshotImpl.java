@@ -262,41 +262,26 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
-  public void writeChecksumSimple(Engine engine) throws IOException {
-    final SnapshotStatistics.ChecksumWriteMode writeMode = getStatistics().getChecksumWriteMode();
-
-    switch (writeMode) {
+  public void writeChecksum(Engine engine, Snapshot.ChecksumWriteMode mode) throws IOException {
+    switch (mode) {
       case NONE:
         logger.info("Skipping writing checksum file: already exists");
         return;
       case SIMPLE:
-        writeChecksumSimpleImpl(engine);
+        if (!logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
+          throw new IllegalStateException(
+              "Cannot write simple checksum: checksum info not available");
+        }
+        logger.info("Executing checksum write in SIMPLE mode");
+        final CRCInfo crcInfo = logReplay.getCrcInfoAtSnapshotVersion().get();
+        new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
         return;
       case FULL:
-        throw new IllegalStateException(
-            "Cannot write simple checksum: checksum info not available");
-      default:
-        throw new IllegalStateException("Unknown checksum write mode: " + writeMode);
-    }
-  }
-
-  @Override
-  public void writeChecksumFull(Engine engine) throws IOException {
-    final SnapshotStatistics.ChecksumWriteMode writeMode = getStatistics().getChecksumWriteMode();
-
-    switch (writeMode) {
-      case NONE:
-        logger.info("Skipping writing checksum file: already exists");
-        return;
-      case SIMPLE:
-        logger.info("Using simple checksum write instead: checksum info available");
-        writeChecksumSimpleImpl(engine);
-        return;
-      case FULL:
+        logger.info("Executing checksum write in FULL mode");
         ChecksumUtils.computeStateAndWriteChecksum(engine, getLogSegment());
         return;
       default:
-        throw new IllegalStateException("Unknown checksum write mode: " + writeMode);
+        throw new IllegalStateException("Unknown checksum write mode: " + mode);
     }
   }
 
@@ -399,11 +384,6 @@ public class SnapshotImpl implements Snapshot {
   // Helper Methods //
   ////////////////////
 
-  private void writeChecksumSimpleImpl(Engine engine) throws IOException {
-    final CRCInfo crcInfo = logReplay.getCrcInfoAtSnapshotVersion().get();
-    new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
-  }
-
   private long getMaxPublishedDeltaVersionOrThrow() {
     // The maxPublishedDeltaVersion is required for publishing to ensure published deltas are
     // contiguous. The cases where it is unknown should be very rare (e.g. Kernel loaded a
@@ -424,7 +404,7 @@ public class SnapshotImpl implements Snapshot {
 
   private class SnapshotStatisticsImpl implements SnapshotStatistics {
     @Override
-    public ChecksumWriteMode getChecksumWriteMode() {
+    public Snapshot.ChecksumWriteMode getChecksumWriteMode() {
       final boolean checksumFileExists =
           getLogSegment()
               .getLastSeenChecksum()
@@ -432,14 +412,14 @@ public class SnapshotImpl implements Snapshot {
               .orElse(false);
 
       if (checksumFileExists) {
-        return ChecksumWriteMode.NONE;
+        return Snapshot.ChecksumWriteMode.NONE;
       }
 
       if (logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
-        return ChecksumWriteMode.SIMPLE;
+        return Snapshot.ChecksumWriteMode.SIMPLE;
       }
 
-      return ChecksumWriteMode.FULL;
+      return Snapshot.ChecksumWriteMode.FULL;
     }
   }
 }

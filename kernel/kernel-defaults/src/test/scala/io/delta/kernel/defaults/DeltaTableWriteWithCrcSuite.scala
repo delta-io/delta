@@ -19,10 +19,10 @@ import scala.collection.immutable.Seq
 import scala.language.implicitConversions
 
 import io.delta.kernel.{Transaction, TransactionCommitResult}
+import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.statistics.SnapshotStatistics.ChecksumWriteMode
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable
 
@@ -68,7 +68,7 @@ trait WriteUtilsWithPostCommitSnapshotCrcSimpleWrite extends AnyFunSuite with Wr
       .getPostCommitSnapshot
       .orElseThrow(() => new IllegalStateException("Required post-commit snapshot is missing"))
 
-    postCommitSnapshot.writeChecksumSimple(engine)
+    postCommitSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
 
     txnResult
   }
