@@ -38,17 +38,22 @@ import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
 import io.delta.kernel.internal.hook.ChecksumFullHook;
 import io.delta.kernel.internal.hook.ChecksumSimpleHook;
 import io.delta.kernel.internal.hook.LogCompactionHook;
+import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
 import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
+import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
@@ -267,7 +272,7 @@ public class TransactionImpl implements Transaction {
     checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
     // For a new table or when fileSizeHistogram is available in the CRC of the readSnapshotOpt
     // we update it in the commit. When it is not available we do nothing.
-    TransactionMetrics transactionMetrics =
+    TransactionMetrics txnMetrics =
         readSnapshotOpt
             .map(
                 snapshot ->
@@ -275,28 +280,17 @@ public class TransactionImpl implements Transaction {
                         snapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram)))
             .orElse(TransactionMetrics.forNewTable());
     try {
-      long committedVersion =
-          transactionMetrics.totalCommitTimer.time(
-              () -> commitWithRetry(engine, dataActions, transactionMetrics));
-      TransactionReport transactionReport =
-          recordTransactionReport(
-              engine,
-              Optional.of(committedVersion),
-              getEffectiveClusteringColumns(),
-              transactionMetrics,
-              Optional.empty() /* exception */);
-      TransactionMetricsResult txnMetricsCaptured =
-          transactionMetrics.captureTransactionMetricsResult();
-      return new TransactionCommitResult(
-          committedVersion,
-          generatePostCommitHooks(committedVersion, txnMetricsCaptured),
-          transactionReport);
+      final Tuple2<ParsedDeltaData, Optional<Long>> committedDeltaAndIct =
+          txnMetrics.totalCommitTimer.time(() -> commitWithRetry(engine, dataActions, txnMetrics));
+
+      return buildTransactionCommitResult(
+          engine, committedDeltaAndIct._1, txnMetrics, committedDeltaAndIct._2);
     } catch (Exception e) {
       recordTransactionReport(
           engine,
           Optional.empty() /* committedVersion */,
           getEffectiveClusteringColumns(),
-          transactionMetrics,
+          txnMetrics,
           Optional.of(e) /* exception */);
       throw e;
     }
@@ -398,7 +392,8 @@ public class TransactionImpl implements Transaction {
   // Commit Execution (Main Flow) //
   //////////////////////////////////
 
-  private long commitWithRetry(
+  /** Returns (commitDeltaData, inCommitTimestamp). */
+  private Tuple2<ParsedDeltaData, Optional<Long>> commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
       long commitAsVersion = getReadTableVersion() + 1;
@@ -508,7 +503,8 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  private long doCommit(
+  /** Returns (commitDeltaData, inCommitTimestamp). */
+  private Tuple2<ParsedDeltaData, Optional<Long>> doCommit(
       Engine engine,
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
@@ -578,9 +574,9 @@ public class TransactionImpl implements Transaction {
       DirectoryCreationUtils.createAllDeltaDirectoriesAsNeeded(
           engine, logPath, commitAsVersion, commitMetadata.getReadProtocolOpt(), protocol);
 
-      committer.commit(engine, dataAndMetadataActions, commitMetadata);
-
-      return commitAsVersion;
+      return new Tuple2<>(
+          committer.commit(engine, dataAndMetadataActions, commitMetadata).getCommitLogData(),
+          attemptCommitInfo.getInCommitTimestamp());
     } catch (IOException ioe) {
       // Error closing the CloseableIterator of actions or error creating the delta log directory
       throw new UncheckedIOException(ioe);
@@ -728,17 +724,94 @@ public class TransactionImpl implements Transaction {
   // Post-Commit Processing //
   ////////////////////////////
 
+  private TransactionCommitResult buildTransactionCommitResult(
+      Engine engine,
+      ParsedDeltaData committedDelta,
+      TransactionMetrics txnMetrics,
+      Optional<Long> committedIctOpt) {
+    final long committedVersion = committedDelta.getVersion();
+
+    final TransactionReport transactionReport =
+        recordTransactionReport(
+            engine,
+            Optional.of(committedVersion),
+            getEffectiveClusteringColumns(),
+            txnMetrics,
+            Optional.empty() /* exception */);
+
+    final TransactionMetricsResult txnMetricsCaptured =
+        txnMetrics.captureTransactionMetricsResult();
+
+    final Optional<CRCInfo> postCommitCrcOpt =
+        buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetricsCaptured);
+
+    final Optional<SnapshotImpl> postCommitSnapshotOpt =
+        buildPostCommitSnapshotOpt(engine, committedDelta, committedIctOpt, postCommitCrcOpt);
+
+    return new TransactionCommitResult(
+        committedVersion,
+        generatePostCommitHooks(committedVersion, postCommitCrcOpt),
+        transactionReport,
+        postCommitSnapshotOpt);
+  }
+
+  private Optional<SnapshotImpl> buildPostCommitSnapshotOpt(
+      Engine engine,
+      ParsedDeltaData committedDelta,
+      Optional<Long> committedIctOpt,
+      Optional<CRCInfo> postCommitCrcOpt) {
+    // TODO: Support building post-commit Snapshots after conflicts. If there was a conflict, then
+    //       we'd need to keep track of each of the conflicting commit files in order to build the
+    //       new LogSegment for our post-commit Snapshot. This is currently not done, today. Note
+    //       that for catalogManaged tables, we would need the Committer to provide the conflicting
+    //       commits as part of the CommitFailedException.
+    if (committedDelta.getVersion() != getReadTableVersion() + 1) {
+      return Optional.empty();
+    }
+
+    final LogSegment postCommitLogSegment = buildPostCommitLogSegment(committedDelta);
+    final Lazy<LogSegment> lazyLogSegment = new Lazy<>(() -> postCommitLogSegment);
+    final Lazy<Optional<CRCInfo>> lazyCrcInfo = new Lazy<>(() -> postCommitCrcOpt);
+    final LogReplay logReplay = new LogReplay(engine, dataPath, lazyLogSegment, lazyCrcInfo);
+    // TODO: SnapshotQueryContext.forPostCommitSnapshot
+    final SnapshotQueryContext snapshotContext =
+        SnapshotQueryContext.forVersionSnapshot(dataPath.toString(), committedDelta.getVersion());
+    final SnapshotImpl postCommitSnapshot =
+        new SnapshotImpl(
+            dataPath,
+            committedDelta.getVersion(),
+            lazyLogSegment,
+            logReplay,
+            protocol,
+            metadata,
+            committer,
+            snapshotContext,
+            committedIctOpt);
+
+    return Optional.of(postCommitSnapshot);
+  }
+
+  private LogSegment buildPostCommitLogSegment(ParsedDeltaData committedDelta) {
+    if (readSnapshotOpt.isPresent()) {
+      return readSnapshotOpt
+          .get()
+          .getLogSegment()
+          .newWithAddedDeltas(Collections.singletonList(committedDelta));
+    }
+
+    return LogSegment.createForNewTable(logPath, committedDelta);
+  }
+
   private List<PostCommitHook> generatePostCommitHooks(
-      long committedVersion, TransactionMetricsResult txnMetrics) {
-    List<PostCommitHook> postCommitHooks = new ArrayList<>();
+      long committedVersion, Optional<CRCInfo> postCommitCrcOpt) {
+    final List<PostCommitHook> postCommitHooks = new ArrayList<>();
+
     if (isReadyForCheckpoint(committedVersion)) {
       postCommitHooks.add(new CheckpointHook(dataPath, committedVersion));
     }
 
-    Optional<CRCInfo> crcInfo =
-        buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics);
-    if (crcInfo.isPresent()) {
-      postCommitHooks.add(new ChecksumSimpleHook(crcInfo.get(), logPath));
+    if (postCommitCrcOpt.isPresent()) {
+      postCommitHooks.add(new ChecksumSimpleHook(postCommitCrcOpt.get(), logPath));
     } else {
       postCommitHooks.add(new ChecksumFullHook(dataPath, committedVersion));
     }

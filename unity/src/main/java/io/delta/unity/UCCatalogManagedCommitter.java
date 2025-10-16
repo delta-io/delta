@@ -18,19 +18,18 @@ package io.delta.unity;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static io.delta.unity.UCCatalogManagedClient.UC_TABLE_ID_KEY;
 import static io.delta.unity.utils.OperationTimer.timeCheckedOperation;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.commit.CommitFailedException;
-import io.delta.kernel.commit.CommitMetadata;
-import io.delta.kernel.commit.CommitResponse;
-import io.delta.kernel.commit.Committer;
+import io.delta.kernel.commit.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
@@ -39,6 +38,9 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.unity.adapters.MetadataAdapter;
 import io.delta.unity.adapters.ProtocolAdapter;
 import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -48,7 +50,7 @@ import org.slf4j.LoggerFactory;
  * An implementation of {@link Committer} that handles commits to Delta tables managed by Unity
  * Catalog. That is, these Delta tables must have the catalogManaged table feature supported.
  */
-public class UCCatalogManagedCommitter implements Committer {
+public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
   protected final UCClient ucClient;
@@ -67,6 +69,10 @@ public class UCCatalogManagedCommitter implements Committer {
     this.ucTableId = requireNonNull(ucTableId, "ucTableId is null");
     this.tablePath = new Path(requireNonNull(tablePath, "tablePath is null"));
   }
+
+  /////////////////
+  // Public APIs //
+  /////////////////
 
   @Override
   public CommitResponse commit(
@@ -88,6 +94,47 @@ public class UCCatalogManagedCommitter implements Committer {
 
     throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
   }
+
+  @Override
+  public void publish(Engine engine, PublishMetadata publishMetadata)
+      throws PublishFailedException {
+    requireNonNull(engine, "engine is null");
+    requireNonNull(publishMetadata, "publishMetadata is null");
+
+    final List<ParsedCatalogCommitData> catalogCommits =
+        publishMetadata.getAscendingCatalogCommits();
+
+    if (catalogCommits.isEmpty()) {
+      return;
+    }
+
+    final String logPath = publishMetadata.getLogPath();
+    final long snapshotVersion = publishMetadata.getSnapshotVersion();
+
+    logger.info(
+        "[{}] Publishing {} catalog commits up to version {}",
+        ucTableId,
+        catalogCommits.size(),
+        snapshotVersion);
+
+    for (ParsedCatalogCommitData catalogCommit : catalogCommits) {
+      publishSingleCommit(engine, catalogCommit, logPath);
+    }
+
+    logger.info(
+        "[{}] Successfully published all catalog commits up to version {}",
+        snapshotVersion,
+        ucTableId);
+  }
+
+  @Override
+  public Map<String, String> getRequiredTableProperties() {
+    return Collections.singletonMap(UC_TABLE_ID_KEY, ucTableId);
+  }
+
+  ///////////////////////////
+  // Commit helper methods //
+  ///////////////////////////
 
   /**
    * Handles CATALOG_CREATE by writing the published delta file for version 0.
@@ -127,6 +174,46 @@ public class UCCatalogManagedCommitter implements Committer {
     commitToUC(commitMetadata, kernelStagedCommitFileStatus);
 
     return new CommitResponse(ParsedCatalogCommitData.forFileStatus(kernelStagedCommitFileStatus));
+  }
+
+  ////////////////////////////
+  // Publish helper methods //
+  ////////////////////////////
+
+  private void publishSingleCommit(
+      Engine engine, ParsedCatalogCommitData catalogCommit, String logPath)
+      throws PublishFailedException {
+    final long commitVersion = catalogCommit.getVersion();
+
+    if (catalogCommit.isInline()) {
+      throw new UnsupportedOperationException(
+          "Publishing inline catalog commits is not yet supported");
+    }
+
+    final String sourcePath = catalogCommit.getFileStatus().getPath();
+    final String targetPath = FileNames.deltaFile(logPath, commitVersion);
+
+    try {
+      logger.info("[{}] Publishing catalog commit: {} -> {}", ucTableId, sourcePath, targetPath);
+
+      // Copy the staged commit file to the published delta file location. We use overwrite=false to
+      // ensure PUT-if-absent semantics, since UC catalogManaged tables expect immutability of
+      // published delta files (e.g. never want the e-tag to change).
+      engine
+          .getFileSystemClient()
+          .copyFileAtomically(sourcePath, targetPath, false /* overwrite */);
+
+      logger.info("[{}] Successfully published version {}", ucTableId, commitVersion);
+    } catch (java.nio.file.FileAlreadyExistsException e) {
+      // File already exists - this is okay, it means this version was already published
+      logger.info("[{}] Version {} already published", ucTableId, commitVersion);
+    } catch (Exception ex) {
+      throw new PublishFailedException(
+          String.format(
+              "Failed to publish version %d from %s to %s: %s",
+              commitVersion, sourcePath, targetPath, ex.getMessage()),
+          ex);
+    }
   }
 
   /////////////////////////////////////////

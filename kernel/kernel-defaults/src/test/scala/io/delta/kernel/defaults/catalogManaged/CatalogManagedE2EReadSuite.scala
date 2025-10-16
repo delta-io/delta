@@ -19,9 +19,11 @@ package io.delta.kernel.defaults.catalogManaged
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.{SnapshotBuilder, TableManager}
+import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.DeltaHistoryManager
+import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
@@ -207,6 +209,88 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
         checkTimeTravelByTimestamp(v2Ts + 1, 2, v2Ts)
       }
       assert(e.getMessage.contains("is after the latest available version"))
+    }
+  }
+
+  test("e2e CommitRange test with catalogOwned-preview table with staged ratified commits") {
+    withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
+      val v0Ts = 1749830855993L // published commit
+      val v1Ts = 1749830871085L // staged commit
+      val v2Ts = 1749830881799L // staged commit
+
+      val latestSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .withLogData(parsedLogData.asJava)
+        .build(defaultEngine)
+
+      def checkStartBoundary(timestamp: Long, expectedVersion: Long): Unit = {
+        assert(TableManager.loadCommitRange(tablePath)
+          .withLogData(parsedLogData.asJava)
+          .withStartBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine).getStartVersion == expectedVersion)
+      }
+      def checkEndBoundary(timestamp: Long, expectedVersion: Long): Unit = {
+        assert(TableManager.loadCommitRange(tablePath)
+          .withLogData(parsedLogData.asJava)
+          .withEndBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine).getEndVersion == expectedVersion)
+      }
+
+      // startTimestamp is before V0
+      checkStartBoundary(v0Ts - 1, 0)
+      // endTimestamp is before V0
+      intercept[KernelException] {
+        checkEndBoundary(v0Ts - 1, -1)
+      }
+
+      // startTimestamp is at V0
+      checkStartBoundary(v0Ts, 0)
+      // endTimestamp is at V0
+      checkEndBoundary(v0Ts, 0)
+
+      // startTimestamp is between V0 and V1
+      checkStartBoundary(v0Ts + 100L, 1)
+      // endTimestamp is between V0 and V1
+      checkEndBoundary(v0Ts + 100L, 0)
+
+      // startTimestamp is at V1
+      checkStartBoundary(v1Ts, 1)
+      // endTimestamp is at V1
+      checkEndBoundary(v1Ts, 1)
+
+      // startTimestamp is between V1 and V2
+      checkStartBoundary(v1Ts + 100L, 2)
+      // endTimestamp is between V1 and V2
+      checkEndBoundary(v1Ts + 100L, 1)
+
+      // startTimestamp is at V2
+      checkStartBoundary(v2Ts, 2)
+      // endTimestamp is at V2
+      checkEndBoundary(v2Ts, 2)
+
+      // startTimestamp is after V2
+      intercept[KernelException] {
+        checkStartBoundary(v2Ts + 10, -1)
+      }
+      // endTimestamp is after V2
+      checkEndBoundary(v2Ts + 10, 2)
+
+      // Verify the fileList in the CommitRange
+      val commitRange = TableManager
+        .loadCommitRange(tablePath)
+        .withLogData(parsedLogData.asJava)
+        .build(defaultEngine)
+
+      val expectedFileList = Seq(
+        // scalastyle:off line.size.limit
+        getTestResourceFilePath("catalog-owned-preview/_delta_log/00000000000000000000.json"),
+        getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000001.4cb9708e-b478-44de-b203-53f9ba9b2876.json"),
+        getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json")
+        // scalastyle:on line.size.limit
+      ).map(path => defaultEngine.getFileSystemClient.resolvePath(path))
+
+      assert(commitRange.asInstanceOf[CommitRangeImpl].getDeltaFiles().asScala.map(_.getPath) ==
+        expectedFileList)
     }
   }
 }

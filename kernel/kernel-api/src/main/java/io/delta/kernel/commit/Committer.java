@@ -46,14 +46,7 @@ public interface Committer {
    * </ol>
    *
    * @param engine the {@link Engine} instance used for committing changes
-   * @param finalizedActions the iterator of finalized actions to be committed, taken from {@link
-   *     CommitContext#getFinalizedActions()}. Callers must either
-   *     <ul>
-   *       <li>Pass the iterator directly from the {@link CommitContext} into this call site
-   *       <li>First materialize the iterator contents (e.g., into a {@link java.util.List}) and
-   *           then create a new iterator from the materialized data
-   *     </ul>
-   *
+   * @param finalizedActions the iterator of finalized actions to be committed
    * @param commitMetadata the {@link CommitMetadata} associated with this commit, which contains
    *     additional metadata required to commit the finalized actions to the table, such as the
    *     commit version, Delta log path, and more.
@@ -63,6 +56,4 @@ public interface Committer {
   CommitResponse commit(
       Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
       throws CommitFailedException;
-
-  // TODO: API to get the required table properties
 }

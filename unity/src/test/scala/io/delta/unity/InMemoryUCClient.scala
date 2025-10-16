@@ -91,6 +91,17 @@ object InMemoryUCClient {
       if (newProtocol.isPresent) currentProtocolOpt = Some(newProtocol.get())
       if (newMetadata.isPresent) currentMetadataOpt = Some(newMetadata.get())
     }
+
+    def forceRemoveCommitsUpToVersion(version: Long): Unit = synchronized {
+      if (version < 0) {
+        throw new IllegalArgumentException(s"Version must be non-negative, but got: $version")
+      }
+
+      val indexToRemove = commits.lastIndexWhere(_.getVersion <= version)
+      if (indexToRemove >= 0) {
+        commits.remove(0, indexToRemove + 1)
+      }
+    }
   }
 }
 
@@ -182,14 +193,14 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     tables.asScala.toMap
   }
 
+  /** Retrieves table data for the given table ID or throws an exception if not found. */
+  private[unity] def getTableDataElseThrow(tableId: String): TableData = {
+    Option(tables.get(tableId))
+      .getOrElse(throw new InvalidTargetTableException(s"Table not found: $tableId"))
+  }
+
   /** Retrieves the table data for the given table ID, creating it if it does not exist. */
   private def getOrCreateTableIfNotExists(tableId: String): TableData = {
     tables.computeIfAbsent(tableId, _ => new TableData)
-  }
-
-  /** Retrieves table data for the given table ID or throws an exception if not found. */
-  private def getTableDataElseThrow(tableId: String): TableData = {
-    Option(tables.get(tableId))
-      .getOrElse(throw new InvalidTargetTableException(s"Table not found: $tableId"))
   }
 }

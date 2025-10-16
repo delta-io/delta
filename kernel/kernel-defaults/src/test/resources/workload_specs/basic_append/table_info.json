@@ -1,0 +1,5 @@
+{
+  "name": "basic_append",
+  "description": "A basic table with two append writes.",
+  "engineInfo": "Apache-Spark/3.5.1 Delta-Lake/3.1.0"
+}
