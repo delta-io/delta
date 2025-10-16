@@ -179,7 +179,8 @@ public class CommitMetadata {
    * <p>{@code Optional.empty()} means "we don't know" - not necessarily that no deltas have been
    * published.
    *
-   * <p>{@code Optional.of(-1)} means it is known that there are no published deltas.
+   * <p>{@code Optional.of(-1)} means it is known that there are no published deltas (e.g., during
+   * CREATE)
    *
    * @return the maximum known published delta version, or empty if unknown
    */
