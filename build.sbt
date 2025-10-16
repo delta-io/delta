@@ -685,12 +685,12 @@ lazy val spark = (project in file("spark-combined"))
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-    
+
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
-    
+
     javaOptions += "-Xmx1024m",
-    
+
     // Configurations to speed up tests and reduce memory footprint
     Test / javaOptions ++= Seq(
       "-Dspark.ui.enabled=false",
@@ -703,7 +703,7 @@ lazy val spark = (project in file("spark-combined"))
       "-Xmx1024m"
     ),
     
-    // Required for testing table features
+    // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
     Test / fork := true,
 
