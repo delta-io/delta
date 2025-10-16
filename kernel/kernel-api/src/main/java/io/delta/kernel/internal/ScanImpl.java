@@ -16,9 +16,9 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
-import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 

@@ -13,50 +13,55 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal.skipping
-
-import java.util.Optional
+package io.delta.kernel.internal.util
 
 import scala.collection.JavaConverters._
-
 import io.delta.kernel.expressions.{Column, Expression, Predicate}
+import io.delta.kernel.internal.skipping.{DataSkippingPredicate, DataSkippingUtils}
 import io.delta.kernel.internal.skipping.DataSkippingUtils.constructDataSkippingFilter
 import io.delta.kernel.internal.skipping.StatsSchemaHelper.{MAX, MIN, STATS_WITH_COLLATION}
 import io.delta.kernel.internal.util.ExpressionUtils.createPredicate
-import io.delta.kernel.test.TestUtils
-import io.delta.kernel.types._
+import io.delta.kernel.types.{CollationIdentifier, DataType, IntegerType, StringType, StructField, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
-
+import io.delta.kernel.test.TestUtils
 import org.scalatest.funsuite.AnyFunSuite
+
+import java.util.Optional
 
 class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
 
+  def col(name: String): Column = new Column(name)
+
+  def nestedCol(name: String): Column = {
+    new Column(name.split("\\."))
+  }
+
   def dataSkippingPredicate(
-      operator: String,
-      children: Seq[Expression],
-      referencedColumns: Set[Column]): DataSkippingPredicate = {
+                             operator: String,
+                             children: Seq[Expression],
+                             referencedColumns: Set[Column]): DataSkippingPredicate = {
     new DataSkippingPredicate(operator, children.asJava, referencedColumns.asJava)
   }
 
   def dataSkippingPredicate(
-      operator: String,
-      left: DataSkippingPredicate,
-      right: DataSkippingPredicate): DataSkippingPredicate = {
+                             operator: String,
+                             left: DataSkippingPredicate,
+                             right: DataSkippingPredicate): DataSkippingPredicate = {
     new DataSkippingPredicate(operator, left, right)
   }
 
   def dataSkippingPredicateWithCollation(
-      operator: String,
-      children: Seq[Expression],
-      collation: CollationIdentifier,
-      referencedColumns: Set[Column]): DataSkippingPredicate = {
+                                          operator: String,
+                                          children: Seq[Expression],
+                                          collation: CollationIdentifier,
+                                          referencedColumns: Set[Column]): DataSkippingPredicate = {
     new DataSkippingPredicate(operator, children.asJava, collation, referencedColumns.asJava)
   }
 
   private def collatedStatsCol(
-      collation: CollationIdentifier,
-      statName: String,
-      fieldName: String): Column = {
+                                collation: CollationIdentifier,
+                                statName: String,
+                                fieldName: String): Column = {
     new Column(Array(STATS_WITH_COLLATION, collation.toString, statName, fieldName))
   }
 
@@ -389,53 +394,53 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
           .add("a", StringType.STRING)
           .add("b", StringType.STRING),
         createPredicate("<", col("a"), literal("m"), Optional.of(utf8Lcase)), {
-          val minA = collatedStatsCol(utf8Lcase, MIN, "a")
-          Some(dataSkippingPredicateWithCollation(
-            "<",
-            Seq(minA, literal("m")),
-            utf8Lcase,
-            Set(minA)))
-        }),
+        val minA = collatedStatsCol(utf8Lcase, MIN, "a")
+        Some(dataSkippingPredicateWithCollation(
+          "<",
+          Seq(minA, literal("m")),
+          utf8Lcase,
+          Set(minA)))
+      }),
       // Reversed comparator: "m" < a -> max(a, collation) > "m"
       (
         new StructType()
           .add("a", StringType.STRING),
         createPredicate("<", literal("m"), col("a"), Optional.of(utf8Lcase)), {
-          val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
-          Some(dataSkippingPredicateWithCollation(
-            ">",
-            Seq(maxA, literal("m")),
-            utf8Lcase,
-            Set(maxA)))
-        }),
+        val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
+        Some(dataSkippingPredicateWithCollation(
+          ">",
+          Seq(maxA, literal("m")),
+          utf8Lcase,
+          Set(maxA)))
+      }),
       // Direct ">": a > "m" -> max(a, collation) > "m"
       (
         new StructType()
           .add("a", StringType.STRING),
         createPredicate(">", col("a"), literal("m"), Optional.of(utf8Lcase)), {
-          val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
-          Some(dataSkippingPredicateWithCollation(
-            ">",
-            Seq(maxA, literal("m")),
-            utf8Lcase,
-            Set(maxA)))
-        }),
+        val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
+        Some(dataSkippingPredicateWithCollation(
+          ">",
+          Seq(maxA, literal("m")),
+          utf8Lcase,
+          Set(maxA)))
+      }),
       // Equality
       (
         new StructType()
           .add("a", StringType.STRING),
         createPredicate("=", col("a"), literal("abc"), Optional.of(unicode)), {
-          val minA = collatedStatsCol(unicode, MIN, "a")
-          val maxA = collatedStatsCol(unicode, MAX, "a")
-          Some(dataSkippingPredicate(
-            "AND",
-            dataSkippingPredicateWithCollation("<=", Seq(minA, literal("abc")), unicode, Set(minA)),
-            dataSkippingPredicateWithCollation(
-              ">=",
-              Seq(maxA, literal("abc")),
-              unicode,
-              Set(maxA))))
-        }),
+        val minA = collatedStatsCol(unicode, MIN, "a")
+        val maxA = collatedStatsCol(unicode, MAX, "a")
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicateWithCollation("<=", Seq(minA, literal("abc")), unicode, Set(minA)),
+          dataSkippingPredicateWithCollation(
+            ">=",
+            Seq(maxA, literal("abc")),
+            unicode,
+            Set(maxA))))
+      }),
       // NOT over comparator: NOT(a < "m") -> max(a, collation) >= "m"
       (
         new StructType()
@@ -443,13 +448,13 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
         new Predicate(
           "NOT",
           createPredicate("<", col("a"), literal("m"), Optional.of(utf8Lcase))), {
-          val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
-          Some(dataSkippingPredicateWithCollation(
-            ">=",
-            Seq(maxA, literal("m")),
-            utf8Lcase,
-            Set(maxA)))
-        }),
+        val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
+        Some(dataSkippingPredicateWithCollation(
+          ">=",
+          Seq(maxA, literal("m")),
+          utf8Lcase,
+          Set(maxA)))
+      }),
       // NOT over AND
       // NOT(a < "m" AND a > "t") => (max.a >= "m") OR (min.a <= "t")
       (
@@ -462,21 +467,21 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
             createPredicate("<", col("a"), literal("m"), Optional.of(unicode)),
             createPredicate(">", col("a"), literal("t"), Optional.of(utf8Lcase)),
             Optional.empty[CollationIdentifier])), {
-          val unicodeMaxA = collatedStatsCol(unicode, MAX, "a")
-          val utf8LcaseMinA = collatedStatsCol(utf8Lcase, MIN, "a")
-          Some(dataSkippingPredicate(
-            "OR",
-            dataSkippingPredicateWithCollation(
-              ">=",
-              Seq(unicodeMaxA, literal("m")),
-              unicode,
-              Set(unicodeMaxA)),
-            dataSkippingPredicateWithCollation(
-              "<=",
-              Seq(utf8LcaseMinA, literal("t")),
-              utf8Lcase,
-              Set(utf8LcaseMinA))))
-        }),
+        val unicodeMaxA = collatedStatsCol(unicode, MAX, "a")
+        val utf8LcaseMinA = collatedStatsCol(utf8Lcase, MIN, "a")
+        Some(dataSkippingPredicate(
+          "OR",
+          dataSkippingPredicateWithCollation(
+            ">=",
+            Seq(unicodeMaxA, literal("m")),
+            unicode,
+            Set(unicodeMaxA)),
+          dataSkippingPredicateWithCollation(
+            "<=",
+            Seq(utf8LcaseMinA, literal("t")),
+            utf8Lcase,
+            Set(utf8LcaseMinA))))
+      }),
       // AND(a < "m" COLLATE UTF8_LCASE, b < 1)
       (
         new StructType()
@@ -487,13 +492,13 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
           createPredicate("<", col("a"), literal("m"), Optional.of(utf8Lcase)),
           createPredicate("<", col("b"), literal(1), Optional.empty[CollationIdentifier]),
           Optional.empty[CollationIdentifier]), {
-          val minA = collatedStatsCol(utf8Lcase, MIN, "a")
-          val minB = nestedCol(s"$MIN.b")
-          Some(dataSkippingPredicate(
-            "AND",
-            dataSkippingPredicateWithCollation("<", Seq(minA, literal("m")), utf8Lcase, Set(minA)),
-            dataSkippingPredicate("<", Seq(minB, literal(1)), Set(minB))))
-        }),
+        val minA = collatedStatsCol(utf8Lcase, MIN, "a")
+        val minB = nestedCol(s"$MIN.b")
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicateWithCollation("<", Seq(minA, literal("m")), utf8Lcase, Set(minA)),
+          dataSkippingPredicate("<", Seq(minB, literal(1)), Set(minB))))
+      }),
       // Ineligible: non-string column with collation
       (
         new StructType()
