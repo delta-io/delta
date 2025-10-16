@@ -52,7 +52,7 @@ public class PartitionUtils {
 
     final Set<String> snapshotPartColNames = new HashSet<>(snapshot.getPartitionColumnNames());
 
-    io.delta.kernel.internal.skipping.PartitionUtils.validatePredicateOnlyOnPartitionColumns(
+    io.delta.kernel.internal.util.PartitionUtils.validatePredicateOnlyOnPartitionColumns(
         partitionPredicate, snapshotPartColNames);
 
     final Scan scan = snapshot.getScanBuilder().withFilter(partitionPredicate).build();

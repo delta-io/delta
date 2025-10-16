@@ -18,7 +18,6 @@ package io.delta.kernel.internal.skipping;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.types.CollationIdentifier;
 import java.util.*;
 
 /** A {@link Predicate} with a set of columns referenced by the expression. */
@@ -26,8 +25,6 @@ public class DataSkippingPredicate extends Predicate {
 
   /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
   private final Set<Column> referencedCols;
-
-  private final Set<CollationIdentifier> collationIdentifiers;
 
   /**
    * @param name the predicate name
@@ -38,17 +35,6 @@ public class DataSkippingPredicate extends Predicate {
   DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
-    this.collationIdentifiers = Collections.unmodifiableSet(new HashSet<>());
-  }
-
-  DataSkippingPredicate(
-      String name,
-      List<Expression> children,
-      CollationIdentifier collationIdentifier,
-      Set<Column> referencedCols) {
-    super(name, children, collationIdentifier);
-    this.referencedCols = Collections.unmodifiableSet(referencedCols);
-    this.collationIdentifiers = Collections.singleton(collationIdentifier);
   }
 
   /**
@@ -60,45 +46,18 @@ public class DataSkippingPredicate extends Predicate {
    * @param right right input to this predicate
    */
   DataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
-    super(name, Arrays.asList(left, right));
-    this.referencedCols =
-        Collections.unmodifiableSet(
-            new HashSet<Column>() {
-              {
-                addAll(left.getReferencedCols());
-                addAll(right.getReferencedCols());
-              }
-            });
-    this.collationIdentifiers =
-        Collections.unmodifiableSet(
-            new HashSet<CollationIdentifier>() {
-              {
-                addAll(left.getReferencedCollations());
-                addAll(right.getReferencedCollations());
-              }
-            });
+    this(
+        name,
+        Arrays.asList(left, right),
+        new HashSet<Column>() {
+          {
+            addAll(left.getReferencedCols());
+            addAll(right.getReferencedCols());
+          }
+        });
   }
 
   public Set<Column> getReferencedCols() {
     return referencedCols;
-  }
-
-  public Set<CollationIdentifier> getReferencedCollations() {
-    return collationIdentifiers;
-  }
-
-  @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (!(o instanceof DataSkippingPredicate)) return false;
-    if (!super.equals(o)) return false;
-    DataSkippingPredicate that = (DataSkippingPredicate) o;
-    return Objects.equals(referencedCols, that.referencedCols)
-        && Objects.equals(collationIdentifiers, that.collationIdentifiers);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hash(super.hashCode(), referencedCols, collationIdentifiers);
   }
 }

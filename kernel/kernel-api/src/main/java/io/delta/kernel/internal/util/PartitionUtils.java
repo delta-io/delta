@@ -13,11 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal.skipping;
+package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import static io.delta.kernel.internal.util.ExpressionUtils.createPredicate;
 import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -31,10 +32,6 @@ import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.InternalUtils;
-import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -274,7 +271,7 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnCheckpointFileSchema(
       Predicate predicate, Map<String, StructField> partitionColNameToField) {
-    return createPartitionPredicate(
+    return createPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewriteColRefOnPartitionValuesParsed(child, partitionColNameToField))
@@ -621,14 +618,5 @@ public class PartitionUtils {
       }
     }
     return escaped.toString();
-  }
-
-  private static PartitionPredicate createPartitionPredicate(
-      String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
-    if (collationIdentifier.isPresent()) {
-      return new PartitionPredicate(name, children, collationIdentifier.get());
-    } else {
-      return new PartitionPredicate(name, children);
-    }
   }
 }

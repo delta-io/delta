@@ -19,9 +19,9 @@ import static io.delta.kernel.internal.DeltaErrors.dataSchemaMismatch;
 import static io.delta.kernel.internal.DeltaErrors.partitionColumnMissingInData;
 import static io.delta.kernel.internal.TransactionImpl.getStatisticsColumns;
 import static io.delta.kernel.internal.data.TransactionStateRow.*;
-import static io.delta.kernel.internal.skipping.PartitionUtils.getTargetDirectory;
-import static io.delta.kernel.internal.skipping.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.ColumnMapping.blockIfColumnMappingEnabled;
+import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
+import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.findColIndex;
 
