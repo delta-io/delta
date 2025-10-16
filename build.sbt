@@ -768,6 +768,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
+    exportJars := true,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
@@ -861,6 +862,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
+    exportJars := true,
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
