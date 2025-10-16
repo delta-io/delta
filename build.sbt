@@ -580,6 +580,10 @@ lazy val spark = (project in file("spark-combined"))
     scalaStyleSettings,
     sparkMimaSettings,
     releaseSettings, // Published to Maven as delta-spark.jar
+    
+    // Set Test baseDirectory before crossSparkSettings() so it uses the correct directory
+    Test / baseDirectory := (sparkV1 / baseDirectory).value,
+    
     crossSparkSettings(),
     
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
@@ -657,23 +661,7 @@ lazy val spark = (project in file("spark-combined"))
     Test / unmanagedResourceDirectories := Seq(
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
     ),
-    
-    // Include Spark-version-specific test sources
-    Test / unmanagedSourceDirectories ++= {
-      val sparkVer = sparkVersion.value
-      val sparkDir = (sparkV1 / baseDirectory).value
-      if (sparkVer.startsWith("3.5")) {
-        Seq(sparkDir / "src" / "test" / "scala-spark-3.5")
-      } else if (sparkVer.startsWith("4.0")) {
-        Seq(sparkDir / "src" / "test" / "scala-spark-master")
-      } else {
-        Seq.empty
-      }
-    },
-    
-    // Tests run in spark/ directory
-    Test / baseDirectory := (sparkV1 / baseDirectory).value,
-    
+
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -694,7 +682,25 @@ lazy val spark = (project in file("spark-combined"))
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
+    
+    javaOptions += "-Xmx1024m",
+    
+    // Configurations to speed up tests and reduce memory footprint
+    Test / javaOptions ++= Seq(
+      "-Dspark.ui.enabled=false",
+      "-Dspark.ui.showConsoleProgress=false",
+      "-Dspark.databricks.delta.snapshotPartitions=2",
+      "-Dspark.sql.shuffle.partitions=5",
+      "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
+      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+      "-Xmx1024m"
+    ),
+    
+    // Required for testing table features
     Test / envVars += ("DELTA_TESTING", "1"),
     Test / fork := true,
 
