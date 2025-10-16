@@ -335,11 +335,16 @@ lazy val connectClient = (project in file("spark-connect/client"))
       if (!distributionDir.exists()) {
         val jarsDir = distributionDir / "jars"
         IO.createDirectory(jarsDir)
-        // Create symlinks for all dependencies.
+        // Create symlinks for JAR dependencies only (skip classes directories to avoid name conflicts)
         serverClassPath.distinct.foreach { entry =>
           val jarFile = entry.data.toPath
-          val linkedJarFile = jarsDir / entry.data.getName
-          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+          // Only create symlinks for JAR files, not classes directories
+          if (jarFile.toString.endsWith(".jar")) {
+            val linkedJarFile = jarsDir / entry.data.getName
+            if (!linkedJarFile.exists()) {
+              Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+            }
+          }
         }
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
@@ -522,9 +527,6 @@ lazy val sparkV1Shaded = (project in file("spark-v1-shaded"))
         path.contains("org/apache/spark/sql/delta/OptimisticTransaction")
       }
     },
-    
-    // Inherit v1's classpath for compilation
-    Compile / dependencyClasspath := (sparkV1 / Compile / dependencyClasspath).value,
   )
 
 // ============================================================
@@ -580,6 +582,9 @@ lazy val spark = (project in file("spark-combined"))
     releaseSettings, // Published to Maven as delta-spark.jar
     crossSparkSettings(),
     
+    // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
+    mimaCurrentClassfiles := (Compile / packageBin).value,
+    
     // Export as JAR to dependent projects (e.g., connectServer, connectClient).
     // This prevents classpath conflicts from internal module 'classes' directories.
     exportJars := true,
@@ -587,20 +592,36 @@ lazy val spark = (project in file("spark-combined"))
     // Internal module artifact names to exclude from published POM
     internalModuleNames := Set("delta-spark-v1", "delta-spark-v1-shaded", "delta-spark-v2"),
 
-    // Merge all classes from internal modules into final JAR
-    Compile / compile := {
-      val _ = (Compile / compile).value
-      val classesDir = (Compile / classDirectory).value
-      val v1Classes = (sparkV1 / Compile / classDirectory).value
-      val v2Classes = (sparkV2 / Compile / classDirectory).value
-      val storageClasses = (storage / Compile / classDirectory).value
-
-      IO.createDirectory(classesDir)
-      IO.copyDirectory(v1Classes, classesDir, overwrite = false, preserveLastModified = true)
-      IO.copyDirectory(storageClasses, classesDir, overwrite = false, preserveLastModified = true)
-      IO.copyDirectory(v2Classes, classesDir, overwrite = true, preserveLastModified = true)
-
-      sbt.internal.inc.Analysis.Empty
+    // Merge classes from internal modules (v1, v2, storage) into final JAR
+    // kernel modules are kept as separate JARs and listed as dependencies in POM
+    Compile / packageBin / mappings ++= {
+      val log = streams.value.log
+      
+      // Collect mappings from internal modules
+      val v1Mappings = (sparkV1 / Compile / packageBin / mappings).value
+      val v2Mappings = (sparkV2 / Compile / packageBin / mappings).value
+      val storageMappings = (storage / Compile / packageBin / mappings).value
+      
+      // Include Python files (from spark/ directory)
+      val pythonMappings = listPythonFiles(baseDirectory.value.getParentFile / "python")
+      
+      // Combine all mappings
+      val allMappings = v1Mappings ++ v2Mappings ++ storageMappings ++ pythonMappings
+      
+      // Detect duplicate class files
+      val classFiles = allMappings.filter(_._2.endsWith(".class"))
+      val duplicates = classFiles.groupBy(_._2).filter(_._2.size > 1)
+      
+      if (duplicates.nonEmpty) {
+        log.error(s"Found ${duplicates.size} duplicate class(es) in packageBin mappings:")
+        duplicates.foreach { case (className, entries) =>
+          log.error(s"  - $className:")
+          entries.foreach { case (file, path) => log.error(s"      from: $file") }
+        }
+        sys.error("Duplicate classes found. This indicates overlapping code between sparkV1, sparkV2, and storage modules.")
+      }
+      
+      allMappings.distinct
     },
     
     // Exclude internal modules from published POM
@@ -624,10 +645,6 @@ lazy val spark = (project in file("spark-combined"))
       val internalModules = internalModuleNames.value
       projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
     },
-    
-    // Include Python files in JAR
-    Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
-      listPythonFiles(baseDirectory.value.getParentFile / "python"),
     
     // Test sources from spark/ directory (sparkV1's directory)
     Test / unmanagedSourceDirectories := {
@@ -768,7 +785,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
-    exportJars := true,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
@@ -862,7 +878,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
-    exportJars := true,
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
