@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
+import static io.delta.kernel.internal.util.ExpressionUtils.createPredicate;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
