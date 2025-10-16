@@ -233,4 +233,37 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       assertCrcExistsAtLatest(engine, tablePath)
     }
   }
+
+  // Note that we can only use SIMPLE when starting from a post-commit snapshot whose transaction
+  // started with a CRC file. Even if there's a CRC file at historical version N-1, we still need to
+  // do a FULL replay to load the CRC file at version N to write it.
+  test("write checksum at historical version => FULL mode") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create version 0 without writing its CRC
+      val txn0 = TableManager.buildCreateTableTransaction(tablePath, testSchema, "xx").build(engine)
+      txn0.commit(engine, emptyIterable())
+
+      // Create version 1 without writing its CRC
+      val snapshot0 = TableManager.loadSnapshot(tablePath).build(engine)
+      val txn1 = snapshot0.buildUpdateTableTransaction("xx", Operation.WRITE).build(engine)
+      txn1.commit(engine, emptyIterable())
+
+      // Create version 2 without writing its CRC
+      val snapshot1 = TableManager.loadSnapshot(tablePath).build(engine)
+      val txn2 = snapshot1.buildUpdateTableTransaction("xx", Operation.WRITE).build(engine)
+      txn2.commit(engine, emptyIterable())
+
+      // Now load the historical snapshot at version 1 and check its mode
+      val historicalSnapshot = TableManager.loadSnapshot(tablePath).atVersion(1).build(engine)
+      assert(historicalSnapshot.getVersion == 1)
+      assert(historicalSnapshot.getStatistics.getChecksumWriteMode == ChecksumWriteMode.FULL)
+
+      // Write checksum for the historical version 1
+      historicalSnapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+
+      // Verify CRC file exists for version 1
+      val snapshot1Again = TableManager.loadSnapshot(tablePath).atVersion(1).build(engine)
+      assert(snapshot1Again.getStatistics.getChecksumWriteMode == ChecksumWriteMode.NONE)
+    }
+  }
 }

@@ -263,15 +263,22 @@ public class SnapshotImpl implements Snapshot {
 
   @Override
   public void writeChecksum(Engine engine, Snapshot.ChecksumWriteMode mode) throws IOException {
+    final Snapshot.ChecksumWriteMode actual = getStatistics().getChecksumWriteMode();
+
+    if (actual != mode) {
+      logger.warn("Requested {} mode but actual mode is {}.", mode, actual);
+    }
+
     switch (mode) {
       case NONE:
-        logger.info("Skipping writing checksum file: already exists");
+        logger.info("Skipping writing checksum file: input mode was NONE");
         return;
       case SIMPLE:
         if (!logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
           throw new IllegalStateException(
               "Cannot write simple checksum: checksum info not available");
         }
+
         logger.info("Executing checksum write in SIMPLE mode");
         final CRCInfo crcInfo = logReplay.getCrcInfoAtSnapshotVersion().get();
         new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
