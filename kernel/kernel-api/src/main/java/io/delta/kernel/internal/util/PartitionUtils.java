@@ -321,7 +321,7 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnScanFileSchema(
       Predicate predicate, Map<String, StructField> partitionColMetadata) {
-    return createPartitionPredicate(
+    return createPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewritePartitionColumnRef(child, partitionColMetadata))
