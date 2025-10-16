@@ -335,15 +335,12 @@ lazy val connectClient = (project in file("spark-connect/client"))
       if (!distributionDir.exists()) {
         val jarsDir = distributionDir / "jars"
         IO.createDirectory(jarsDir)
-        // Create symlinks for JAR dependencies only (skip classes directories to avoid name conflicts)
+        // Create symlinks for all dependencies
         serverClassPath.distinct.foreach { entry =>
           val jarFile = entry.data.toPath
-          // Only create symlinks for JAR files, not classes directories
-          if (jarFile.toString.endsWith(".jar")) {
-            val linkedJarFile = jarsDir / entry.data.getName
-            if (!linkedJarFile.exists()) {
-              Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
-            }
+          val linkedJarFile = jarsDir / entry.data.getName
+          if (!linkedJarFile.exists()) {
+            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
           }
         }
         // Create a symlink for the log4j properties
@@ -643,8 +640,14 @@ lazy val spark = (project in file("spark-combined"))
       }).transform(node).head
     },
     
+    // Don't include repositories in published POM
+    // Maven Central artifacts should only depend on other Maven Central artifacts,
+    // not on custom repositories (e.g., Apache snapshot repos)
     pomIncludeRepository := { _ => false },
     
+    // Filter internal modules from project dependencies
+    // This works together with pomPostProcess to ensure internal modules
+    // (sparkV1, sparkV2, sparkV1Shaded) are not listed as dependencies in POM
     projectDependencies := {
       val internalModules = internalModuleNames.value
       projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
@@ -791,6 +794,11 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
+    
+    // Use unique classDirectory name to avoid conflicts in connectClient test setup
+    // This allows connectClient to create symlinks without FileAlreadyExistsException
+    Compile / classDirectory := target.value / "scala-2.12" / "kernel-api-classes",
+    
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
@@ -884,6 +892,11 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
+    
+    // Use unique classDirectory name to avoid conflicts in connectClient test setup
+    // This allows connectClient to create symlinks without FileAlreadyExistsException
+    Compile / classDirectory := target.value / "scala-2.12" / "kernel-defaults-classes",
+    
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
