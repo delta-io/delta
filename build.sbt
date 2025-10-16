@@ -436,6 +436,8 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
+    // Force Avro 1.12.0 to support Iceberg 1.9.0
+    dependencyOverrides += "org.apache.avro" % "avro" % "1.12.0",
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
