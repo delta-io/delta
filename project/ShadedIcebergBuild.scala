@@ -23,7 +23,6 @@ import sbtassembly.*
 
 object ShadedIcebergBuild {
   val icebergExclusionRules = List.apply(
-    ExclusionRule("org.apache.avro"),
     ExclusionRule("com.github.ben-manes.caffeine"),
     ExclusionRule("io.netty"),
     ExclusionRule("org.apache.httpcomponents.client5"),
@@ -126,6 +125,9 @@ object ShadedIcebergBuild {
       MergeStrategy.first
     case PathList("org", "slf4j", xs @ _*) =>
       // SLF4J is provided by Spark runtime, exclude from assembly
+      MergeStrategy.discard
+    case PathList("org", "apache", "avro", xs @ _*) =>
+      // Avro is provided by Spark runtime, exclude from assembly
       MergeStrategy.discard
     case x => prev(x)
   }
