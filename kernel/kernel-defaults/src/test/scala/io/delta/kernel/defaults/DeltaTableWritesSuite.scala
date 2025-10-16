@@ -233,7 +233,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // Create table
       val table = Table.forPath(engine, tablePath)
       val txn0 = getCreateTxn(engine, tablePath, testSchema)
-        .commit(engine, emptyIterable())
+      commitTransaction(txn0, engine, emptyIterable())
+
       // Create txn1 with config changes
       val txn1 = getUpdateTxn(
         engine,
