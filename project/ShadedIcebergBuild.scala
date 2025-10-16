@@ -35,6 +35,7 @@ object ShadedIcebergBuild {
     ExclusionRule("commons-codec"),
     ExclusionRule("com.fasterxml.jackson.core"),
     ExclusionRule("com.fasterxml.jackson.databind"),
+    ExclusionRule("org.jspecify.annotations"),
   )
 
   val hadoopClientExclusionRules = List.apply(
