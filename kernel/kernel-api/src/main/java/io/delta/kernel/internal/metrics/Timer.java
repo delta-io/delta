@@ -102,8 +102,10 @@ public class Timer {
   public <T, E extends Exception> T timeChecked(ThrowingSupplier<T, E> operation) throws E {
     try (Timed ignore = start()) {
       return operation.get();
+    } catch (RuntimeException | Error e) {
+      throw e;
     } catch (Exception e) {
-      // Safe cast since operation can only throw E or unchecked exceptions
+      // Safe cast since operation can only throw E or unchecked exceptions (handled above)
       throw (E) e;
     }
   }
