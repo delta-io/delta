@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.read;
 
 import io.delta.kernel.internal.actions.AddFile;
+import org.apache.spark.sql.delta.sources.AdmittableFile;
 
 /**
  * Java version of IndexedFile.scala that uses Kernel's action classes.
@@ -24,7 +25,7 @@ import io.delta.kernel.internal.actions.AddFile;
  *
  * <p>Indexed: refers to the index in DeltaSourceOffset, assigned by the streaming engine.
  */
-public class IndexedFile {
+public class IndexedFile implements AdmittableFile {
   private final long version;
   private final long index;
   private final AddFile addFile;
@@ -45,6 +46,16 @@ public class IndexedFile {
 
   public AddFile getAddFile() {
     return addFile;
+  }
+
+  @Override
+  public boolean hasFileAction() {
+    return addFile != null;
+  }
+
+  @Override
+  public long getFileSize() {
+    return addFile != null ? addFile.getSize() : 0L;
   }
 
   @Override
