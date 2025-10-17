@@ -71,6 +71,19 @@ public class MapType extends DataType {
   }
 
   @Override
+  public boolean equivalentIgnoreCollations(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    MapType mapType = (MapType) dataType;
+    return keyField.equalsIgnoreCollations(mapType.keyField)
+        && valueField.equalsIgnoreCollations(mapType.valueField);
+  }
+
+  @Override
   public boolean equals(Object o) {
     if (this == o) {
       return true;
