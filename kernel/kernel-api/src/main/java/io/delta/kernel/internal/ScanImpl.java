@@ -366,7 +366,7 @@ public class ScanImpl implements Scan {
     // pruning it after is much simpler
     StructType prunedStatsSchema =
         DataSkippingUtils.pruneStatsSchema(
-            getStatsSchema(metadata.getDataSchema(), dataSkippingFilter.getReferencedCollations()), dataSkippingFilter.getReferencedCols());
+            getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
 
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
