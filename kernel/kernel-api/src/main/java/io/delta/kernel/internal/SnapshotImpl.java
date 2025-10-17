@@ -265,27 +265,35 @@ public class SnapshotImpl implements Snapshot {
   public void writeChecksum(Engine engine, Snapshot.ChecksumWriteMode mode) throws IOException {
     final Snapshot.ChecksumWriteMode actual = getStatistics().getChecksumWriteMode();
 
-    if (actual != mode) {
-      logger.warn("Requested {} mode but actual mode is {}.", mode, actual);
-    }
-
     switch (mode) {
       case NONE:
         logger.info("Skipping writing checksum file: input mode was NONE");
+        if (actual != ChecksumWriteMode.NONE) {
+          logger.warn("Note that the checksum file does NOT actually exist");
+        }
         return;
       case SIMPLE:
-        final CRCInfo crcInfo =
-            logReplay
-                .getCrcInfoAtSnapshotVersion()
-                .orElseThrow(
-                    () ->
-                        new IllegalStateException(
-                            "Cannot write checksum in mode SIMPLE: info not available"));
+        if (actual == ChecksumWriteMode.NONE) {
+          logger.warn("Not writing checksum in SIMPLE mode: checksum file already exists");
+          return;
+        }
+        if (actual == ChecksumWriteMode.FULL) {
+          throw new IllegalStateException(
+              "Cannot write checksum in SIMPLE mode: FULL mode required");
+        }
 
+        final CRCInfo crcInfo = logReplay.getCrcInfoAtSnapshotVersion().get();
         logger.info("Executing checksum write in SIMPLE mode");
         new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
         return;
       case FULL:
+        if (actual == ChecksumWriteMode.NONE) {
+          logger.warn("Not writing checksum as FULL mode: checksum file already exists");
+          return;
+        }
+        if (actual == ChecksumWriteMode.SIMPLE) {
+          logger.warn("Requested checksum write in FULL mode, but SIMPLE mode is available");
+        }
         logger.info("Executing checksum write in FULL mode");
         ChecksumUtils.computeStateAndWriteChecksum(engine, getLogSegment());
         return;
