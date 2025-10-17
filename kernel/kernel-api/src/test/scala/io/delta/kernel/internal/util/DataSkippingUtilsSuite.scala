@@ -16,20 +16,53 @@
 package io.delta.kernel.internal.util
 
 import scala.collection.JavaConverters._
-
-import io.delta.kernel.expressions.Column
-import io.delta.kernel.internal.skipping.DataSkippingUtils
-import io.delta.kernel.types.{DataType, StructField, StructType}
+import io.delta.kernel.expressions.{Column, Expression, Predicate}
+import io.delta.kernel.internal.skipping.{DataSkippingPredicate, DataSkippingUtils}
+import io.delta.kernel.internal.skipping.DataSkippingUtils.constructDataSkippingFilter
+import io.delta.kernel.internal.skipping.StatsSchemaHelper.{MAX, MIN, STATS_WITH_COLLATION}
+import io.delta.kernel.internal.util.ExpressionUtils.createPredicate
+import io.delta.kernel.types.{CollationIdentifier, DataType, IntegerType, StringType, StructField, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
-
+import io.delta.kernel.test.TestUtils
 import org.scalatest.funsuite.AnyFunSuite
 
-class DataSkippingUtilsSuite extends AnyFunSuite {
+import java.util.Optional
+
+class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
 
   def col(name: String): Column = new Column(name)
 
   def nestedCol(name: String): Column = {
     new Column(name.split("\\."))
+  }
+
+  def dataSkippingPredicate(
+                             operator: String,
+                             children: Seq[Expression],
+                             referencedColumns: Set[Column]): DataSkippingPredicate = {
+    new DataSkippingPredicate(operator, children.asJava, referencedColumns.asJava)
+  }
+
+  def dataSkippingPredicate(
+                             operator: String,
+                             left: DataSkippingPredicate,
+                             right: DataSkippingPredicate): DataSkippingPredicate = {
+    new DataSkippingPredicate(operator, left, right)
+  }
+
+  def dataSkippingPredicateWithCollation(
+                                          operator: String,
+                                          children: Seq[Expression],
+                                          collation: CollationIdentifier,
+                                          referencedColumns: Set[Column]): DataSkippingPredicate = {
+    new DataSkippingPredicate(operator, children.asJava, collation, referencedColumns.asJava)
+  }
+
+  private def collatedStatsCol(
+                                collation: CollationIdentifier,
+                                statName: String,
+                                fieldName: String): Column = {
+    new Column(Array(STATS_WITH_COLLATION, collation.toString, statName, fieldName))
   }
 
   /* For struct type checks for equality based on field names & data type only */
@@ -158,5 +191,330 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       testSchema,
       Set(),
       new StructType())
+  }
+
+  // TODO: add tests for remaining operators
+  test("check constructDataSkippingFilter") {
+    val testCases = Seq(
+      // (schema, predicate, expectedDataSkippingPredicateOpt)
+      (
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", StringType.STRING),
+        createPredicate("<", col("a"), col("b"), Optional.empty[CollationIdentifier]),
+        None),
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER)
+          .add("b", StringType.STRING),
+        createPredicate("<", col("a"), literal("x"), Optional.empty[CollationIdentifier]),
+        Some(dataSkippingPredicate(
+          "<",
+          Seq(nestedCol(s"$MIN.a"), literal("x")),
+          Set(nestedCol(s"$MIN.a"))))),
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER)
+          .add("b", StringType.STRING),
+        createPredicate("<", literal("x"), col("a"), Optional.empty[CollationIdentifier]),
+        Some(dataSkippingPredicate(
+          ">",
+          Seq(nestedCol(s"$MAX.a"), literal("x")),
+          Set(nestedCol(s"$MAX.a"))))),
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER)
+          .add("b", StringType.STRING),
+        createPredicate(">", col("a"), literal("x"), Optional.empty[CollationIdentifier]),
+        Some(dataSkippingPredicate(
+          ">",
+          Seq(nestedCol(s"$MAX.a"), literal("x")),
+          Set(nestedCol(s"$MAX.a"))))),
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        createPredicate("=", col("a"), literal(10), Optional.empty[CollationIdentifier]),
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicate(
+            "<=",
+            Seq(nestedCol(s"$MIN.a"), literal(10)),
+            Set(nestedCol(s"$MIN.a"))),
+          dataSkippingPredicate(
+            ">=",
+            Seq(nestedCol(s"$MAX.a"), literal(10)),
+            Set(nestedCol(s"$MAX.a")))))),
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        new Predicate(
+          "NOT",
+          createPredicate("<", col("a"), literal(10), Optional.empty[CollationIdentifier])),
+        Some(dataSkippingPredicate(
+          ">=",
+          Seq(nestedCol(s"$MAX.a"), literal(10)),
+          Set(nestedCol(s"$MAX.a"))))),
+      // NOT over AND: NOT(a < 5 AND a > 10) => (max.a >= 5) OR (min.a <= 10)
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "AND",
+            createPredicate("<", col("a"), literal(5), Optional.empty[CollationIdentifier]),
+            createPredicate(">", col("a"), literal(10), Optional.empty[CollationIdentifier]),
+            Optional.empty[CollationIdentifier])),
+        Some(dataSkippingPredicate(
+          "OR",
+          dataSkippingPredicate(
+            ">=",
+            Seq(nestedCol(s"$MAX.a"), literal(5)),
+            Set(nestedCol(s"$MAX.a"))),
+          dataSkippingPredicate(
+            "<=",
+            Seq(nestedCol(s"$MIN.a"), literal(10)),
+            Set(nestedCol(s"$MIN.a")))))),
+      // NOT over OR: NOT(a < 5 OR a > 10) => (max.a >= 5) AND (min.a <= 10)
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "OR",
+            createPredicate("<", col("a"), literal(5), Optional.empty[CollationIdentifier]),
+            createPredicate(">", col("a"), literal(10), Optional.empty[CollationIdentifier]),
+            Optional.empty[CollationIdentifier])),
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicate(
+            ">=",
+            Seq(nestedCol(s"$MAX.a"), literal(5)),
+            Set(nestedCol(s"$MAX.a"))),
+          dataSkippingPredicate(
+            "<=",
+            Seq(nestedCol(s"$MIN.a"), literal(10)),
+            Set(nestedCol(s"$MIN.a")))))),
+      // NOT over OR with one ineligible leg: NOT(a < b OR a < 5) => NOT(a < b) AND NOT(a < 5)
+      // The first leg is ineligible; AND with single leg should return that leg only
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER)
+          .add("b", IntegerType.INTEGER),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "OR",
+            createPredicate("<", col("a"), col("b"), Optional.empty[CollationIdentifier]),
+            createPredicate("<", col("a"), literal(5), Optional.empty[CollationIdentifier]),
+            Optional.empty[CollationIdentifier])),
+        Some(dataSkippingPredicate(
+          ">=",
+          Seq(nestedCol(s"$MAX.a"), literal(5)),
+          Set(nestedCol(s"$MAX.a"))))),
+      // NOT over AND with one ineligible leg: NOT(a < 5 AND a < b)
+      // => NOT(a < 5) OR NOT(a < b); since OR needs both legs, expect None
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER)
+          .add("b", IntegerType.INTEGER),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "AND",
+            createPredicate("<", col("a"), literal(5), Optional.empty[CollationIdentifier]),
+            createPredicate("<", col("a"), col("b"), Optional.empty[CollationIdentifier]),
+            Optional.empty[CollationIdentifier])),
+        None),
+      // Double NOT elimination: NOT(NOT(a < 5)) => a < 5 => min.a < 5
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        new Predicate(
+          "NOT",
+          new Predicate(
+            "NOT",
+            createPredicate("<", col("a"), literal(5), Optional.empty[CollationIdentifier]))),
+        Some(dataSkippingPredicate(
+          "<",
+          Seq(nestedCol(s"$MIN.a"), literal(5)),
+          Set(nestedCol(s"$MIN.a"))))),
+      // Cross-column case: NOT(a < 5 OR b > 7) => (max.a >= 5) AND (min.b <= 7)
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER)
+          .add("b", IntegerType.INTEGER),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "OR",
+            createPredicate("<", col("a"), literal(5), Optional.empty[CollationIdentifier]),
+            createPredicate(">", col("b"), literal(7), Optional.empty[CollationIdentifier]),
+            Optional.empty[CollationIdentifier])),
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicate(
+            ">=",
+            Seq(nestedCol(s"$MAX.a"), literal(5)),
+            Set(nestedCol(s"$MAX.a"))),
+          dataSkippingPredicate(
+            "<=",
+            Seq(nestedCol(s"$MIN.b"), literal(7)),
+            Set(nestedCol(s"$MIN.b")))))))
+
+    testCases.foreach { case (schema, predicate, expectedDataSkippingPredicateOpt) =>
+      val dataSkippingPredicateOpt = optionalToScala(constructDataSkippingFilter(predicate, schema))
+      (dataSkippingPredicateOpt, expectedDataSkippingPredicateOpt) match {
+        case (Some(dataSkippingPredicate), Some(expectedDataSkippingPredicate)) =>
+          assert(dataSkippingPredicate == expectedDataSkippingPredicate)
+        case (None, None) => // pass
+        case _ =>
+          fail(s"Expected $expectedDataSkippingPredicateOpt, found $dataSkippingPredicateOpt")
+      }
+    }
+  }
+
+  test("check constructDataSkippingFilter with collations") {
+    val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+    val unicode = CollationIdentifier.fromString("ICU.UNICODE")
+
+    val testCases = Seq(
+      // (schema, predicate, expectedDataSkippingPredicateOpt)
+      // Ineligible: both sides are columns
+      (
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", StringType.STRING),
+        createPredicate("<", col("a"), col("b"), Optional.of(utf8Lcase)),
+        None),
+      // Eligible: a < "m" with collation -> min(a, collation) < "m"
+      (
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", StringType.STRING),
+        createPredicate("<", col("a"), literal("m"), Optional.of(utf8Lcase)), {
+        val minA = collatedStatsCol(utf8Lcase, MIN, "a")
+        Some(dataSkippingPredicateWithCollation(
+          "<",
+          Seq(minA, literal("m")),
+          utf8Lcase,
+          Set(minA)))
+      }),
+      // Reversed comparator: "m" < a -> max(a, collation) > "m"
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate("<", literal("m"), col("a"), Optional.of(utf8Lcase)), {
+        val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
+        Some(dataSkippingPredicateWithCollation(
+          ">",
+          Seq(maxA, literal("m")),
+          utf8Lcase,
+          Set(maxA)))
+      }),
+      // Direct ">": a > "m" -> max(a, collation) > "m"
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate(">", col("a"), literal("m"), Optional.of(utf8Lcase)), {
+        val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
+        Some(dataSkippingPredicateWithCollation(
+          ">",
+          Seq(maxA, literal("m")),
+          utf8Lcase,
+          Set(maxA)))
+      }),
+      // Equality
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate("=", col("a"), literal("abc"), Optional.of(unicode)), {
+        val minA = collatedStatsCol(unicode, MIN, "a")
+        val maxA = collatedStatsCol(unicode, MAX, "a")
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicateWithCollation("<=", Seq(minA, literal("abc")), unicode, Set(minA)),
+          dataSkippingPredicateWithCollation(
+            ">=",
+            Seq(maxA, literal("abc")),
+            unicode,
+            Set(maxA))))
+      }),
+      // NOT over comparator: NOT(a < "m") -> max(a, collation) >= "m"
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        new Predicate(
+          "NOT",
+          createPredicate("<", col("a"), literal("m"), Optional.of(utf8Lcase))), {
+        val maxA = collatedStatsCol(utf8Lcase, MAX, "a")
+        Some(dataSkippingPredicateWithCollation(
+          ">=",
+          Seq(maxA, literal("m")),
+          utf8Lcase,
+          Set(maxA)))
+      }),
+      // NOT over AND
+      // NOT(a < "m" AND a > "t") => (max.a >= "m") OR (min.a <= "t")
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "AND",
+            createPredicate("<", col("a"), literal("m"), Optional.of(unicode)),
+            createPredicate(">", col("a"), literal("t"), Optional.of(utf8Lcase)),
+            Optional.empty[CollationIdentifier])), {
+        val unicodeMaxA = collatedStatsCol(unicode, MAX, "a")
+        val utf8LcaseMinA = collatedStatsCol(utf8Lcase, MIN, "a")
+        Some(dataSkippingPredicate(
+          "OR",
+          dataSkippingPredicateWithCollation(
+            ">=",
+            Seq(unicodeMaxA, literal("m")),
+            unicode,
+            Set(unicodeMaxA)),
+          dataSkippingPredicateWithCollation(
+            "<=",
+            Seq(utf8LcaseMinA, literal("t")),
+            utf8Lcase,
+            Set(utf8LcaseMinA))))
+      }),
+      // AND(a < "m" COLLATE UTF8_LCASE, b < 1)
+      (
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", IntegerType.INTEGER),
+        createPredicate(
+          "AND",
+          createPredicate("<", col("a"), literal("m"), Optional.of(utf8Lcase)),
+          createPredicate("<", col("b"), literal(1), Optional.empty[CollationIdentifier]),
+          Optional.empty[CollationIdentifier]), {
+        val minA = collatedStatsCol(utf8Lcase, MIN, "a")
+        val minB = nestedCol(s"$MIN.b")
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicateWithCollation("<", Seq(minA, literal("m")), utf8Lcase, Set(minA)),
+          dataSkippingPredicate("<", Seq(minB, literal(1)), Set(minB))))
+      }),
+      // Ineligible: non-string column with collation
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        createPredicate("<", col("a"), literal("m"), Optional.of(utf8Lcase)),
+        None))
+
+    testCases.foreach { case (schema, predicate, expectedDataSkippingPredicateOpt) =>
+      val dataSkippingPredicateOpt = optionalToScala(constructDataSkippingFilter(predicate, schema))
+      (dataSkippingPredicateOpt, expectedDataSkippingPredicateOpt) match {
+        case (Some(dataSkippingPredicate), Some(expectedDataSkippingPredicate)) =>
+          assert(dataSkippingPredicate == expectedDataSkippingPredicate)
+        case (None, None) => // pass
+        case _ =>
+          fail(s"Expected $expectedDataSkippingPredicateOpt, found $dataSkippingPredicateOpt")
+      }
+    }
   }
 }

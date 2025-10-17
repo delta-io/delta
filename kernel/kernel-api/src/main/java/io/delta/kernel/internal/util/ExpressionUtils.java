@@ -19,7 +19,10 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.types.CollationIdentifier;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 public class ExpressionUtils {
   /** Return an expression cast as a predicate, throw an error if it is not a predicate */
@@ -50,5 +53,22 @@ public class ExpressionUtils {
     checkArgument(
         children.size() == 1, "%s: expected one inputs, but got %s", expression, children.size());
     return children.get(0);
+  }
+
+  public static Predicate createPredicate(
+      String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
+    if (collationIdentifier.isPresent()) {
+      return new Predicate(name, children, collationIdentifier.get());
+    } else {
+      return new Predicate(name, children);
+    }
+  }
+
+  public static Predicate createPredicate(
+      String name,
+      Expression left,
+      Expression right,
+      Optional<CollationIdentifier> collationIdentifier) {
+    return createPredicate(name, Arrays.asList(left, right), collationIdentifier);
   }
 }
