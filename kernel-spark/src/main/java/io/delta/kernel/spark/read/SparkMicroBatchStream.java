@@ -551,7 +551,6 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         output.add(new IndexedFile(version, index++, addFile));
       }
     }
-
     return index;
   }
 }
