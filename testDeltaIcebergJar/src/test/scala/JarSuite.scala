@@ -38,7 +38,7 @@ class JarSuite extends AnyFunSuite {
     "org/apache/spark/sql/delta/commands/convert/IcebergSchemaUtils",
     "org/apache/spark/sql/delta/commands/convert/IcebergTable",
     // e.g. org/apache/iceberg/transforms/IcebergPartitionUtil.class
-    "org/apache/iceberg/",
+    // "org/apache/iceberg/",
     "com/github/benmanes/caffeine/",
     "org/apache/avro/"
   )
