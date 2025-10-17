@@ -702,7 +702,7 @@ lazy val spark = (project in file("spark-combined"))
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
       "-Xmx1024m"
     ),
-    
+
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
     Test / fork := true,
