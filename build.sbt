@@ -580,6 +580,19 @@ lazy val spark = (project in file("spark-combined"))
     // Set Test baseDirectory before crossSparkSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
     
+    // Test sources from spark/ directory (sparkV1's directory)
+    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
+    Test / unmanagedSourceDirectories := {
+      val sparkDir = (sparkV1 / baseDirectory).value
+      Seq(
+        sparkDir / "src" / "test" / "scala",
+        sparkDir / "src" / "test" / "java"
+      )
+    },
+    Test / unmanagedResourceDirectories := Seq(
+      (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
+    ),
+    
     crossSparkSettings(),
     
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
@@ -649,18 +662,6 @@ lazy val spark = (project in file("spark-combined"))
       projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
     },
     
-    // Test sources from spark/ directory (sparkV1's directory)
-    Test / unmanagedSourceDirectories := {
-      val sparkDir = (sparkV1 / baseDirectory).value
-      Seq(
-        sparkDir / "src" / "test" / "scala",
-        sparkDir / "src" / "test" / "java"
-      )
-    },
-    Test / unmanagedResourceDirectories := Seq(
-      (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
-    ),
-
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
