@@ -86,6 +86,28 @@ public class Timer {
     }
   }
 
+  /**
+   * Times an operation that can throw a specific checked exception type.
+   *
+   * @param <T> The return type
+   * @param <E> The exception type that can be thrown
+   */
+  @FunctionalInterface
+  public interface ThrowingSupplier<T, E extends Exception> {
+    T get() throws E;
+  }
+
+  /** Times an operation that can throw a specific checked exception type. */
+  @SuppressWarnings("unchecked")
+  public <T, E extends Exception> T timeChecked(ThrowingSupplier<T, E> operation) throws E {
+    try (Timed ignore = start()) {
+      return operation.get();
+    } catch (Exception e) {
+      // Safe cast since operation can only throw E or unchecked exceptions
+      throw (E) e;
+    }
+  }
+
   public void time(Runnable runnable) {
     try (Timed ignore = start()) {
       runnable.run();
