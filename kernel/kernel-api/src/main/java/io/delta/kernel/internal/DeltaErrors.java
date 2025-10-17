@@ -365,6 +365,19 @@ public final class DeltaErrors {
 
   // Start: Column Defaults Exceptions
 
+  // TODO migrate this to InvalidTableException when table info is available at the call site
+  public static KernelException defaultValueRequiresTableFeature() {
+    return new KernelException(
+        "Found column defaults in the schema but the table does not support the "
+            + "columnDefaults table feature.");
+  }
+
+  public static KernelException defaultValueRequireIcebergV3() {
+    return new KernelException(
+        "In Delta Kernel, default values table feature requires "
+            + "IcebergCompatV3 to be enabled.");
+  }
+
   public static KernelException nonLiteralDefaultValue(String value) {
     return new KernelException(
         String.format(

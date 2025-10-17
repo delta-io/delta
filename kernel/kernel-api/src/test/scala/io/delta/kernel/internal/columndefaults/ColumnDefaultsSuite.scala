@@ -78,16 +78,23 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
           new StructType().add("clid", IntegerType.INTEGER, metadataForDefault("300")),
           false))
     ColumnDefaults.validateSchema(correctSchema, true, true)
-    val e = intercept[KernelException] {
+    var e = intercept[KernelException] {
       ColumnDefaults.validateSchema(correctSchema, true, false)
     }
     assert(e.getMessage ==
       "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.")
-    val e2 = intercept[KernelException] {
+    // Validate column default requires v3 even if schema has no defaults
+    e = intercept[KernelException] {
+      ColumnDefaults.validateSchema(new StructType().add("key", IntegerType.INTEGER), true, false)
+    }
+    assert(e.getMessage ==
+      "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.")
+
+    e = intercept[KernelException] {
       ColumnDefaults.validateSchema(correctSchema, false, true)
     }
-    assert(e2.getMessage ==
-      "This table does not enable table features for setting column defaults")
+    assert(e.getMessage == "Found column defaults in the schema but the table does not support" +
+      " the columnDefaults table feature.")
 
     val unsupportedCases = Seq(
       new StructType().add("sub", IntegerType.INTEGER),
@@ -98,9 +105,11 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
       val schemaWithUnsupportedType = new StructType()
         .add("id", IntegerType.INTEGER)
         .add("col1", dataType, metadataForDefault("120"))
-      intercept[KernelException] {
+      e = intercept[KernelException] {
         ColumnDefaults.validateSchema(schemaWithUnsupportedType, true, true)
       }
+      assert(e.getMessage.contains(
+        "currently only literal values are supported for default values in Kernel."))
     }
 
     val badCases = Seq(
@@ -157,9 +166,11 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
             new StructType().add("mapValueId", dataType, metadataForDefault(defaultValue)),
             false))
       Seq(badSchema1, badSchema2, badSchema3, badSchema4).foreach(schema => {
-        intercept[KernelException] {
+        e = intercept[KernelException] {
           ColumnDefaults.validateSchema(schema, true, true)
         }
+        assert(e.getMessage.contains(
+          "currently only literal values are supported for default values in Kernel."))
       })
     }
   }

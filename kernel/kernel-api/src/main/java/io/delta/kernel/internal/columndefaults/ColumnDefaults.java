@@ -61,14 +61,12 @@ public class ColumnDefaults {
   public static void validateSchema(
       StructType schema, boolean isEnabled, boolean isIcebergCompatV3Enabled) {
     if (isEnabled && !isIcebergCompatV3Enabled) {
-      throw new KernelException(
-          "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.");
+      throw DeltaErrors.defaultValueRequireIcebergV3();
     }
     Stream<StructField> defaultValues = extractFieldsWithDefaultValues(schema);
     if (!isEnabled) {
       if (defaultValues.findAny().isPresent()) {
-        throw new KernelException(
-            "This table does not enable table features for setting column defaults");
+        throw DeltaErrors.defaultValueRequiresTableFeature();
       }
     } else {
       // This check will be relaxed once kernel supports default values with expression
@@ -99,9 +97,7 @@ public class ColumnDefaults {
               String defaultValue = getRawDefaultValue(field);
               try {
                 validateLiteral(field.getDataType(), defaultValue);
-              } catch (DateTimeParseException
-                  | IllegalArgumentException
-                  | UnsupportedOperationException e) {
+              } catch (DateTimeParseException | IllegalArgumentException e) {
                 throw DeltaErrors.icebergCompatRequiresLiteralDefaultValue(
                     compatVersion, defaultValue);
               }
@@ -128,6 +124,11 @@ public class ColumnDefaults {
    *   <li>4.95 and '4.95' are both valid Double/Float literals.
    *   <li>'2022-01-01' is a valid Date literal, '09/01/2022' is not.
    * </ul>
+   *
+   * @throws IllegalArgumentException if the value is not a literal value
+   * @throws DateTimeParseException if invalid date is provided to a date column
+   * @throws UnsupportedOperationException when kernel does not support column defaults for the data
+   *     type
    */
   private static void validateLiteral(DataType type, String value) {
     String stripped = stripQuotes(value, false);
