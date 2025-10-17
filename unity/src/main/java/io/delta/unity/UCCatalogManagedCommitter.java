@@ -19,7 +19,6 @@ package io.delta.unity;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.unity.UCCatalogManagedClient.UC_TABLE_ID_KEY;
-import static io.delta.unity.utils.OperationTimer.timeCheckedOperation;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.commit.*;
@@ -37,6 +36,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.unity.adapters.MetadataAdapter;
 import io.delta.unity.adapters.ProtocolAdapter;
+import io.delta.unity.metrics.UcCommitTelemetry;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
@@ -83,16 +83,34 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
     requireNonNull(commitMetadata, "commitMetadata is null");
     validateLogPathBelongsToThisUcTable(commitMetadata);
 
-    final CommitMetadata.CommitType commitType = commitMetadata.getCommitType();
+    final UcCommitTelemetry telemetry =
+        new UcCommitTelemetry(ucTableId, tablePath.toString(), commitMetadata);
+    final UcCommitTelemetry.MetricsCollector metricsCollector = telemetry.getMetricsCollector();
 
-    if (commitType == CommitMetadata.CommitType.CATALOG_CREATE) {
-      return createImpl(engine, finalizedActions, commitMetadata);
-    }
-    if (commitType == CommitMetadata.CommitType.CATALOG_WRITE) {
-      return writeImpl(engine, finalizedActions, commitMetadata);
-    }
+    try {
+      final CommitResponse response =
+          metricsCollector.totalCommitTimer.timeChecked(
+              () -> {
+                final CommitMetadata.CommitType commitType = commitMetadata.getCommitType();
 
-    throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
+                if (commitType == CommitMetadata.CommitType.CATALOG_CREATE) {
+                  return createImpl(engine, finalizedActions, commitMetadata, metricsCollector);
+                }
+                if (commitType == CommitMetadata.CommitType.CATALOG_WRITE) {
+                  return writeImpl(engine, finalizedActions, commitMetadata, metricsCollector);
+                }
+
+                throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
+              });
+
+      final UcCommitTelemetry.Report successfulReport = telemetry.createSuccessReport();
+      engine.getMetricsReporters().forEach(r -> r.report(successfulReport));
+      return response;
+    } catch (CommitFailedException | RuntimeException e) {
+      final UcCommitTelemetry.Report failureReport = telemetry.createFailureReport(e);
+      engine.getMetricsReporters().forEach(r -> r.report(failureReport));
+      throw e;
+    }
   }
 
   @Override
@@ -144,7 +162,10 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
    */
   // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
   private CommitResponse createImpl(
-      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
+      Engine engine,
+      CloseableIterator<Row> finalizedActions,
+      CommitMetadata commitMetadata,
+      UcCommitTelemetry.MetricsCollector metricsCollector)
       throws CommitFailedException {
     checkArgument(
         commitMetadata.getVersion() == 0,
@@ -152,7 +173,8 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
         commitMetadata.getVersion());
 
     final FileStatus kernelPublishedDeltaFileStatus =
-        writeDeltaFile(engine, finalizedActions, commitMetadata.getPublishedDeltaFilePath());
+        writeDeltaFile(
+            engine, finalizedActions, commitMetadata.getPublishedDeltaFilePath(), metricsCollector);
 
     return new CommitResponse(
         ParsedPublishedDeltaData.forFileStatus(kernelPublishedDeltaFileStatus));
@@ -163,15 +185,22 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
    * call) to UC server.
    */
   private CommitResponse writeImpl(
-      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
+      Engine engine,
+      CloseableIterator<Row> finalizedActions,
+      CommitMetadata commitMetadata,
+      UcCommitTelemetry.MetricsCollector metricsCollector)
       throws CommitFailedException {
     checkArgument(
         commitMetadata.getVersion() > 0, "Can only write staged commit files for versions > 0");
 
     final FileStatus kernelStagedCommitFileStatus =
-        writeDeltaFile(engine, finalizedActions, commitMetadata.generateNewStagedCommitFilePath());
+        writeDeltaFile(
+            engine,
+            finalizedActions,
+            commitMetadata.generateNewStagedCommitFilePath(),
+            metricsCollector);
 
-    commitToUC(commitMetadata, kernelStagedCommitFileStatus);
+    commitToUC(commitMetadata, kernelStagedCommitFileStatus, metricsCollector);
 
     return new CommitResponse(ParsedCatalogCommitData.forFileStatus(kernelStagedCommitFileStatus));
   }
@@ -259,14 +288,16 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
    * </ul>
    */
   private FileStatus writeDeltaFile(
-      Engine engine, CloseableIterator<Row> finalizedActions, String filePath)
+      Engine engine,
+      CloseableIterator<Row> finalizedActions,
+      String filePath,
+      UcCommitTelemetry.MetricsCollector metricsCollector)
       throws CommitFailedException {
-    try {
-      return timeCheckedOperation(
-          logger,
-          "Write file: " + filePath,
-          ucTableId,
-          () -> {
+    return metricsCollector.writeCommitFileTimer.timeChecked(
+        () -> {
+          try {
+            logger.info("[{}] Writing file: {}", ucTableId, filePath);
+
             // Note: the engine is responsible for closing the actions iterator once it has been
             //       fully consumed.
             engine
@@ -274,28 +305,33 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 .writeJsonFileAtomically(filePath, finalizedActions, true /* overwrite */);
 
             return engine.getFileSystemClient().getFileStatus(filePath);
-          });
-    } catch (IOException ex) {
-      // Note that as per the JsonHandler::writeJsonFileAtomically API contract with overwrite=true,
-      // FileAlreadyExistsException should not be possible here.
+          } catch (IOException ex) {
+            // Note that as per the JsonHandler::writeJsonFileAtomically API contract with
+            // overwrite=true, FileAlreadyExistsException should not be possible here.
 
-      throw new CommitFailedException(
-          true /* retryable */,
-          false /* conflict */,
-          "Failed to write delta file due to: " + ex.getMessage(),
-          ex);
-    }
+            throw new CommitFailedException(
+                true /* retryable */,
+                false /* conflict */,
+                "Failed to write delta file due to: " + ex.getMessage(),
+                ex);
+          }
+        });
   }
 
-  private void commitToUC(CommitMetadata commitMetadata, FileStatus kernelStagedCommitFileStatus)
+  private void commitToUC(
+      CommitMetadata commitMetadata,
+      FileStatus kernelStagedCommitFileStatus,
+      UcCommitTelemetry.MetricsCollector metricsCollector)
       throws CommitFailedException {
-    timeCheckedOperation(
-        logger,
-        "Commit staged commit file to UC: " + kernelStagedCommitFileStatus.getPath(),
-        ucTableId,
+    metricsCollector.commitToUcServerTimer.timeChecked(
         () -> {
-          // commitToUc is only for normal catalog WRITES, not for CREATE, or UPGRADE, or DOWNGRADE,
-          // or anything filesystem related.
+          logger.info(
+              "[{}] Committing staged commit file to UC: {}",
+              ucTableId,
+              kernelStagedCommitFileStatus.getPath());
+
+          // commitToUc is only for normal catalog WRITES, not for CREATE, or UPGRADE, or
+          // DOWNGRADE, or anything filesystem related.
           checkState(
               commitMetadata.getCommitType() == CommitMetadata.CommitType.CATALOG_WRITE,
               "Only supported commit type is CATALOG_WRITE, but got: %s");
