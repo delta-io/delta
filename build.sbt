@@ -339,9 +339,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
         serverClassPath.distinct.foreach { entry =>
           val jarFile = entry.data.toPath
           val linkedJarFile = jarsDir / entry.data.getName
-          if (!linkedJarFile.exists()) {
-            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
-          }
+          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
         }
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
