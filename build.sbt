@@ -703,7 +703,6 @@ lazy val spark = (project in file("spark-combined"))
 
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
-    Test / fork := true,
 
     TestParallelization.settings,
   )
