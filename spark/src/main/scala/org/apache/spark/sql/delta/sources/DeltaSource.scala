@@ -76,7 +76,7 @@ private[delta] case class IndexedFile(
     add: AddFile,
     remove: RemoveFile = null,
     cdc: AddCDCFile = null,
-    shouldSkip: Boolean = false) {
+    shouldSkip: Boolean = false) extends org.apache.spark.sql.delta.sources.AdmittableFile {
 
   require(Option(add).size + Option(remove).size + Option(cdc).size <= 1,
     "IndexedFile must have at most one of add, remove, or cdc")
@@ -91,11 +91,11 @@ private[delta] case class IndexedFile(
     }
   }
 
-  def hasFileAction: Boolean = {
+  override def hasFileAction(): Boolean = {
     getFileAction != null
   }
 
-  def getFileSize: Long = {
+  override def getFileSize(): Long = {
     if (add != null) {
       add.size
     } else if (remove != null) {
@@ -1279,7 +1279,13 @@ case class DeltaSource(
 
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
 
-  trait DeltaSourceAdmissionBase { self: AdmissionLimits =>
+  /**
+   * Class that helps controlling how much data should be processed by a single micro-batch.
+   */
+  case class AdmissionLimits(
+      maxFiles: Option[Int] = options.maxFilesPerTrigger,
+      var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)
+  ) {
     // This variable indicates whether a commit has already been processed by a batch or not.
     var commitProcessedInBatch = false
 
@@ -1292,9 +1298,9 @@ case class DeltaSource(
      * This overloaded method checks if all the FileActions for a commit can be accommodated by
      * the rate limit.
      */
-    def admit(indexedFiles: Seq[IndexedFile]): Boolean = {
-      def getSize(actions: Seq[IndexedFile]): Long = {
-        actions.filter(_.hasFileAction).foldLeft(0L) { (l, r) => l + r.getFileAction.getFileSize }
+    def admit(indexedFiles: Seq[AdmittableFile]): Boolean = {
+      def getSize(actions: Seq[AdmittableFile]): Long = {
+        actions.filter(_.hasFileAction).foldLeft(0L) { (l, r) => l + r.getFileSize }
       }
       if (indexedFiles.isEmpty) {
         true
@@ -1315,7 +1321,7 @@ case class DeltaSource(
      * Whether to admit the next file. Dummy IndexedFile entries with no attached file action are
      * always admitted.
      */
-    def admit(indexedFile: IndexedFile): Boolean = {
+    def admit(indexedFile: AdmittableFile): Boolean = {
       commitProcessedInBatch = true
 
       if (!indexedFile.hasFileAction) {
@@ -1328,7 +1334,7 @@ case class DeltaSource(
       // will even admit a file when it is larger than the remaining capacity, and that we will
       // admit at least one file.
       val shouldAdmit = hasCapacity
-      take(files = 1, bytes = indexedFile.getFileAction.getFileSize)
+      take(files = 1, bytes = indexedFile.getFileSize)
       shouldAdmit
     }
 
@@ -1336,16 +1342,6 @@ case class DeltaSource(
     def hasCapacity: Boolean = {
       filesToTake > 0 && bytesToTake > 0
     }
-
-  }
-
-  /**
-   * Class that helps controlling how much data should be processed by a single micro-batch.
-   */
-  case class AdmissionLimits(
-      maxFiles: Option[Int] = options.maxFilesPerTrigger,
-      var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)
-  ) extends DeltaSourceAdmissionBase {
 
     var filesToTake = maxFiles.getOrElse {
       if (options.maxBytesPerTrigger.isEmpty) {
