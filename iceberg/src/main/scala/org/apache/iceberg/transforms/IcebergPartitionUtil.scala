@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.iceberg.transforms
+package shadedForDelta.org.apache.iceberg.transforms
 
 import scala.collection.JavaConverters._
 
@@ -22,10 +22,10 @@ import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.commands.convert.TypeToSparkTypeWithCustomCast
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
-import org.apache.iceberg.{PartitionField, PartitionSpec, Schema, StructLike}
-import org.apache.iceberg.types.Type.TypeID
-import org.apache.iceberg.types.Types
-import org.apache.iceberg.types.TypeUtil
+import shadedForDelta.org.apache.iceberg.{PartitionField, PartitionSpec, Schema, StructLike}
+import shadedForDelta.org.apache.iceberg.types.Type.TypeID
+import shadedForDelta.org.apache.iceberg.types.Types
+import shadedForDelta.org.apache.iceberg.types.TypeUtil
 
 import org.apache.spark.sql.types.{DateType, IntegerType, MetadataBuilder, StringType, StructField}
 
