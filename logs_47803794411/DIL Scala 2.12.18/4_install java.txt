@@ -1,0 +1,38 @@
+﻿2025-10-17T00:22:23.3684050Z ##[group]Run actions/setup-java@v3
+2025-10-17T00:22:23.3684324Z with:
+2025-10-17T00:22:23.3684493Z   distribution: zulu
+2025-10-17T00:22:23.3684689Z   java-version: 11
+2025-10-17T00:22:23.3684869Z   java-package: jdk
+2025-10-17T00:22:23.3685085Z   check-latest: false
+2025-10-17T00:22:23.3685275Z   server-id: github
+2025-10-17T00:22:23.3685466Z   server-username: GITHUB_ACTOR
+2025-10-17T00:22:23.3685700Z   server-password: GITHUB_TOKEN
+2025-10-17T00:22:23.3685921Z   overwrite-settings: true
+2025-10-17T00:22:23.3686128Z   job-status: success
+2025-10-17T00:22:23.3686451Z   token: ***
+2025-10-17T00:22:23.3686622Z env:
+2025-10-17T00:22:23.3686792Z   SCALA_VERSION: 2.12.18
+2025-10-17T00:22:23.3690662Z   GIT_DIFF: 'build.sbt' 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java' 'project/TestParallelization.scala' 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java' 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala' 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:23.3698620Z   GIT_DIFF_FILTERED: 'build.sbt' 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java' 'project/TestParallelization.scala' 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java' 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala' 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:23.3702801Z   MATCHED_FILES: 
+2025-10-17T00:22:23.3702985Z ##[endgroup]
+2025-10-17T00:22:23.5705751Z ##[group]Installed distributions
+2025-10-17T00:22:23.5733000Z Trying to resolve the latest version from remote
+2025-10-17T00:22:23.6579362Z Resolved latest version as 11.0.28+6
+2025-10-17T00:22:23.6579857Z Trying to download...
+2025-10-17T00:22:23.6580758Z Downloading Java 11.0.28+6 (Zulu) from https://cdn.azul.com/zulu/bin/zulu11.82.19-ca-jdk11.0.28-linux_x64.tar.gz ...
+2025-10-17T00:22:26.7181377Z Extracting Java archive...
+2025-10-17T00:22:26.7304354Z [command]/usr/bin/tar xz --warning=no-unknown-keyword -C /home/runner/work/_temp/55cd0898-83cb-4282-b029-412175a4362e -f /home/runner/work/_temp/ae327c00-c0bc-4bf7-8af7-5f6e8623f219
+2025-10-17T00:22:29.3354177Z Java 11.0.28+6 was downloaded
+2025-10-17T00:22:29.3355048Z Setting Java 11.0.28+6 as the default
+2025-10-17T00:22:29.3364002Z Creating toolchains.xml for JDK version 11 from zulu
+2025-10-17T00:22:29.3437090Z Writing to /home/runner/.m2/toolchains.xml
+2025-10-17T00:22:29.3437686Z 
+2025-10-17T00:22:29.3438000Z Java configuration:
+2025-10-17T00:22:29.3438503Z   Distribution: zulu
+2025-10-17T00:22:29.3439079Z   Version: 11.0.28+6
+2025-10-17T00:22:29.3439806Z   Path: /opt/hostedtoolcache/Java_Zulu_jdk/11.0.28-6/x64
+2025-10-17T00:22:29.3440736Z 
+2025-10-17T00:22:29.3441746Z ##[endgroup]
+2025-10-17T00:22:29.3511870Z Creating settings.xml with server-id: github
+2025-10-17T00:22:29.3512219Z Writing to /home/runner/.m2/settings.xml

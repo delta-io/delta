@@ -1,0 +1,780 @@
+﻿2025-10-17T00:22:17.0540414Z ##[group]Run technote-space/get-diff-action@v4
+2025-10-17T00:22:17.0540749Z with:
+2025-10-17T00:22:17.0541003Z   PATTERNS: **
+.github/workflows/**
+!kernel/**
+!connectors/**
+
+2025-10-17T00:22:17.0541481Z   GITHUB_TOKEN: ***
+2025-10-17T00:22:17.0541670Z   DOT: ...
+2025-10-17T00:22:17.0541843Z   DIFF_FILTER: AMRC
+2025-10-17T00:22:17.0542018Z   FORMAT: text
+2025-10-17T00:22:17.0542195Z   SEPARATOR:  
+2025-10-17T00:22:17.0542371Z   SET_ENV_NAME: GIT_DIFF
+2025-10-17T00:22:17.0542600Z   SET_ENV_NAME_FILTERED_DIFF: GIT_DIFF_FILTERED
+2025-10-17T00:22:17.0542885Z   SET_ENV_NAME_MATCHED_FILES: MATCHED_FILES
+2025-10-17T00:22:17.0543162Z   COUNT_DEFAULT: 0
+2025-10-17T00:22:17.0543365Z   INSERTIONS_DEFAULT: 0
+2025-10-17T00:22:17.0543552Z   DELETIONS_DEFAULT: 0
+2025-10-17T00:22:17.0543753Z   LINES_DEFAULT: 0
+2025-10-17T00:22:17.0543923Z env:
+2025-10-17T00:22:17.0544088Z   SCALA_VERSION: 2.13.13
+2025-10-17T00:22:17.0544279Z ##[endgroup]
+2025-10-17T00:22:17.1140025Z 
+2025-10-17T00:22:17.1142797Z ==================================================
+2025-10-17T00:22:17.1149082Z Version:  technote-space/get-diff-action@v4.2.0
+2025-10-17T00:22:17.1149799Z           022182ca8427404917213dac4eede8b5da1654e3
+2025-10-17T00:22:17.1150392Z Event:    pull_request
+2025-10-17T00:22:17.1150850Z Action:   synchronize
+2025-10-17T00:22:17.1151348Z sha:      bda796d5e6b81d900adedced2272844d2e7163ca
+2025-10-17T00:22:17.1151971Z ref:      refs/pull/5320/merge
+2025-10-17T00:22:17.1152308Z Labels:
+2025-10-17T00:22:17.1152692Z owner:    delta-io
+2025-10-17T00:22:17.1153194Z repo:     delta
+2025-10-17T00:22:17.1153485Z 
+2025-10-17T00:22:17.1156899Z ##[group]Dump context
+2025-10-17T00:22:17.1185273Z Context {
+2025-10-17T00:22:17.1185639Z   payload: {
+2025-10-17T00:22:17.1186010Z     action: 'synchronize',
+2025-10-17T00:22:17.1186532Z     after: '347983772435b512989aba6af57ccaeefc5ff382',
+2025-10-17T00:22:17.1187140Z     before: '4f486960ec5f10d7d75909f929d5efdad6e99ea1',
+2025-10-17T00:22:17.1187832Z     enterprise: {
+2025-10-17T00:22:17.1188425Z       avatar_url: 'https://avatars.githubusercontent.com/b/130310?v=4',
+2025-10-17T00:22:17.1189155Z       created_at: '2024-03-01T17:01:23Z',
+2025-10-17T00:22:17.1189631Z       description: null,
+2025-10-17T00:22:17.1190139Z       html_url: 'https://github.com/enterprises/Delta-io',
+2025-10-17T00:22:17.1190712Z       id: 130310,
+2025-10-17T00:22:17.1191065Z       name: 'Delta Lake',
+2025-10-17T00:22:17.1191466Z       node_id: 'E_kgDOAAH9Bg',
+2025-10-17T00:22:17.1191885Z       slug: 'Delta-io',
+2025-10-17T00:22:17.1192280Z       updated_at: '2025-10-01T17:37:57Z',
+2025-10-17T00:22:17.1192862Z       website_url: null
+2025-10-17T00:22:17.1193296Z     },
+2025-10-17T00:22:17.1193753Z     number: 5320,
+2025-10-17T00:22:17.1193994Z     organization: {
+2025-10-17T00:22:17.1194368Z       avatar_url: 'https://avatars.githubusercontent.com/u/49767398?v=4',
+2025-10-17T00:22:17.1195400Z       description: 'An open-source storage framework that enables building a Lakehouse architecture with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs',
+2025-10-17T00:22:17.1196242Z       events_url: 'https://api.github.com/orgs/delta-io/events',
+2025-10-17T00:22:17.1196639Z       hooks_url: 'https://api.github.com/orgs/delta-io/hooks',
+2025-10-17T00:22:17.1196966Z       id: 49767398,
+2025-10-17T00:22:17.1197238Z       issues_url: 'https://api.github.com/orgs/delta-io/issues',
+2025-10-17T00:22:17.1197573Z       login: 'delta-io',
+2025-10-17T00:22:17.1198122Z       members_url: 'https://api.github.com/orgs/delta-io/members{/member}',
+2025-10-17T00:22:17.1198527Z       node_id: 'MDEyOk9yZ2FuaXphdGlvbjQ5NzY3Mzk4',
+2025-10-17T00:22:17.1198989Z       public_members_url: 'https://api.github.com/orgs/delta-io/public_members{/member}',
+2025-10-17T00:22:17.1199489Z       repos_url: 'https://api.github.com/orgs/delta-io/repos',
+2025-10-17T00:22:17.1199841Z       url: 'https://api.github.com/orgs/delta-io'
+2025-10-17T00:22:17.1200112Z     },
+2025-10-17T00:22:17.1200294Z     pull_request: {
+2025-10-17T00:22:17.1200493Z       _links: [Object],
+2025-10-17T00:22:17.1201217Z       active_lock_reason: null,
+2025-10-17T00:22:17.1201591Z       additions: 352,
+2025-10-17T00:22:17.1201909Z       assignee: null,
+2025-10-17T00:22:17.1202266Z       assignees: [],
+2025-10-17T00:22:17.1202638Z       author_association: 'COLLABORATOR',
+2025-10-17T00:22:17.1203063Z       auto_merge: null,
+2025-10-17T00:22:17.1203393Z       base: [Object],
+2025-10-17T00:22:17.1203760Z       body: '<!--\r\n' +
+2025-10-17T00:22:17.1204259Z         'Thanks for sending a pull request!  Here are some tips for you:\r\n' +
+2025-10-17T00:22:17.1205357Z         '  1. If this is your first time, please read our contributor guidelines: https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md\r\n' +
+2025-10-17T00:22:17.1206518Z         "  2. If the PR is unfinished, add '[WIP]' in your PR title, e.g., '[WIP] Your PR title ...'.\r\n" +
+2025-10-17T00:22:17.1207321Z         '  3. Be sure to keep the PR description updated to reflect all changes.\r\n' +
+2025-10-17T00:22:17.1208276Z         '  4. Please write your PR title to summarize what this PR proposes.\r\n' +
+2025-10-17T00:22:17.1209155Z         '  5. If possible, provide a concise example to reproduce the issue for a faster review.\r\n' +
+2025-10-17T00:22:17.1210166Z         '  6. If applicable, include the corresponding issue number in the PR title and link it in the body.\r\n' +
+2025-10-17T00:22:17.1210905Z         '-->\r\n' +
+2025-10-17T00:22:17.1211192Z         '\r\n' +
+2025-10-17T00:22:17.1211606Z         '#### Which Delta project/connector is this regarding?\r\n' +
+2025-10-17T00:22:17.1212087Z         '<!--\r\n' +
+2025-10-17T00:22:17.1212661Z         'Please add the component selected below to the beginning of the pull request title\r\n' +
+2025-10-17T00:22:17.1213410Z         'For example: [Spark] Title of my pull request\r\n' +
+2025-10-17T00:22:17.1213873Z         '-->\r\n' +
+2025-10-17T00:22:17.1214114Z         '\r\n' +
+2025-10-17T00:22:17.1214299Z         '- [ ] Spark\r\n' +
+2025-10-17T00:22:17.1214515Z         '- [ ] Standalone\r\n' +
+2025-10-17T00:22:17.1214729Z         '- [ ] Flink\r\n' +
+2025-10-17T00:22:17.1214934Z         '- [ ] Kernel\r\n' +
+2025-10-17T00:22:17.1215147Z         '- [ ] Other (fill in here)\r\n' +
+2025-10-17T00:22:17.1215378Z         '\r\n' +
+2025-10-17T00:22:17.1215560Z         '## Description\r\n' +
+2025-10-17T00:22:17.1215762Z         '\r\n' +
+2025-10-17T00:22:17.1215921Z         '<!--\r\n' +
+2025-10-17T00:22:17.1216127Z         '- Describe what this PR changes.\r\n' +
+2025-10-17T00:22:17.1216395Z         '- Describe why we need the change.\r\n' +
+2025-10-17T00:22:17.1216638Z         ' \r\n' +
+2025-10-17T00:22:17.1217034Z         'If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merge.\r\n' +
+2025-10-17T00:22:17.1217853Z         '-->\r\n' +
+2025-10-17T00:22:17.1218076Z         '\r\n' +
+2025-10-17T00:22:17.1218261Z         '## How was this patch tested?\r\n' +
+2025-10-17T00:22:17.1218496Z         '\r\n' +
+2025-10-17T00:22:17.1218654Z         '<!--\r\n' +
+2025-10-17T00:22:17.1219154Z         'If tests were added, say they were added here. Please make sure to test the changes thoroughly including negative and positive cases if possible.\r\n' +
+2025-10-17T00:22:17.1220183Z         'If the changes were tested in any way other than unit tests, please clarify how you tested step by step (ideally copy and paste-able, so that other reviewers can test and check, and descendants can verify in the future).\r\n' +
+2025-10-17T00:22:17.1220980Z         'If the changes were not tested, please explain why.\r\n' +
+2025-10-17T00:22:17.1221256Z         '-->\r\n' +
+2025-10-17T00:22:17.1221414Z         '\r\n' +
+2025-10-17T00:22:17.1221648Z         '## Does this PR introduce _any_ user-facing changes?\r\n' +
+2025-10-17T00:22:17.1221921Z         '\r\n' +
+2025-10-17T00:22:17.1222080Z         '<!--\r\n' +
+2025-10-17T00:22:17.1222692Z         'If yes, please clarify the previous behavior and the change this PR proposes - provide the console output, description and/or an example to show the behavior difference if possible.\r\n' +
+2025-10-17T00:22:17.1223866Z         'If possible, please also clarify if this is a user-facing change compared to the released Delta Lake versions or within the unreleased branches such as master.\r\n' +
+2025-10-17T00:22:17.1224459Z         "If no, write 'No'.\r\n" +
+2025-10-17T00:22:17.1224665Z         '-->\r\n',
+2025-10-17T00:22:17.1224846Z       changed_files: 16,
+2025-10-17T00:22:17.1225040Z       closed_at: null,
+2025-10-17T00:22:17.1225222Z       comments: 0,
+2025-10-17T00:22:17.1225551Z       comments_url: 'https://api.github.com/repos/delta-io/delta/issues/5320/comments',
+2025-10-17T00:22:17.1225910Z       commits: 63,
+2025-10-17T00:22:17.1226214Z       commits_url: 'https://api.github.com/repos/delta-io/delta/pulls/5320/commits',
+2025-10-17T00:22:17.1226567Z       created_at: '2025-10-09T19:59:10Z',
+2025-10-17T00:22:17.1226799Z       deletions: 98,
+2025-10-17T00:22:17.1227046Z       diff_url: 'https://github.com/delta-io/delta/pull/5320.diff',
+2025-10-17T00:22:17.1227337Z       draft: false,
+2025-10-17T00:22:17.1227517Z       head: [Object],
+2025-10-17T00:22:17.1227960Z       html_url: 'https://github.com/delta-io/delta/pull/5320',
+2025-10-17T00:22:17.1228245Z       id: 2901869366,
+2025-10-17T00:22:17.1228516Z       issue_url: 'https://api.github.com/repos/delta-io/delta/issues/5320',
+2025-10-17T00:22:17.1228834Z       labels: [],
+2025-10-17T00:22:17.1229006Z       locked: false,
+2025-10-17T00:22:17.1229202Z       maintainer_can_modify: true,
+2025-10-17T00:22:17.1229485Z       merge_commit_sha: '5f0635fe1754e38a352655ed9693b7ce4666be4f',
+2025-10-17T00:22:17.1229776Z       mergeable: null,
+2025-10-17T00:22:17.1229977Z       mergeable_state: 'unknown',
+2025-10-17T00:22:17.1230192Z       merged: false,
+2025-10-17T00:22:17.1230374Z       merged_at: null,
+2025-10-17T00:22:17.1230562Z       merged_by: null,
+2025-10-17T00:22:17.1230749Z       milestone: null,
+2025-10-17T00:22:17.1230950Z       node_id: 'PR_kwDOCuYOpM6s9wM2',
+2025-10-17T00:22:17.1231182Z       number: 5320,
+2025-10-17T00:22:17.1231437Z       patch_url: 'https://github.com/delta-io/delta/pull/5320.patch',
+2025-10-17T00:22:17.1231745Z       rebaseable: null,
+2025-10-17T00:22:17.1231946Z       requested_reviewers: [Array],
+2025-10-17T00:22:17.1232175Z       requested_teams: [],
+2025-10-17T00:22:17.1232529Z       review_comment_url: 'https://api.github.com/repos/delta-io/delta/pulls/comments{/number}',
+2025-10-17T00:22:17.1232942Z       review_comments: 8,
+2025-10-17T00:22:17.1233366Z       review_comments_url: 'https://api.github.com/repos/delta-io/delta/pulls/5320/comments',
+2025-10-17T00:22:17.1233740Z       state: 'open',
+2025-10-17T00:22:17.1234146Z       statuses_url: 'https://api.github.com/repos/delta-io/delta/statuses/347983772435b512989aba6af57ccaeefc5ff382',
+2025-10-17T00:22:17.1234753Z       title: '[WIP][POC]New spark structure',
+2025-10-17T00:22:17.1235006Z       updated_at: '2025-10-17T00:22:04Z',
+2025-10-17T00:22:17.1235314Z       url: 'https://api.github.com/repos/delta-io/delta/pulls/5320',
+2025-10-17T00:22:17.1235612Z       user: [Object]
+2025-10-17T00:22:17.1235778Z     },
+2025-10-17T00:22:17.1235939Z     repository: {
+2025-10-17T00:22:17.1236118Z       allow_forking: true,
+2025-10-17T00:22:17.1236447Z       archive_url: 'https://api.github.com/repos/delta-io/delta/{archive_format}{/ref}',
+2025-10-17T00:22:17.1236802Z       archived: false,
+2025-10-17T00:22:17.1237106Z       assignees_url: 'https://api.github.com/repos/delta-io/delta/assignees{/user}',
+2025-10-17T00:22:17.1237541Z       blobs_url: 'https://api.github.com/repos/delta-io/delta/git/blobs{/sha}',
+2025-10-17T00:22:17.1238315Z       branches_url: 'https://api.github.com/repos/delta-io/delta/branches{/branch}',
+2025-10-17T00:22:17.1238719Z       clone_url: 'https://github.com/delta-io/delta.git',
+2025-10-17T00:22:17.1239157Z       collaborators_url: 'https://api.github.com/repos/delta-io/delta/collaborators{/collaborator}',
+2025-10-17T00:22:17.1239677Z       comments_url: 'https://api.github.com/repos/delta-io/delta/comments{/number}',
+2025-10-17T00:22:17.1240443Z       commits_url: 'https://api.github.com/repos/delta-io/delta/commits{/sha}',
+2025-10-17T00:22:17.1241284Z       compare_url: 'https://api.github.com/repos/delta-io/delta/compare/{base}...{head}',
+2025-10-17T00:22:17.1242116Z       contents_url: 'https://api.github.com/repos/delta-io/delta/contents/{+path}',
+2025-10-17T00:22:17.1242996Z       contributors_url: 'https://api.github.com/repos/delta-io/delta/contributors',
+2025-10-17T00:22:17.1243650Z       created_at: '2019-04-22T18:56:51Z',
+2025-10-17T00:22:17.1244045Z       custom_properties: {},
+2025-10-17T00:22:17.1244273Z       default_branch: 'master',
+2025-10-17T00:22:17.1244607Z       deployments_url: 'https://api.github.com/repos/delta-io/delta/deployments',
+2025-10-17T00:22:17.1245370Z       description: 'An open-source storage framework that enables building a Lakehouse architecture with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs',
+2025-10-17T00:22:17.1246007Z       disabled: false,
+2025-10-17T00:22:17.1246299Z       downloads_url: 'https://api.github.com/repos/delta-io/delta/downloads',
+2025-10-17T00:22:17.1246711Z       events_url: 'https://api.github.com/repos/delta-io/delta/events',
+2025-10-17T00:22:17.1247011Z       fork: false,
+2025-10-17T00:22:17.1247192Z       forks: 1936,
+2025-10-17T00:22:17.1247363Z       forks_count: 1936,
+2025-10-17T00:22:17.1247849Z       forks_url: 'https://api.github.com/repos/delta-io/delta/forks',
+2025-10-17T00:22:17.1248202Z       full_name: 'delta-io/delta',
+2025-10-17T00:22:17.1248547Z       git_commits_url: 'https://api.github.com/repos/delta-io/delta/git/commits{/sha}',
+2025-10-17T00:22:17.1249001Z       git_refs_url: 'https://api.github.com/repos/delta-io/delta/git/refs{/sha}',
+2025-10-17T00:22:17.1249627Z       git_tags_url: 'https://api.github.com/repos/delta-io/delta/git/tags{/sha}',
+2025-10-17T00:22:17.1250264Z       git_url: 'git://github.com/delta-io/delta.git',
+2025-10-17T00:22:17.1250726Z       has_discussions: true,
+2025-10-17T00:22:17.1251096Z       has_downloads: true,
+2025-10-17T00:22:17.1251447Z       has_issues: true,
+2025-10-17T00:22:17.1251794Z       has_pages: true,
+2025-10-17T00:22:17.1252129Z       has_projects: false,
+2025-10-17T00:22:17.1252484Z       has_wiki: false,
+2025-10-17T00:22:17.1252876Z       homepage: 'https://delta.io',
+2025-10-17T00:22:17.1253443Z       hooks_url: 'https://api.github.com/repos/delta-io/delta/hooks',
+2025-10-17T00:22:17.1254234Z       html_url: 'https://github.com/delta-io/delta',
+2025-10-17T00:22:17.1254704Z       id: 182849188,
+2025-10-17T00:22:17.1255048Z       is_template: false,
+2025-10-17T00:22:17.1255692Z       issue_comment_url: 'https://api.github.com/repos/delta-io/delta/issues/comments{/number}',
+2025-10-17T00:22:17.1256909Z       issue_events_url: 'https://api.github.com/repos/delta-io/delta/issues/events{/number}',
+2025-10-17T00:22:17.1258035Z       issues_url: 'https://api.github.com/repos/delta-io/delta/issues{/number}',
+2025-10-17T00:22:17.1258850Z       keys_url: 'https://api.github.com/repos/delta-io/delta/keys{/key_id}',
+2025-10-17T00:22:17.1259628Z       labels_url: 'https://api.github.com/repos/delta-io/delta/labels{/name}',
+2025-10-17T00:22:17.1260212Z       language: 'Scala',
+2025-10-17T00:22:17.1260747Z       languages_url: 'https://api.github.com/repos/delta-io/delta/languages',
+2025-10-17T00:22:17.1261298Z       license: [Object],
+2025-10-17T00:22:17.1261782Z       merges_url: 'https://api.github.com/repos/delta-io/delta/merges',
+2025-10-17T00:22:17.1262579Z       milestones_url: 'https://api.github.com/repos/delta-io/delta/milestones{/number}',
+2025-10-17T00:22:17.1263242Z       mirror_url: null,
+2025-10-17T00:22:17.1263572Z       name: 'delta',
+2025-10-17T00:22:17.1263954Z       node_id: 'MDEwOlJlcG9zaXRvcnkxODI4NDkxODg=',
+2025-10-17T00:22:17.1264821Z       notifications_url: 'https://api.github.com/repos/delta-io/delta/notifications{?since,all,participating}',
+2025-10-17T00:22:17.1265610Z       open_issues: 1147,
+2025-10-17T00:22:17.1265969Z       open_issues_count: 1147,
+2025-10-17T00:22:17.1266569Z       owner: [Object],
+2025-10-17T00:22:17.1266904Z       private: false,
+2025-10-17T00:22:17.1267419Z       pulls_url: 'https://api.github.com/repos/delta-io/delta/pulls{/number}',
+2025-10-17T00:22:17.1268230Z       pushed_at: '2025-10-16T22:28:08Z',
+2025-10-17T00:22:17.1268838Z       releases_url: 'https://api.github.com/repos/delta-io/delta/releases{/id}',
+2025-10-17T00:22:17.1269430Z       size: 43517,
+2025-10-17T00:22:17.1269801Z       ssh_url: 'git@github.com:delta-io/delta.git',
+2025-10-17T00:22:17.1270267Z       stargazers_count: 8336,
+2025-10-17T00:22:17.1270847Z       stargazers_url: 'https://api.github.com/repos/delta-io/delta/stargazers',
+2025-10-17T00:22:17.1271654Z       statuses_url: 'https://api.github.com/repos/delta-io/delta/statuses/{sha}',
+2025-10-17T00:22:17.1272478Z       subscribers_url: 'https://api.github.com/repos/delta-io/delta/subscribers',
+2025-10-17T00:22:17.1273323Z       subscription_url: 'https://api.github.com/repos/delta-io/delta/subscription',
+2025-10-17T00:22:17.1274025Z       svn_url: 'https://github.com/delta-io/delta',
+2025-10-17T00:22:17.1274617Z       tags_url: 'https://api.github.com/repos/delta-io/delta/tags',
+2025-10-17T00:22:17.1275273Z       teams_url: 'https://api.github.com/repos/delta-io/delta/teams',
+2025-10-17T00:22:17.1275814Z       topics: [Array],
+2025-10-17T00:22:17.1276324Z       trees_url: 'https://api.github.com/repos/delta-io/delta/git/trees{/sha}',
+2025-10-17T00:22:17.1276964Z       updated_at: '2025-10-16T22:28:13Z',
+2025-10-17T00:22:17.1277471Z       url: 'https://api.github.com/repos/delta-io/delta',
+2025-10-17T00:22:17.1278141Z       visibility: 'public',
+2025-10-17T00:22:17.1278502Z       watchers: 8336,
+2025-10-17T00:22:17.1278822Z       watchers_count: 8336,
+2025-10-17T00:22:17.1311020Z       web_commit_signoff_required: false
+2025-10-17T00:22:17.1311657Z     },
+2025-10-17T00:22:17.1312071Z     sender: {
+2025-10-17T00:22:17.1312770Z       avatar_url: 'https://avatars.githubusercontent.com/u/42597328?v=4',
+2025-10-17T00:22:17.1313918Z       events_url: 'https://api.github.com/users/huan233usc/events{/privacy}',
+2025-10-17T00:22:17.1314662Z       followers_url: 'https://api.github.com/users/huan233usc/followers',
+2025-10-17T00:22:17.1315491Z       following_url: 'https://api.github.com/users/huan233usc/following{/other_user}',
+2025-10-17T00:22:17.1316293Z       gists_url: 'https://api.github.com/users/huan233usc/gists{/gist_id}',
+2025-10-17T00:22:17.1316879Z       gravatar_id: '',
+2025-10-17T00:22:17.1317285Z       html_url: 'https://github.com/huan233usc',
+2025-10-17T00:22:17.1317902Z       id: 42597328,
+2025-10-17T00:22:17.1318254Z       login: 'huan233usc',
+2025-10-17T00:22:17.1318891Z       node_id: 'MDQ6VXNlcjQyNTk3MzI4',
+2025-10-17T00:22:17.1319488Z       organizations_url: 'https://api.github.com/users/huan233usc/orgs',
+2025-10-17T00:22:17.1320299Z       received_events_url: 'https://api.github.com/users/huan233usc/received_events',
+2025-10-17T00:22:17.1321060Z       repos_url: 'https://api.github.com/users/huan233usc/repos',
+2025-10-17T00:22:17.1321596Z       site_admin: false,
+2025-10-17T00:22:17.1322145Z       starred_url: 'https://api.github.com/users/huan233usc/starred{/owner}{/repo}',
+2025-10-17T00:22:17.1322991Z       subscriptions_url: 'https://api.github.com/users/huan233usc/subscriptions',
+2025-10-17T00:22:17.1323604Z       type: 'User',
+2025-10-17T00:22:17.1323986Z       url: 'https://api.github.com/users/huan233usc',
+2025-10-17T00:22:17.1324459Z       user_view_type: 'public'
+2025-10-17T00:22:17.1324817Z     }
+2025-10-17T00:22:17.1325064Z   },
+2025-10-17T00:22:17.1325348Z   eventName: 'pull_request',
+2025-10-17T00:22:17.1325767Z   sha: 'bda796d5e6b81d900adedced2272844d2e7163ca',
+2025-10-17T00:22:17.1326259Z   ref: 'refs/pull/5320/merge',
+2025-10-17T00:22:17.1326642Z   workflow: 'Delta Iceberg Latest',
+2025-10-17T00:22:17.1327032Z   action: 'git-diff',
+2025-10-17T00:22:17.1327388Z   actor: 'huan233usc',
+2025-10-17T00:22:17.1327836Z   job: 'test',
+2025-10-17T00:22:17.1328168Z   runNumber: 5217,
+2025-10-17T00:22:17.1328669Z   runId: 18578501855,
+2025-10-17T00:22:17.1329036Z   apiUrl: 'https://api.github.com',
+2025-10-17T00:22:17.1329461Z   serverUrl: 'https://github.com',
+2025-10-17T00:22:17.1329979Z   graphqlUrl: 'https://api.github.com/graphql'
+2025-10-17T00:22:17.1330420Z }
+2025-10-17T00:22:17.1331076Z ##[endgroup]
+2025-10-17T00:22:17.1331639Z ##[group]Dump Payload
+2025-10-17T00:22:17.1332122Z {
+2025-10-17T00:22:17.1332390Z   action: 'synchronize',
+2025-10-17T00:22:17.1332795Z   after: '347983772435b512989aba6af57ccaeefc5ff382',
+2025-10-17T00:22:17.1333314Z   before: '4f486960ec5f10d7d75909f929d5efdad6e99ea1',
+2025-10-17T00:22:17.1333779Z   enterprise: {
+2025-10-17T00:22:17.1334237Z     avatar_url: 'https://avatars.githubusercontent.com/b/130310?v=4',
+2025-10-17T00:22:17.1334602Z     created_at: '2024-03-01T17:01:23Z',
+2025-10-17T00:22:17.1334874Z     description: null,
+2025-10-17T00:22:17.1335136Z     html_url: 'https://github.com/enterprises/Delta-io',
+2025-10-17T00:22:17.1335448Z     id: 130310,
+2025-10-17T00:22:17.1335632Z     name: 'Delta Lake',
+2025-10-17T00:22:17.1335842Z     node_id: 'E_kgDOAAH9Bg',
+2025-10-17T00:22:17.1336047Z     slug: 'Delta-io',
+2025-10-17T00:22:17.1336251Z     updated_at: '2025-10-01T17:37:57Z',
+2025-10-17T00:22:17.1336474Z     website_url: null
+2025-10-17T00:22:17.1336656Z   },
+2025-10-17T00:22:17.1336806Z   number: 5320,
+2025-10-17T00:22:17.1336980Z   organization: {
+2025-10-17T00:22:17.1337258Z     avatar_url: 'https://avatars.githubusercontent.com/u/49767398?v=4',
+2025-10-17T00:22:17.1338306Z     description: 'An open-source storage framework that enables building a Lakehouse architecture with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs',
+2025-10-17T00:22:17.1339055Z     events_url: 'https://api.github.com/orgs/delta-io/events',
+2025-10-17T00:22:17.1339404Z     hooks_url: 'https://api.github.com/orgs/delta-io/hooks',
+2025-10-17T00:22:17.1339682Z     id: 49767398,
+2025-10-17T00:22:17.1339913Z     issues_url: 'https://api.github.com/orgs/delta-io/issues',
+2025-10-17T00:22:17.1340387Z     login: 'delta-io',
+2025-10-17T00:22:17.1340767Z     members_url: 'https://api.github.com/orgs/delta-io/members{/member}',
+2025-10-17T00:22:17.1341143Z     node_id: 'MDEyOk9yZ2FuaXphdGlvbjQ5NzY3Mzk4',
+2025-10-17T00:22:17.1341540Z     public_members_url: 'https://api.github.com/orgs/delta-io/public_members{/member}',
+2025-10-17T00:22:17.1341959Z     repos_url: 'https://api.github.com/orgs/delta-io/repos',
+2025-10-17T00:22:17.1342273Z     url: 'https://api.github.com/orgs/delta-io'
+2025-10-17T00:22:17.1342514Z   },
+2025-10-17T00:22:17.1342672Z   pull_request: {
+2025-10-17T00:22:17.1342878Z     _links: {
+2025-10-17T00:22:17.1343163Z       comments: [Object],
+2025-10-17T00:22:17.1343603Z       commits: [Object],
+2025-10-17T00:22:17.1343802Z       html: [Object],
+2025-10-17T00:22:17.1343979Z       issue: [Object],
+2025-10-17T00:22:17.1344169Z       review_comment: [Object],
+2025-10-17T00:22:17.1344384Z       review_comments: [Object],
+2025-10-17T00:22:17.1344586Z       self: [Object],
+2025-10-17T00:22:17.1344775Z       statuses: [Object]
+2025-10-17T00:22:17.1344952Z     },
+2025-10-17T00:22:17.1345122Z     active_lock_reason: null,
+2025-10-17T00:22:17.1345328Z     additions: 352,
+2025-10-17T00:22:17.1345504Z     assignee: null,
+2025-10-17T00:22:17.1345672Z     assignees: [],
+2025-10-17T00:22:17.1345873Z     author_association: 'COLLABORATOR',
+2025-10-17T00:22:17.1346107Z     auto_merge: null,
+2025-10-17T00:22:17.1346286Z     base: {
+2025-10-17T00:22:17.1346456Z       label: 'delta-io:master',
+2025-10-17T00:22:17.1346670Z       ref: 'master',
+2025-10-17T00:22:17.1346853Z       repo: [Object],
+2025-10-17T00:22:17.1347065Z       sha: '68cf28415ec4e41c7cb26e7aa7670e17d249240a',
+2025-10-17T00:22:17.1347336Z       user: [Object]
+2025-10-17T00:22:17.1347506Z     },
+2025-10-17T00:22:17.1347834Z     body: '<!--\r\n' +
+2025-10-17T00:22:17.1348115Z       'Thanks for sending a pull request!  Here are some tips for you:\r\n' +
+2025-10-17T00:22:17.1348753Z       '  1. If this is your first time, please read our contributor guidelines: https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md\r\n' +
+2025-10-17T00:22:17.1349541Z       "  2. If the PR is unfinished, add '[WIP]' in your PR title, e.g., '[WIP] Your PR title ...'.\r\n" +
+2025-10-17T00:22:17.1349998Z       '  3. Be sure to keep the PR description updated to reflect all changes.\r\n' +
+2025-10-17T00:22:17.1350421Z       '  4. Please write your PR title to summarize what this PR proposes.\r\n' +
+2025-10-17T00:22:17.1350891Z       '  5. If possible, provide a concise example to reproduce the issue for a faster review.\r\n' +
+2025-10-17T00:22:17.1351464Z       '  6. If applicable, include the corresponding issue number in the PR title and link it in the body.\r\n' +
+2025-10-17T00:22:17.1351886Z       '-->\r\n' +
+2025-10-17T00:22:17.1352059Z       '\r\n' +
+2025-10-17T00:22:17.1352314Z       '#### Which Delta project/connector is this regarding?\r\n' +
+2025-10-17T00:22:17.1352591Z       '<!--\r\n' +
+2025-10-17T00:22:17.1352926Z       'Please add the component selected below to the beginning of the pull request title\r\n' +
+2025-10-17T00:22:17.1353356Z       'For example: [Spark] Title of my pull request\r\n' +
+2025-10-17T00:22:17.1353626Z       '-->\r\n' +
+2025-10-17T00:22:17.1353787Z       '\r\n' +
+2025-10-17T00:22:17.1353959Z       '- [ ] Spark\r\n' +
+2025-10-17T00:22:17.1354156Z       '- [ ] Standalone\r\n' +
+2025-10-17T00:22:17.1354364Z       '- [ ] Flink\r\n' +
+2025-10-17T00:22:17.1354549Z       '- [ ] Kernel\r\n' +
+2025-10-17T00:22:17.1354759Z       '- [ ] Other (fill in here)\r\n' +
+2025-10-17T00:22:17.1354985Z       '\r\n' +
+2025-10-17T00:22:17.1355164Z       '## Description\r\n' +
+2025-10-17T00:22:17.1355372Z       '\r\n' +
+2025-10-17T00:22:17.1355526Z       '<!--\r\n' +
+2025-10-17T00:22:17.1355719Z       '- Describe what this PR changes.\r\n' +
+2025-10-17T00:22:17.1355980Z       '- Describe why we need the change.\r\n' +
+2025-10-17T00:22:17.1356219Z       ' \r\n' +
+2025-10-17T00:22:17.1356598Z       'If this PR resolves an issue be sure to include "Resolves #XXX" to correctly link and close the issue upon merge.\r\n' +
+2025-10-17T00:22:17.1357037Z       '-->\r\n' +
+2025-10-17T00:22:17.1357204Z       '\r\n' +
+2025-10-17T00:22:17.1357383Z       '## How was this patch tested?\r\n' +
+2025-10-17T00:22:17.1357616Z       '\r\n' +
+2025-10-17T00:22:17.1357901Z       '<!--\r\n' +
+2025-10-17T00:22:17.1358387Z       'If tests were added, say they were added here. Please make sure to test the changes thoroughly including negative and positive cases if possible.\r\n' +
+2025-10-17T00:22:17.1359419Z       'If the changes were tested in any way other than unit tests, please clarify how you tested step by step (ideally copy and paste-able, so that other reviewers can test and check, and descendants can verify in the future).\r\n' +
+2025-10-17T00:22:17.1360404Z       'If the changes were not tested, please explain why.\r\n' +
+2025-10-17T00:22:17.1360691Z       '-->\r\n' +
+2025-10-17T00:22:17.1360852Z       '\r\n' +
+2025-10-17T00:22:17.1361082Z       '## Does this PR introduce _any_ user-facing changes?\r\n' +
+2025-10-17T00:22:17.1361355Z       '\r\n' +
+2025-10-17T00:22:17.1361514Z       '<!--\r\n' +
+2025-10-17T00:22:17.1362111Z       'If yes, please clarify the previous behavior and the change this PR proposes - provide the console output, description and/or an example to show the behavior difference if possible.\r\n' +
+2025-10-17T00:22:17.1363120Z       'If possible, please also clarify if this is a user-facing change compared to the released Delta Lake versions or within the unreleased branches such as master.\r\n' +
+2025-10-17T00:22:17.1363707Z       "If no, write 'No'.\r\n" +
+2025-10-17T00:22:17.1363914Z       '-->\r\n',
+2025-10-17T00:22:17.1364092Z     changed_files: 16,
+2025-10-17T00:22:17.1364276Z     closed_at: null,
+2025-10-17T00:22:17.1364456Z     comments: 0,
+2025-10-17T00:22:17.1365005Z     comments_url: 'https://api.github.com/repos/delta-io/delta/issues/5320/comments',
+2025-10-17T00:22:17.1365641Z     commits: 63,
+2025-10-17T00:22:17.1366134Z     commits_url: 'https://api.github.com/repos/delta-io/delta/pulls/5320/commits',
+2025-10-17T00:22:17.1366671Z     created_at: '2025-10-09T19:59:10Z',
+2025-10-17T00:22:17.1366905Z     deletions: 98,
+2025-10-17T00:22:17.1367157Z     diff_url: 'https://github.com/delta-io/delta/pull/5320.diff',
+2025-10-17T00:22:17.1367455Z     draft: false,
+2025-10-17T00:22:17.1367753Z     head: {
+2025-10-17T00:22:17.1367941Z       label: 'huan233usc:new',
+2025-10-17T00:22:17.1368147Z       ref: 'new',
+2025-10-17T00:22:17.1368326Z       repo: [Object],
+2025-10-17T00:22:17.1368548Z       sha: '347983772435b512989aba6af57ccaeefc5ff382',
+2025-10-17T00:22:17.1368801Z       user: [Object]
+2025-10-17T00:22:17.1368977Z     },
+2025-10-17T00:22:17.1369203Z     html_url: 'https://github.com/delta-io/delta/pull/5320',
+2025-10-17T00:22:17.1369488Z     id: 2901869366,
+2025-10-17T00:22:17.1369754Z     issue_url: 'https://api.github.com/repos/delta-io/delta/issues/5320',
+2025-10-17T00:22:17.1370073Z     labels: [],
+2025-10-17T00:22:17.1370239Z     locked: false,
+2025-10-17T00:22:17.1370444Z     maintainer_can_modify: true,
+2025-10-17T00:22:17.1370722Z     merge_commit_sha: '5f0635fe1754e38a352655ed9693b7ce4666be4f',
+2025-10-17T00:22:17.1371008Z     mergeable: null,
+2025-10-17T00:22:17.1371195Z     mergeable_state: 'unknown',
+2025-10-17T00:22:17.1371407Z     merged: false,
+2025-10-17T00:22:17.1371604Z     merged_at: null,
+2025-10-17T00:22:17.1371810Z     merged_by: null,
+2025-10-17T00:22:17.1371987Z     milestone: null,
+2025-10-17T00:22:17.1372237Z     node_id: 'PR_kwDOCuYOpM6s9wM2',
+2025-10-17T00:22:17.1372535Z     number: 5320,
+2025-10-17T00:22:17.1372841Z     patch_url: 'https://github.com/delta-io/delta/pull/5320.patch',
+2025-10-17T00:22:17.1373151Z     rebaseable: null,
+2025-10-17T00:22:17.1373346Z     requested_reviewers: [ [Object] ],
+2025-10-17T00:22:17.1373585Z     requested_teams: [],
+2025-10-17T00:22:17.1373935Z     review_comment_url: 'https://api.github.com/repos/delta-io/delta/pulls/comments{/number}',
+2025-10-17T00:22:17.1374325Z     review_comments: 8,
+2025-10-17T00:22:17.1374669Z     review_comments_url: 'https://api.github.com/repos/delta-io/delta/pulls/5320/comments',
+2025-10-17T00:22:17.1375047Z     state: 'open',
+2025-10-17T00:22:17.1375463Z     statuses_url: 'https://api.github.com/repos/delta-io/delta/statuses/347983772435b512989aba6af57ccaeefc5ff382',
+2025-10-17T00:22:17.1375950Z     title: '[WIP][POC]New spark structure',
+2025-10-17T00:22:17.1376212Z     updated_at: '2025-10-17T00:22:04Z',
+2025-10-17T00:22:17.1376513Z     url: 'https://api.github.com/repos/delta-io/delta/pulls/5320',
+2025-10-17T00:22:17.1376806Z     user: {
+2025-10-17T00:22:17.1377070Z       avatar_url: 'https://avatars.githubusercontent.com/u/42597328?v=4',
+2025-10-17T00:22:17.1377835Z       events_url: 'https://api.github.com/users/huan233usc/events{/privacy}',
+2025-10-17T00:22:17.1378321Z       followers_url: 'https://api.github.com/users/huan233usc/followers',
+2025-10-17T00:22:17.1378762Z       following_url: 'https://api.github.com/users/huan233usc/following{/other_user}',
+2025-10-17T00:22:17.1379205Z       gists_url: 'https://api.github.com/users/huan233usc/gists{/gist_id}',
+2025-10-17T00:22:17.1379517Z       gravatar_id: '',
+2025-10-17T00:22:17.1379740Z       html_url: 'https://github.com/huan233usc',
+2025-10-17T00:22:17.1379983Z       id: 42597328,
+2025-10-17T00:22:17.1380164Z       login: 'huan233usc',
+2025-10-17T00:22:17.1380381Z       node_id: 'MDQ6VXNlcjQyNTk3MzI4',
+2025-10-17T00:22:17.1380710Z       organizations_url: 'https://api.github.com/users/huan233usc/orgs',
+2025-10-17T00:22:17.1381147Z       received_events_url: 'https://api.github.com/users/huan233usc/received_events',
+2025-10-17T00:22:17.1381565Z       repos_url: 'https://api.github.com/users/huan233usc/repos',
+2025-10-17T00:22:17.1381860Z       site_admin: false,
+2025-10-17T00:22:17.1382169Z       starred_url: 'https://api.github.com/users/huan233usc/starred{/owner}{/repo}',
+2025-10-17T00:22:17.1382623Z       subscriptions_url: 'https://api.github.com/users/huan233usc/subscriptions',
+2025-10-17T00:22:17.1383086Z       type: 'User',
+2025-10-17T00:22:17.1383305Z       url: 'https://api.github.com/users/huan233usc',
+2025-10-17T00:22:17.1383567Z       user_view_type: 'public'
+2025-10-17T00:22:17.1383770Z     }
+2025-10-17T00:22:17.1383923Z   },
+2025-10-17T00:22:17.1384078Z   repository: {
+2025-10-17T00:22:17.1384260Z     allow_forking: true,
+2025-10-17T00:22:17.1384580Z     archive_url: 'https://api.github.com/repos/delta-io/delta/{archive_format}{/ref}',
+2025-10-17T00:22:17.1384935Z     archived: false,
+2025-10-17T00:22:17.1385238Z     assignees_url: 'https://api.github.com/repos/delta-io/delta/assignees{/user}',
+2025-10-17T00:22:17.1385681Z     blobs_url: 'https://api.github.com/repos/delta-io/delta/git/blobs{/sha}',
+2025-10-17T00:22:17.1386118Z     branches_url: 'https://api.github.com/repos/delta-io/delta/branches{/branch}',
+2025-10-17T00:22:17.1386510Z     clone_url: 'https://github.com/delta-io/delta.git',
+2025-10-17T00:22:17.1386956Z     collaborators_url: 'https://api.github.com/repos/delta-io/delta/collaborators{/collaborator}',
+2025-10-17T00:22:17.1387469Z     comments_url: 'https://api.github.com/repos/delta-io/delta/comments{/number}',
+2025-10-17T00:22:17.1388030Z     commits_url: 'https://api.github.com/repos/delta-io/delta/commits{/sha}',
+2025-10-17T00:22:17.1388479Z     compare_url: 'https://api.github.com/repos/delta-io/delta/compare/{base}...{head}',
+2025-10-17T00:22:17.1388948Z     contents_url: 'https://api.github.com/repos/delta-io/delta/contents/{+path}',
+2025-10-17T00:22:17.1389392Z     contributors_url: 'https://api.github.com/repos/delta-io/delta/contributors',
+2025-10-17T00:22:17.1389742Z     created_at: '2019-04-22T18:56:51Z',
+2025-10-17T00:22:17.1389982Z     custom_properties: {},
+2025-10-17T00:22:17.1390186Z     default_branch: 'master',
+2025-10-17T00:22:17.1390508Z     deployments_url: 'https://api.github.com/repos/delta-io/delta/deployments',
+2025-10-17T00:22:17.1391263Z     description: 'An open-source storage framework that enables building a Lakehouse architecture with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs',
+2025-10-17T00:22:17.1391908Z     disabled: false,
+2025-10-17T00:22:17.1392190Z     downloads_url: 'https://api.github.com/repos/delta-io/delta/downloads',
+2025-10-17T00:22:17.1392600Z     events_url: 'https://api.github.com/repos/delta-io/delta/events',
+2025-10-17T00:22:17.1392911Z     fork: false,
+2025-10-17T00:22:17.1393080Z     forks: 1936,
+2025-10-17T00:22:17.1393251Z     forks_count: 1936,
+2025-10-17T00:22:17.1393512Z     forks_url: 'https://api.github.com/repos/delta-io/delta/forks',
+2025-10-17T00:22:17.1393823Z     full_name: 'delta-io/delta',
+2025-10-17T00:22:17.1394155Z     git_commits_url: 'https://api.github.com/repos/delta-io/delta/git/commits{/sha}',
+2025-10-17T00:22:17.1394734Z     git_refs_url: 'https://api.github.com/repos/delta-io/delta/git/refs{/sha}',
+2025-10-17T00:22:17.1395168Z     git_tags_url: 'https://api.github.com/repos/delta-io/delta/git/tags{/sha}',
+2025-10-17T00:22:17.1395523Z     git_url: 'git://github.com/delta-io/delta.git',
+2025-10-17T00:22:17.1395795Z     has_discussions: true,
+2025-10-17T00:22:17.1395997Z     has_downloads: true,
+2025-10-17T00:22:17.1396190Z     has_issues: true,
+2025-10-17T00:22:17.1396367Z     has_pages: true,
+2025-10-17T00:22:17.1396552Z     has_projects: false,
+2025-10-17T00:22:17.1396734Z     has_wiki: false,
+2025-10-17T00:22:17.1396931Z     homepage: 'https://delta.io',
+2025-10-17T00:22:17.1397225Z     hooks_url: 'https://api.github.com/repos/delta-io/delta/hooks',
+2025-10-17T00:22:17.1397564Z     html_url: 'https://github.com/delta-io/delta',
+2025-10-17T00:22:17.1397928Z     id: 182849188,
+2025-10-17T00:22:17.1398106Z     is_template: false,
+2025-10-17T00:22:17.1398454Z     issue_comment_url: 'https://api.github.com/repos/delta-io/delta/issues/comments{/number}',
+2025-10-17T00:22:17.1398963Z     issue_events_url: 'https://api.github.com/repos/delta-io/delta/issues/events{/number}',
+2025-10-17T00:22:17.1399433Z     issues_url: 'https://api.github.com/repos/delta-io/delta/issues{/number}',
+2025-10-17T00:22:17.1399965Z     keys_url: 'https://api.github.com/repos/delta-io/delta/keys{/key_id}',
+2025-10-17T00:22:17.1400381Z     labels_url: 'https://api.github.com/repos/delta-io/delta/labels{/name}',
+2025-10-17T00:22:17.1400705Z     language: 'Scala',
+2025-10-17T00:22:17.1400987Z     languages_url: 'https://api.github.com/repos/delta-io/delta/languages',
+2025-10-17T00:22:17.1401303Z     license: {
+2025-10-17T00:22:17.1401472Z       key: 'apache-2.0',
+2025-10-17T00:22:17.1401677Z       name: 'Apache License 2.0',
+2025-10-17T00:22:17.1401900Z       node_id: 'MDc6TGljZW5zZTI=',
+2025-10-17T00:22:17.1402129Z       spdx_id: 'Apache-2.0',
+2025-10-17T00:22:17.1402378Z       url: 'https://api.github.com/licenses/apache-2.0'
+2025-10-17T00:22:17.1402635Z     },
+2025-10-17T00:22:17.1402874Z     merges_url: 'https://api.github.com/repos/delta-io/delta/merges',
+2025-10-17T00:22:17.1403312Z     milestones_url: 'https://api.github.com/repos/delta-io/delta/milestones{/number}',
+2025-10-17T00:22:17.1403674Z     mirror_url: null,
+2025-10-17T00:22:17.1403857Z     name: 'delta',
+2025-10-17T00:22:17.1404077Z     node_id: 'MDEwOlJlcG9zaXRvcnkxODI4NDkxODg=',
+2025-10-17T00:22:17.1404552Z     notifications_url: 'https://api.github.com/repos/delta-io/delta/notifications{?since,all,participating}',
+2025-10-17T00:22:17.1404995Z     open_issues: 1147,
+2025-10-17T00:22:17.1405186Z     open_issues_count: 1147,
+2025-10-17T00:22:17.1405385Z     owner: {
+2025-10-17T00:22:17.1405651Z       avatar_url: 'https://avatars.githubusercontent.com/u/49767398?v=4',
+2025-10-17T00:22:17.1406076Z       events_url: 'https://api.github.com/users/delta-io/events{/privacy}',
+2025-10-17T00:22:17.1406478Z       followers_url: 'https://api.github.com/users/delta-io/followers',
+2025-10-17T00:22:17.1406904Z       following_url: 'https://api.github.com/users/delta-io/following{/other_user}',
+2025-10-17T00:22:17.1407332Z       gists_url: 'https://api.github.com/users/delta-io/gists{/gist_id}',
+2025-10-17T00:22:17.1407730Z       gravatar_id: '',
+2025-10-17T00:22:17.1407965Z       html_url: 'https://github.com/delta-io',
+2025-10-17T00:22:17.1408213Z       id: 49767398,
+2025-10-17T00:22:17.1408399Z       login: 'delta-io',
+2025-10-17T00:22:17.1408640Z       node_id: 'MDEyOk9yZ2FuaXphdGlvbjQ5NzY3Mzk4',
+2025-10-17T00:22:17.1408999Z       organizations_url: 'https://api.github.com/users/delta-io/orgs',
+2025-10-17T00:22:17.1409439Z       received_events_url: 'https://api.github.com/users/delta-io/received_events',
+2025-10-17T00:22:17.1409845Z       repos_url: 'https://api.github.com/users/delta-io/repos',
+2025-10-17T00:22:17.1410139Z       site_admin: false,
+2025-10-17T00:22:17.1410443Z       starred_url: 'https://api.github.com/users/delta-io/starred{/owner}{/repo}',
+2025-10-17T00:22:17.1411062Z       subscriptions_url: 'https://api.github.com/users/delta-io/subscriptions',
+2025-10-17T00:22:17.1411409Z       type: 'Organization',
+2025-10-17T00:22:17.1411646Z       url: 'https://api.github.com/users/delta-io',
+2025-10-17T00:22:17.1411939Z       user_view_type: 'public'
+2025-10-17T00:22:17.1412140Z     },
+2025-10-17T00:22:17.1412302Z     private: false,
+2025-10-17T00:22:17.1412582Z     pulls_url: 'https://api.github.com/repos/delta-io/delta/pulls{/number}',
+2025-10-17T00:22:17.1412923Z     pushed_at: '2025-10-16T22:28:08Z',
+2025-10-17T00:22:17.1413252Z     releases_url: 'https://api.github.com/repos/delta-io/delta/releases{/id}',
+2025-10-17T00:22:17.1413585Z     size: 43517,
+2025-10-17T00:22:17.1413791Z     ssh_url: 'git@github.com:delta-io/delta.git',
+2025-10-17T00:22:17.1414050Z     stargazers_count: 8336,
+2025-10-17T00:22:17.1414362Z     stargazers_url: 'https://api.github.com/repos/delta-io/delta/stargazers',
+2025-10-17T00:22:17.1414798Z     statuses_url: 'https://api.github.com/repos/delta-io/delta/statuses/{sha}',
+2025-10-17T00:22:17.1415246Z     subscribers_url: 'https://api.github.com/repos/delta-io/delta/subscribers',
+2025-10-17T00:22:17.1415693Z     subscription_url: 'https://api.github.com/repos/delta-io/delta/subscription',
+2025-10-17T00:22:17.1416072Z     svn_url: 'https://github.com/delta-io/delta',
+2025-10-17T00:22:17.1416505Z     tags_url: 'https://api.github.com/repos/delta-io/delta/tags',
+2025-10-17T00:22:17.1416878Z     teams_url: 'https://api.github.com/repos/delta-io/delta/teams',
+2025-10-17T00:22:17.1417252Z     topics: [ 'acid', 'analytics', 'big-data', 'delta-lake', 'spark' ],
+2025-10-17T00:22:17.1417757Z     trees_url: 'https://api.github.com/repos/delta-io/delta/git/trees{/sha}',
+2025-10-17T00:22:17.1418199Z     updated_at: '2025-10-16T22:28:13Z',
+2025-10-17T00:22:17.1418467Z     url: 'https://api.github.com/repos/delta-io/delta',
+2025-10-17T00:22:17.1418749Z     visibility: 'public',
+2025-10-17T00:22:17.1418953Z     watchers: 8336,
+2025-10-17T00:22:17.1419140Z     watchers_count: 8336,
+2025-10-17T00:22:17.1419354Z     web_commit_signoff_required: false
+2025-10-17T00:22:17.1419576Z   },
+2025-10-17T00:22:17.1419730Z   sender: {
+2025-10-17T00:22:17.1419991Z     avatar_url: 'https://avatars.githubusercontent.com/u/42597328?v=4',
+2025-10-17T00:22:17.1420418Z     events_url: 'https://api.github.com/users/huan233usc/events{/privacy}',
+2025-10-17T00:22:17.1420827Z     followers_url: 'https://api.github.com/users/huan233usc/followers',
+2025-10-17T00:22:17.1421271Z     following_url: 'https://api.github.com/users/huan233usc/following{/other_user}',
+2025-10-17T00:22:17.1421707Z     gists_url: 'https://api.github.com/users/huan233usc/gists{/gist_id}',
+2025-10-17T00:22:17.1422023Z     gravatar_id: '',
+2025-10-17T00:22:17.1422245Z     html_url: 'https://github.com/huan233usc',
+2025-10-17T00:22:17.1422488Z     id: 42597328,
+2025-10-17T00:22:17.1422672Z     login: 'huan233usc',
+2025-10-17T00:22:17.1422882Z     node_id: 'MDQ6VXNlcjQyNTk3MzI4',
+2025-10-17T00:22:17.1423213Z     organizations_url: 'https://api.github.com/users/huan233usc/orgs',
+2025-10-17T00:22:17.1423649Z     received_events_url: 'https://api.github.com/users/huan233usc/received_events',
+2025-10-17T00:22:17.1424069Z     repos_url: 'https://api.github.com/users/huan233usc/repos',
+2025-10-17T00:22:17.1424359Z     site_admin: false,
+2025-10-17T00:22:17.1424673Z     starred_url: 'https://api.github.com/users/huan233usc/starred{/owner}{/repo}',
+2025-10-17T00:22:17.1425135Z     subscriptions_url: 'https://api.github.com/users/huan233usc/subscriptions',
+2025-10-17T00:22:17.1425476Z     type: 'User',
+2025-10-17T00:22:17.1425695Z     url: 'https://api.github.com/users/huan233usc',
+2025-10-17T00:22:17.1425957Z     user_view_type: 'public'
+2025-10-17T00:22:17.1426158Z   }
+2025-10-17T00:22:17.1426305Z }
+2025-10-17T00:22:17.1426698Z ##[endgroup]
+2025-10-17T00:22:17.1426877Z ==================================================
+2025-10-17T00:22:17.1427042Z 
+2025-10-17T00:22:17.1427140Z [command]git remote add get-diff-action
+2025-10-17T00:22:17.1428206Z [command]git fetch --no-tags --no-recurse-submodules '--depth=10000' get-diff-action 'refs/pull/5320/merge:refs/remotes/get-diff-action/pull/5320/merge' 'refs/heads/master:refs/remotes/get-diff-action/master'
+2025-10-17T00:22:21.0757083Z   >> From https://github.com/delta-io/delta
+2025-10-17T00:22:21.0757958Z   >>  * [new ref]             refs/pull/5320/merge -> get-diff-action/pull/5320/merge
+2025-10-17T00:22:21.0760095Z   >> * [new branch]          master               -> get-diff-action/master
+2025-10-17T00:22:21.0795902Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' '--diff-filter=AMRC' --name-only
+2025-10-17T00:22:21.0843572Z   >> build.sbt
+2025-10-17T00:22:21.0845306Z   >> kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java
+2025-10-17T00:22:21.0846266Z   >> kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java
+2025-10-17T00:22:21.0847416Z   >> kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java
+2025-10-17T00:22:21.0848927Z   >> kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java
+2025-10-17T00:22:21.0849892Z   >> kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java
+2025-10-17T00:22:21.0850847Z   >> kernel/kernel-defaults/src/test/scala/io/delta/kernel/defaults/utils/TestUtils.scala
+2025-10-17T00:22:21.0851830Z   >> project/TestParallelization.scala
+2025-10-17T00:22:21.0852523Z   >> spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java
+2025-10-17T00:22:21.0853209Z   >> spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala
+2025-10-17T00:22:21.0853720Z   >> spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala
+2025-10-17T00:22:21.0854177Z   >> spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala
+2025-10-17T00:22:21.0854609Z   >> spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala
+2025-10-17T00:22:21.0855059Z   >> spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala
+2025-10-17T00:22:21.0855544Z   >> spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala
+2025-10-17T00:22:21.0856021Z   >> spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala
+2025-10-17T00:22:21.0887071Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'build.sbt'
+2025-10-17T00:22:21.0902188Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java'
+2025-10-17T00:22:21.0930156Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java'
+2025-10-17T00:22:21.0947941Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java'
+2025-10-17T00:22:21.0972535Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java'
+2025-10-17T00:22:21.0999248Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java'
+2025-10-17T00:22:21.1026561Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'project/TestParallelization.scala'
+2025-10-17T00:22:21.1059407Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java'
+2025-10-17T00:22:21.1092627Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala'
+2025-10-17T00:22:21.1109619Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala'
+2025-10-17T00:22:21.1127824Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala'
+2025-10-17T00:22:21.1149355Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala'
+2025-10-17T00:22:21.1174124Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala'
+2025-10-17T00:22:21.1202211Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala'
+2025-10-17T00:22:21.1208685Z [command]git diff 'get-diff-action/master...get-diff-action/pull/5320/merge' --shortstat -w -- 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:21.1241580Z   >> 1 file changed, 238 insertions(+), 61 deletions(-)
+2025-10-17T00:22:21.1244942Z   >> 1 file changed, 1 insertion(+), 1 deletion(-)
+2025-10-17T00:22:21.1248798Z   >> 1 file changed, 2 insertions(+), 2 deletions(-)
+2025-10-17T00:22:21.1251969Z   >> 1 file changed, 2 insertions(+), 2 deletions(-)
+2025-10-17T00:22:21.1255204Z   >> 1 file changed, 2 insertions(+), 2 deletions(-)
+2025-10-17T00:22:21.1257501Z   >> 1 file changed, 14 insertions(+), 7 deletions(-)
+2025-10-17T00:22:21.1260851Z   >> 1 file changed, 4 insertions(+), 1 deletion(-)
+2025-10-17T00:22:21.1262930Z   >> 1 file changed, 29 insertions(+)
+2025-10-17T00:22:21.1266208Z   >> 1 file changed, 37 insertions(+)
+2025-10-17T00:22:21.1268220Z   >> 1 file changed, 2 insertions(+), 1 deletion(-)
+2025-10-17T00:22:21.1270472Z   >> 1 file changed, 2 insertions(+), 2 deletions(-)
+2025-10-17T00:22:21.1272498Z   >> 1 file changed, 7 insertions(+), 10 deletions(-)
+2025-10-17T00:22:21.1279300Z   >> 1 file changed, 4 insertions(+), 2 deletions(-)
+2025-10-17T00:22:21.1286359Z   >> 1 file changed, 1 insertion(+), 2 deletions(-)
+2025-10-17T00:22:21.1286926Z   >> 1 file changed, 4 insertions(+), 4 deletions(-)
+2025-10-17T00:22:21.1294781Z ##[group]Dump diffs
+2025-10-17T00:22:21.1302195Z [
+2025-10-17T00:22:21.1302619Z   {
+2025-10-17T00:22:21.1303121Z     file: 'build.sbt',
+2025-10-17T00:22:21.1303733Z     filterIgnored: false,
+2025-10-17T00:22:21.1304123Z     isMatched: true,
+2025-10-17T00:22:21.1304478Z     insertions: 238,
+2025-10-17T00:22:21.1304818Z     deletions: 61,
+2025-10-17T00:22:21.1305127Z     lines: 299
+2025-10-17T00:22:21.1305414Z   },
+2025-10-17T00:22:21.1305658Z   {
+2025-10-17T00:22:21.1306265Z     file: 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java',
+2025-10-17T00:22:21.1306988Z     filterIgnored: false,
+2025-10-17T00:22:21.1307371Z     isMatched: true,
+2025-10-17T00:22:21.1307934Z     insertions: 1,
+2025-10-17T00:22:21.1308282Z     deletions: 1,
+2025-10-17T00:22:21.1308595Z     lines: 2
+2025-10-17T00:22:21.1308879Z   },
+2025-10-17T00:22:21.1309144Z   {
+2025-10-17T00:22:21.1309675Z     file: 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java',
+2025-10-17T00:22:21.1310367Z     filterIgnored: false,
+2025-10-17T00:22:21.1310725Z     isMatched: true,
+2025-10-17T00:22:21.1311061Z     insertions: 2,
+2025-10-17T00:22:21.1311382Z     deletions: 2,
+2025-10-17T00:22:21.1311694Z     lines: 4
+2025-10-17T00:22:21.1311992Z   },
+2025-10-17T00:22:21.1312244Z   {
+2025-10-17T00:22:21.1312709Z     file: 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java',
+2025-10-17T00:22:21.1313134Z     filterIgnored: false,
+2025-10-17T00:22:21.1313347Z     isMatched: true,
+2025-10-17T00:22:21.1313528Z     insertions: 2,
+2025-10-17T00:22:21.1313704Z     deletions: 2,
+2025-10-17T00:22:21.1313869Z     lines: 4
+2025-10-17T00:22:21.1314026Z   },
+2025-10-17T00:22:21.1314162Z   {
+2025-10-17T00:22:21.1314750Z     file: 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java',
+2025-10-17T00:22:21.1315703Z     filterIgnored: false,
+2025-10-17T00:22:21.1316046Z     isMatched: true,
+2025-10-17T00:22:21.1316353Z     insertions: 2,
+2025-10-17T00:22:21.1316636Z     deletions: 2,
+2025-10-17T00:22:21.1316912Z     lines: 4
+2025-10-17T00:22:21.1317176Z   },
+2025-10-17T00:22:21.1317417Z   {
+2025-10-17T00:22:21.1318157Z     file: 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java',
+2025-10-17T00:22:21.1318871Z     filterIgnored: false,
+2025-10-17T00:22:21.1319202Z     isMatched: true,
+2025-10-17T00:22:21.1319509Z     insertions: 14,
+2025-10-17T00:22:21.1319794Z     deletions: 7,
+2025-10-17T00:22:21.1320088Z     lines: 21
+2025-10-17T00:22:21.1320340Z   },
+2025-10-17T00:22:21.1320581Z   {
+2025-10-17T00:22:21.1320902Z     file: 'project/TestParallelization.scala',
+2025-10-17T00:22:21.1321345Z     filterIgnored: false,
+2025-10-17T00:22:21.1321677Z     isMatched: true,
+2025-10-17T00:22:21.1321980Z     insertions: 4,
+2025-10-17T00:22:21.1322272Z     deletions: 1,
+2025-10-17T00:22:21.1322550Z     lines: 5
+2025-10-17T00:22:21.1322813Z   },
+2025-10-17T00:22:21.1323040Z   {
+2025-10-17T00:22:21.1323619Z     file: 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java',
+2025-10-17T00:22:21.1324321Z     filterIgnored: false,
+2025-10-17T00:22:21.1324815Z     isMatched: true,
+2025-10-17T00:22:21.1325104Z     insertions: 29,
+2025-10-17T00:22:21.1325400Z     deletions: 0,
+2025-10-17T00:22:21.1325679Z     lines: 29
+2025-10-17T00:22:21.1325934Z   },
+2025-10-17T00:22:21.1326174Z   {
+2025-10-17T00:22:21.1326714Z     file: 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala',
+2025-10-17T00:22:21.1327477Z     filterIgnored: false,
+2025-10-17T00:22:21.1328315Z     isMatched: true,
+2025-10-17T00:22:21.1328547Z     insertions: 37,
+2025-10-17T00:22:21.1328735Z     deletions: 0,
+2025-10-17T00:22:21.1328965Z     lines: 37
+2025-10-17T00:22:21.1329134Z   },
+2025-10-17T00:22:21.1329309Z   {
+2025-10-17T00:22:21.1329617Z     file: 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala',
+2025-10-17T00:22:21.1330006Z     filterIgnored: false,
+2025-10-17T00:22:21.1330223Z     isMatched: true,
+2025-10-17T00:22:21.1330417Z     insertions: 2,
+2025-10-17T00:22:21.1330590Z     deletions: 1,
+2025-10-17T00:22:21.1330780Z     lines: 3
+2025-10-17T00:22:21.1330953Z   },
+2025-10-17T00:22:21.1331090Z   {
+2025-10-17T00:22:21.1331413Z     file: 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala',
+2025-10-17T00:22:21.1331793Z     filterIgnored: false,
+2025-10-17T00:22:21.1332009Z     isMatched: true,
+2025-10-17T00:22:21.1332200Z     insertions: 2,
+2025-10-17T00:22:21.1332375Z     deletions: 2,
+2025-10-17T00:22:21.1332564Z     lines: 4
+2025-10-17T00:22:21.1332733Z   },
+2025-10-17T00:22:21.1332874Z   {
+2025-10-17T00:22:21.1333161Z     file: 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala',
+2025-10-17T00:22:21.1333574Z     filterIgnored: false,
+2025-10-17T00:22:21.1333767Z     isMatched: true,
+2025-10-17T00:22:21.1333961Z     insertions: 7,
+2025-10-17T00:22:21.1334145Z     deletions: 10,
+2025-10-17T00:22:21.1334333Z     lines: 17
+2025-10-17T00:22:21.1334521Z   },
+2025-10-17T00:22:21.1334685Z   {
+2025-10-17T00:22:21.1335040Z     file: 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala',
+2025-10-17T00:22:21.1335515Z     filterIgnored: false,
+2025-10-17T00:22:21.1335749Z     isMatched: true,
+2025-10-17T00:22:21.1335944Z     insertions: 4,
+2025-10-17T00:22:21.1336152Z     deletions: 2,
+2025-10-17T00:22:21.1336333Z     lines: 6
+2025-10-17T00:22:21.1336525Z   },
+2025-10-17T00:22:21.1336682Z   {
+2025-10-17T00:22:21.1337033Z     file: 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala',
+2025-10-17T00:22:21.1337470Z     filterIgnored: false,
+2025-10-17T00:22:21.1337924Z     isMatched: true,
+2025-10-17T00:22:21.1338151Z     insertions: 1,
+2025-10-17T00:22:21.1338343Z     deletions: 2,
+2025-10-17T00:22:21.1338717Z     lines: 3
+2025-10-17T00:22:21.1338915Z   },
+2025-10-17T00:22:21.1339081Z   {
+2025-10-17T00:22:21.1339433Z     file: 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala',
+2025-10-17T00:22:21.1339881Z     filterIgnored: false,
+2025-10-17T00:22:21.1340144Z     isMatched: true,
+2025-10-17T00:22:21.1340394Z     insertions: 4,
+2025-10-17T00:22:21.1340637Z     deletions: 4,
+2025-10-17T00:22:21.1340844Z     lines: 8
+2025-10-17T00:22:21.1341022Z   }
+2025-10-17T00:22:21.1341165Z ]
+2025-10-17T00:22:21.1341579Z ##[endgroup]
+2025-10-17T00:22:21.1341902Z ##[group]Dump output
+2025-10-17T00:22:21.1342038Z 
+2025-10-17T00:22:21.1356034Z ##[warning]The `set-output` command is deprecated and will be disabled soon. Please upgrade to using Environment Files. For more information see: https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+2025-10-17T00:22:21.1386896Z diff: 'build.sbt' 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java' 'project/TestParallelization.scala' 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java' 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala' 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:21.1391553Z 
+2025-10-17T00:22:21.1393959Z ##[warning]The `set-output` command is deprecated and will be disabled soon. Please upgrade to using Environment Files. For more information see: https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+2025-10-17T00:22:21.1399775Z filtered_diff: 'build.sbt' 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java' 'project/TestParallelization.scala' 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java' 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala' 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:21.1403912Z 
+2025-10-17T00:22:21.1405726Z ##[warning]The `set-output` command is deprecated and will be disabled soon. Please upgrade to using Environment Files. For more information see: https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+2025-10-17T00:22:21.1407069Z matched_files: 
+2025-10-17T00:22:21.1407179Z 
+2025-10-17T00:22:21.1409553Z ##[warning]The `set-output` command is deprecated and will be disabled soon. Please upgrade to using Environment Files. For more information see: https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+2025-10-17T00:22:21.1410933Z count: 15
+2025-10-17T00:22:21.1411035Z 
+2025-10-17T00:22:21.1412767Z ##[warning]The `set-output` command is deprecated and will be disabled soon. Please upgrade to using Environment Files. For more information see: https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+2025-10-17T00:22:21.1414287Z insertions: 349
+2025-10-17T00:22:21.1414409Z 
+2025-10-17T00:22:21.1416139Z ##[warning]The `set-output` command is deprecated and will be disabled soon. Please upgrade to using Environment Files. For more information see: https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+2025-10-17T00:22:21.1417365Z deletions: 97
+2025-10-17T00:22:21.1417479Z 
+2025-10-17T00:22:21.1419447Z ##[warning]The `set-output` command is deprecated and will be disabled soon. Please upgrade to using Environment Files. For more information see: https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/
+2025-10-17T00:22:21.1420727Z lines: 446
+2025-10-17T00:22:21.1421072Z ##[endgroup]

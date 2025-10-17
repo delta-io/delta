@@ -1,0 +1,32 @@
+﻿2025-10-17T00:22:26.0218191Z ##[group]Run actions/cache@v3
+2025-10-17T00:22:26.0218462Z with:
+2025-10-17T00:22:26.0218658Z   path: ~/.sbt
+~/.ivy2
+~/.cache/coursier
+
+2025-10-17T00:22:26.0218958Z   key: delta-sbt-cache-spark3.2-scala2.13.13
+2025-10-17T00:22:26.0219230Z   enableCrossOsArchive: false
+2025-10-17T00:22:26.0219460Z   fail-on-cache-miss: false
+2025-10-17T00:22:26.0219668Z   lookup-only: false
+2025-10-17T00:22:26.0219854Z env:
+2025-10-17T00:22:26.0220011Z   SCALA_VERSION: 2.13.13
+2025-10-17T00:22:26.0224125Z   GIT_DIFF: 'build.sbt' 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java' 'project/TestParallelization.scala' 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java' 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala' 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:26.0232486Z   GIT_DIFF_FILTERED: 'build.sbt' 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java' 'project/TestParallelization.scala' 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java' 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala' 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:26.0236598Z   MATCHED_FILES: 
+2025-10-17T00:22:26.0236847Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/11.0.28-6/x64
+2025-10-17T00:22:26.0237218Z   JAVA_HOME_11_X64: /opt/hostedtoolcache/Java_Zulu_jdk/11.0.28-6/x64
+2025-10-17T00:22:26.0237900Z ##[endgroup]
+2025-10-17T00:22:26.4900269Z Cache hit for: delta-sbt-cache-spark3.2-scala2.13.13
+2025-10-17T00:22:27.7722547Z Received 8388608 of 1073676792 (0.8%), 8.0 MBs/sec
+2025-10-17T00:22:28.7731014Z Received 130023424 of 1073676792 (12.1%), 62.0 MBs/sec
+2025-10-17T00:22:29.8601538Z Received 268435456 of 1073676792 (25.0%), 82.9 MBs/sec
+2025-10-17T00:22:30.8629222Z Received 402653184 of 1073676792 (37.5%), 93.9 MBs/sec
+2025-10-17T00:22:31.8641841Z Received 536870912 of 1073676792 (50.0%), 100.6 MBs/sec
+2025-10-17T00:22:32.8649202Z Received 671088640 of 1073676792 (62.5%), 105.1 MBs/sec
+2025-10-17T00:22:33.8695098Z Received 805306368 of 1073676792 (75.0%), 108.2 MBs/sec
+2025-10-17T00:22:34.8709217Z Received 939524096 of 1073676792 (87.5%), 110.6 MBs/sec
+2025-10-17T00:22:35.7512611Z Received 1073676792 of 1073676792 (100.0%), 114.0 MBs/sec
+2025-10-17T00:22:35.7515824Z Cache Size: ~1024 MB (1073676792 B)
+2025-10-17T00:22:35.7631221Z [command]/usr/bin/tar -xf /home/runner/work/_temp/e38b841e-c57b-4651-a8c7-80668456e810/cache.tzst -P -C /home/runner/work/delta/delta --use-compress-program unzstd
+2025-10-17T00:22:37.8414469Z Cache restored successfully
+2025-10-17T00:22:38.0576571Z Cache restored from key: delta-sbt-cache-spark3.2-scala2.13.13

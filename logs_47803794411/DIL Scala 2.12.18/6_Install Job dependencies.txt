@@ -1,0 +1,585 @@
+﻿2025-10-17T00:22:36.5054599Z ##[group]Run sudo apt-get update
+2025-10-17T00:22:36.5055014Z [36;1msudo apt-get update[0m
+2025-10-17T00:22:36.5055850Z [36;1msudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git[0m
+2025-10-17T00:22:36.5056683Z [36;1msudo apt install libedit-dev[0m
+2025-10-17T00:22:36.5057140Z [36;1mcurl -LO https://github.com/bufbuild/buf/releases/download/v1.28.1/buf-Linux-x86_64.tar.gz[0m
+2025-10-17T00:22:36.5057595Z [36;1mmkdir -p ~/buf[0m
+2025-10-17T00:22:36.5057916Z [36;1mtar -xvzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1[0m
+2025-10-17T00:22:36.5058277Z [36;1mrm buf-Linux-x86_64.tar.gz[0m
+2025-10-17T00:22:36.5058558Z [36;1msudo apt install python3-pip --fix-missing[0m
+2025-10-17T00:22:36.5058869Z [36;1msudo pip3 install pipenv==2024.4.1[0m
+2025-10-17T00:22:36.5059158Z [36;1mcurl https://pyenv.run | bash[0m
+2025-10-17T00:22:36.5059466Z [36;1mexport PATH="~/.pyenv/bin:$PATH"[0m
+2025-10-17T00:22:36.5059720Z [36;1meval "$(pyenv init -)"[0m
+2025-10-17T00:22:36.5059975Z [36;1meval "$(pyenv virtualenv-init -)"[0m
+2025-10-17T00:22:36.5060242Z [36;1mpyenv install 3.8.18[0m
+2025-10-17T00:22:36.5060467Z [36;1mpyenv global system 3.8.18[0m
+2025-10-17T00:22:36.5060720Z [36;1mpipenv --python 3.8.18 install[0m
+2025-10-17T00:22:36.5096869Z shell: /usr/bin/bash -e {0}
+2025-10-17T00:22:36.5097120Z env:
+2025-10-17T00:22:36.5097306Z   SCALA_VERSION: 2.12.18
+2025-10-17T00:22:36.5101366Z   GIT_DIFF: 'build.sbt' 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java' 'project/TestParallelization.scala' 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java' 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala' 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:36.5109216Z   GIT_DIFF_FILTERED: 'build.sbt' 'kernel-spark/src/main/java/io/delta/kernel/spark/read/SparkBatch.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/Dsv2BasicTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/SparkDsv2TestBase.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/read/SparkGoldenTableTest.java' 'kernel-spark/src/test/java/io/delta/kernel/spark/utils/StreamingHelperTest.java' 'project/TestParallelization.scala' 'spark-combined/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java' 'spark-combined/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaAnalysis.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/DeltaErrors.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/catalog/DeltaCatalog.scala' 'spark/src/main/scala/org/apache/spark/sql/delta/implicits/package.scala' 'spark/src/test/scala/org/apache/spark/sql/delta/DeltaErrorsSuite.scala'
+2025-10-17T00:22:36.5113669Z   MATCHED_FILES: 
+2025-10-17T00:22:36.5113928Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/11.0.28-6/x64
+2025-10-17T00:22:36.5114300Z   JAVA_HOME_11_X64: /opt/hostedtoolcache/Java_Zulu_jdk/11.0.28-6/x64
+2025-10-17T00:22:36.5114600Z ##[endgroup]
+2025-10-17T00:22:36.7166115Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+2025-10-17T00:22:36.7674384Z Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+2025-10-17T00:22:36.7678087Z Get:6 https://packages.microsoft.com/repos/azure-cli noble InRelease [3564 B]
+2025-10-17T00:22:36.7722353Z Get:7 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+2025-10-17T00:22:36.7800839Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+2025-10-17T00:22:36.7859312Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+2025-10-17T00:22:36.7911930Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+2025-10-17T00:22:36.9597458Z Get:8 https://packages.microsoft.com/repos/azure-cli noble/main amd64 Packages [1629 B]
+2025-10-17T00:22:37.0055631Z Get:9 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [62.7 kB]
+2025-10-17T00:22:37.0175478Z Get:10 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [45.3 kB]
+2025-10-17T00:22:37.0321762Z Get:11 https://packages.microsoft.com/ubuntu/24.04/prod noble/main armhf Packages [10.9 kB]
+2025-10-17T00:22:37.0532771Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1498 kB]
+2025-10-17T00:22:37.0610409Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [288 kB]
+2025-10-17T00:22:37.0636813Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [175 kB]
+2025-10-17T00:22:37.0653957Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 c-n-f Metadata [15.3 kB]
+2025-10-17T00:22:37.0669178Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1489 kB]
+2025-10-17T00:22:37.0743276Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe Translation-en [301 kB]
+2025-10-17T00:22:37.0767140Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [377 kB]
+2025-10-17T00:22:37.0800916Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 c-n-f Metadata [31.2 kB]
+2025-10-17T00:22:37.0812862Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [2089 kB]
+2025-10-17T00:22:37.0916588Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [470 kB]
+2025-10-17T00:22:37.1390403Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Components [212 B]
+2025-10-17T00:22:37.1396339Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 c-n-f Metadata [516 B]
+2025-10-17T00:22:37.1405421Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Packages [30.3 kB]
+2025-10-17T00:22:37.1418261Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse Translation-en [5564 B]
+2025-10-17T00:22:37.1426568Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+2025-10-17T00:22:37.1436505Z Get:27 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 c-n-f Metadata [484 B]
+2025-10-17T00:22:37.1443911Z Get:28 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [7156 B]
+2025-10-17T00:22:37.1457958Z Get:29 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [11.0 kB]
+2025-10-17T00:22:37.1466831Z Get:30 http://azure.archive.ubuntu.com/ubuntu noble-backports/restricted amd64 Components [216 B]
+2025-10-17T00:22:37.1473693Z Get:31 http://azure.archive.ubuntu.com/ubuntu noble-backports/multiverse amd64 Components [212 B]
+2025-10-17T00:22:37.1614184Z Get:32 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Packages [1222 kB]
+2025-10-17T00:22:37.1685380Z Get:33 http://azure.archive.ubuntu.com/ubuntu noble-security/main Translation-en [204 kB]
+2025-10-17T00:22:37.1702846Z Get:34 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Components [21.5 kB]
+2025-10-17T00:22:37.1713205Z Get:35 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 c-n-f Metadata [8968 B]
+2025-10-17T00:22:37.2159174Z Get:36 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Packages [885 kB]
+2025-10-17T00:22:37.2209984Z Get:37 http://azure.archive.ubuntu.com/ubuntu noble-security/universe Translation-en [197 kB]
+2025-10-17T00:22:37.2231756Z Get:38 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Components [52.2 kB]
+2025-10-17T00:22:37.2266828Z Get:39 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 c-n-f Metadata [18.2 kB]
+2025-10-17T00:22:37.2283631Z Get:40 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1978 kB]
+2025-10-17T00:22:37.2374361Z Get:41 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [450 kB]
+2025-10-17T00:22:37.2402511Z Get:42 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Components [212 B]
+2025-10-17T00:22:37.2410927Z Get:43 http://azure.archive.ubuntu.com/ubuntu noble-security/multiverse Translation-en [5844 B]
+2025-10-17T00:22:37.2419276Z Get:44 http://azure.archive.ubuntu.com/ubuntu noble-security/multiverse amd64 Components [212 B]
+2025-10-17T00:22:48.3806844Z Fetched 12.3 MB in 2s (7848 kB/s)
+2025-10-17T00:22:49.1375703Z Reading package lists...
+2025-10-17T00:22:49.1702219Z Reading package lists...
+2025-10-17T00:22:49.3453909Z Building dependency tree...
+2025-10-17T00:22:49.3461773Z Reading state information...
+2025-10-17T00:22:49.5049874Z make is already the newest version (4.3-4.1build2).
+2025-10-17T00:22:49.5050513Z zlib1g-dev is already the newest version (1:1.3.dfsg-3.1ubuntu2.1).
+2025-10-17T00:22:49.5051127Z libsqlite3-dev is already the newest version (3.45.1-1ubuntu2.5).
+2025-10-17T00:22:49.5051939Z wget is already the newest version (1.21.4-1ubuntu4.1).
+2025-10-17T00:22:49.5052419Z curl is already the newest version (8.5.0-2ubuntu10.6).
+2025-10-17T00:22:49.5053215Z libncurses-dev is already the newest version (6.4+20240113-1ubuntu2).
+2025-10-17T00:22:49.5053783Z libncurses-dev set to manually installed.
+2025-10-17T00:22:49.5054294Z xz-utils is already the newest version (5.6.1+really5.4.5-1ubuntu0.2).
+2025-10-17T00:22:49.5054895Z libffi-dev is already the newest version (3.4.6-1build1).
+2025-10-17T00:22:49.5055345Z libffi-dev set to manually installed.
+2025-10-17T00:22:49.5055940Z python3-openssl is already the newest version (23.2.0-1).
+2025-10-17T00:22:49.5056419Z python3-openssl set to manually installed.
+2025-10-17T00:22:49.5056906Z git is already the newest version (1:2.51.0-0ppa2~ubuntu24.04.1).
+2025-10-17T00:22:49.5057376Z git set to manually installed.
+2025-10-17T00:22:49.5057778Z The following additional packages will be installed:
+2025-10-17T00:22:49.5058399Z   bzip2-doc libbrotli-dev libfontconfig-dev libfontconfig1-dev libfreetype-dev
+2025-10-17T00:22:49.5059097Z   libpng-dev libpng-tools libpthread-stubs0-dev libssl3t64 libx11-dev
+2025-10-17T00:22:49.5059675Z   libxau-dev libxcb1-dev libxdmcp-dev libxext-dev libxft-dev libxrender-dev
+2025-10-17T00:22:49.5060772Z   libxss-dev llvm-runtime openssl tcl-dev tcl8.6-dev tk8.6-dev uuid-dev
+2025-10-17T00:22:49.5062047Z   x11proto-core-dev x11proto-dev xorg-sgml-doctools xtrans-dev
+2025-10-17T00:22:49.5071621Z Suggested packages:
+2025-10-17T00:22:49.5072114Z   freetype2-doc liblzma-doc readline-doc libssl-doc libx11-doc libxcb-doc
+2025-10-17T00:22:49.5072587Z   libxext-doc tcl-doc tcl8.6-doc tk-doc tk8.6-doc
+2025-10-17T00:22:49.5754539Z The following NEW packages will be installed:
+2025-10-17T00:22:49.5756493Z   build-essential bzip2-doc libbrotli-dev libbz2-dev libfontconfig-dev
+2025-10-17T00:22:49.5757767Z   libfontconfig1-dev libfreetype-dev liblzma-dev libpng-dev libpng-tools
+2025-10-17T00:22:49.5760505Z   libpthread-stubs0-dev libreadline-dev libx11-dev libxau-dev libxcb1-dev
+2025-10-17T00:22:49.5761370Z   libxdmcp-dev libxext-dev libxft-dev libxrender-dev libxss-dev llvm
+2025-10-17T00:22:49.5763887Z   llvm-runtime tcl-dev tcl8.6-dev tk-dev tk8.6-dev uuid-dev x11proto-core-dev
+2025-10-17T00:22:49.5764589Z   x11proto-dev xorg-sgml-doctools xtrans-dev
+2025-10-17T00:22:49.5771388Z The following packages will be upgraded:
+2025-10-17T00:22:49.5774208Z   libssl-dev libssl3t64 openssl
+2025-10-17T00:22:49.5954013Z 3 upgraded, 31 newly installed, 0 to remove and 34 not upgraded.
+2025-10-17T00:22:49.5954660Z Need to get 11.2 MB of archives.
+2025-10-17T00:22:49.5955199Z After this operation, 21.7 MB of additional disk space will be used.
+2025-10-17T00:22:49.5955842Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+2025-10-17T00:22:49.6419882Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libssl-dev amd64 3.0.13-0ubuntu3.6 [2408 kB]
+2025-10-17T00:22:49.7515708Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libssl3t64 amd64 3.0.13-0ubuntu3.6 [1940 kB]
+2025-10-17T00:22:49.8518699Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 openssl amd64 3.0.13-0ubuntu3.6 [1003 kB]
+2025-10-17T00:22:49.9245979Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 build-essential amd64 12.10ubuntu1 [4928 B]
+2025-10-17T00:22:49.9557232Z Get:6 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 bzip2-doc all 1.0.8-5.1build0.1 [499 kB]
+2025-10-17T00:22:50.0152241Z Get:7 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libbrotli-dev amd64 1.1.0-2build2 [353 kB]
+2025-10-17T00:22:50.0548922Z Get:8 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libbz2-dev amd64 1.0.8-5.1build0.1 [33.6 kB]
+2025-10-17T00:22:50.0836940Z Get:9 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libpng-dev amd64 1.6.43-5build1 [264 kB]
+2025-10-17T00:22:50.1168532Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libfreetype-dev amd64 2.13.2+dfsg-1build3 [575 kB]
+2025-10-17T00:22:50.1630148Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 uuid-dev amd64 2.39.3-9ubuntu6.3 [33.5 kB]
+2025-10-17T00:22:50.1913210Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libfontconfig-dev amd64 2.15.0-1.1ubuntu2 [161 kB]
+2025-10-17T00:22:50.2248805Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libfontconfig1-dev amd64 2.15.0-1.1ubuntu2 [1840 B]
+2025-10-17T00:22:50.2531147Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libpng-tools amd64 1.6.43-5build1 [28.5 kB]
+2025-10-17T00:22:50.2834858Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libpthread-stubs0-dev amd64 0.4-1build3 [4746 B]
+2025-10-17T00:22:50.3126589Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libreadline-dev amd64 8.2-4build1 [167 kB]
+2025-10-17T00:22:50.3488049Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 xorg-sgml-doctools all 1:1.11-1.1 [10.9 kB]
+2025-10-17T00:22:50.3760726Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 x11proto-dev all 2023.2-1 [602 kB]
+2025-10-17T00:22:50.4435936Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libxau-dev amd64 1:1.0.9-1build6 [9570 B]
+2025-10-17T00:22:50.5195268Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 x11proto-core-dev all 2023.2-1 [2444 B]
+2025-10-17T00:22:50.5489886Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libxdmcp-dev amd64 1:1.1.3-0ubuntu6 [26.5 kB]
+2025-10-17T00:22:50.5806279Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 xtrans-dev all 1.4.0-1 [68.9 kB]
+2025-10-17T00:22:50.6292626Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libxcb1-dev amd64 1.15-1ubuntu2 [85.8 kB]
+2025-10-17T00:22:50.6756669Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libx11-dev amd64 2:1.8.7-1build1 [732 kB]
+2025-10-17T00:22:50.7876910Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libxext-dev amd64 2:1.3.4-1build2 [83.5 kB]
+2025-10-17T00:22:50.8166302Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libxrender-dev amd64 1:0.9.10-1.1build1 [26.3 kB]
+2025-10-17T00:22:50.8437146Z Get:27 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libxft-dev amd64 2.3.6-1build1 [64.3 kB]
+2025-10-17T00:22:50.8758617Z Get:28 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libxss-dev amd64 1:1.2.3-1build3 [12.1 kB]
+2025-10-17T00:22:50.9020789Z Get:29 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 llvm-runtime amd64 1:18.0-59~exp2 [5496 B]
+2025-10-17T00:22:50.9327014Z Get:30 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 llvm amd64 1:18.0-59~exp2 [4146 B]
+2025-10-17T00:22:50.9603461Z Get:31 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 tcl8.6-dev amd64 8.6.14+dfsg-1build1 [1000 kB]
+2025-10-17T00:22:51.0297809Z Get:32 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 tcl-dev amd64 8.6.14build1 [5782 B]
+2025-10-17T00:22:51.0569208Z Get:33 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 tk8.6-dev amd64 8.6.14-1build1 [788 kB]
+2025-10-17T00:22:51.1245973Z Get:34 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 tk-dev amd64 8.6.14build1 [2914 B]
+2025-10-17T00:22:51.1536575Z Get:35 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 liblzma-dev amd64 5.6.1+really5.4.5-1ubuntu0.2 [176 kB]
+2025-10-17T00:22:51.4696192Z Fetched 11.2 MB in 2s (7096 kB/s)
+2025-10-17T00:22:51.6609446Z (Reading database ... 
+2025-10-17T00:22:51.6609933Z (Reading database ... 5%
+2025-10-17T00:22:51.6610259Z (Reading database ... 10%
+2025-10-17T00:22:51.6610493Z (Reading database ... 15%
+2025-10-17T00:22:51.6610709Z (Reading database ... 20%
+2025-10-17T00:22:51.6610919Z (Reading database ... 25%
+2025-10-17T00:22:51.6611122Z (Reading database ... 30%
+2025-10-17T00:22:51.6611649Z (Reading database ... 35%
+2025-10-17T00:22:51.6611994Z (Reading database ... 40%
+2025-10-17T00:22:51.6612330Z (Reading database ... 45%
+2025-10-17T00:22:51.6612667Z (Reading database ... 50%
+2025-10-17T00:22:51.7594109Z (Reading database ... 55%
+2025-10-17T00:22:52.3864639Z (Reading database ... 60%
+2025-10-17T00:22:52.9556300Z (Reading database ... 65%
+2025-10-17T00:22:53.5091927Z (Reading database ... 70%
+2025-10-17T00:22:54.0769170Z (Reading database ... 75%
+2025-10-17T00:22:54.6535427Z (Reading database ... 80%
+2025-10-17T00:22:55.4192484Z (Reading database ... 85%
+2025-10-17T00:22:56.1014855Z (Reading database ... 90%
+2025-10-17T00:22:56.7250120Z (Reading database ... 95%
+2025-10-17T00:22:56.7250684Z (Reading database ... 100%
+2025-10-17T00:22:56.7251143Z (Reading database ... 214596 files and directories currently installed.)
+2025-10-17T00:22:56.7298139Z Preparing to unpack .../libssl-dev_3.0.13-0ubuntu3.6_amd64.deb ...
+2025-10-17T00:22:56.7349032Z Unpacking libssl-dev:amd64 (3.0.13-0ubuntu3.6) over (3.0.13-0ubuntu3.5) ...
+2025-10-17T00:22:56.8809226Z Preparing to unpack .../libssl3t64_3.0.13-0ubuntu3.6_amd64.deb ...
+2025-10-17T00:22:56.8935954Z Unpacking libssl3t64:amd64 (3.0.13-0ubuntu3.6) over (3.0.13-0ubuntu3.5) ...
+2025-10-17T00:22:56.9918846Z Setting up libssl3t64:amd64 (3.0.13-0ubuntu3.6) ...
+2025-10-17T00:22:57.0263633Z (Reading database ... 
+2025-10-17T00:22:57.0264125Z (Reading database ... 5%
+2025-10-17T00:22:57.0264549Z (Reading database ... 10%
+2025-10-17T00:22:57.0264993Z (Reading database ... 15%
+2025-10-17T00:22:57.0265409Z (Reading database ... 20%
+2025-10-17T00:22:57.0266121Z (Reading database ... 25%
+2025-10-17T00:22:57.0266557Z (Reading database ... 30%
+2025-10-17T00:22:57.0266964Z (Reading database ... 35%
+2025-10-17T00:22:57.0267388Z (Reading database ... 40%
+2025-10-17T00:22:57.0267684Z (Reading database ... 45%
+2025-10-17T00:22:57.0267940Z (Reading database ... 50%
+2025-10-17T00:22:57.0279120Z (Reading database ... 55%
+2025-10-17T00:22:57.0382442Z (Reading database ... 60%
+2025-10-17T00:22:57.0405393Z (Reading database ... 65%
+2025-10-17T00:22:57.0423118Z (Reading database ... 70%
+2025-10-17T00:22:57.0445727Z (Reading database ... 75%
+2025-10-17T00:22:57.0508385Z (Reading database ... 80%
+2025-10-17T00:22:57.0666898Z (Reading database ... 85%
+2025-10-17T00:22:57.0877308Z (Reading database ... 90%
+2025-10-17T00:22:57.0953866Z (Reading database ... 95%
+2025-10-17T00:22:57.0954357Z (Reading database ... 100%
+2025-10-17T00:22:57.0954992Z (Reading database ... 214596 files and directories currently installed.)
+2025-10-17T00:22:57.0996617Z Preparing to unpack .../00-openssl_3.0.13-0ubuntu3.6_amd64.deb ...
+2025-10-17T00:22:57.1029693Z Unpacking openssl (3.0.13-0ubuntu3.6) over (3.0.13-0ubuntu3.5) ...
+2025-10-17T00:22:58.0767474Z Selecting previously unselected package build-essential.
+2025-10-17T00:22:58.0906339Z Preparing to unpack .../01-build-essential_12.10ubuntu1_amd64.deb ...
+2025-10-17T00:22:58.0917326Z Unpacking build-essential (12.10ubuntu1) ...
+2025-10-17T00:22:58.1128295Z Selecting previously unselected package bzip2-doc.
+2025-10-17T00:22:58.1262957Z Preparing to unpack .../02-bzip2-doc_1.0.8-5.1build0.1_all.deb ...
+2025-10-17T00:22:58.1274183Z Unpacking bzip2-doc (1.0.8-5.1build0.1) ...
+2025-10-17T00:22:58.1664009Z Selecting previously unselected package libbrotli-dev:amd64.
+2025-10-17T00:22:58.1798892Z Preparing to unpack .../03-libbrotli-dev_1.1.0-2build2_amd64.deb ...
+2025-10-17T00:22:58.1807069Z Unpacking libbrotli-dev:amd64 (1.1.0-2build2) ...
+2025-10-17T00:22:58.2064164Z Selecting previously unselected package libbz2-dev:amd64.
+2025-10-17T00:22:58.2197713Z Preparing to unpack .../04-libbz2-dev_1.0.8-5.1build0.1_amd64.deb ...
+2025-10-17T00:22:58.2205834Z Unpacking libbz2-dev:amd64 (1.0.8-5.1build0.1) ...
+2025-10-17T00:22:58.2409566Z Selecting previously unselected package libpng-dev:amd64.
+2025-10-17T00:22:58.2541335Z Preparing to unpack .../05-libpng-dev_1.6.43-5build1_amd64.deb ...
+2025-10-17T00:22:58.2548817Z Unpacking libpng-dev:amd64 (1.6.43-5build1) ...
+2025-10-17T00:22:58.3192982Z Selecting previously unselected package libfreetype-dev:amd64.
+2025-10-17T00:22:58.3325943Z Preparing to unpack .../06-libfreetype-dev_2.13.2+dfsg-1build3_amd64.deb ...
+2025-10-17T00:22:58.3333878Z Unpacking libfreetype-dev:amd64 (2.13.2+dfsg-1build3) ...
+2025-10-17T00:22:58.3703142Z Selecting previously unselected package uuid-dev:amd64.
+2025-10-17T00:22:58.3838094Z Preparing to unpack .../07-uuid-dev_2.39.3-9ubuntu6.3_amd64.deb ...
+2025-10-17T00:22:58.3847117Z Unpacking uuid-dev:amd64 (2.39.3-9ubuntu6.3) ...
+2025-10-17T00:22:58.4465671Z Selecting previously unselected package libfontconfig-dev:amd64.
+2025-10-17T00:22:58.4602392Z Preparing to unpack .../08-libfontconfig-dev_2.15.0-1.1ubuntu2_amd64.deb ...
+2025-10-17T00:22:58.4614094Z Unpacking libfontconfig-dev:amd64 (2.15.0-1.1ubuntu2) ...
+2025-10-17T00:22:58.4977950Z Selecting previously unselected package libfontconfig1-dev:amd64.
+2025-10-17T00:22:58.5114125Z Preparing to unpack .../09-libfontconfig1-dev_2.15.0-1.1ubuntu2_amd64.deb ...
+2025-10-17T00:22:58.5123090Z Unpacking libfontconfig1-dev:amd64 (2.15.0-1.1ubuntu2) ...
+2025-10-17T00:22:58.5312179Z Selecting previously unselected package libpng-tools.
+2025-10-17T00:22:58.5445917Z Preparing to unpack .../10-libpng-tools_1.6.43-5build1_amd64.deb ...
+2025-10-17T00:22:58.5453160Z Unpacking libpng-tools (1.6.43-5build1) ...
+2025-10-17T00:22:58.5650297Z Selecting previously unselected package libpthread-stubs0-dev:amd64.
+2025-10-17T00:22:58.5784111Z Preparing to unpack .../11-libpthread-stubs0-dev_0.4-1build3_amd64.deb ...
+2025-10-17T00:22:58.5791725Z Unpacking libpthread-stubs0-dev:amd64 (0.4-1build3) ...
+2025-10-17T00:22:58.6005464Z Selecting previously unselected package libreadline-dev:amd64.
+2025-10-17T00:22:58.6138849Z Preparing to unpack .../12-libreadline-dev_8.2-4build1_amd64.deb ...
+2025-10-17T00:22:58.6148274Z Unpacking libreadline-dev:amd64 (8.2-4build1) ...
+2025-10-17T00:22:58.6385607Z Selecting previously unselected package xorg-sgml-doctools.
+2025-10-17T00:22:58.6520537Z Preparing to unpack .../13-xorg-sgml-doctools_1%3a1.11-1.1_all.deb ...
+2025-10-17T00:22:58.6529043Z Unpacking xorg-sgml-doctools (1:1.11-1.1) ...
+2025-10-17T00:22:58.6811603Z Selecting previously unselected package x11proto-dev.
+2025-10-17T00:22:58.6946975Z Preparing to unpack .../14-x11proto-dev_2023.2-1_all.deb ...
+2025-10-17T00:22:58.6954998Z Unpacking x11proto-dev (2023.2-1) ...
+2025-10-17T00:22:58.7530020Z Selecting previously unselected package libxau-dev:amd64.
+2025-10-17T00:22:58.7666054Z Preparing to unpack .../15-libxau-dev_1%3a1.0.9-1build6_amd64.deb ...
+2025-10-17T00:22:58.7673507Z Unpacking libxau-dev:amd64 (1:1.0.9-1build6) ...
+2025-10-17T00:22:58.7949223Z Selecting previously unselected package x11proto-core-dev.
+2025-10-17T00:22:58.8084321Z Preparing to unpack .../16-x11proto-core-dev_2023.2-1_all.deb ...
+2025-10-17T00:22:58.8125126Z Unpacking x11proto-core-dev (2023.2-1) ...
+2025-10-17T00:22:58.8307357Z Selecting previously unselected package libxdmcp-dev:amd64.
+2025-10-17T00:22:58.8440285Z Preparing to unpack .../17-libxdmcp-dev_1%3a1.1.3-0ubuntu6_amd64.deb ...
+2025-10-17T00:22:58.8451147Z Unpacking libxdmcp-dev:amd64 (1:1.1.3-0ubuntu6) ...
+2025-10-17T00:22:58.8642476Z Selecting previously unselected package xtrans-dev.
+2025-10-17T00:22:58.8774408Z Preparing to unpack .../18-xtrans-dev_1.4.0-1_all.deb ...
+2025-10-17T00:22:58.8783385Z Unpacking xtrans-dev (1.4.0-1) ...
+2025-10-17T00:22:58.9066729Z Selecting previously unselected package libxcb1-dev:amd64.
+2025-10-17T00:22:58.9204088Z Preparing to unpack .../19-libxcb1-dev_1.15-1ubuntu2_amd64.deb ...
+2025-10-17T00:22:58.9220949Z Unpacking libxcb1-dev:amd64 (1.15-1ubuntu2) ...
+2025-10-17T00:22:58.9462332Z Selecting previously unselected package libx11-dev:amd64.
+2025-10-17T00:22:58.9597051Z Preparing to unpack .../20-libx11-dev_2%3a1.8.7-1build1_amd64.deb ...
+2025-10-17T00:22:58.9604941Z Unpacking libx11-dev:amd64 (2:1.8.7-1build1) ...
+2025-10-17T00:22:58.9944812Z Selecting previously unselected package libxext-dev:amd64.
+2025-10-17T00:22:59.0079349Z Preparing to unpack .../21-libxext-dev_2%3a1.3.4-1build2_amd64.deb ...
+2025-10-17T00:22:59.0087342Z Unpacking libxext-dev:amd64 (2:1.3.4-1build2) ...
+2025-10-17T00:22:59.0387587Z Selecting previously unselected package libxrender-dev:amd64.
+2025-10-17T00:22:59.0522485Z Preparing to unpack .../22-libxrender-dev_1%3a0.9.10-1.1build1_amd64.deb ...
+2025-10-17T00:22:59.0530385Z Unpacking libxrender-dev:amd64 (1:0.9.10-1.1build1) ...
+2025-10-17T00:22:59.0750573Z Selecting previously unselected package libxft-dev:amd64.
+2025-10-17T00:22:59.0884975Z Preparing to unpack .../23-libxft-dev_2.3.6-1build1_amd64.deb ...
+2025-10-17T00:22:59.0893503Z Unpacking libxft-dev:amd64 (2.3.6-1build1) ...
+2025-10-17T00:22:59.1156181Z Selecting previously unselected package libxss-dev:amd64.
+2025-10-17T00:22:59.1289793Z Preparing to unpack .../24-libxss-dev_1%3a1.2.3-1build3_amd64.deb ...
+2025-10-17T00:22:59.1297981Z Unpacking libxss-dev:amd64 (1:1.2.3-1build3) ...
+2025-10-17T00:22:59.1499680Z Selecting previously unselected package llvm-runtime:amd64.
+2025-10-17T00:22:59.1633372Z Preparing to unpack .../25-llvm-runtime_1%3a18.0-59~exp2_amd64.deb ...
+2025-10-17T00:22:59.1641983Z Unpacking llvm-runtime:amd64 (1:18.0-59~exp2) ...
+2025-10-17T00:22:59.1867004Z Selecting previously unselected package llvm.
+2025-10-17T00:22:59.2000456Z Preparing to unpack .../26-llvm_1%3a18.0-59~exp2_amd64.deb ...
+2025-10-17T00:22:59.2029570Z Unpacking llvm (1:18.0-59~exp2) ...
+2025-10-17T00:22:59.4364939Z Selecting previously unselected package tcl8.6-dev:amd64.
+2025-10-17T00:22:59.4501430Z Preparing to unpack .../27-tcl8.6-dev_8.6.14+dfsg-1build1_amd64.deb ...
+2025-10-17T00:22:59.4508789Z Unpacking tcl8.6-dev:amd64 (8.6.14+dfsg-1build1) ...
+2025-10-17T00:22:59.4966863Z Selecting previously unselected package tcl-dev:amd64.
+2025-10-17T00:22:59.5103010Z Preparing to unpack .../28-tcl-dev_8.6.14build1_amd64.deb ...
+2025-10-17T00:22:59.5111554Z Unpacking tcl-dev:amd64 (8.6.14build1) ...
+2025-10-17T00:22:59.5324774Z Selecting previously unselected package tk8.6-dev:amd64.
+2025-10-17T00:22:59.5461012Z Preparing to unpack .../29-tk8.6-dev_8.6.14-1build1_amd64.deb ...
+2025-10-17T00:22:59.5469432Z Unpacking tk8.6-dev:amd64 (8.6.14-1build1) ...
+2025-10-17T00:22:59.5875528Z Selecting previously unselected package tk-dev:amd64.
+2025-10-17T00:22:59.6012703Z Preparing to unpack .../30-tk-dev_8.6.14build1_amd64.deb ...
+2025-10-17T00:22:59.6020560Z Unpacking tk-dev:amd64 (8.6.14build1) ...
+2025-10-17T00:22:59.6227454Z Selecting previously unselected package liblzma-dev:amd64.
+2025-10-17T00:22:59.6365485Z Preparing to unpack .../31-liblzma-dev_5.6.1+really5.4.5-1ubuntu0.2_amd64.deb ...
+2025-10-17T00:22:59.6374361Z Unpacking liblzma-dev:amd64 (5.6.1+really5.4.5-1ubuntu0.2) ...
+2025-10-17T00:22:59.6869702Z Setting up bzip2-doc (1.0.8-5.1build0.1) ...
+2025-10-17T00:22:59.6893076Z Setting up libpng-tools (1.6.43-5build1) ...
+2025-10-17T00:22:59.6914066Z Setting up tcl8.6-dev:amd64 (8.6.14+dfsg-1build1) ...
+2025-10-17T00:22:59.6933833Z Setting up libpng-dev:amd64 (1.6.43-5build1) ...
+2025-10-17T00:22:59.6987968Z Setting up libreadline-dev:amd64 (8.2-4build1) ...
+2025-10-17T00:22:59.7009499Z Setting up libpthread-stubs0-dev:amd64 (0.4-1build3) ...
+2025-10-17T00:22:59.7030456Z Setting up xtrans-dev (1.4.0-1) ...
+2025-10-17T00:22:59.7049844Z Setting up uuid-dev:amd64 (2.39.3-9ubuntu6.3) ...
+2025-10-17T00:22:59.7069062Z Setting up llvm-runtime:amd64 (1:18.0-59~exp2) ...
+2025-10-17T00:22:59.7088519Z Setting up libssl-dev:amd64 (3.0.13-0ubuntu3.6) ...
+2025-10-17T00:22:59.7111511Z Setting up llvm (1:18.0-59~exp2) ...
+2025-10-17T00:22:59.7134500Z Setting up tcl-dev:amd64 (8.6.14build1) ...
+2025-10-17T00:22:59.7156494Z Setting up liblzma-dev:amd64 (5.6.1+really5.4.5-1ubuntu0.2) ...
+2025-10-17T00:22:59.7178719Z Setting up build-essential (12.10ubuntu1) ...
+2025-10-17T00:22:59.7200032Z Setting up xorg-sgml-doctools (1:1.11-1.1) ...
+2025-10-17T00:22:59.7222579Z Setting up openssl (3.0.13-0ubuntu3.6) ...
+2025-10-17T00:22:59.7266222Z Setting up libbrotli-dev:amd64 (1.1.0-2build2) ...
+2025-10-17T00:22:59.7288884Z Setting up libbz2-dev:amd64 (1.0.8-5.1build0.1) ...
+2025-10-17T00:22:59.7309491Z Setting up libfreetype-dev:amd64 (2.13.2+dfsg-1build3) ...
+2025-10-17T00:22:59.7329820Z Setting up libfontconfig-dev:amd64 (2.15.0-1.1ubuntu2) ...
+2025-10-17T00:22:59.7349609Z Setting up libfontconfig1-dev:amd64 (2.15.0-1.1ubuntu2) ...
+2025-10-17T00:22:59.7423011Z Processing triggers for libc-bin (2.39-0ubuntu8.6) ...
+2025-10-17T00:23:01.3274898Z Processing triggers for man-db (2.12.0-4build2) ...
+2025-10-17T00:24:24.8036985Z Processing triggers for sgml-base (1.31) ...
+2025-10-17T00:24:24.8599029Z Processing triggers for install-info (7.1-3build2) ...
+2025-10-17T00:24:25.1742303Z Setting up x11proto-dev (2023.2-1) ...
+2025-10-17T00:24:25.1765360Z Setting up libxau-dev:amd64 (1:1.0.9-1build6) ...
+2025-10-17T00:24:25.1790397Z Setting up libxdmcp-dev:amd64 (1:1.1.3-0ubuntu6) ...
+2025-10-17T00:24:25.1817027Z Setting up x11proto-core-dev (2023.2-1) ...
+2025-10-17T00:24:25.1846866Z Setting up libxcb1-dev:amd64 (1.15-1ubuntu2) ...
+2025-10-17T00:24:25.1872127Z Setting up libx11-dev:amd64 (2:1.8.7-1build1) ...
+2025-10-17T00:24:25.1901024Z Setting up libxext-dev:amd64 (2:1.3.4-1build2) ...
+2025-10-17T00:24:25.1925453Z Setting up libxrender-dev:amd64 (1:0.9.10-1.1build1) ...
+2025-10-17T00:24:25.1948089Z Setting up libxft-dev:amd64 (2.3.6-1build1) ...
+2025-10-17T00:24:25.1969032Z Setting up libxss-dev:amd64 (1:1.2.3-1build3) ...
+2025-10-17T00:24:25.1996469Z Setting up tk8.6-dev:amd64 (8.6.14-1build1) ...
+2025-10-17T00:24:25.2020980Z Setting up tk-dev:amd64 (8.6.14build1) ...
+2025-10-17T00:24:26.4222146Z 
+2025-10-17T00:24:26.4224341Z Running kernel seems to be up-to-date.
+2025-10-17T00:24:26.4224742Z 
+2025-10-17T00:24:26.4224877Z Restarting services...
+2025-10-17T00:24:26.4662858Z  /etc/needrestart/restart.d/systemd-manager
+2025-10-17T00:24:26.7794098Z  systemctl restart packagekit.service php8.3-fpm.service systemd-journald.service systemd-networkd.service systemd-resolved.service systemd-udevd.service udisks2.service walinuxagent.service
+2025-10-17T00:24:26.9732182Z 
+2025-10-17T00:24:26.9732808Z Service restarts being deferred:
+2025-10-17T00:24:26.9739886Z  systemctl restart hosted-compute-agent.service
+2025-10-17T00:24:26.9740637Z  systemctl restart systemd-logind.service
+2025-10-17T00:24:26.9740963Z 
+2025-10-17T00:24:26.9741115Z No containers need to be restarted.
+2025-10-17T00:24:26.9741801Z 
+2025-10-17T00:24:26.9742007Z User sessions running outdated binaries:
+2025-10-17T00:24:26.9742528Z  runner @ user manager service: systemd[1061]
+2025-10-17T00:24:26.9879982Z 
+2025-10-17T00:24:26.9880835Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+2025-10-17T00:24:28.0511329Z 
+2025-10-17T00:24:28.0512036Z WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+2025-10-17T00:24:28.0512546Z 
+2025-10-17T00:24:28.0656724Z Reading package lists...
+2025-10-17T00:24:28.2824990Z Building dependency tree...
+2025-10-17T00:24:28.2833281Z Reading state information...
+2025-10-17T00:24:28.4448577Z The following additional packages will be installed:
+2025-10-17T00:24:28.4453771Z   libbsd-dev libmd-dev
+2025-10-17T00:24:28.4764889Z The following NEW packages will be installed:
+2025-10-17T00:24:28.4769995Z   libbsd-dev libedit-dev libmd-dev
+2025-10-17T00:24:28.5016755Z 0 upgraded, 3 newly installed, 0 to remove and 34 not upgraded.
+2025-10-17T00:24:28.5303170Z Need to get 334 kB of archives.
+2025-10-17T00:24:28.5303642Z After this operation, 1414 kB of additional disk space will be used.
+2025-10-17T00:24:28.5304335Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+2025-10-17T00:24:28.5764434Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libmd-dev amd64 1.1.0-2build1.1 [45.5 kB]
+2025-10-17T00:24:28.6062173Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libbsd-dev amd64 0.12.1-1build1.1 [169 kB]
+2025-10-17T00:24:28.6362419Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 libedit-dev amd64 3.1-20230828-1build1 [119 kB]
+2025-10-17T00:24:28.8921113Z Fetched 334 kB in 0s (2831 kB/s)
+2025-10-17T00:24:28.9101788Z Selecting previously unselected package libmd-dev:amd64.
+2025-10-17T00:24:28.9155677Z (Reading database ... 
+2025-10-17T00:24:28.9156103Z (Reading database ... 5%
+2025-10-17T00:24:28.9156485Z (Reading database ... 10%
+2025-10-17T00:24:28.9156859Z (Reading database ... 15%
+2025-10-17T00:24:28.9157250Z (Reading database ... 20%
+2025-10-17T00:24:28.9157606Z (Reading database ... 25%
+2025-10-17T00:24:28.9157975Z (Reading database ... 30%
+2025-10-17T00:24:28.9158346Z (Reading database ... 35%
+2025-10-17T00:24:28.9158699Z (Reading database ... 40%
+2025-10-17T00:24:28.9159079Z (Reading database ... 45%
+2025-10-17T00:24:28.9159447Z (Reading database ... 50%
+2025-10-17T00:24:28.9172620Z (Reading database ... 55%
+2025-10-17T00:24:28.9282701Z (Reading database ... 60%
+2025-10-17T00:24:28.9307213Z (Reading database ... 65%
+2025-10-17T00:24:28.9324521Z (Reading database ... 70%
+2025-10-17T00:24:28.9348918Z (Reading database ... 75%
+2025-10-17T00:24:28.9412090Z (Reading database ... 80%
+2025-10-17T00:24:28.9571965Z (Reading database ... 85%
+2025-10-17T00:24:28.9797985Z (Reading database ... 90%
+2025-10-17T00:24:28.9879971Z (Reading database ... 95%
+2025-10-17T00:24:28.9880440Z (Reading database ... 100%
+2025-10-17T00:24:28.9880956Z (Reading database ... 215572 files and directories currently installed.)
+2025-10-17T00:24:28.9925411Z Preparing to unpack .../libmd-dev_1.1.0-2build1.1_amd64.deb ...
+2025-10-17T00:24:28.9937365Z Unpacking libmd-dev:amd64 (1.1.0-2build1.1) ...
+2025-10-17T00:24:29.0239983Z Selecting previously unselected package libbsd-dev:amd64.
+2025-10-17T00:24:29.0375637Z Preparing to unpack .../libbsd-dev_0.12.1-1build1.1_amd64.deb ...
+2025-10-17T00:24:29.0384892Z Unpacking libbsd-dev:amd64 (0.12.1-1build1.1) ...
+2025-10-17T00:24:29.0865163Z Selecting previously unselected package libedit-dev:amd64.
+2025-10-17T00:24:29.1000672Z Preparing to unpack .../libedit-dev_3.1-20230828-1build1_amd64.deb ...
+2025-10-17T00:24:29.1008783Z Unpacking libedit-dev:amd64 (3.1-20230828-1build1) ...
+2025-10-17T00:24:29.1456417Z Setting up libmd-dev:amd64 (1.1.0-2build1.1) ...
+2025-10-17T00:24:29.1477240Z Setting up libbsd-dev:amd64 (0.12.1-1build1.1) ...
+2025-10-17T00:24:29.1499175Z Setting up libedit-dev:amd64 (3.1-20230828-1build1) ...
+2025-10-17T00:24:29.1522758Z Processing triggers for man-db (2.12.0-4build2) ...
+2025-10-17T00:24:30.2144536Z 
+2025-10-17T00:24:30.2145258Z Running kernel seems to be up-to-date.
+2025-10-17T00:24:30.2145614Z 
+2025-10-17T00:24:30.2145751Z Restarting services...
+2025-10-17T00:24:30.2300262Z 
+2025-10-17T00:24:30.2300706Z Service restarts being deferred:
+2025-10-17T00:24:30.2301829Z  systemctl restart hosted-compute-agent.service
+2025-10-17T00:24:30.2302357Z  systemctl restart systemd-logind.service
+2025-10-17T00:24:30.2302667Z 
+2025-10-17T00:24:30.2302836Z No containers need to be restarted.
+2025-10-17T00:24:30.2303110Z 
+2025-10-17T00:24:30.2303273Z User sessions running outdated binaries:
+2025-10-17T00:24:30.2303769Z  runner @ user manager service: systemd[1061]
+2025-10-17T00:24:30.2363323Z 
+2025-10-17T00:24:30.2363812Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+2025-10-17T00:24:31.1595450Z   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+2025-10-17T00:24:31.1596177Z                                  Dload  Upload   Total   Spent    Left  Speed
+2025-10-17T00:24:31.1596556Z 
+2025-10-17T00:24:31.2198466Z   0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+2025-10-17T00:24:31.2199106Z   0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+2025-10-17T00:24:31.2705730Z 
+2025-10-17T00:24:31.3662233Z   1 20.4M    1  256k    0     0  2301k      0  0:00:09 --:--:--  0:00:09 2301k
+2025-10-17T00:24:31.3662899Z 100 20.4M  100 20.4M    0     0  98.9M      0 --:--:-- --:--:-- --:--:--  212M
+2025-10-17T00:24:31.3739617Z buf/bin/
+2025-10-17T00:24:31.3740321Z buf/bin/protoc-gen-buf-breaking
+2025-10-17T00:24:31.4895874Z buf/bin/protoc-gen-buf-lint
+2025-10-17T00:24:31.5814894Z buf/bin/buf
+2025-10-17T00:24:31.7940889Z buf/LICENSE
+2025-10-17T00:24:31.7941524Z buf/share/
+2025-10-17T00:24:31.7941893Z buf/share/man/
+2025-10-17T00:24:31.7943574Z buf/share/man/man1/
+2025-10-17T00:24:31.7957510Z buf/share/man/man1/buf-beta-stats.1
+2025-10-17T00:24:31.7958020Z buf/share/man/man1/buf-beta-registry.1
+2025-10-17T00:24:31.7958500Z buf/share/man/man1/buf-beta-registry-plugin.1
+2025-10-17T00:24:31.7959074Z buf/share/man/man1/buf-beta-registry-repository-get.1
+2025-10-17T00:24:31.7959565Z buf/share/man/man1/buf-mod-update.1
+2025-10-17T00:24:31.7959838Z buf/share/man/man1/buf-beta-registry-tag.1
+2025-10-17T00:24:31.7960164Z buf/share/man/man1/buf-beta-migrate-v1beta1.1
+2025-10-17T00:24:31.7960452Z buf/share/man/man1/buf-beta.1
+2025-10-17T00:24:31.7960751Z buf/share/man/man1/buf-beta-registry-webhook-create.1
+2025-10-17T00:24:31.7961603Z buf/share/man/man1/buf-beta-registry-organization-create.1
+2025-10-17T00:24:31.7962106Z buf/share/man/man1/buf-mod-ls-lint-rules.1
+2025-10-17T00:24:31.7962596Z buf/share/man/man1/buf-beta-price.1
+2025-10-17T00:24:31.7963025Z buf/share/man/man1/buf-beta-registry-repository.1
+2025-10-17T00:24:31.7963572Z buf/share/man/man1/buf-mod-open.1
+2025-10-17T00:24:31.7964015Z buf/share/man/man1/buf-beta-registry-draft.1
+2025-10-17T00:24:31.7964473Z buf/share/man/man1/buf-beta-registry-organization.1
+2025-10-17T00:24:31.7964899Z buf/share/man/man1/buf-completion-powershell.1
+2025-10-17T00:24:31.7965389Z buf/share/man/man1/buf-beta-registry-tag-create.1
+2025-10-17T00:24:31.7965974Z buf/share/man/man1/buf-beta-registry-repository-deprecate.1
+2025-10-17T00:24:31.7966827Z buf/share/man/man1/buf-mod-ls-breaking-rules.1
+2025-10-17T00:24:31.7967289Z buf/share/man/man1/buf-beta-graph.1
+2025-10-17T00:24:31.7967791Z buf/share/man/man1/buf-beta-registry-repository-undeprecate.1
+2025-10-17T00:24:31.7968138Z buf/share/man/man1/buf-push.1
+2025-10-17T00:24:31.7968374Z buf/share/man/man1/buf-generate.1
+2025-10-17T00:24:31.7968635Z buf/share/man/man1/buf-mod-clear-cache.1
+2025-10-17T00:24:31.7968962Z buf/share/man/man1/buf-beta-registry-organization-delete.1
+2025-10-17T00:24:31.7969281Z buf/share/man/man1/buf-mod.1
+2025-10-17T00:24:31.7969506Z buf/share/man/man1/buf-curl.1
+2025-10-17T00:24:31.7969760Z buf/share/man/man1/buf-beta-registry-commit-list.1
+2025-10-17T00:24:31.7970049Z buf/share/man/man1/buf-registry.1
+2025-10-17T00:24:31.7970352Z buf/share/man/man1/buf-beta-registry-repository-update.1
+2025-10-17T00:24:31.7970665Z buf/share/man/man1/buf-registry-login.1
+2025-10-17T00:24:31.7970926Z buf/share/man/man1/buf-completion.1
+2025-10-17T00:24:31.7971387Z buf/share/man/man1/buf-export.1
+2025-10-17T00:24:31.7971858Z buf/share/man/man1/buf-beta-registry-repository-delete.1
+2025-10-17T00:24:31.7972185Z buf/share/man/man1/buf-beta-studio-agent.1
+2025-10-17T00:24:31.7972480Z buf/share/man/man1/buf-beta-registry-draft-list.1
+2025-10-17T00:24:31.7972767Z buf/share/man/man1/buf-mod-prune.1
+2025-10-17T00:24:31.7973015Z buf/share/man/man1/buf-completion-bash.1
+2025-10-17T00:24:31.7973276Z buf/share/man/man1/buf-ls-files.1
+2025-10-17T00:24:31.7973513Z buf/share/man/man1/buf-build.1
+2025-10-17T00:24:31.7973744Z buf/share/man/man1/buf-registry-logout.1
+2025-10-17T00:24:31.7973998Z buf/share/man/man1/buf-convert.1
+2025-10-17T00:24:31.7974243Z buf/share/man/man1/buf-completion-fish.1
+2025-10-17T00:24:31.7974495Z buf/share/man/man1/buf-lint.1
+2025-10-17T00:24:31.7974726Z buf/share/man/man1/buf-breaking.1
+2025-10-17T00:24:31.7975009Z buf/share/man/man1/buf-beta-registry-webhook-delete.1
+2025-10-17T00:24:31.7975368Z buf/share/man/man1/buf-beta-registry-repository-create.1
+2025-10-17T00:24:31.7975715Z buf/share/man/man1/buf-beta-registry-repository-list.1
+2025-10-17T00:24:31.7976075Z buf/share/man/man1/buf-beta-registry-organization-get.1
+2025-10-17T00:24:31.7976406Z buf/share/man/man1/buf-beta-registry-tag-list.1
+2025-10-17T00:24:31.7976670Z buf/share/man/man1/buf.1
+2025-10-17T00:24:31.7976881Z buf/share/man/man1/buf-format.1
+2025-10-17T00:24:31.7977109Z buf/share/man/man1/buf-mod-init.1
+2025-10-17T00:24:31.7977393Z buf/share/man/man1/buf-beta-registry-draft-delete.1
+2025-10-17T00:24:31.7977721Z buf/share/man/man1/buf-beta-registry-plugin-delete.1
+2025-10-17T00:24:31.7978040Z buf/share/man/man1/buf-beta-registry-webhook.1
+2025-10-17T00:24:31.7978337Z buf/share/man/man1/buf-beta-registry-commit.1
+2025-10-17T00:24:31.7978639Z buf/share/man/man1/buf-beta-registry-plugin-push.1
+2025-10-17T00:24:31.7978963Z buf/share/man/man1/buf-beta-registry-webhook-list.1
+2025-10-17T00:24:31.7979258Z buf/share/man/man1/buf-completion-zsh.1
+2025-10-17T00:24:31.7979544Z buf/share/man/man1/buf-beta-registry-commit-get.1
+2025-10-17T00:24:31.7979822Z buf/share/fish/
+2025-10-17T00:24:31.7980025Z buf/share/fish/vendor_completions.d/
+2025-10-17T00:24:31.7980286Z buf/share/fish/vendor_completions.d/buf.fish
+2025-10-17T00:24:31.7980534Z buf/share/zsh/
+2025-10-17T00:24:31.7980723Z buf/share/zsh/site-functions/
+2025-10-17T00:24:31.7980958Z buf/share/zsh/site-functions/_buf
+2025-10-17T00:24:31.7981371Z buf/etc/
+2025-10-17T00:24:31.7981595Z buf/etc/bash_completion.d/
+2025-10-17T00:24:31.7981825Z buf/etc/bash_completion.d/buf
+2025-10-17T00:24:31.8122833Z 
+2025-10-17T00:24:31.8123252Z WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+2025-10-17T00:24:31.8123572Z 
+2025-10-17T00:24:31.8254603Z Reading package lists...
+2025-10-17T00:24:32.0078878Z Building dependency tree...
+2025-10-17T00:24:32.0086682Z Reading state information...
+2025-10-17T00:24:32.1628903Z python3-pip is already the newest version (24.0+dfsg-1ubuntu1.3).
+2025-10-17T00:24:32.2112339Z 0 upgraded, 0 newly installed, 0 to remove and 34 not upgraded.
+2025-10-17T00:24:36.1367271Z Collecting pipenv==2024.4.1
+2025-10-17T00:24:36.2027423Z   Downloading pipenv-2024.4.1-py3-none-any.whl.metadata (17 kB)
+2025-10-17T00:24:36.2189310Z Requirement already satisfied: certifi in /usr/lib/python3/dist-packages (from pipenv==2024.4.1) (2023.11.17)
+2025-10-17T00:24:36.2197745Z Requirement already satisfied: packaging>=22 in /usr/lib/python3/dist-packages (from pipenv==2024.4.1) (24.0)
+2025-10-17T00:24:36.2208093Z Requirement already satisfied: setuptools>=67 in /usr/lib/python3/dist-packages (from pipenv==2024.4.1) (68.1.2)
+2025-10-17T00:24:36.3035422Z Collecting virtualenv>=20.24.2 (from pipenv==2024.4.1)
+2025-10-17T00:24:36.3180384Z   Downloading virtualenv-20.35.3-py3-none-any.whl.metadata (4.6 kB)
+2025-10-17T00:24:36.3552344Z Collecting distlib<1,>=0.3.7 (from virtualenv>=20.24.2->pipenv==2024.4.1)
+2025-10-17T00:24:36.3696057Z   Downloading distlib-0.4.0-py2.py3-none-any.whl.metadata (5.2 kB)
+2025-10-17T00:24:36.4009926Z Collecting filelock<4,>=3.12.2 (from virtualenv>=20.24.2->pipenv==2024.4.1)
+2025-10-17T00:24:36.4153236Z   Downloading filelock-3.20.0-py3-none-any.whl.metadata (2.1 kB)
+2025-10-17T00:24:36.4197011Z Requirement already satisfied: platformdirs<5,>=3.9.1 in /usr/local/lib/python3.12/dist-packages (from virtualenv>=20.24.2->pipenv==2024.4.1) (4.4.0)
+2025-10-17T00:24:36.4432139Z Downloading pipenv-2024.4.1-py3-none-any.whl (3.0 MB)
+2025-10-17T00:24:36.5271478Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.0/3.0 MB 37.6 MB/s eta 0:00:00
+2025-10-17T00:24:36.5525457Z Downloading virtualenv-20.35.3-py3-none-any.whl (6.0 MB)
+2025-10-17T00:24:36.5948025Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.0/6.0 MB 148.7 MB/s eta 0:00:00
+2025-10-17T00:24:36.6095891Z Downloading distlib-0.4.0-py2.py3-none-any.whl (469 kB)
+2025-10-17T00:24:36.6157186Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 469.0/469.0 kB 109.4 MB/s eta 0:00:00
+2025-10-17T00:24:36.6300360Z Downloading filelock-3.20.0-py3-none-any.whl (16 kB)
+2025-10-17T00:24:36.9914539Z Installing collected packages: distlib, filelock, virtualenv, pipenv
+2025-10-17T00:24:38.4363937Z Successfully installed distlib-0.4.0 filelock-3.20.0 pipenv-2024.4.1 virtualenv-20.35.3
+2025-10-17T00:24:38.4365973Z WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
+2025-10-17T00:24:38.5121766Z   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+2025-10-17T00:24:38.5122463Z                                  Dload  Upload   Total   Spent    Left  Speed
+2025-10-17T00:24:38.5122760Z 
+2025-10-17T00:24:39.0177859Z   0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+2025-10-17T00:24:39.0178658Z 100   270  100   270    0     0    533      0 --:--:-- --:--:-- --:--:--   534
+2025-10-17T00:24:39.0612417Z Cloning into '/home/runner/.pyenv'...
+2025-10-17T00:24:39.4636055Z Cloning into '/home/runner/.pyenv/plugins/pyenv-doctor'...
+2025-10-17T00:24:39.6987705Z Cloning into '/home/runner/.pyenv/plugins/pyenv-update'...
+2025-10-17T00:24:39.9561000Z Cloning into '/home/runner/.pyenv/plugins/pyenv-virtualenv'...
+2025-10-17T00:24:40.1839276Z 
+2025-10-17T00:24:40.1840075Z WARNING: seems you still have not added 'pyenv' to the load path.
+2025-10-17T00:24:40.1840621Z 
+2025-10-17T00:24:40.1957684Z # Load pyenv automatically by appending
+2025-10-17T00:24:40.1959371Z # the following to 
+2025-10-17T00:24:40.1960027Z # ~/.bash_profile if it exists, otherwise ~/.profile (for login shells)
+2025-10-17T00:24:40.1961917Z # and ~/.bashrc (for interactive shells) :
+2025-10-17T00:24:40.1962333Z 
+2025-10-17T00:24:40.1962548Z export PYENV_ROOT="$HOME/.pyenv"
+2025-10-17T00:24:40.1963315Z [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+2025-10-17T00:24:40.1963893Z eval "$(pyenv init - bash)"
+2025-10-17T00:24:40.1964188Z 
+2025-10-17T00:24:40.1964442Z # Restart your shell for the changes to take effect.
+2025-10-17T00:24:40.1964804Z 
+2025-10-17T00:24:40.2208312Z # Load pyenv-virtualenv automatically by adding
+2025-10-17T00:24:40.2209009Z # the following to ~/.bashrc:
+2025-10-17T00:24:40.2209276Z 
+2025-10-17T00:24:40.2209451Z eval "$(pyenv virtualenv-init -)"
+2025-10-17T00:24:40.2209658Z 
+2025-10-17T00:24:40.4674711Z Downloading Python-3.8.18.tar.xz...
+2025-10-17T00:24:40.4675322Z -> https://www.python.org/ftp/python/3.8.18/Python-3.8.18.tar.xz
+2025-10-17T00:24:42.1048045Z Installing Python-3.8.18...
+2025-10-17T00:26:15.7474279Z Installed Python-3.8.18 to /home/runner/.pyenv/versions/3.8.18
+2025-10-17T00:26:17.1628639Z Creating a virtualenv for this project
+2025-10-17T00:26:17.1632729Z Pipfile: /home/runner/work/delta/delta/Pipfile
+2025-10-17T00:26:17.2437419Z Using /home/runner/.pyenv/shims/python3.83.8.18 to create virtualenv...
+2025-10-17T00:26:18.2122330Z created virtual environment CPython3.8.18.final.0-64 in 806ms
+2025-10-17T00:26:18.2126807Z   creator 
+2025-10-17T00:26:18.2130752Z CPython3Posix(dest=/home/runner/.local/share/virtualenvs/delta-Jo9PrCI6, 
+2025-10-17T00:26:18.2134234Z clear=False, no_vcs_ignore=False, global=False)
+2025-10-17T00:26:18.2135624Z   seeder FromAppData(download=False, pip=bundle, setuptools=bundle, 
+2025-10-17T00:26:18.2136637Z wheel=bundle, via=copy, app_data_dir=/home/runner/.local/share/virtualenv)
+2025-10-17T00:26:18.2137522Z     added seed packages: pip==25.0.1, setuptools==75.3.2, wheel==0.45.1
+2025-10-17T00:26:18.2138201Z   activators 
+2025-10-17T00:26:18.2138988Z BashActivator,CShellActivator,FishActivator,NushellActivator,PowerShellActivator
+2025-10-17T00:26:18.2139861Z ,PythonActivator
+2025-10-17T00:26:18.2140171Z 
+2025-10-17T00:26:18.2140454Z Successfully created virtual environment!
+2025-10-17T00:26:18.2594213Z Virtualenv location: /home/runner/.local/share/virtualenvs/delta-Jo9PrCI6
+2025-10-17T00:26:18.2614606Z Creating a Pipfile for this project...
+2025-10-17T00:26:18.2928538Z Pipfile.lock not found, creating...
+2025-10-17T00:26:18.3000622Z Locking [packages] dependencies...
+2025-10-17T00:26:18.3060247Z Locking [dev-packages] dependencies...
+2025-10-17T00:26:18.3143088Z Updated Pipfile.lock (7299c8081191af55f2650e8f7b982cc0a1d13d33955fc57b916a7e303f576240)!
+2025-10-17T00:26:18.3182167Z To activate this project's virtualenv, run pipenv shell.
+2025-10-17T00:26:18.3183158Z Alternatively, run a command inside the virtualenv with pipenv run.
+2025-10-17T00:26:18.3184022Z Installing dependencies from Pipfile.lock (576240)...

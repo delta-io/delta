@@ -1,0 +1,32 @@
+﻿2025-10-17T00:22:12.2331321Z Current runner version: '2.329.0'
+2025-10-17T00:22:12.2356840Z ##[group]Runner Image Provisioner
+2025-10-17T00:22:12.2358109Z Hosted Compute Agent
+2025-10-17T00:22:12.2358757Z Version: 20251013.424
+2025-10-17T00:22:12.2359332Z Commit: cfdd8bfed34d71a55b72df4d2e82343c3fc2bab3
+2025-10-17T00:22:12.2360135Z Build Date: 2025-10-13T20:22:23Z
+2025-10-17T00:22:12.2360760Z ##[endgroup]
+2025-10-17T00:22:12.2361280Z ##[group]Operating System
+2025-10-17T00:22:12.2361910Z Ubuntu
+2025-10-17T00:22:12.2362373Z 24.04.3
+2025-10-17T00:22:12.2362840Z LTS
+2025-10-17T00:22:12.2363254Z ##[endgroup]
+2025-10-17T00:22:12.2363920Z ##[group]Runner Image
+2025-10-17T00:22:12.2364419Z Image: ubuntu-24.04
+2025-10-17T00:22:12.2364910Z Version: 20251014.76.1
+2025-10-17T00:22:12.2365991Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20251014.76/images/ubuntu/Ubuntu2404-Readme.md
+2025-10-17T00:22:12.2367406Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20251014.76
+2025-10-17T00:22:12.2369179Z ##[endgroup]
+2025-10-17T00:22:12.2370234Z ##[group]GITHUB_TOKEN Permissions
+2025-10-17T00:22:12.2372151Z Contents: read
+2025-10-17T00:22:12.2372691Z Metadata: read
+2025-10-17T00:22:12.2373208Z Packages: read
+2025-10-17T00:22:12.2373879Z ##[endgroup]
+2025-10-17T00:22:12.2375857Z Secret source: None
+2025-10-17T00:22:12.2376552Z Prepare workflow directory
+2025-10-17T00:22:12.2901586Z Prepare all required actions
+2025-10-17T00:22:12.2940340Z Getting action download info
+2025-10-17T00:22:12.8047890Z Download action repository 'actions/checkout@v3' (SHA:f43a0e5ff2bd294095638e18286ca9a3d1956744)
+2025-10-17T00:22:13.0258329Z Download action repository 'technote-space/get-diff-action@v4' (SHA:623b016c454ae55181c010cb611bd5d7028102c9)
+2025-10-17T00:22:13.6860966Z Download action repository 'actions/setup-java@v3' (SHA:17f84c3641ba7b8f6deff6309fc4c864478f5d62)
+2025-10-17T00:22:14.2671041Z Download action repository 'actions/cache@v3' (SHA:6f8efc29b200d32929f49075959781ed54ec270c)
+2025-10-17T00:22:14.5351576Z Complete job name: DIL: Scala 2.13.13

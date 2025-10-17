@@ -1,0 +1,5 @@
+2025-10-17T00:22:08.4660000Z Requested labels: ubuntu-24.04
+2025-10-17T00:22:08.4660000Z Job defined at: delta-io/delta/.github/workflows/iceberg_test.yaml@refs/pull/5320/merge
+2025-10-17T00:22:08.4660000Z Waiting for a runner to pick up this job...
+2025-10-17T00:22:08.9570000Z Job is about to start running on the hosted runner: GitHub Actions 1000127187
+2025-10-17T00:22:08.9560000Z Job is waiting for a hosted runner to come online.
