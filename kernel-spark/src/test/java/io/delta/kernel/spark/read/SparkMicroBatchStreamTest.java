@@ -48,7 +48,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
   @BeforeEach
   void setUp() {
-    microBatchStream = new SparkMicroBatchStream(null, new Configuration());
+    microBatchStream = new SparkMicroBatchStream(spark, null, new Configuration(), null);
   }
 
   @Test
@@ -147,7 +147,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
       }
       sql("INSERT INTO %s VALUES %s", testTableName, insertValues.toString());
     }
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(spark, testTablePath, new Configuration(), null);
 
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -325,7 +326,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // Test DSv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(spark, testTablePath, new Configuration(), null);
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -414,7 +416,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
     // Test DSv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(spark, testTablePath, new Configuration(), null);
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
