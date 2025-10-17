@@ -174,8 +174,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create un-partitioned table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn =
-        getCreateTxn(engine, tablePath, testSchema)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       assert(txn.getSchema(engine) === testSchema)
       assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
@@ -195,7 +194,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val table = Table.forPath(engine, tablePath)
       val txn1 = getCreateTxn(engine, tablePath, testSchema)
 
-      txn1.commit(engine, emptyIterable())
+      commitTransaction(txn1, engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
@@ -233,8 +232,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      getCreateTxn(engine, tablePath, testSchema)
-        .commit(engine, emptyIterable())
+      val txn0 = getCreateTxn(engine, tablePath, testSchema)
+      commitTransaction(txn0, engine, emptyIterable())
+
       // Create txn1 with config changes
       val txn1 = getUpdateTxn(
         engine,
@@ -261,8 +261,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      getCreateTxn(engine, tablePath, testSchema)
-        .commit(engine, emptyIterable())
+      val txn0 = getCreateTxn(engine, tablePath, testSchema)
+      commitTransaction(txn0, engine, emptyIterable())
 
       // Create txn1 with config changes
       val txn1 = getUpdateTxn(
@@ -1038,7 +1038,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
       // Create table with stats collection enabled.
       val txn = getCreateTxn(engine, tblPath, schema, tableProperties = tableProps)
-      txn.commit(engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
       // Write one batch of data.
       val dataBatches = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
