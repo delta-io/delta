@@ -76,9 +76,9 @@ trait TypeWideningTestCasesShims {
         null.asInstanceOf[BigDecimal]))
   )
 
-  // Type changes that are only supported in ALTER TABLE CHANGE COLUMN TYPE but are not considered
-  // for automatic type widening.
-  protected val alterTableOnlySupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
+  // Type changes that are only eligible for automatic widening when
+  // spark.databricks.delta.typeWidening.allowAutomaticWidening = ALWAYS.
+  protected val restrictedAutomaticWideningTestCases: Seq[TypeEvolutionTestCase] = Seq(
     SupportedTypeEvolutionTestCase(IntegerType, DoubleType,
       Seq(1, -1, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]),
       Seq(987654321.987654321d, -0d, 0d, Double.NaN, Double.NegativeInfinity,

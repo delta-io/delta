@@ -20,7 +20,9 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
@@ -58,9 +60,20 @@ public class LogSegment {
     final List<FileStatus> deltas = Collections.singletonList(deltaFile);
     final List<FileStatus> checkpoints = Collections.emptyList();
     final List<FileStatus> compactions = Collections.emptyList();
+    final Optional<Long> maxPublishedDeltaVersion =
+        parsedDeltaVersion0 instanceof ParsedPublishedDeltaData
+            ? Optional.of(0L)
+            : Optional.empty();
 
     return new LogSegment(
-        logPath, 0 /* version */, deltas, compactions, checkpoints, deltaFile, Optional.empty());
+        logPath,
+        0 /* version */,
+        deltas,
+        compactions,
+        checkpoints,
+        deltaFile /* deltaAtEndVersion */,
+        Optional.empty() /* lastSeenChecksum */,
+        maxPublishedDeltaVersion);
   }
 
   private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
@@ -77,6 +90,7 @@ public class LogSegment {
   private final FileStatus deltaAtEndVersion;
   private final Optional<Long> checkpointVersionOpt;
   private final Optional<FileStatus> lastSeenChecksum;
+  private final Optional<Long> maxPublishedDeltaVersion;
   private final List<FileStatus> deltasAndCheckpoints;
   private final Lazy<List<FileStatus>> deltasAndCheckpointsReversed;
   private final Lazy<List<FileStatus>> compactionsReversed;
@@ -107,6 +121,10 @@ public class LogSegment {
    *     that checkpoint version.
    * @param lastSeenChecksum The most recent checksum file encountered during log directory listing,
    *     if available.
+   * @param maxPublishedDeltaVersion The maximum version among all published delta files seen during
+   *     log segment construction, if available. Note that the Published Delta file for this version
+   *     may not be included as a Delta in this LogSegment, if there was a catalog commit that took
+   *     priority over it.
    */
   public LogSegment(
       Path logPath,
@@ -115,7 +133,8 @@ public class LogSegment {
       List<FileStatus> compactions,
       List<FileStatus> checkpoints,
       FileStatus deltaAtEndVersion,
-      Optional<FileStatus> lastSeenChecksum) {
+      Optional<FileStatus> lastSeenChecksum,
+      Optional<Long> maxPublishedDeltaVersion) {
 
     ///////////////////////
     // Input validations //
@@ -177,6 +196,7 @@ public class LogSegment {
     this.checkpoints = checkpoints;
     this.deltaAtEndVersion = deltaAtEndVersion;
     this.lastSeenChecksum = lastSeenChecksum;
+    this.maxPublishedDeltaVersion = maxPublishedDeltaVersion;
     this.deltasAndCheckpoints =
         Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList());
 
@@ -241,6 +261,27 @@ public class LogSegment {
   }
 
   /**
+   * Returns the maximum published delta version observed during log segment construction.
+   *
+   * <p>This is a best-effort API that returns what was actually seen during construction, not the
+   * authoritative maximum published delta version in the log.
+   *
+   * <p>{@code Optional.empty()} means "we don't know" - not necessarily that no deltas have been
+   * published. This can occur when:
+   *
+   * <ul>
+   *   <li>Only checkpoint files were found during listing (e.g., due to log cleanup)
+   *   <li>Listing bounds did not include published delta files
+   *   <li>The table contains only catalog commits with no published deltas
+   * </ul>
+   *
+   * @return the maximum published delta version seen during construction, or empty if unknown
+   */
+  public Optional<Long> getMaxPublishedDeltaVersion() {
+    return maxPublishedDeltaVersion;
+  }
+
+  /**
    * Returns the Delta file at the end {@code version} of this LogSegment.
    *
    * <p>If this LogSegment has checkpoints and deltas, then this is the last delta.
@@ -268,6 +309,14 @@ public class LogSegment {
    */
   public List<FileStatus> allFilesWithCompactionsReversed() {
     return deltasCheckpointsCompactionsReversed.get();
+  }
+
+  public List<ParsedCatalogCommitData> getAllCatalogCommits() {
+    return deltas.stream()
+        .map(ParsedDeltaData::forFileStatus)
+        .filter(x -> x instanceof ParsedCatalogCommitData)
+        .map(ParsedCatalogCommitData.class::cast)
+        .collect(Collectors.toList());
   }
 
   /**
@@ -317,7 +366,8 @@ public class LogSegment {
         compactions, // Keep existing compactions
         checkpoints, // Keep existing checkpoints
         lastAddedDelta.getFileStatus(),
-        lastSeenChecksum); // Keep existing lastSeenChecksum
+        lastSeenChecksum, // Keep existing lastSeenChecksum
+        maxPublishedDeltaVersion); // Keep existing maxPublishedDeltaVersion
   }
 
   @Override
@@ -330,7 +380,8 @@ public class LogSegment {
             + "  checkpoints=[%s\n  ],\n"
             + "  deltaAtEndVersion=%s,\n"
             + "  lastSeenChecksum=%s,\n"
-            + "  checkpointVersion=%s\n"
+            + "  checkpointVersion=%s,\n"
+            + "  maxPublishedDeltaVersion=%s\n"
             + "}",
         logPath,
         version,
@@ -338,7 +389,8 @@ public class LogSegment {
         formatList(checkpoints),
         deltaAtEndVersion,
         lastSeenChecksum.map(FileStatus::toString).orElse("None"),
-        checkpointVersionOpt.map(String::valueOf).orElse("None"));
+        checkpointVersionOpt.map(String::valueOf).orElse("None"),
+        maxPublishedDeltaVersion.map(String::valueOf).orElse("None"));
   }
 
   @Override

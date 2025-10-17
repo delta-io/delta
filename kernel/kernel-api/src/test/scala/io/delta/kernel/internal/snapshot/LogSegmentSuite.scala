@@ -16,11 +16,12 @@
 
 package io.delta.kernel.internal.snapshot
 
+import java.lang.{Long => JLong}
 import java.util.{Collections, List => JList, Optional}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData, ParsedLogData}
+import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.utils.FileStatus
@@ -49,7 +50,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       compactions: JList[FileStatus] = Collections.emptyList(),
       checkpoints: JList[FileStatus] = Collections.emptyList(),
       deltaAtEndVersion: Option[FileStatus] = None,
-      lastSeenChecksum: Optional[FileStatus] = Optional.empty()): LogSegment = {
+      lastSeenChecksum: Optional[FileStatus] = Optional.empty(),
+      maxPublishedDeltaVersion: Optional[JLong] = Optional.empty()): LogSegment = {
     val finalDeltaAtEndVersion = deltaAtEndVersion.getOrElse {
       if (!deltas.isEmpty()) {
         // If we have deltas, use the last delta
@@ -72,7 +74,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       compactions,
       checkpoints,
       finalDeltaAtEndVersion,
-      lastSeenChecksum)
+      lastSeenChecksum,
+      maxPublishedDeltaVersion)
   }
 
   test("constructor -- valid case (non-empty)") {
@@ -299,7 +302,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
       version = 12,
       deltas = deltasFs11To12List,
       checkpoints = checkpointFs10List,
-      lastSeenChecksum = Optional.of(checksumAtVersion10))
+      lastSeenChecksum = Optional.of(checksumAtVersion10),
+      maxPublishedDeltaVersion = Optional.of(12L))
     // scalastyle:off line.size.limit
     val expectedToString =
       """LogSegment {
@@ -314,7 +318,8 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
         |  ],
         |  deltaAtEndVersion=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000012.json', size=12, modificationTime=120},
         |  lastSeenChecksum=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000010.crc', size=10, modificationTime=10},
-        |  checkpointVersion=10
+        |  checkpointVersion=10,
+        |  maxPublishedDeltaVersion=12
         |}""".stripMargin
     // scalastyle:on line.size.limit
     assert(logSegment.toString === expectedToString)

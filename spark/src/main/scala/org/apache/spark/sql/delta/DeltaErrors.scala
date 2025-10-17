@@ -3813,6 +3813,13 @@ trait DeltaErrorsBase
       messageParameters = Array(operation, id.toString)
     )
   }
+
+  def catalogManagedTablePathBasedAccessNotAllowed(path: Path): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED",
+      messageParameters = Array(path.toString)
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

@@ -16,7 +16,6 @@
 
 package io.delta.unity;
 
-import static io.delta.kernel.commit.CatalogCommitterUtils.CATALOG_MANAGED_ENABLEMENT_KEY;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.unity.utils.OperationTimer.timeUncheckedOperation;
 
@@ -263,7 +262,8 @@ public class UCCatalogManagedClient {
     final Map<String, String> requiredProperties = new HashMap<>();
 
     requiredProperties.put(
-        CATALOG_MANAGED_ENABLEMENT_KEY, TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
+        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.getTableFeatureSupportKey(),
+        TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
     requiredProperties.put(UC_TABLE_ID_KEY, ucTableId);
 
     return requiredProperties;

@@ -2101,6 +2101,20 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STREAMING_SINK_IMPLICIT_CAST_ESCAPE_COLUMN_NAMES =
+    buildConf("streaming.sink.implicitCastEscapeColumnNames")
+      .internal()
+      .doc(
+        """
+          |When true, the code paths handling implicit casting in streaming will escape column names
+          |to properly handle e.g. dots in column names.
+          |This is a kill-switch and shouldn't be disabled unless necessary to mitigate an issue.
+          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
+          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(

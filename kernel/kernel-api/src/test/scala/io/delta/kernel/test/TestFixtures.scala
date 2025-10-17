@@ -16,6 +16,7 @@
 
 package io.delta.kernel.test
 
+import java.lang.{Long => JLong}
 import java.util.{Collections, Map => JMap, Optional}
 import java.util.function.Supplier
 
@@ -23,8 +24,10 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.internal.actions.{CommitInfo, DomainMetadata, Metadata, Protocol}
-import io.delta.kernel.internal.util.Tuple2
+import io.delta.kernel.internal.files.ParsedCatalogCommitData
+import io.delta.kernel.internal.util.{FileNames, Tuple2}
 import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
+import io.delta.kernel.utils.FileStatus
 
 /**
  * Test fixtures including factory methods and constants for creating test objects with sensible
@@ -64,7 +67,8 @@ trait TestFixtures extends ActionUtils {
       committerProperties: Supplier[JMap[String, String]] = () => Collections.emptyMap(),
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
-      newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = {
+      newMetadataOpt: Optional[Metadata] = Optional.empty(),
+      maxKnownPublishedDeltaVersion: Optional[JLong] = Optional.empty()): CommitMetadata = {
     new CommitMetadata(
       version,
       logPath,
@@ -73,7 +77,15 @@ trait TestFixtures extends ActionUtils {
       committerProperties,
       readPandMOpt,
       newProtocolOpt,
-      newMetadataOpt)
+      newMetadataOpt,
+      maxKnownPublishedDeltaVersion)
+  }
+
+  def createStagedCatalogCommit(
+      v: Long,
+      logPath: String = "/fake/_delta_log"): ParsedCatalogCommitData = {
+    val fileStatus = FileStatus.of(FileNames.stagedCommitFile(logPath, v), v, v * 10)
+    ParsedCatalogCommitData.forFileStatus(fileStatus)
   }
 
 }

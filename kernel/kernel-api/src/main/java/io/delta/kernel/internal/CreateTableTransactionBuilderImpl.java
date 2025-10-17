@@ -138,7 +138,8 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
             schema,
             tableProperties.orElse(emptyMap()),
             partitionColumns,
-            clusteringColumns);
+            clusteringColumns,
+            userProvidedCommitter);
 
     Path dataPath = new Path(resolvedPath);
     return new TransactionImpl(

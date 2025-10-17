@@ -64,11 +64,16 @@ public final class DeltaHistoryManager {
    * </ul>
    *
    * @param millisSinceEpochUTC the number of milliseconds since midnight, January 1, 1970 UTC
+   * @param catalogCommits parsed log Deltas to use (must be sorted and contiguous)
    * @return latest commit that happened at or before {@code timestamp}.
    * @throws KernelException if the timestamp is more than the timestamp of any committed version
    */
   public static long getVersionAtOrAfterTimestamp(
-      Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
+      Engine engine,
+      Path logPath,
+      long millisSinceEpochUTC,
+      SnapshotImpl latestSnapshot,
+      List<ParsedCatalogCommitData> catalogCommits) {
     DeltaHistoryManager.Commit commit =
         DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
@@ -82,8 +87,7 @@ public final class DeltaHistoryManager {
             // e.g. we give time T-1 and first commit has time T, then we DO want that earliest
             // commit
             true /* canReturnEarliestCommit */,
-            // TODO: pass through parsedDeltaData for ccv2
-            Collections.emptyList() /* parsedDeltaDatas */);
+            catalogCommits);
 
     if (commit.getTimestamp() >= millisSinceEpochUTC) {
       return commit.getVersion();
@@ -110,11 +114,16 @@ public final class DeltaHistoryManager {
    * </ul>
    *
    * @param millisSinceEpochUTC the number of milliseconds since midnight, January 1, 1970 UTC
+   * @param catalogCommits parsed log Deltas to use (must be sorted and contiguous)
    * @return latest commit that happened before or at {@code timestamp}.
    * @throws KernelException if the timestamp is less than the timestamp of any committed version
    */
   public static long getVersionBeforeOrAtTimestamp(
-      Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
+      Engine engine,
+      Path logPath,
+      long millisSinceEpochUTC,
+      SnapshotImpl latestSnapshot,
+      List<ParsedCatalogCommitData> catalogCommits) {
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
             latestSnapshot,
@@ -126,8 +135,7 @@ public final class DeltaHistoryManager {
             // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest
             // commit
             false /* canReturnEarliestCommit */,
-            // TODO: pass through parsedDeltaData for ccv2
-            Collections.emptyList() /* parsedDeltaDatas */)
+            catalogCommits)
         .getVersion();
   }
 
@@ -146,7 +154,7 @@ public final class DeltaHistoryManager {
    *     provided timestamp is after the latest commit
    * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
    *     provided timestamp is before the earliest commit
-   * @param parsedCatalogCommits parsed log Deltas to use
+   * @param catalogCommits parsed log Deltas to use (must be sorted and contiguous)
    * @throws KernelException if the provided timestamp is before the earliest commit and
    *     canReturnEarliestCommit is false
    * @throws KernelException if the provided timestamp is after the latest commit and
@@ -161,16 +169,16 @@ public final class DeltaHistoryManager {
       boolean mustBeRecreatable,
       boolean canReturnLastCommit,
       boolean canReturnEarliestCommit,
-      List<ParsedCatalogCommitData> parsedCatalogCommits)
+      List<ParsedCatalogCommitData> catalogCommits)
       throws TableNotFoundException {
     // For now, we only accept *staged* ratified  commits (not inline)
-    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(parsedCatalogCommits);
+    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(catalogCommits);
 
     // Create a mapper for delta version -> file status that takes into account ratified commits
     Function<Long, FileStatus> versionToFileStatusFunction =
-        getVersionToFileStatusFunction(parsedCatalogCommits, logPath);
+        getVersionToFileStatusFunction(catalogCommits, logPath);
     Optional<Long> earliestRatifiedCommitVersion =
-        parsedCatalogCommits.stream().map(ParsedLogData::getVersion).min(Long::compare);
+        catalogCommits.stream().map(ParsedLogData::getVersion).min(Long::compare);
 
     long earliestVersion =
         (mustBeRecreatable)
@@ -606,9 +614,9 @@ public final class DeltaHistoryManager {
    * exist either in the list of ratified commits provided by the catalog or on the file-system.
    */
   private static Function<Long, FileStatus> getVersionToFileStatusFunction(
-      List<ParsedCatalogCommitData> parsedCatalogCommits, Path logPath) {
+      List<ParsedCatalogCommitData> catalogCommits, Path logPath) {
     Map<Long, FileStatus> versionToFileStatusMap = new HashMap<>();
-    for (ParsedCatalogCommitData catalogCommit : parsedCatalogCommits) {
+    for (ParsedCatalogCommitData catalogCommit : catalogCommits) {
       versionToFileStatusMap.put(catalogCommit.getVersion(), catalogCommit.getFileStatus());
     }
     return version -> {

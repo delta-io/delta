@@ -281,7 +281,8 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // No delta files
     checkGetActiveCommitAtTimestampError[RuntimeException](
       Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00f.oo0.parquet")
-        .map(FileStatus.of(_, 10, 10)),
+        .map(new Path(logPath, _))
+        .map(path => FileStatus.of(path.toString, 10, 10)),
       latestVersion = 1L,
       25,
       "No delta files found in the directory")
@@ -361,7 +362,8 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // No delta files
     checkGetActiveCommitAtTimestampError[RuntimeException](
       Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00f.oo0.parquet")
-        .map(FileStatus.of(_, 10, 10)),
+        .map(new Path(logPath, _))
+        .map(path => FileStatus.of(path.toString, 10, 10)),
       latestVersion = 1L,
       25,
       "No delta files found in the directory",
@@ -990,12 +992,15 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
           Seq.empty.asJava,
           Seq.empty.asJava,
           deltaFileStatus(2L),
-          Optional.empty())),
+          Optional.empty(), /* lastSeenChecksum */
+          Optional.empty() /* maxPublishedDeltaVersion */
+        )),
       null, /* logReplay */
       new Protocol(1, 2),
       malformedMetadata,
       DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
-      SnapshotQueryContext.forLatestSnapshot(dataPath.toString))
+      SnapshotQueryContext.forLatestSnapshot(dataPath.toString),
+      Optional.empty() /* inCommitTimestampOpt */ )
 
     intercept[IllegalStateException] {
       getActiveCommitAtTimestamp(

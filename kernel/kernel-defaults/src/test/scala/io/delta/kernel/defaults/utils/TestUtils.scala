@@ -17,7 +17,8 @@ package io.delta.kernel.defaults.utils
 
 import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
-import java.nio.file.Files
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
 import java.util.{Optional, TimeZone, UUID}
 
 import scala.collection.JavaConverters._
@@ -37,20 +38,21 @@ import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.stats.FileSizeHistogram
+import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.internal.util.FileNames.checksumFile
-import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
+import org.apache.spark.sql.delta.{sources, OptimisticTransaction}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.{types => sparktypes, SparkSession}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
@@ -170,6 +172,36 @@ trait AbstractTestUtils
     def toScala: Option[T] = if (optional.isPresent) Some(optional.get()) else None
   }
 
+  /**
+   * Provides test-only apis to internal Delta Spark APIs.
+   */
+  implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
+
+    /**
+     * Test only method to commit arbitrary actions to delta table.
+     */
+    def commitManuallyWithValidation(actions: Action*): Unit = {
+      txn.commit(actions.toSeq, ManualUpdate)
+    }
+
+    /**
+     * Test only method to unsafe commit - writes actions directly to transaction log.
+     * Note: This bypasses Delta Spark transaction logic.
+     *
+     * @param tablePath The path to the Delta table
+     * @param version The commit version number
+     * @param actions Sequence of Action objects to write
+     */
+    def commitUnsafe(tablePath: String, version: Long, actions: Action*): Unit = {
+      val logPath = new org.apache.hadoop.fs.Path(tablePath, "_delta_log")
+      val commitFile = org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile(logPath, version)
+      val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
+      Files.write(Paths.get(commitFile.toString), commitContent)
+      // Generate crc file for this commit version.
+      Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
+    }
+  }
+
   implicit object ResourceLoader {
     lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
@@ -196,7 +228,7 @@ trait AbstractTestUtils
     testFunc(tablePath)
   }
 
-  def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
+  def latestSnapshot(path: String, engine: Engine = defaultEngine): SnapshotImpl = {
     getTableManagerAdapter.getSnapshotAtLatest(engine, path)
   }
 
@@ -532,6 +564,22 @@ trait AbstractTestUtils
   }
 
   /**
+   * Creates a temporary directory with Delta log structure (_delta_log, _staged_commits,
+   * _sidecars), passes (tablePath, logPath) to `f`, and deletes the directory after `f` returns.
+   */
+  protected def withTempDirAndAllDeltaSubDirs(f: (String, String) => Unit): Unit = {
+    val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
+    val deltaLogDir = new File(tempDir, "_delta_log")
+    deltaLogDir.mkdirs()
+    new File(deltaLogDir, FileNames.STAGED_COMMIT_DIRECTORY).mkdirs()
+    new File(deltaLogDir, FileNames.SIDECAR_DIRECTORY).mkdirs()
+    try f(tempDir.getAbsolutePath, deltaLogDir.getAbsolutePath)
+    finally {
+      FileUtils.deleteDirectory(tempDir)
+    }
+  }
+
+  /**
    * Create a unique table name and drops it after completing `f`
    */
   protected def withTempTable[T](f: String => T): T = {
@@ -809,7 +857,7 @@ trait AbstractTestUtils
       engine: Engine,
       tablePath: String,
       version: Long): Unit = {
-    val logPath = new KernelPath(s"$tablePath/_delta_log");
+    val logPath = new Path(s"$tablePath/_delta_log");
     val crcInfo = ChecksumReader.tryReadChecksumFile(
       engine,
       FileStatus.of(checksumFile(
