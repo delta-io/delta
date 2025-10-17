@@ -596,10 +596,7 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
       Dataset<Row> df = spark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
       Dataset<Row> df2 = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
       assertEquals(df.schema(), df2.schema(), "Schema mismatch for table: " + tableName);
-      Row[] actualRows1 = (Row[]) df.collect();
-      Row[] actualRows2 = (Row[]) df2.collect();
-      assertEquals(
-          actualRows1.length, actualRows2.length, "Row count mismatch for table: " + tableName);
+      assertDatasetEquals(df.collect(), df2.collect());
     }
   }
 
