@@ -19,7 +19,6 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.CollationIdentifier;
-
 import java.util.*;
 
 /** A {@link Predicate} with a set of columns referenced by the expression. */
@@ -28,7 +27,10 @@ public class DataSkippingPredicate extends Predicate {
   /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
   private final Set<Column> referencedCols;
 
-  /** Set of {@link CollationIdentifier}s referenced by this predicate or any of its child expressions */
+  /**
+   * Set of {@link CollationIdentifier}s referenced by this predicate or any of its child
+   * expressions
+   */
   private final Set<CollationIdentifier> collationIdentifiers;
 
   /**
@@ -70,22 +72,9 @@ public class DataSkippingPredicate extends Predicate {
    */
   DataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
     super(name, Arrays.asList(left, right));
-    this.referencedCols =
-        Collections.unmodifiableSet(
-            new HashSet<Column>() {
-              {
-                addAll(left.getReferencedCols());
-                addAll(right.getReferencedCols());
-              }
-            });
+    this.referencedCols = immutableUnion(left.referencedCols, right.referencedCols);
     this.collationIdentifiers =
-        Collections.unmodifiableSet(
-            new HashSet<CollationIdentifier>() {
-              {
-                addAll(left.getReferencedCollations());
-                addAll(right.getReferencedCollations());
-              }
-            });
+        immutableUnion(left.collationIdentifiers, right.collationIdentifiers);
   }
 
   /** @return set of columns referenced by this predicate or any of its child expressions */
@@ -93,8 +82,22 @@ public class DataSkippingPredicate extends Predicate {
     return referencedCols;
   }
 
-  /** @return set of collation identifiers referenced by this predicate or any of its child expressions */
+  /**
+   * @return set of collation identifiers referenced by this predicate or any of its child
+   *     expressions
+   */
   public Set<CollationIdentifier> getReferencedCollations() {
     return collationIdentifiers;
+  }
+
+  /** @return an unmodifiable set containing all elements from both sets. */
+  private <T> Set<T> immutableUnion(Set<T> set1, Set<T> set2) {
+    return Collections.unmodifiableSet(
+        new HashSet<T>() {
+          {
+            addAll(set1);
+            addAll(set2);
+          }
+        });
   }
 }

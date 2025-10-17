@@ -24,7 +24,6 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
-
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -107,10 +106,10 @@ public class StatsSchemaHelper {
    * |  |-- tightBounds: boolean (nullable = true)
    * </pre>
    */
-  public static StructType getStatsSchema(StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
+  public static StructType getStatsSchema(StructType dataSchema) {
     StructType statsSchema = new StructType().add(NUM_RECORDS, LongType.LONG, true);
 
-    StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema, false);
+    StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
     if (minMaxStatsSchema.length() > 0) {
       statsSchema = statsSchema.add(MIN, minMaxStatsSchema, true).add(MAX, minMaxStatsSchema, true);
     }
@@ -121,11 +120,6 @@ public class StatsSchemaHelper {
     }
 
     statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
-
-    StructType collatedMinMaxStatsSchema = getCollatedStatsSchema(dataSchema, collationIdentifiers);
-    if (collatedMinMaxStatsSchema.length() > 0) {
-      statsSchema = statsSchema.add(STATS_WITH_COLLATION, collatedMinMaxStatsSchema, true);
-    }
 
     return statsSchema;
   }
@@ -273,43 +267,20 @@ public class StatsSchemaHelper {
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
    * fields (i.e. don't include fields with isSkippingEligibleDataType=false)
    */
-  private static StructType getMinMaxStatsSchema(StructType dataSchema, boolean isCollatedSkipping) {
+  private static StructType getMinMaxStatsSchema(StructType dataSchema) {
     List<StructField> fields = new ArrayList<>();
     for (StructField field : dataSchema.fields()) {
-      if (isSkippingEligibleDataType(field.getDataType(), isCollatedSkipping)) {
+      if (isSkippingEligibleDataType(field.getDataType(), false)) {
         fields.add(new StructField(getPhysicalName(field), field.getDataType(), true));
       } else if (field.getDataType() instanceof StructType) {
         fields.add(
             new StructField(
                 getPhysicalName(field),
-                getMinMaxStatsSchema((StructType) field.getDataType(), isCollatedSkipping),
+                getMinMaxStatsSchema((StructType) field.getDataType()),
                 true));
       }
     }
     return new StructType(fields);
-  }
-
-  /**
-   * Given a data schema returns the expected schema for a STATS_WITH_COLLATION statistics column.
-   * This means 1) replace logical names with physical names 2) set nullable=true 3) only keep
-   * string columns
-   */
-  private static StructType getCollatedStatsSchema(
-      StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
-    StructType statsWithCollation = new StructType();
-    StructType collatedMinMaxStatsSchema = getMinMaxStatsSchema(dataSchema, true);
-    for (CollationIdentifier collationIdentifier : collationIdentifiers) {
-      if (collatedMinMaxStatsSchema.length() > 0) {
-        statsWithCollation =
-            statsWithCollation.add(
-                collationIdentifier.toString(),
-                new StructType()
-                    .add(MIN, collatedMinMaxStatsSchema, true)
-                    .add(MAX, collatedMinMaxStatsSchema, true),
-                true);
-      }
-    }
-    return statsWithCollation;
   }
 
   /**
@@ -352,10 +323,12 @@ public class StatsSchemaHelper {
     // Use binary stats if collation is not specified or if it is the default Spark collation.
     if (collationIdentifier.isPresent()
         && collationIdentifier.get() != CollationIdentifier.SPARK_UTF8_BINARY) {
+      // Collation-aware stats are stored under `statsWithCollation.collationName.statType`.
       return getChildColumn(
           physicalColumn,
-          Arrays.asList(statType, collationIdentifier.get().toString(), STATS_WITH_COLLATION));
+          Arrays.asList(STATS_WITH_COLLATION, collationIdentifier.get().toString(), statType));
     } else {
+      // Binary stats are stored under `statType`.
       return getChildColumn(physicalColumn, statType);
     }
   }
@@ -394,9 +367,10 @@ public class StatsSchemaHelper {
     return new Column(prependArray(column.getNames(), parentName));
   }
 
-  /** Returns the provided column as a child column nested under {@code ancestorPath} */
-  private static Column getChildColumn(Column column, List<String> ancestorPath) {
-    for (String name : ancestorPath) {;
+  /** Returns the provided column as a child column nested under {@code nestedPath} */
+  private static Column getChildColumn(Column column, List<String> nestedPath) {
+    for (int i = nestedPath.size() - 1; i >= 0; i--) {
+      String name = nestedPath.get(i);
       column = getChildColumn(column, name);
     }
     return column;
