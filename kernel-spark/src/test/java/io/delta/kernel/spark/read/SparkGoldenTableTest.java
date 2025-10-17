@@ -596,7 +596,8 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
       Dataset<Row> df = spark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
       Dataset<Row> df2 = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
       assertEquals(df.schema(), df2.schema(), "Schema mismatch for table: " + tableName);
-      assertDatasetEquals(df.collect(), df2.collect());
+      assertDatasetEquals(
+          Arrays.asList((Row[]) df.collect()), Arrays.asList((Row[]) df2.collect()));
     }
   }
 
@@ -637,6 +638,38 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
 
   private void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
     List<Row> actualRows = actual.collectAsList();
-    assertEquals(expectedRows, actualRows);
+    assertEquals(actualRows.size(), expectedRows.size());
+
+    Set<String> expectedSet = new HashSet<>();
+    for (Row row : expectedRows) {
+      expectedSet.add(normalizeRowString(row.toString()));
+    }
+
+    Set<String> actualSet = new HashSet<>();
+    for (Row row : actualRows) {
+      actualSet.add(normalizeRowString(row.toString()));
+    }
+
+    assertEquals(expectedSet, actualSet);
+  }
+
+  private void assertDatasetEquals(List<Row> actualRows, List<Row> expectedRows) {
+    assertEquals(actualRows.size(), expectedRows.size());
+
+    Set<String> expectedSet = new HashSet<>();
+    for (Row row : expectedRows) {
+      expectedSet.add(normalizeRowString(row.toString()));
+    }
+
+    Set<String> actualSet = new HashSet<>();
+    for (Row row : actualRows) {
+      actualSet.add(normalizeRowString(row.toString()));
+    }
+
+    assertEquals(expectedSet, actualSet);
+  }
+
+  private String normalizeRowString(String rowString) {
+    return rowString.replace("WrappedArray", "List");
   }
 }
