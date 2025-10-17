@@ -69,7 +69,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport))
+    assert(expectedJson == MetricsReportSerializer.serializeMetricsReport(snapshotReport))
   }
 
   test("SnapshotReport serializer") {
@@ -106,7 +106,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport1))
+    assert(expectedJson == MetricsReportSerializer.serializeMetricsReport(snapshotReport1))
 
     // Check with test function
     testSnapshotReport(snapshotReport1)
@@ -152,7 +152,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport))
+    assert(expectedJson == MetricsReportSerializer.serializeMetricsReport(transactionReport))
   }
 
   test("TransactionReport serializer") {
@@ -204,7 +204,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport1))
+    assert(expectedJson == MetricsReportSerializer.serializeMetricsReport(transactionReport1))
     // Check with test function
     testTransactionReport(transactionReport1)
 
@@ -257,7 +257,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport))
+    assert(expectedJson == MetricsReportSerializer.serializeMetricsReport(scanReport))
   }
 
   test("ScanReport serializer") {
@@ -319,7 +319,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport1))
+    assert(expectedJson == MetricsReportSerializer.serializeMetricsReport(scanReport1))
 
     // Check with test function
     testScanReport(scanReport1)
@@ -339,4 +339,28 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.empty())
     testScanReport(scanReport2)
   }
+
+  test("Generic serializer handles custom/new report types") {
+    // This test demonstrates that any custom MetricsReport implementation with proper
+    // Jackson annotations can be serialized without modifying MetricsReportSerializer
+
+    val fooReport = new FooReport("bar-value", 42, "zap-value")
+
+    val actualJson = MetricsReportSerializer.serializeMetricsReport(fooReport)
+
+    val expectedJson = """{"bar":"bar-value","zip":42,"zap":"zap-value"}"""
+
+    assert(expectedJson == actualJson)
+  }
 }
+
+/**
+ * Example custom report type demonstrating extensibility.
+ * Uses public fields (via @BeanProperty) to work with Jackson, like UcCommitTelemetry.Report.
+ */
+@com.fasterxml.jackson.annotation.JsonPropertyOrder(Array("bar", "zip", "zap"))
+class FooReport(
+    @scala.beans.BeanProperty val bar: String,
+    @scala.beans.BeanProperty val zip: Int,
+    @scala.beans.BeanProperty val zap: String)
+    extends io.delta.kernel.metrics.MetricsReport
