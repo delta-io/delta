@@ -44,7 +44,7 @@ trait ConvertUtilsBase extends DeltaLogging {
 
   var icebergSparkTableClassPath =
     "org.apache.spark.sql.delta.commands.convert.IcebergTable"
-  var icebergLibTableClassPath = "org.apache.iceberg.Table"
+  var icebergLibTableClassPath = "shadedForDelta.org.apache.iceberg.Table"
 
   /**
    * Creates a source Parquet table for conversion.

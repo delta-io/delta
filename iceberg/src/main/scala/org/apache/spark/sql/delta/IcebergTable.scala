@@ -24,11 +24,11 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, D
 import org.apache.spark.sql.delta.DeltaErrors.{cloneFromIcebergSourceWithoutSpecs, cloneFromIcebergSourceWithPartitionEvolution}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.iceberg.{PartitionSpec, Schema, Snapshot => IcebergSnapshot, Table, TableProperties}
-import org.apache.iceberg.hadoop.HadoopTables
-import org.apache.iceberg.io.FileIO
-import org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
-import org.apache.iceberg.util.PropertyUtil
+import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Snapshot => IcebergSnapshot, Table, TableProperties}
+import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
+import shadedForDelta.org.apache.iceberg.io.FileIO
+import shadedForDelta.org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
+import shadedForDelta.org.apache.iceberg.util.PropertyUtil
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
