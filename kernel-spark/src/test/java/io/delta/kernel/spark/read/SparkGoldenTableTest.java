@@ -544,8 +544,7 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
     }
     Dataset<Row> df = full.selectExpr(projectedCols.toArray(new String[0]));
 
-    Row[] actualRows = (Row[]) df.collect();
-    assertEquals(expected.size(), actualRows.length, "Row count mismatch");
+    assertDatasetEquals(df, expected);
   }
 
   @Test
@@ -628,8 +627,7 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
     Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
-    Row[] actualRows = (Row[]) df.collect();
-    assertEquals(expected.size(), actualRows.length, "Row count mismatch");
+    assertDatasetEquals(df, expected);
   }
 
   private String goldenTablePath(String name) {
@@ -638,5 +636,10 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
 
   private List<String> getAllGoldenTableNames() {
     return scala.collection.JavaConverters.seqAsJavaList(GoldenTableUtils$.MODULE$.allTableNames());
+  }
+
+  private void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
+    List<Row> actualRows = actual.collectAsList();
+    assertEquals(expectedRows, actualRows);
   }
 }
