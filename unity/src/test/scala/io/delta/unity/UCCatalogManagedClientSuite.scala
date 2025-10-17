@@ -22,7 +22,6 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.{CreateTableTransactionBuilderImpl, SnapshotImpl}
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.storage.commit.Commit

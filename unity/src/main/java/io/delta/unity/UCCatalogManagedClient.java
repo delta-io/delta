@@ -230,7 +230,7 @@ public class UCCatalogManagedClient {
     final GetCommitsResponse response =
         getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
     final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
-    // TODO: should we throw early if startVersion or endVersion is >= ucTableVersion?
+    validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
     final List<ParsedLogData> logData =
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
     final Lazy<Snapshot> latestSnapshot =
@@ -267,10 +267,7 @@ public class UCCatalogManagedClient {
                         endTimestampOpt.get(), latestSnapshot.get()));
           }
 
-          return commitRangeBuilder
-              // TODO: potentially filter and cast this based on changes in base PR
-              .withLogData(logData)
-              .build(engine);
+          return commitRangeBuilder.withLogData(logData).build(engine);
         });
   }
 
@@ -389,6 +386,33 @@ public class UCCatalogManagedClient {
               "[%s] Cannot load table version %s as the latest version ratified by UC is %s",
               ucTableId, tableVersionToLoad, maxRatifiedVersion));
     }
+  }
+
+  private void validateVersionBoundariesExist(
+      String ucTableId,
+      Optional<Long> startVersion,
+      Optional<Long> endVersion,
+      long maxRatifiedVersion) {
+    startVersion.ifPresent(
+        v -> {
+          if (v > maxRatifiedVersion) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "[%s] Cannot load commit range with start version %s as the latest version "
+                        + "ratified by UC is %s",
+                    ucTableId, v, maxRatifiedVersion));
+          }
+        });
+    endVersion.ifPresent(
+        v -> {
+          if (v > maxRatifiedVersion) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "[%s] Cannot load commit range with end version %s as the latest version "
+                        + "ratified by UC is %s",
+                    ucTableId, v, maxRatifiedVersion));
+          }
+        });
   }
 
   private Map<String, String> getRequiredTablePropertiesForCreate(String ucTableId) {

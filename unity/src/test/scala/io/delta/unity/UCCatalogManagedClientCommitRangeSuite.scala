@@ -158,6 +158,34 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       "Cannot provide a start timestamp greater than the end timestamp"))
   }
 
+  test("loadCommitRange throws if startVersion is greater than max ratified version") {
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+    val ex = intercept[IllegalArgumentException] {
+      testLoadCommitRange(
+        expectedStartVersion = 0,
+        expectedEndVersion = 2,
+        startVersionOpt = Optional.of(9L))
+    }
+    assert(ex.getMessage.contains(
+      "Cannot load commit range with start version 9 as the latest version ratified by UC is 2"))
+  }
+
+  test("loadCommitRange throws if endVersion is greater than max ratified version") {
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+    val ex = intercept[IllegalArgumentException] {
+      testLoadCommitRange(
+        expectedStartVersion = 0,
+        expectedEndVersion = 2,
+        endVersionOpt = Optional.of(9L))
+    }
+    assert(ex.getMessage.contains(
+      "Cannot load commit range with end version 9 as the latest version ratified by UC is 2"))
+  }
+
   test("loadCommitRange loads with default boundaries (start=0, end=latest)") {
     testLoadCommitRange(expectedStartVersion = 0, expectedEndVersion = 2)
   }
@@ -208,21 +236,6 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       expectedEndVersion = 1L,
       startTimestampOpt = Optional.of(v1Ts - 50),
       endTimestampOpt = Optional.of(v1Ts + 50))
-  }
-
-  test("loadCommitRange invalid version bound") {
-    intercept[KernelException] {
-      testLoadCommitRange(
-        expectedStartVersion = 1L,
-        expectedEndVersion = 1L,
-        startVersionOpt = Optional.of(5))
-    }
-    intercept[KernelException] {
-      testLoadCommitRange(
-        expectedStartVersion = 1L,
-        expectedEndVersion = 1L,
-        endVersionOpt = Optional.of(5))
-    }
   }
 
   test("loadCommitRange invalid timestamp bound") {
