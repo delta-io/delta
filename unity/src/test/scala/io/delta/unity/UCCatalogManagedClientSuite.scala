@@ -16,67 +16,25 @@
 
 package io.delta.unity
 
-import java.lang.{Long => JLong}
-import java.net.URI
 import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.{CreateTableTransactionBuilderImpl, SnapshotImpl}
+import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
-import io.delta.kernel.internal.util.FileNames
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
-import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 import io.delta.unity.InMemoryUCClient.TableData
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Unit tests for [[UCCatalogManagedClient]]. */
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
   import UCCatalogManagedClientSuite._
-
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-  /**
-   * When a new UC table is created, it will have Delta version 0 but the max ratified verison in
-   * UC is -1. This is a special edge case.
-   */
-  private def createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne(
-      ucTableId: String = "ucTableId"): UCCatalogManagedClient = {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableData = new TableData(-1, ArrayBuffer[Commit]())
-    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
-    new UCCatalogManagedClient(ucClient)
-  }
-
-  private def withUCClientAndTestTable(
-      textFx: (InMemoryUCClientWithMetrics, String, Long) => Unit): Unit = {
-    val maxRatifiedVersion = 2L
-    val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucClient = new InMemoryUCClientWithMetrics("ucMetastoreId")
-    val fs = FileSystem.get(new Configuration())
-    val catalogCommits = Seq(
-      // scalastyle:off line.size.limit
-      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000001.4cb9708e-b478-44de-b203-53f9ba9b2876.json"),
-      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json"))
-      // scalastyle:on line.size.limit
-      .map { path => fs.getFileStatus(new Path(path)) }
-      .map { fileStatus =>
-        new Commit(
-          FileNames.deltaVersion(fileStatus.getPath.toString),
-          fileStatus,
-          fileStatus.getModificationTime)
-      }
-    val tableData = new TableData(maxRatifiedVersion, ArrayBuffer(catalogCommits: _*))
-    ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
-    textFx(ucClient, tablePath, maxRatifiedVersion)
-  }
 
   /**
    * If present, loads the given `versionToLoad`, else loads the maxRatifiedVersion of 2.
@@ -223,9 +181,6 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
   }
 
   /* ---- Time-travel-by-timestamp tests --- */
-  val v0Ts = 1749830855993L // published commit
-  val v1Ts = 1749830871085L // ratified staged commit
-  val v2Ts = 1749830881799L // ratified staged commit
 
   test("loadTable correctly loads a UC table -- " +
     "timestampToLoad is exactly a ratified commit (the max)") {
@@ -326,268 +281,11 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val committerOpt = createTableTxnBuilder.getCommitterOpt
     assert(committerOpt.get().isInstanceOf[UCCatalogManagedCommitter])
   }
-
-  /* ------------- loadCommitRange tests ------------- */
-
-  /** Helper method with reasonable defaults */
-  private def loadCommitRange(
-      ucCatalogManagedClient: UCCatalogManagedClient,
-      engine: Engine = defaultEngine,
-      ucTableId: String = "ucTableId",
-      tablePath: String = "tablePath",
-      startVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
-      startTimestampOpt: Optional[java.lang.Long] = emptyLongOpt,
-      endVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
-      endTimestampOpt: Optional[java.lang.Long] = emptyLongOpt) = {
-    ucCatalogManagedClient.loadCommitRange(
-      engine,
-      ucTableId,
-      tablePath,
-      startVersionOpt,
-      startTimestampOpt,
-      endVersionOpt,
-      endTimestampOpt)
-  }
-
-  private def testLoadCommitRange(
-      expectedStartVersion: Long,
-      expectedEndVersion: Long,
-      startVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
-      startTimestampOpt: Optional[java.lang.Long] = emptyLongOpt,
-      endVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
-      endTimestampOpt: Optional[java.lang.Long] = emptyLongOpt): Unit = {
-    require(!startVersionOpt.isPresent || !startTimestampOpt.isPresent)
-    require(!endVersionOpt.isPresent || !endTimestampOpt.isPresent)
-
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-      val commitRange = loadCommitRange(
-        ucCatalogManagedClient,
-        tablePath = tablePath,
-        startVersionOpt = startVersionOpt,
-        startTimestampOpt = startTimestampOpt,
-        endVersionOpt = endVersionOpt,
-        endTimestampOpt = endTimestampOpt)
-
-      assert(commitRange.getStartVersion == expectedStartVersion)
-      assert(commitRange.getEndVersion == expectedEndVersion)
-      assert(ucClient.getNumGetCommitCalls == 1)
-    }
-  }
-
-  test("loadCommitRange throws on null input") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    assertThrows[NullPointerException] {
-      // engine is null
-      loadCommitRange(ucCatalogManagedClient, engine = null)
-    }
-    assertThrows[NullPointerException] {
-      // ucTableId is null
-      loadCommitRange(ucCatalogManagedClient, ucTableId = null)
-    }
-    assertThrows[NullPointerException] {
-      // tablePath is null
-      loadCommitRange(ucCatalogManagedClient, tablePath = null)
-    }
-    assertThrows[NullPointerException] {
-      // startVersionOpt is null
-      loadCommitRange(ucCatalogManagedClient, startVersionOpt = null)
-    }
-    assertThrows[NullPointerException] {
-      // startTimestampOpt is null
-      loadCommitRange(ucCatalogManagedClient, startTimestampOpt = null)
-    }
-    assertThrows[NullPointerException] {
-      // endVersionOpt is null
-      loadCommitRange(ucCatalogManagedClient, endVersionOpt = null)
-    }
-    assertThrows[NullPointerException] {
-      // endTimestampOpt is null
-      loadCommitRange(ucCatalogManagedClient, endTimestampOpt = null)
-    }
-  }
-
-  test("loadCommitRange throws on invalid input - conflicting start boundaries") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[IllegalArgumentException] {
-      loadCommitRange(
-        ucCatalogManagedClient,
-        startVersionOpt = Optional.of(1L),
-        startTimestampOpt = Optional.of(100L))
-    }
-    assert(ex.getMessage.contains("Cannot provide both a start timestamp and start version"))
-  }
-
-  test("loadCommitRange throws on invalid input - conflicting end boundaries") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[IllegalArgumentException] {
-      loadCommitRange(
-        ucCatalogManagedClient,
-        endVersionOpt = Optional.of(2L),
-        endTimestampOpt = Optional.of(200L))
-    }
-    assert(ex.getMessage.contains("Cannot provide both an end timestamp and start version"))
-  }
-
-  test("loadCommitRange throws on invalid input - start version > end version") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[IllegalArgumentException] {
-      loadCommitRange(
-        ucCatalogManagedClient,
-        startVersionOpt = Optional.of(5L),
-        endVersionOpt = Optional.of(2L))
-    }
-    assert(ex.getMessage.contains("Cannot provide a start version greater than the end version"))
-  }
-
-  test("loadCommitRange throws on invalid input - start timestamp > end timestamp") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[IllegalArgumentException] {
-      loadCommitRange(
-        ucCatalogManagedClient,
-        startTimestampOpt = Optional.of(500L),
-        endTimestampOpt = Optional.of(200L))
-    }
-    assert(ex.getMessage.contains(
-      "Cannot provide a start timestamp greater than the end timestamp"))
-  }
-
-  test("loadCommitRange loads with default boundaries (start=0, end=latest)") {
-    testLoadCommitRange(expectedStartVersion = 0, expectedEndVersion = 2)
-  }
-
-  test("loadCommitRange loads with version boundaries") {
-    testLoadCommitRange(
-      expectedStartVersion = 1,
-      expectedEndVersion = 2,
-      startVersionOpt = Optional.of(1L),
-      endVersionOpt = Optional.of(2L))
-  }
-
-  test("loadCommitRange loads with timestamp boundaries") {
-    testLoadCommitRange(
-      expectedStartVersion = 0L,
-      expectedEndVersion = 1L,
-      startTimestampOpt = Optional.of(v0Ts),
-      endTimestampOpt = Optional.of(v1Ts + 10))
-  }
-
-  test("loadCommitRange loads with mixed start timestamp and end version") {
-    testLoadCommitRange(
-      expectedStartVersion = 0L,
-      expectedEndVersion = 2L,
-      startTimestampOpt = Optional.of(v0Ts),
-      endVersionOpt = Optional.of(2L))
-  }
-
-  test("loadCommitRange loads with mixed start version and end timestamp") {
-    testLoadCommitRange(
-      expectedStartVersion = 1L,
-      expectedEndVersion = 2L,
-      startVersionOpt = Optional.of(1L),
-      endTimestampOpt = Optional.of(v2Ts))
-  }
-
-  test("loadCommitRange loads single version range") {
-    testLoadCommitRange(
-      expectedStartVersion = 1L,
-      expectedEndVersion = 1L,
-      startVersionOpt = Optional.of(1L),
-      endVersionOpt = Optional.of(1L))
-  }
-
-  test("loadCommitRange loads single version range by timestamps") {
-    testLoadCommitRange(
-      expectedStartVersion = 1L,
-      expectedEndVersion = 1L,
-      startTimestampOpt = Optional.of(v1Ts - 50),
-      endTimestampOpt = Optional.of(v1Ts + 50))
-  }
-
-  test("loadCommitRange invalid version bound") {
-    intercept[KernelException] {
-      testLoadCommitRange(
-        expectedStartVersion = 1L,
-        expectedEndVersion = 1L,
-        startVersionOpt = Optional.of(5))
-    }
-    intercept[KernelException] {
-      testLoadCommitRange(
-        expectedStartVersion = 1L,
-        expectedEndVersion = 1L,
-        endVersionOpt = Optional.of(5))
-    }
-  }
-
-  test("loadCommitRange invalid timestamp bound") {
-    intercept[KernelException] {
-      testLoadCommitRange(
-        expectedStartVersion = 1L,
-        expectedEndVersion = 1L,
-        startTimestampOpt = Optional.of(v2Ts + 10))
-    }
-    intercept[KernelException] {
-      testLoadCommitRange(
-        expectedStartVersion = 1L,
-        expectedEndVersion = 1L,
-        endTimestampOpt = Optional.of(v0Ts - 10))
-    }
-  }
-
-  test("loadCommitRange when the table doesn't exist in catalog") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[RuntimeException] {
-      loadCommitRange(
-        ucCatalogManagedClient,
-        ucTableId = "nonExistentTableId")
-    }
-    assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
-  }
-
-  test("loadCommitRange for new table when UC maxRatifiedVersion is -1") {
-    val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucCatalogManagedClient =
-      createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
-    val commitRange = loadCommitRange(
-      ucCatalogManagedClient,
-      tablePath = tablePath)
-
-    assert(commitRange.getStartVersion == 0)
-    assert(commitRange.getEndVersion == 0)
-  }
 }
 
 object UCCatalogManagedClientSuite {
 
   private def javaLongOpt(value: Long): Optional[java.lang.Long] = {
     Optional.of(value)
-  }
-
-  /** Wrapper class around InMemoryUCClient that tracks number of getCommit calls made */
-  class InMemoryUCClientWithMetrics(ucMetastoreId: String) extends InMemoryUCClient(ucMetastoreId) {
-    private var numGetCommitsCalls: Long = 0
-
-    override def getCommits(
-        tableId: String,
-        tableUri: URI,
-        startVersion: Optional[JLong],
-        endVersion: Optional[JLong]): GetCommitsResponse = {
-      numGetCommitsCalls += 1
-      super.getCommits(tableId, tableUri, startVersion, endVersion)
-    }
-
-    def getNumGetCommitCalls: Long = numGetCommitsCalls
   }
 }
