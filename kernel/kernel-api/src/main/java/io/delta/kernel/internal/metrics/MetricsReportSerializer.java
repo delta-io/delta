@@ -26,46 +26,34 @@ import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.metrics.MetricsReport;
-import io.delta.kernel.metrics.ScanReport;
-import io.delta.kernel.metrics.SnapshotReport;
-import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import java.io.IOException;
 
 /** Defines JSON serializers for {@link MetricsReport} types */
-public final class MetricsReportSerializers {
+public final class MetricsReportSerializer {
 
   /////////////////
   // Public APIs //
   /////////////////
 
   /**
-   * Serializes a {@link SnapshotReport} to a JSON string
+   * Serializes any {@link MetricsReport} to a JSON string using the configured ObjectMapper. This
+   * method works for any report type that has proper Jackson annotations.
    *
-   * @throws JsonProcessingException
-   */
-  public static String serializeSnapshotReport(SnapshotReport snapshotReport)
-      throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(snapshotReport);
-  }
-
-  /**
-   * Serializes a {@link ScanReport} to a JSON string
+   * <p>For successful serialization, the report class should have:
    *
-   * @throws JsonProcessingException
-   */
-  public static String serializeScanReport(ScanReport scanReport) throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(scanReport);
-  }
-
-  /**
-   * Serializes a {@link TransactionReport} to a JSON string
+   * <ul>
+   *   <li>Public fields or public getter methods
+   *   <li>No circular references in the object graph
+   *   <li>Fields with types supported by Jackson (primitives, collections, or types with registered
+   *       serializers)
+   * </ul>
    *
-   * @throws JsonProcessingException
+   * @throws JsonProcessingException if the report cannot be serialized (e.g., circular references,
+   *     unsupported types, or inaccessible fields)
    */
-  public static String serializeTransactionReport(TransactionReport transactionReport)
-      throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(transactionReport);
+  public static String serializeMetricsReport(MetricsReport report) throws JsonProcessingException {
+    return OBJECT_MAPPER.writeValueAsString(report);
   }
 
   /////////////////////////////////
@@ -96,5 +84,5 @@ public final class MetricsReportSerializers {
     }
   }
 
-  private MetricsReportSerializers() {}
+  private MetricsReportSerializer() {}
 }
