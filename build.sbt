@@ -923,7 +923,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-val icebergShadedVersion = "1.8.0"
+val icebergShadedVersion = "1.9.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
