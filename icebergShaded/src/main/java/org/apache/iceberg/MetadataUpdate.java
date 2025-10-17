@@ -97,8 +97,7 @@ public interface MetadataUpdate extends Serializable {
 
     /**
      * Set the schema
-     *
-     * @deprecated in 1.9.0, added back manually for compatibility with DBR
+     * @deprecated in 1.9.0
      */
     @Deprecated
     public AddSchema(Schema schema, int lastColumnId) {

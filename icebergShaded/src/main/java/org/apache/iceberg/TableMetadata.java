@@ -597,8 +597,7 @@ public class TableMetadata implements Serializable {
 
   /**
    * Updates the schema
-   *
-   * @deprecated in 1.9.0, added back manually for compatibility with DBR
+   * @deprecated in 1.9.0
    */
   @Deprecated
   public TableMetadata updateSchema(Schema newSchema, int newLastColumnId) {
