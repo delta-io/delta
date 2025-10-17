@@ -638,10 +638,7 @@ lazy val spark = (project in file("spark-combined"))
         }
       }).transform(node).head
     },
-    
-    // Don't include repositories in published POM
-    // Maven Central artifacts should only depend on other Maven Central artifacts,
-    // not on custom repositories (e.g., Apache snapshot repos)
+
     pomIncludeRepository := { _ => false },
     
     // Filter internal modules from project dependencies
