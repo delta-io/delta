@@ -263,20 +263,17 @@ public class SnapshotImpl implements Snapshot {
 
   @Override
   public void writeChecksum(Engine engine, Snapshot.ChecksumWriteMode mode) throws IOException {
-    final Snapshot.ChecksumWriteMode actual = getStatistics().getChecksumWriteMode();
+    final Optional<Snapshot.ChecksumWriteMode> actualOpt = getStatistics().getChecksumWriteMode();
+
+    if (actualOpt.isEmpty()) {
+      logger.warn("Not writing checksum: checksum file already exists at version {}", version);
+      return;
+    }
+
+    final Snapshot.ChecksumWriteMode actual = actualOpt.get();
 
     switch (mode) {
-      case NONE:
-        logger.info("Skipping writing checksum file: input mode was NONE");
-        if (actual != ChecksumWriteMode.NONE) {
-          logger.warn("Note that the checksum file does NOT actually exist");
-        }
-        return;
       case SIMPLE:
-        if (actual == ChecksumWriteMode.NONE) {
-          logger.warn("Not writing checksum in SIMPLE mode: checksum file already exists");
-          return;
-        }
         if (actual == ChecksumWriteMode.FULL) {
           throw new IllegalStateException(
               "Cannot write checksum in SIMPLE mode: FULL mode required");
@@ -287,10 +284,6 @@ public class SnapshotImpl implements Snapshot {
         new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
         return;
       case FULL:
-        if (actual == ChecksumWriteMode.NONE) {
-          logger.warn("Not writing checksum as FULL mode: checksum file already exists");
-          return;
-        }
         if (actual == ChecksumWriteMode.SIMPLE) {
           logger.warn("Requested checksum write in FULL mode, but SIMPLE mode is available");
         }
@@ -421,7 +414,7 @@ public class SnapshotImpl implements Snapshot {
 
   private class SnapshotStatisticsImpl implements SnapshotStatistics {
     @Override
-    public Snapshot.ChecksumWriteMode getChecksumWriteMode() {
+    public Optional<Snapshot.ChecksumWriteMode> getChecksumWriteMode() {
       final boolean checksumFileExists =
           getLogSegment()
               .getLastSeenChecksum()
@@ -429,14 +422,14 @@ public class SnapshotImpl implements Snapshot {
               .orElse(false);
 
       if (checksumFileExists) {
-        return Snapshot.ChecksumWriteMode.NONE;
+        return Optional.empty();
       }
 
       if (logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
-        return Snapshot.ChecksumWriteMode.SIMPLE;
+        return Optional.of(Snapshot.ChecksumWriteMode.SIMPLE);
       }
 
-      return Snapshot.ChecksumWriteMode.FULL;
+      return Optional.of(Snapshot.ChecksumWriteMode.FULL);
     }
   }
 }

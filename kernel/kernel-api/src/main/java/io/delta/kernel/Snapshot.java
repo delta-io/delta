@@ -58,9 +58,6 @@ public interface Snapshot {
    * #writeChecksum(Engine, ChecksumWriteMode)}.
    */
   enum ChecksumWriteMode {
-    /** Checksum file already exists at this version, no write needed. */
-    NONE,
-
     /**
      * Checksum info is already loaded in this Snapshot and can be written cheaply. This mode uses
      * pre-computed CRC information already in memory.
@@ -148,24 +145,25 @@ public interface Snapshot {
   /**
    * Writes a checksum file for this snapshot using the specified mode.
    *
+   * <p>This method should only be called if a checksum file does not already exist at this version.
+   * If it already does, this method is a no-op. Use {@link
+   * SnapshotStatistics#getChecksumWriteMode()} to check if writing is needed and to determine the
+   * appropriate mode.
+   *
    * <p>This method handles checksum writing based on the provided mode:
    *
    * <ul>
-   *   <li><b>NONE:</b> No-op, as a checksum file already exists at this version
-   *   <li><b>SIMPLE:</b> Uses pre-computed CRC information already loaded in memory. This is the
-   *       fastest approach but requires CRC info to be available. Throws {@link
-   *       IllegalStateException} if CRC information is not available.
-   *   <li><b>FULL:</b> Computes the necessary state if needed by replaying the delta log since the
-   *       latest checksum (if present). This always succeeds but may be expensive for large tables
-   *       when CRC information is not available.
+   *   <li>SIMPLE: Uses pre-computed CRC information already loaded in memory. This is the fastest
+   *       approach but requires CRC info to be available. Throws {@link IllegalStateException} if
+   *       CRC information is not available.
+   *   <li>FULL: Computes the necessary CRC information by replaying the delta log since the latest
+   *       checksum (if present). This may be expensive for large tables when CRC information is not
+   *       available.
    * </ul>
    *
-   * <p>Use {@link SnapshotStatistics#getChecksumWriteMode()} to determine the appropriate mode for
-   * this snapshot.
-   *
    * @param engine the engine to use for writing the checksum file and potentially reading the log
-   * @param mode the mode specifying how to write the checksum
-   * @throws IOException If an I/O error occurs during checksum computation or writing
+   * @param mode the mode specifying how to write the checksum (SIMPLE or FULL)
+   * @throws IOException if an I/O error occurs during checksum computation or writing
    * @throws IllegalStateException if mode is SIMPLE but CRC information is not available
    * @see SnapshotStatistics#getChecksumWriteMode()
    */

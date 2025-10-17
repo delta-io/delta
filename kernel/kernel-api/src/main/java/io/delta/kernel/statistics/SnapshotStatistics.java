@@ -18,6 +18,7 @@ package io.delta.kernel.statistics;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.annotation.Evolving;
+import java.util.Optional;
 
 /** Provides statistics and metadata about a {@link Snapshot}. */
 @Evolving
@@ -26,18 +27,20 @@ public interface SnapshotStatistics {
   /**
    * Determines the appropriate mode for writing a checksum file for this Snapshot.
    *
-   * <p>The returned mode can be passed to {@link Snapshot#writeChecksum} to write the checksum file
-   * using the most efficient approach available:
+   * <p>The returned value can be passed to {@link Snapshot#writeChecksum} to write the checksum
+   * file using the most efficient approach available:
    *
    * <ul>
-   *   <li>{@link Snapshot.ChecksumWriteMode#NONE} - Checksum already exists, no action needed
-   *   <li>{@link Snapshot.ChecksumWriteMode#SIMPLE} - Fast write using in-memory CRC info
-   *   <li>{@link Snapshot.ChecksumWriteMode#FULL} - Requires log replay to compute CRC info
+   *   <li>{@link Optional#empty()} - Checksum already exists, no write needed
+   *   <li>{@link Optional} of {@link Snapshot.ChecksumWriteMode#SIMPLE} - Fast write using
+   *       in-memory CRC info
+   *   <li>{@link Optional} of {@link Snapshot.ChecksumWriteMode#FULL} - Requires log replay to
+   *       compute CRC info
    * </ul>
    *
-   * @return the recommended checksum write mode for this snapshot
+   * @return the recommended checksum write mode, or empty if checksum already exists
    */
-  Snapshot.ChecksumWriteMode getChecksumWriteMode();
+  Optional<Snapshot.ChecksumWriteMode> getChecksumWriteMode();
 
   // TODO: getNumUnpublishedCatalogCommits
   // TODO: getNumDeltasSinceLastCheckpoint
