@@ -140,10 +140,10 @@ object IcebergPartitionUtil {
               .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, sourceField.fieldId())
             ("", TypeUtil.visit(sourceType, new TypeToSparkTypeWithCustomCast(castTimeType)))
 
-          case Timestamps.YEAR | Dates.YEAR =>
+          case Timestamps.MICROS_TO_YEAR | Dates.YEAR =>
             (s"year($sourceColumnName)", IntegerType)
 
-          case Timestamps.DAY | Dates.DAY =>
+          case Timestamps.MICROS_TO_DAY | Dates.DAY =>
             (s"cast($sourceColumnName as date)", DateType)
 
           case t: Truncate[_] if sourceType.typeId() == TypeID.STRING =>
@@ -154,10 +154,10 @@ object IcebergPartitionUtil {
             (icebergNumericTruncateExpression(sourceColumnName, t.width().toLong),
               TypeUtil.visit(sourceType, new TypeToSparkTypeWithCustomCast(castTimeType)))
 
-          case Timestamps.MONTH | Dates.MONTH =>
+          case Timestamps.MICROS_TO_MONTH | Dates.MONTH =>
             (s"date_format($sourceColumnName, 'yyyy-MM')", StringType)
 
-          case Timestamps.HOUR =>
+          case Timestamps.MICROS_TO_HOUR =>
             (s"date_format($sourceColumnName, 'yyyy-MM-dd-HH')", StringType)
 
           case other =>
