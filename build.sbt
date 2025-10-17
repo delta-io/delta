@@ -563,7 +563,7 @@ lazy val sparkV2 = (project in file("kernel-spark"))
 
 
 // ============================================================
-// Module 5: delta-spark (final published module - combined v1+v2+shaded)
+// Module 4: delta-spark (final published module - combined v1+v2)
 // ============================================================
 lazy val spark = (project in file("spark-combined"))
   .dependsOn(sparkV1)
