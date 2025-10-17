@@ -16,15 +16,17 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import static io.delta.kernel.internal.skipping.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
+import static io.delta.kernel.internal.skipping.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
-import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
-import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelEngineException;
+import io.delta.kernel.exceptions.UnsupportedPredicateWithCollation;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -39,9 +41,11 @@ import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
+import io.delta.kernel.internal.skipping.PartitionUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.types.CollationIdentifier;
 import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -366,7 +370,8 @@ public class ScanImpl implements Scan {
     // pruning it after is much simpler
     StructType prunedStatsSchema =
         DataSkippingUtils.pruneStatsSchema(
-            getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
+            getStatsSchema(metadata.getDataSchema(), dataSkippingFilter.getReferencedCollations()),
+            dataSkippingFilter.getReferencedCols());
 
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
@@ -380,15 +385,20 @@ public class ScanImpl implements Scan {
                 "COALESCE", Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
-    PredicateEvaluator predicateEvaluator =
-        wrapEngineException(
-            () ->
-                engine
-                    .getExpressionHandler()
-                    .getPredicateEvaluator(prunedStatsSchema, filterToEval),
-            "Get the predicate evaluator for data skipping with schema=%s and filter=%s",
-            prunedStatsSchema,
-            filterToEval);
+    PredicateEvaluator predicateEvaluator;
+    try {
+      predicateEvaluator =
+          wrapEngineException(
+              () ->
+                  engine
+                      .getExpressionHandler()
+                      .getPredicateEvaluator(prunedStatsSchema, filterToEval),
+              "Get the predicate evaluator for data skipping with schema=%s and filter=%s",
+              prunedStatsSchema,
+              filterToEval);
+    } catch (UnsupportedPredicateWithCollation e) {
+      return scanFileIter;
+    }
 
     return scanFileIter.map(
         filteredScanFileBatch -> {
