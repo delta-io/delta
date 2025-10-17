@@ -175,6 +175,28 @@ public final class StructType extends DataType {
             .allMatch(result -> result);
   }
 
+  /**
+   * Are the data types same? The collations could be different.
+   *
+   * @param dataType
+   * @return
+   */
+  @Override
+  public boolean equivalentIgnoreCollations(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    StructType structType = (StructType) dataType;
+    return this.length() == structType.length()
+        && this.fieldNames == structType.fieldNames
+        && IntStream.range(0, this.length())
+            .mapToObj(i -> this.at(i).equivalentIgnoreCollations(structType.at(i)))
+            .allMatch(result -> result);
+  }
+
   @Override
   public boolean isNested() {
     return true;
