@@ -143,14 +143,7 @@ public interface Snapshot {
   void publish(Engine engine) throws PublishFailedException;
 
   /**
-   * Writes a checksum file for this snapshot using the specified mode.
-   *
-   * <p>This method should only be called if a checksum file does not already exist at this version.
-   * If it already does, this method is a no-op. Use {@link
-   * SnapshotStatistics#getChecksumWriteMode()} to check if writing is needed and to determine the
-   * appropriate mode.
-   *
-   * <p>This method handles checksum writing based on the provided mode:
+   * Writes a checksum file for this snapshot using the specified mode:
    *
    * <ul>
    *   <li>SIMPLE: Uses pre-computed CRC information already loaded in memory. This is the fastest
@@ -160,6 +153,16 @@ public interface Snapshot {
    *       checksum (if present). This may be expensive for large tables when CRC information is not
    *       available.
    * </ul>
+   *
+   * <p>Use {@link SnapshotStatistics#getChecksumWriteMode()} to check if writing is needed and to
+   * determine the appropriate mode.
+   *
+   * <p>This method should only be called if a checksum file does not already exist at this version.
+   * If it already does, this method is a no-op.
+   *
+   * <p>If a concurrent writer creates the checksum file for this version between when this snapshot
+   * was loaded and when this method is called, the method will detect the existing checksum and
+   * return successfully without error. This ensures safe concurrent checksum writing.
    *
    * @param engine the engine to use for writing the checksum file and potentially reading the log
    * @param mode the mode specifying how to write the checksum (SIMPLE or FULL)

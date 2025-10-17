@@ -257,4 +257,29 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       assert(snapshot1Again.getStatistics.getChecksumWriteMode.isEmpty)
     }
   }
+
+  test("concurrent checksum write => second write still returns successfully without error") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      // Step 1: Create a table (v0.json) and get the post-commit snapshot
+      val txn = TableManager.buildCreateTableTransaction(tablePath, testSchema, "xx").build(engine)
+      val result = txn.commit(engine, emptyIterable())
+      val postCommitSnapshot = result.getPostCommitSnapshot.get()
+
+      // Step 2: Load a new snapshot to latest (v0)
+      val freshSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
+      assert(freshSnapshot.getStatistics.getChecksumWriteMode.get == ChecksumWriteMode.FULL)
+
+      // ===== WHEN =====
+      // Step 3: Use the fresh snapshot to write the checksum
+      freshSnapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+      assertCrcExistsAtLatest(engine, tablePath)
+
+      // ===== THEN =====
+      // Step 4: Use the first (post-commit) snapshot to write the checksum -- should NOT fail
+      // This simulates a concurrent write scenario where another writer already wrote the CRC
+      assert(postCommitSnapshot.getStatistics.getChecksumWriteMode.get == ChecksumWriteMode.SIMPLE)
+      postCommitSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE) // should be a no-op
+    }
+  }
 }
