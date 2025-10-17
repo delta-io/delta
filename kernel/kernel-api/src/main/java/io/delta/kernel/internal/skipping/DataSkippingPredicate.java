@@ -18,6 +18,8 @@ package io.delta.kernel.internal.skipping;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.types.CollationIdentifier;
+
 import java.util.*;
 
 /** A {@link Predicate} with a set of columns referenced by the expression. */
@@ -25,6 +27,9 @@ public class DataSkippingPredicate extends Predicate {
 
   /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
   private final Set<Column> referencedCols;
+
+  /** Set of {@link CollationIdentifier}s referenced by this predicate or any of its child expressions */
+  private final Set<CollationIdentifier> collationIdentifiers;
 
   /**
    * @param name the predicate name
@@ -35,6 +40,24 @@ public class DataSkippingPredicate extends Predicate {
   DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
+    this.collationIdentifiers = Collections.unmodifiableSet(new HashSet<>());
+  }
+
+  /**
+   * @param name the predicate name
+   * @param children list of expressions that are input to this predicate.
+   * @param collationIdentifier collation identifier used for this predicate
+   * @param referencedCols set of columns referenced by this predicate or any of its child
+   *     expressions
+   */
+  DataSkippingPredicate(
+      String name,
+      List<Expression> children,
+      CollationIdentifier collationIdentifier,
+      Set<Column> referencedCols) {
+    super(name, children, collationIdentifier);
+    this.referencedCols = Collections.unmodifiableSet(referencedCols);
+    this.collationIdentifiers = Collections.singleton(collationIdentifier);
   }
 
   /**
@@ -46,18 +69,32 @@ public class DataSkippingPredicate extends Predicate {
    * @param right right input to this predicate
    */
   DataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
-    this(
-        name,
-        Arrays.asList(left, right),
-        new HashSet<Column>() {
-          {
-            addAll(left.getReferencedCols());
-            addAll(right.getReferencedCols());
-          }
-        });
+    super(name, Arrays.asList(left, right));
+    this.referencedCols =
+        Collections.unmodifiableSet(
+            new HashSet<Column>() {
+              {
+                addAll(left.getReferencedCols());
+                addAll(right.getReferencedCols());
+              }
+            });
+    this.collationIdentifiers =
+        Collections.unmodifiableSet(
+            new HashSet<CollationIdentifier>() {
+              {
+                addAll(left.getReferencedCollations());
+                addAll(right.getReferencedCollations());
+              }
+            });
   }
 
+  /** @return set of columns referenced by this predicate or any of its child expressions */
   public Set<Column> getReferencedCols() {
     return referencedCols;
+  }
+
+  /** @return set of collation identifiers referenced by this predicate or any of its child expressions */
+  public Set<CollationIdentifier> getReferencedCollations() {
+    return collationIdentifiers;
   }
 }
