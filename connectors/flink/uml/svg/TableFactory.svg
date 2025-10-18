@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" contentStyleType="text/css" height="1013px" preserveAspectRatio="none" style="width:2364px;height:1013px;background:#FFFFFF;" version="1.1" viewBox="0 0 2364 1013" width="2364px" zoomAndPan="magnify"><defs/><g><!--MD5=[7a5a6de6bca2a11cee30d29d2e31f30a]
+cluster org.apache.hadoop--><g id="cluster_org.apache.hadoop"><path d="M1983.5,15 L2120.5,15 A3.75,3.75 0 0 1 2123,17.5 L2130,38.6094 L2130.5,38.6094 A2.5,2.5 0 0 1 2133,41.1094 L2133,112.5 A2.5,2.5 0 0 1 2130.5,115 L1983.5,115 A2.5,2.5 0 0 1 1981,112.5 L1981,17.5 A2.5,2.5 0 0 1 1983.5,15 " fill="#DDDDDD" style="stroke:#000000;stroke-width:1.5;"/><line style="stroke:#000000;stroke-width:1.5;" x1="1981" x2="2130" y1="38.6094" y2="38.6094"/><text fill="#000000" font-family="sans-serif" font-size="14" font-weight="bold" lengthAdjust="spacing" textLength="136" x="1985" y="31.5332">org.apache.hadoop</text></g><!--MD5=[1e5c6319ef009a639e433385c5af7ca5]
+cluster org.apache.flink--><g id="cluster_org.apache.flink"><path d="M151.5,6 L265.5,6 A3.75,3.75 0 0 1 268,8.5 L275,29.6094 L1730.5,29.6094 A2.5,2.5 0 0 1 1733,32.1094 L1733,407.5 A2.5,2.5 0 0 1 1730.5,410 L151.5,410 A2.5,2.5 0 0 1 149,407.5 L149,8.5 A2.5,2.5 0 0 1 151.5,6 " fill="#DDDDDD" style="stroke:#000000;stroke-width:1.5;"/><line style="stroke:#000000;stroke-width:1.5;" x1="149" x2="275" y1="29.6094" y2="29.6094"/><text fill="#000000" font-family="sans-serif" font-size="14" font-weight="bold" lengthAdjust="spacing" textLength="113" x="153" y="22.5332">org.apache.flink</text></g><!--MD5=[dc04aec112824d186720224bea4275aa]
+cluster io.delta.flink--><g id="cluster_io.delta.flink"><path d="M8.5,434 L95.5,434 A3.75,3.75 0 0 1 98,436.5 L105,457.6094 L2354.5,457.6094 A2.5,2.5 0 0 1 2357,460.1094 L2357,835.5 A2.5,2.5 0 0 1 2354.5,838 L8.5,838 A2.5,2.5 0 0 1 6,835.5 L6,436.5 A2.5,2.5 0 0 1 8.5,434 " fill="none" style="stroke:#000000;stroke-width:1.5;"/><line style="stroke:#000000;stroke-width:1.5;" x1="6" x2="105" y1="457.6094" y2="457.6094"/><text fill="#000000" font-family="sans-serif" font-size="14" font-weight="bold" lengthAdjust="spacing" textLength="86" x="10" y="450.5332">io.delta.flink</text></g><!--MD5=[9b7eb76f801c309757ef5968cb2349d9]
+class Configuration--><g id="elem_Configuration"><rect codeLine="4" fill="#F1F1F1" height="48" id="Configuration" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="117" x="1998.5" y="51"/><ellipse cx="2013.5" cy="67" fill="#ADD1B2" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M2015.5,63.5 Q2015.7031,63 2015.9375,62.75 Q2016.1719,62.5 2016.4375,62.5 Q2016.9063,62.5 2017.2031,62.7813 Q2017.5,63.0625 2017.5,63.7188 L2017.5,65.2813 Q2017.5,65.9375 2017.2188,66.2188 Q2016.9375,66.5 2016.5,66.5 Q2016.1094,66.5 2015.8594,66.3281 Q2015.6094,66.1563 2015.5,65.7031 Q2015.4531,65.3906 2015.2813,65.2188 Q2014.9688,64.8906 2014.4063,64.7031 Q2013.8438,64.5 2013.2813,64.5 Q2012.5781,64.5 2011.9844,64.7813 Q2011.4063,65.0625 2010.9531,65.6875 Q2010.5,66.3125 2010.5,67.1719 L2010.5,68.0938 Q2010.5,69.125 2011.3438,69.8125 Q2012.1875,70.5 2013.6875,70.5 Q2014.5781,70.5 2015.2031,70.2969 Q2015.5625,70.1875 2015.9688,69.8281 Q2016.2344,69.625 2016.375,69.5625 Q2016.5156,69.5 2016.6875,69.5 Q2017.0156,69.5 2017.25,69.7656 Q2017.5,70.0156 2017.5,70.375 Q2017.5,70.7188 2017.1563,71.125 Q2016.6563,71.7188 2015.8594,72.0469 Q2014.8125,72.5 2013.5313,72.5 Q2012.0313,72.5 2010.8281,71.9063 Q2009.8594,71.4375 2009.1719,70.4219 Q2008.5,69.4063 2008.5,68.2031 L2008.5,67.1094 Q2008.5,65.8594 2009.0938,64.7656 Q2009.7031,63.6719 2010.75,63.0938 Q2011.8125,62.5 2013,62.5 Q2013.7188,62.5 2014.3438,62.75 Q2014.9688,63 2015.5,63.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="85" x="2027.5" y="72.7285">Configuration</text><line style="stroke:#181818;stroke-width:0.5;" x1="1999.5" x2="2114.5" y1="83" y2="83"/><line style="stroke:#181818;stroke-width:0.5;" x1="1999.5" x2="2114.5" y1="91" y2="91"/></g><!--MD5=[cc453c0deb64e0223003bcb0eef32592]
+class DynamicTableFactory--><g id="elem_DynamicTableFactory"><rect codeLine="9" fill="#F1F1F1" height="48" id="DynamicTableFactory" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="170" x="600" y="185.5"/><ellipse cx="615" cy="201.5" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M616,198.5 L616,204.5 L618,204.5 L618.4844,204.5 L619,205.125 L619,205.5 L619,205.875 L618.4844,206.5 L618,206.5 L612,206.5 L611.5156,206.5 L611,205.875 L611,205.5 L611,205.125 L611.5156,204.5 L612,204.5 L614,204.5 L614,198.5 L612,198.5 L611.5156,198.5 L611,197.875 L611,197.5 L611,197.125 L611.5156,196.5 L612,196.5 L618,196.5 L618.4844,196.5 L619,197.125 L619,197.5 L619,197.875 L618.4844,198.5 L618,198.5 L616,198.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="138" x="629" y="207.2285">DynamicTableFactory</text><line style="stroke:#181818;stroke-width:0.5;" x1="601" x2="769" y1="217.5" y2="217.5"/><line style="stroke:#181818;stroke-width:0.5;" x1="601" x2="769" y1="225.5" y2="225.5"/></g><!--MD5=[ef409e62d1531398478f7c6218bc1eb2]
+class DynamicTableFactory.Context--><g id="elem_DynamicTableFactory.Context"><rect codeLine="10" fill="#F1F1F1" height="48" id="DynamicTableFactory.Context" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="222" x="574" y="51"/><ellipse cx="589" cy="67" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M590,64 L590,70 L592,70 L592.4844,70 L593,70.625 L593,71 L593,71.375 L592.4844,72 L592,72 L586,72 L585.5156,72 L585,71.375 L585,71 L585,70.625 L585.5156,70 L586,70 L588,70 L588,64 L586,64 L585.5156,64 L585,63.375 L585,63 L585,62.625 L585.5156,62 L586,62 L592,62 L592.4844,62 L593,62.625 L593,63 L593,63.375 L592.4844,64 L592,64 L590,64 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="190" x="603" y="72.7285">DynamicTableFactory.Context</text><line style="stroke:#181818;stroke-width:0.5;" x1="575" x2="795" y1="83" y2="83"/><line style="stroke:#181818;stroke-width:0.5;" x1="575" x2="795" y1="91" y2="91"/></g><!--MD5=[5af57d29fc5f95e36c401978b7b0d4ea]
+class DynamicTableSinkFactory--><g id="elem_DynamicTableSinkFactory"><rect codeLine="12" fill="#F1F1F1" height="65.6094" id="DynamicTableSinkFactory" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="512" x="748" y="319.5"/><ellipse cx="916.75" cy="335.5" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M917.75,332.5 L917.75,338.5 L919.75,338.5 L920.2344,338.5 L920.75,339.125 L920.75,339.5 L920.75,339.875 L920.2344,340.5 L919.75,340.5 L913.75,340.5 L913.2656,340.5 L912.75,339.875 L912.75,339.5 L912.75,339.125 L913.2656,338.5 L913.75,338.5 L915.75,338.5 L915.75,332.5 L913.75,332.5 L913.2656,332.5 L912.75,331.875 L912.75,331.5 L912.75,331.125 L913.2656,330.5 L913.75,330.5 L919.75,330.5 L920.2344,330.5 L920.75,331.125 L920.75,331.5 L920.75,331.875 L920.2344,332.5 L919.75,332.5 L917.75,332.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="166" x="937.25" y="341.2285">DynamicTableSinkFactory</text><line style="stroke:#181818;stroke-width:0.5;" x1="749" x2="1259" y1="351.5" y2="351.5"/><line style="stroke:#181818;stroke-width:0.5;" x1="749" x2="1259" y1="359.5" y2="359.5"/><ellipse cx="759" cy="373.8047" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="486" x="768" y="378.0332">createDynamicTableSink(DynamicTableFactory.Context) : DynamicTableSink</text></g><!--MD5=[53075ab3bf62fa78c47559d88d2cc651]
+class DynamicTableSourceFactory--><g id="elem_DynamicTableSourceFactory"><rect codeLine="16" fill="#F1F1F1" height="65.6094" id="DynamicTableSourceFactory" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="548" x="165" y="319.5"/><ellipse cx="343.25" cy="335.5" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M344.25,332.5 L344.25,338.5 L346.25,338.5 L346.7344,338.5 L347.25,339.125 L347.25,339.5 L347.25,339.875 L346.7344,340.5 L346.25,340.5 L340.25,340.5 L339.7656,340.5 L339.25,339.875 L339.25,339.5 L339.25,339.125 L339.7656,338.5 L340.25,338.5 L342.25,338.5 L342.25,332.5 L340.25,332.5 L339.7656,332.5 L339.25,331.875 L339.25,331.5 L339.25,331.125 L339.7656,330.5 L340.25,330.5 L346.25,330.5 L346.7344,330.5 L347.25,331.125 L347.25,331.5 L347.25,331.875 L346.7344,332.5 L346.25,332.5 L344.25,332.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="183" x="363.75" y="341.2285">DynamicTableSourceFactory</text><line style="stroke:#181818;stroke-width:0.5;" x1="166" x2="712" y1="351.5" y2="351.5"/><line style="stroke:#181818;stroke-width:0.5;" x1="166" x2="712" y1="359.5" y2="359.5"/><ellipse cx="176" cy="373.8047" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="522" x="185" y="378.0332">createDynamicTableSource(DynamicTableFactory.Context) : DynamicTableSource</text></g><!--MD5=[2b6be7226b53322e94d9ef819ce45a96]
+class DynamicTableSink--><g id="elem_DynamicTableSink"><rect codeLine="20" fill="#F1F1F1" height="83.2188" id="DynamicTableSink" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="501" x="1208.5" y="168"/><ellipse cx="1395.75" cy="184" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M1396.75,181 L1396.75,187 L1398.75,187 L1399.2344,187 L1399.75,187.625 L1399.75,188 L1399.75,188.375 L1399.2344,189 L1398.75,189 L1392.75,189 L1392.2656,189 L1391.75,188.375 L1391.75,188 L1391.75,187.625 L1392.2656,187 L1392.75,187 L1394.75,187 L1394.75,181 L1392.75,181 L1392.2656,181 L1391.75,180.375 L1391.75,180 L1391.75,179.625 L1392.2656,179 L1392.75,179 L1398.75,179 L1399.2344,179 L1399.75,179.625 L1399.75,180 L1399.75,180.375 L1399.2344,181 L1398.75,181 L1396.75,181 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="118" x="1416.25" y="189.7285">DynamicTableSink</text><line style="stroke:#181818;stroke-width:0.5;" x1="1209.5" x2="1708.5" y1="200" y2="200"/><line style="stroke:#181818;stroke-width:0.5;" x1="1209.5" x2="1708.5" y1="208" y2="208"/><ellipse cx="1219.5" cy="222.3047" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="354" x="1228.5" y="226.5332">getChangelogMode(ChangelogMode) : ChangelogMode</text><ellipse cx="1219.5" cy="239.9141" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="475" x="1228.5" y="244.1426">getSinkRuntimeProvider(DynamicTableSink.Context) : SinkRuntimeProvider</text></g><!--MD5=[1e128bcb7b0defe2c07db429ce932cc3]
+class DynamicTableSink.Context--><g id="elem_DynamicTableSink.Context"><rect codeLine="25" fill="#F1F1F1" height="48" id="DynamicTableSink.Context" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="202" x="1160" y="51"/><ellipse cx="1175" cy="67" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M1176,64 L1176,70 L1178,70 L1178.4844,70 L1179,70.625 L1179,71 L1179,71.375 L1178.4844,72 L1178,72 L1172,72 L1171.5156,72 L1171,71.375 L1171,71 L1171,70.625 L1171.5156,70 L1172,70 L1174,70 L1174,64 L1172,64 L1171.5156,64 L1171,63.375 L1171,63 L1171,62.625 L1171.5156,62 L1172,62 L1178,62 L1178.4844,62 L1179,62.625 L1179,63 L1179,63.375 L1178.4844,64 L1178,64 L1176,64 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="170" x="1189" y="72.7285">DynamicTableSink.Context</text><line style="stroke:#181818;stroke-width:0.5;" x1="1161" x2="1361" y1="83" y2="83"/><line style="stroke:#181818;stroke-width:0.5;" x1="1161" x2="1361" y1="91" y2="91"/></g><!--MD5=[159c2efadd8e187f05880fa753ac1cb2]
+class DynamicTableSource--><g id="elem_DynamicTableSource"><rect codeLine="26" fill="#F1F1F1" height="48" id="DynamicTableSource" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="167" x="858.5" y="185.5"/><ellipse cx="873.5" cy="201.5" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M874.5,198.5 L874.5,204.5 L876.5,204.5 L876.9844,204.5 L877.5,205.125 L877.5,205.5 L877.5,205.875 L876.9844,206.5 L876.5,206.5 L870.5,206.5 L870.0156,206.5 L869.5,205.875 L869.5,205.5 L869.5,205.125 L870.0156,204.5 L870.5,204.5 L872.5,204.5 L872.5,198.5 L870.5,198.5 L870.0156,198.5 L869.5,197.875 L869.5,197.5 L869.5,197.125 L870.0156,196.5 L870.5,196.5 L876.5,196.5 L876.9844,196.5 L877.5,197.125 L877.5,197.5 L877.5,197.875 L876.9844,198.5 L876.5,198.5 L874.5,198.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="135" x="887.5" y="207.2285">DynamicTableSource</text><line style="stroke:#181818;stroke-width:0.5;" x1="859.5" x2="1024.5" y1="217.5" y2="217.5"/><line style="stroke:#181818;stroke-width:0.5;" x1="859.5" x2="1024.5" y1="225.5" y2="225.5"/></g><!--MD5=[ae3c2b0361426727515f8827999cae3b]
+class DynamicTableSource.Context--><g id="elem_DynamicTableSource.Context"><rect codeLine="27" fill="#F1F1F1" height="48" id="DynamicTableSource.Context" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="219" x="832.5" y="51"/><ellipse cx="847.5" cy="67" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M848.5,64 L848.5,70 L850.5,70 L850.9844,70 L851.5,70.625 L851.5,71 L851.5,71.375 L850.9844,72 L850.5,72 L844.5,72 L844.0156,72 L843.5,71.375 L843.5,71 L843.5,70.625 L844.0156,70 L844.5,70 L846.5,70 L846.5,64 L844.5,64 L844.0156,64 L843.5,63.375 L843.5,63 L843.5,62.625 L844.0156,62 L844.5,62 L850.5,62 L850.9844,62 L851.5,62.625 L851.5,63 L851.5,63.375 L850.9844,64 L850.5,64 L848.5,64 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="187" x="861.5" y="72.7285">DynamicTableSource.Context</text><line style="stroke:#181818;stroke-width:0.5;" x1="833.5" x2="1050.5" y1="83" y2="83"/><line style="stroke:#181818;stroke-width:0.5;" x1="833.5" x2="1050.5" y1="91" y2="91"/></g><!--MD5=[08d0a4cabf0b6f168cba2602644097d9]
+class ScanTableSource--><g id="elem_ScanTableSource"><rect codeLine="29" fill="#F1F1F1" height="83.2188" id="ScanTableSource" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="422" x="1295" y="311"/><ellipse cx="1445.25" cy="327" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M1446.25,324 L1446.25,330 L1448.25,330 L1448.7344,330 L1449.25,330.625 L1449.25,331 L1449.25,331.375 L1448.7344,332 L1448.25,332 L1442.25,332 L1441.7656,332 L1441.25,331.375 L1441.25,331 L1441.25,330.625 L1441.7656,330 L1442.25,330 L1444.25,330 L1444.25,324 L1442.25,324 L1441.7656,324 L1441.25,323.375 L1441.25,323 L1441.25,322.625 L1441.7656,322 L1442.25,322 L1448.25,322 L1448.7344,322 L1449.25,322.625 L1449.25,323 L1449.25,323.375 L1448.7344,324 L1448.25,324 L1446.25,324 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="113" x="1465.75" y="332.7285">ScanTableSource</text><line style="stroke:#181818;stroke-width:0.5;" x1="1296" x2="1716" y1="343" y2="343"/><line style="stroke:#181818;stroke-width:0.5;" x1="1296" x2="1716" y1="351" y2="351"/><ellipse cx="1306" cy="365.3047" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="250" x="1315" y="369.5332">getChangelogMode() : ChangelogMode</text><ellipse cx="1306" cy="382.9141" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="396" x="1315" y="387.1426">getScanRuntimeProvider(ScanContext) : ScanRuntimeProvider</text></g><!--MD5=[e80dc587a9ef8ac94dbf87ac4c0283b6]
+class SupportsPartitioning--><g id="elem_SupportsPartitioning"><rect codeLine="34" fill="#F1F1F1" height="65.6094" id="SupportsPartitioning" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="320" x="1397" y="42"/><ellipse cx="1488.75" cy="58" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M1489.75,55 L1489.75,61 L1491.75,61 L1492.2344,61 L1492.75,61.625 L1492.75,62 L1492.75,62.375 L1492.2344,63 L1491.75,63 L1485.75,63 L1485.2656,63 L1484.75,62.375 L1484.75,62 L1484.75,61.625 L1485.2656,61 L1485.75,61 L1487.75,61 L1487.75,55 L1485.75,55 L1485.2656,55 L1484.75,54.375 L1484.75,54 L1484.75,53.625 L1485.2656,53 L1485.75,53 L1491.75,53 L1492.2344,53 L1492.75,53.625 L1492.75,54 L1492.75,54.375 L1492.2344,55 L1491.75,55 L1489.75,55 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="128" x="1509.25" y="63.7285">SupportsPartitioning</text><line style="stroke:#181818;stroke-width:0.5;" x1="1398" x2="1716" y1="74" y2="74"/><line style="stroke:#181818;stroke-width:0.5;" x1="1398" x2="1716" y1="82" y2="82"/><ellipse cx="1408" cy="96.3047" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="294" x="1417" y="100.5332">applyStaticPartition(Map&lt;String, String&gt;) : void</text></g><!--MD5=[5b17ac0b9e47ff1ea50bce2af3c901db]
+class ScanContext--><g id="elem_ScanContext"><rect codeLine="38" fill="#F1F1F1" height="48" id="ScanContext" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="112" x="1061" y="185.5"/><ellipse cx="1076" cy="201.5" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M1077,198.5 L1077,204.5 L1079,204.5 L1079.4844,204.5 L1080,205.125 L1080,205.5 L1080,205.875 L1079.4844,206.5 L1079,206.5 L1073,206.5 L1072.5156,206.5 L1072,205.875 L1072,205.5 L1072,205.125 L1072.5156,204.5 L1073,204.5 L1075,204.5 L1075,198.5 L1073,198.5 L1072.5156,198.5 L1072,197.875 L1072,197.5 L1072,197.125 L1072.5156,196.5 L1073,196.5 L1079,196.5 L1079.4844,196.5 L1080,197.125 L1080,197.5 L1080,197.875 L1079.4844,198.5 L1079,198.5 L1077,198.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="80" x="1090" y="207.2285">ScanContext</text><line style="stroke:#181818;stroke-width:0.5;" x1="1062" x2="1172" y1="217.5" y2="217.5"/><line style="stroke:#181818;stroke-width:0.5;" x1="1062" x2="1172" y1="225.5" y2="225.5"/></g><!--MD5=[ebb69b90b2431c0a564912f1e6ed0bd8]
+class SinkRuntimeProvider--><g id="elem_SinkRuntimeProvider"><rect codeLine="39" fill="#F1F1F1" height="48" id="SinkRuntimeProvider" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="164" x="373" y="51"/><ellipse cx="388" cy="67" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M389,64 L389,70 L391,70 L391.4844,70 L392,70.625 L392,71 L392,71.375 L391.4844,72 L391,72 L385,72 L384.5156,72 L384,71.375 L384,71 L384,70.625 L384.5156,70 L385,70 L387,70 L387,64 L385,64 L384.5156,64 L384,63.375 L384,63 L384,62.625 L384.5156,62 L385,62 L391,62 L391.4844,62 L392,62.625 L392,63 L392,63.375 L391.4844,64 L391,64 L389,64 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="132" x="402" y="72.7285">SinkRuntimeProvider</text><line style="stroke:#181818;stroke-width:0.5;" x1="374" x2="536" y1="83" y2="83"/><line style="stroke:#181818;stroke-width:0.5;" x1="374" x2="536" y1="91" y2="91"/></g><!--MD5=[55f5c15c2afc5830699af0b6fc92575f]
+class ScanRuntimeProvider--><g id="elem_ScanRuntimeProvider"><rect codeLine="40" fill="#F1F1F1" height="65.6094" id="ScanRuntimeProvider" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="168" x="166" y="42"/><ellipse cx="181" cy="58" fill="#B4A7E5" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M182,55 L182,61 L184,61 L184.4844,61 L185,61.625 L185,62 L185,62.375 L184.4844,63 L184,63 L178,63 L177.5156,63 L177,62.375 L177,62 L177,61.625 L177.5156,61 L178,61 L180,61 L180,55 L178,55 L177.5156,55 L177,54.375 L177,54 L177,53.625 L177.5156,53 L178,53 L184,53 L184.4844,53 L185,53.625 L185,54 L185,54.375 L184.4844,55 L184,55 L182,55 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" font-style="italic" lengthAdjust="spacing" textLength="136" x="195" y="63.7285">ScanRuntimeProvider</text><line style="stroke:#181818;stroke-width:0.5;" x1="167" x2="333" y1="74" y2="74"/><line style="stroke:#181818;stroke-width:0.5;" x1="167" x2="333" y1="82" y2="82"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="140" x="172" y="100.5332">isBounded() : boolean</text></g><!--MD5=[74b69ce51eaeff5942b28e8517960c99]
+class DeltaDynamicTableFactory--><g id="elem_DeltaDynamicTableFactory"><rect codeLine="59" fill="#F1F1F1" height="118.4375" id="DeltaDynamicTableFactory" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="548" x="295" y="480"/><ellipse cx="479.25" cy="496" fill="#ADD1B2" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M481.25,492.5 Q481.4531,492 481.6875,491.75 Q481.9219,491.5 482.1875,491.5 Q482.6563,491.5 482.9531,491.7813 Q483.25,492.0625 483.25,492.7188 L483.25,494.2813 Q483.25,494.9375 482.9688,495.2188 Q482.6875,495.5 482.25,495.5 Q481.8594,495.5 481.6094,495.3281 Q481.3594,495.1563 481.25,494.7031 Q481.2031,494.3906 481.0313,494.2188 Q480.7188,493.8906 480.1563,493.7031 Q479.5938,493.5 479.0313,493.5 Q478.3281,493.5 477.7344,493.7813 Q477.1563,494.0625 476.7031,494.6875 Q476.25,495.3125 476.25,496.1719 L476.25,497.0938 Q476.25,498.125 477.0938,498.8125 Q477.9375,499.5 479.4375,499.5 Q480.3281,499.5 480.9531,499.2969 Q481.3125,499.1875 481.7188,498.8281 Q481.9844,498.625 482.125,498.5625 Q482.2656,498.5 482.4375,498.5 Q482.7656,498.5 483,498.7656 Q483.25,499.0156 483.25,499.375 Q483.25,499.7188 482.9063,500.125 Q482.4063,500.7188 481.6094,501.0469 Q480.5625,501.5 479.2813,501.5 Q477.7813,501.5 476.5781,500.9063 Q475.6094,500.4375 474.9219,499.4219 Q474.25,498.4063 474.25,497.2031 L474.25,496.1094 Q474.25,494.8594 474.8438,493.7656 Q475.4531,492.6719 476.5,492.0938 Q477.5625,491.5 478.75,491.5 Q479.4688,491.5 480.0938,491.75 Q480.7188,492 481.25,492.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="171" x="499.75" y="501.7285">DeltaDynamicTableFactory</text><line style="stroke:#181818;stroke-width:0.5;" x1="296" x2="842" y1="512" y2="512"/><rect fill="none" height="6" style="stroke:#C82930;stroke-width:1.0;" width="6" x="303" y="523.3047"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="155" x="315" y="530.5332">isFromCatalog : boolean</text><line style="stroke:#181818;stroke-width:0.5;" x1="296" x2="842" y1="537.6094" y2="537.6094"/><polygon fill="#4177AF" points="306,547.9141,302,553.9141,310,553.9141" style="stroke:#1963A0;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" text-decoration="underline" textLength="270" x="315" y="556.1426">fromCatalog() : DeltaDynamicTableFactory</text><ellipse cx="306" cy="569.5234" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="486" x="315" y="573.752">createDynamicTableSink(DynamicTableFactory.Context) : DynamicTableSink</text><ellipse cx="306" cy="587.1328" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="522" x="315" y="591.3613">createDynamicTableSource(DynamicTableFactory.Context) : DynamicTableSource</text></g><!--MD5=[eaaa9308a99dd8a65a0c18fde0755fd3]
+class DeltaDynamicTableSink--><g id="elem_DeltaDynamicTableSink"><rect codeLine="67" fill="#F1F1F1" height="83.2188" id="DeltaDynamicTableSink" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="501" x="1590.5" y="497.5"/><ellipse cx="1761.75" cy="513.5" fill="#ADD1B2" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M1763.75,510 Q1763.9531,509.5 1764.1875,509.25 Q1764.4219,509 1764.6875,509 Q1765.1563,509 1765.4531,509.2813 Q1765.75,509.5625 1765.75,510.2188 L1765.75,511.7813 Q1765.75,512.4375 1765.4688,512.7188 Q1765.1875,513 1764.75,513 Q1764.3594,513 1764.1094,512.8281 Q1763.8594,512.6563 1763.75,512.2031 Q1763.7031,511.8906 1763.5313,511.7188 Q1763.2188,511.3906 1762.6563,511.2031 Q1762.0938,511 1761.5313,511 Q1760.8281,511 1760.2344,511.2813 Q1759.6563,511.5625 1759.2031,512.1875 Q1758.75,512.8125 1758.75,513.6719 L1758.75,514.5938 Q1758.75,515.625 1759.5938,516.3125 Q1760.4375,517 1761.9375,517 Q1762.8281,517 1763.4531,516.7969 Q1763.8125,516.6875 1764.2188,516.3281 Q1764.4844,516.125 1764.625,516.0625 Q1764.7656,516 1764.9375,516 Q1765.2656,516 1765.5,516.2656 Q1765.75,516.5156 1765.75,516.875 Q1765.75,517.2188 1765.4063,517.625 Q1764.9063,518.2188 1764.1094,518.5469 Q1763.0625,519 1761.7813,519 Q1760.2813,519 1759.0781,518.4063 Q1758.1094,517.9375 1757.4219,516.9219 Q1756.75,515.9063 1756.75,514.7031 L1756.75,513.6094 Q1756.75,512.3594 1757.3438,511.2656 Q1757.9531,510.1719 1759,509.5938 Q1760.0625,509 1761.25,509 Q1761.9688,509 1762.5938,509.25 Q1763.2188,509.5 1763.75,510 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="150" x="1782.25" y="519.2285">DeltaDynamicTableSink</text><line style="stroke:#181818;stroke-width:0.5;" x1="1591.5" x2="2090.5" y1="529.5" y2="529.5"/><line style="stroke:#181818;stroke-width:0.5;" x1="1591.5" x2="2090.5" y1="537.5" y2="537.5"/><ellipse cx="1601.5" cy="551.8047" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="354" x="1610.5" y="556.0332">getChangelogMode(ChangelogMode) : ChangelogMode</text><ellipse cx="1601.5" cy="569.4141" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="475" x="1610.5" y="573.6426">getSinkRuntimeProvider(DynamicTableSink.Context) : SinkRuntimeProvider</text></g><!--MD5=[20d7f8fdd4b97365ae16dfd380b33394]
+class DeltaDynamicTableSource--><g id="elem_DeltaDynamicTableSource"><rect codeLine="72" fill="#F1F1F1" height="136.0469" id="DeltaDynamicTableSource" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="422" x="1133" y="471"/><ellipse cx="1255.75" cy="487" fill="#ADD1B2" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M1257.75,483.5 Q1257.9531,483 1258.1875,482.75 Q1258.4219,482.5 1258.6875,482.5 Q1259.1563,482.5 1259.4531,482.7813 Q1259.75,483.0625 1259.75,483.7188 L1259.75,485.2813 Q1259.75,485.9375 1259.4688,486.2188 Q1259.1875,486.5 1258.75,486.5 Q1258.3594,486.5 1258.1094,486.3281 Q1257.8594,486.1563 1257.75,485.7031 Q1257.7031,485.3906 1257.5313,485.2188 Q1257.2188,484.8906 1256.6563,484.7031 Q1256.0938,484.5 1255.5313,484.5 Q1254.8281,484.5 1254.2344,484.7813 Q1253.6563,485.0625 1253.2031,485.6875 Q1252.75,486.3125 1252.75,487.1719 L1252.75,488.0938 Q1252.75,489.125 1253.5938,489.8125 Q1254.4375,490.5 1255.9375,490.5 Q1256.8281,490.5 1257.4531,490.2969 Q1257.8125,490.1875 1258.2188,489.8281 Q1258.4844,489.625 1258.625,489.5625 Q1258.7656,489.5 1258.9375,489.5 Q1259.2656,489.5 1259.5,489.7656 Q1259.75,490.0156 1259.75,490.375 Q1259.75,490.7188 1259.4063,491.125 Q1258.9063,491.7188 1258.1094,492.0469 Q1257.0625,492.5 1255.7813,492.5 Q1254.2813,492.5 1253.0781,491.9063 Q1252.1094,491.4375 1251.4219,490.4219 Q1250.75,489.4063 1250.75,488.2031 L1250.75,487.1094 Q1250.75,485.8594 1251.3438,484.7656 Q1251.9531,483.6719 1253,483.0938 Q1254.0625,482.5 1255.25,482.5 Q1255.9688,482.5 1256.5938,482.75 Q1257.2188,483 1257.75,483.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="168" x="1276.25" y="492.7285">DeltaDynamicTableSource</text><line style="stroke:#181818;stroke-width:0.5;" x1="1134" x2="1554" y1="503" y2="503"/><rect fill="none" height="6" style="stroke:#C82930;stroke-width:1.0;" width="6" x="1141" y="514.3047"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="175" x="1153" y="521.5332">hadoopConf : Configuration</text><rect fill="none" height="6" style="stroke:#C82930;stroke-width:1.0;" width="6" x="1141" y="531.9141"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="185" x="1153" y="539.1426">queryOptions : QueryOptions</text><rect fill="none" height="6" style="stroke:#C82930;stroke-width:1.0;" width="6" x="1141" y="549.5234"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="139" x="1153" y="556.752">columns : List&lt;String&gt;</text><line style="stroke:#181818;stroke-width:0.5;" x1="1134" x2="1554" y1="563.8281" y2="563.8281"/><ellipse cx="1144" cy="578.1328" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="250" x="1153" y="582.3613">getChangelogMode() : ChangelogMode</text><ellipse cx="1144" cy="595.7422" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="396" x="1153" y="599.9707">getScanRuntimeProvider(ScanContext) : ScanRuntimeProvider</text></g><!--MD5=[62e30cd1e0d392bb44df28752a119427]
+class QueryOptions--><g id="elem_QueryOptions"><rect codeLine="81" fill="#F1F1F1" height="153.6563" id="QueryOptions" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="313" x="412.5" y="668"/><ellipse cx="520.75" cy="684" fill="#ADD1B2" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M522.75,680.5 Q522.9531,680 523.1875,679.75 Q523.4219,679.5 523.6875,679.5 Q524.1563,679.5 524.4531,679.7813 Q524.75,680.0625 524.75,680.7188 L524.75,682.2813 Q524.75,682.9375 524.4688,683.2188 Q524.1875,683.5 523.75,683.5 Q523.3594,683.5 523.1094,683.3281 Q522.8594,683.1563 522.75,682.7031 Q522.7031,682.3906 522.5313,682.2188 Q522.2188,681.8906 521.6563,681.7031 Q521.0938,681.5 520.5313,681.5 Q519.8281,681.5 519.2344,681.7813 Q518.6563,682.0625 518.2031,682.6875 Q517.75,683.3125 517.75,684.1719 L517.75,685.0938 Q517.75,686.125 518.5938,686.8125 Q519.4375,687.5 520.9375,687.5 Q521.8281,687.5 522.4531,687.2969 Q522.8125,687.1875 523.2188,686.8281 Q523.4844,686.625 523.625,686.5625 Q523.7656,686.5 523.9375,686.5 Q524.2656,686.5 524.5,686.7656 Q524.75,687.0156 524.75,687.375 Q524.75,687.7188 524.4063,688.125 Q523.9063,688.7188 523.1094,689.0469 Q522.0625,689.5 520.7813,689.5 Q519.2813,689.5 518.0781,688.9063 Q517.1094,688.4375 516.4219,687.4219 Q515.75,686.4063 515.75,685.2031 L515.75,684.1094 Q515.75,682.8594 516.3438,681.7656 Q516.9531,680.6719 518,680.0938 Q519.0625,679.5 520.25,679.5 Q520.9688,679.5 521.5938,679.75 Q522.2188,680 522.75,680.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="88" x="541.25" y="689.7285">QueryOptions</text><line style="stroke:#181818;stroke-width:0.5;" x1="413.5" x2="724.5" y1="700" y2="700"/><rect fill="none" height="6" style="stroke:#C82930;stroke-width:1.0;" width="6" x="420.5" y="711.3047"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="145" x="432.5" y="718.5332">deltaTablePath : String</text><rect fill="none" height="6" style="stroke:#C82930;stroke-width:1.0;" width="6" x="420.5" y="728.9141"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="157" x="432.5" y="736.1426">queryMode : QueryMode</text><rect fill="none" height="6" style="stroke:#C82930;stroke-width:1.0;" width="6" x="420.5" y="746.5234"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="254" x="432.5" y="753.752">jobSpecificOptions : Map&lt;String, String&gt;</text><line style="stroke:#181818;stroke-width:0.5;" x1="413.5" x2="724.5" y1="760.8281" y2="760.8281"/><ellipse cx="423.5" cy="775.1328" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="177" x="432.5" y="779.3613">getDeltaTablePath() : String</text><ellipse cx="423.5" cy="792.7422" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="190" x="432.5" y="796.9707">getQueryMode() : QueryMode</text><ellipse cx="423.5" cy="810.3516" fill="#84BE84" rx="3" ry="3" style="stroke:#038048;stroke-width:1.0;"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="287" x="432.5" y="814.5801">getJobSpecificOptions() : Map&lt;String, String&gt;</text></g><!--MD5=[2d281093d17410b5c14d3d62964d3181]
+class QueryMode--><g id="elem_QueryMode"><rect codeLine="91" fill="#F1F1F1" height="83.2188" id="QueryMode" rx="2.5" ry="2.5" style="stroke:#181818;stroke-width:0.5;" width="106" x="761" y="703.5"/><ellipse cx="776" cy="719.5" fill="#EB937F" rx="11" ry="11" style="stroke:#181818;stroke-width:1.0;"/><path d="M774.5,720.5 L774.5,722.5 L778.5,722.5 L778.5,721.5 L778.5,721.0156 L779.125,720.5 L779.5,720.5 L779.875,720.5 L780.5,721.0156 L780.5,721.5 L780.5,724.5 L772.5,724.5 L772.0156,724.5 L771.5,723.875 L771.5,723.5 L771.5,723.125 L772.0156,722.5 L772.5,722.5 L772.5,722.5 L772.5,716.5 L772.5,716.5 L772.0156,716.5 L771.5,715.875 L771.5,715.5 L771.5,715.125 L772.0156,714.5 L772.5,714.5 L780.5,714.5 L780.5,717.5 L780.5,717.9844 L779.875,718.5 L779.5,718.5 L779.125,718.5 L778.5,717.9844 L778.5,717.5 L778.5,716.5 L774.5,716.5 L774.5,718.5 L775.5,718.5 L775.5,718.0156 L775.5,718.0156 L776.125,717.5 L776.5,717.5 L776.875,717.5 L777.5,718.0156 L777.5,718.5 L777.5,720.5 L777.5,720.9844 L776.875,721.5 L776.875,721.5 L776.5,721.5 L776.125,721.5 L775.5,720.9844 L775.5,720.9844 L775.5,720.5 L774.5,720.5 Z " fill="#000000"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="74" x="790" y="725.2285">QueryMode</text><line style="stroke:#181818;stroke-width:0.5;" x1="762" x2="866" y1="735.5" y2="735.5"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="46" x="767" y="754.0332">BATCH</text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="80" x="767" y="771.6426">STREAMING</text><line style="stroke:#181818;stroke-width:0.5;" x1="762" x2="866" y1="778.7188" y2="778.7188"/></g><path d="M2127,470 L2127,487.3516 L1964.5,550.3047 L2127,495.3516 L2127,512.7031 A0,0 0 0 0 2127,512.7031 L2341,512.7031 A0,0 0 0 0 2341,512.7031 L2341,480 L2331,470 L2127,470 A0,0 0 0 0 2127,470 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><path d="M2331,470 L2331,480 L2341,480 L2331,470 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="127" x="2133" y="488.4951">Always returns Flink's</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="193" x="2133" y="504.8467">ChangelogMode::INSERT_ONLY.</text><path d="M2127,522.7031 L2127,556.4063 L2085.5,567.9141 L2127,564.4063 L2127,598.1094 A0,0 0 0 0 2127,598.1094 L2332,598.1094 A0,0 0 0 0 2332,598.1094 L2332,532.7031 L2322,522.7031 L2127,522.7031 A0,0 0 0 0 2127,522.7031 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><path d="M2322,522.7031 L2322,532.7031 L2332,532.7031 L2322,522.7031 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="155" x="2133" y="541.1982">Will use Delta Sink Builder</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="184" x="2133" y="557.5498">to set up a DeltaSink and return</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="160" x="2133" y="573.9014">its new instance wrapped in</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="165" x="2133" y="590.2529">Flink's SinkRuntimeProvider.</text><path d="M22.5,512.5 L22.5,555.2031 A0,0 0 0 0 22.5,555.2031 L259.5,555.2031 A0,0 0 0 0 259.5,555.2031 L259.5,537.8516 L299,550.4141 L259.5,529.8516 L259.5,522.5 L249.5,512.5 L22.5,512.5 A0,0 0 0 0 22.5,512.5 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><path d="M249.5,512.5 L249.5,522.5 L259.5,522.5 L249.5,512.5 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="189" x="28.5" y="530.9951">Will be called from Delta Catalog</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="216" x="28.5" y="547.3467">setting "isFromCatalog" flag to "true".</text><path d="M878,470 L878,512.7031 A0,0 0 0 0 878,512.7031 L1092,512.7031 A0,0 0 0 0 1092,512.7031 L1092,495.3516 L1137,576.6328 L1092,487.3516 L1092,480 L1082,470 L878,470 A0,0 0 0 0 878,470 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><path d="M1082,470 L1082,480 L1092,480 L1082,470 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="127" x="884" y="488.4951">Always returns Flink's</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="193" x="884" y="504.8467">ChangelogMode::INSERT_ONLY.</text><path d="M878,522.7031 L878,598.1094 A0,0 0 0 0 878,598.1094 L1098,598.1094 A0,0 0 0 0 1098,598.1094 L1098,564.4063 L1137,594.2422 L1098,556.4063 L1098,532.7031 L1088,522.7031 L878,522.7031 A0,0 0 0 0 878,522.7031 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><path d="M1088,522.7031 L1088,532.7031 L1098,532.7031 L1088,522.7031 " fill="#FEFFDD" style="stroke:#181818;stroke-width:0.5;"/><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="170" x="884" y="541.1982">Will use Delta Source Builder</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="199" x="884" y="557.5498">to set up a DeltaSource and return</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="160" x="884" y="573.9014">its new instance wrapped in</text><text fill="#000000" font-family="sans-serif" font-size="13" lengthAdjust="spacing" textLength="169" x="884" y="590.2529">Flink's ScanRuntimeProvider.</text><!--MD5=[dad51ba2ab7b8c8e2a0a41c7555dac6e]
+reverse link DynamicTableFactory to DynamicTableSinkFactory--><g id="link_DynamicTableFactory_DynamicTableSinkFactory"><path d="M755.64,241.72 C807.85,264.8 878.71,296.12 931.38,319.4 " fill="none" id="DynamicTableFactory-backto-DynamicTableSinkFactory" style="stroke:#181818;stroke-width:1.0;"/><polygon fill="none" points="752.78,248.11,737.32,233.63,758.44,235.31,752.78,248.11" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[dbe54f1a81287e5df3f63ebe72e712f6]
+reverse link DynamicTableFactory to DynamicTableSourceFactory--><g id="link_DynamicTableFactory_DynamicTableSourceFactory"><path d="M627.05,243.72 C587.16,266.58 534.46,296.78 495,319.4 " fill="none" id="DynamicTableFactory-backto-DynamicTableSourceFactory" style="stroke:#181818;stroke-width:1.0;"/><polygon fill="none" points="623.82,237.5,644.65,233.63,630.78,249.64,623.82,237.5" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[98447ca0988f570f462c210fa10196fa]
+reverse link DynamicTableSource to ScanTableSource--><g id="link_DynamicTableSource_ScanTableSource"><path d="M1013.62,240.92 C1023.4,244.58 1033.38,248.05 1043,251 C1124.2,275.9 1215.21,297.06 1294.92,313.45 " fill="none" id="DynamicTableSource-backto-ScanTableSource" style="stroke:#181818;stroke-width:1.0;"/><polygon fill="none" points="1010.71,247.3,994.6,233.53,1015.78,234.26,1010.71,247.3" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[30bf6b011172f06a4f0e8520320d479a]
+reverse link DynamicTableSource.Context to ScanContext--><g id="link_DynamicTableSource.Context_ScanContext"><path d="M988.68,111.34 C1019.71,134.84 1059.57,165.02 1086.57,185.46 " fill="none" id="DynamicTableSource.Context-backto-ScanContext" style="stroke:#181818;stroke-width:1.0;"/><polygon fill="none" points="984.2,116.73,972.48,99.08,992.65,105.57,984.2,116.73" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[adae04f51ceeabe20c52562ea60c3179]
+reverse link DynamicTableFactory to DynamicTableFactory.Context--><g id="link_DynamicTableFactory_DynamicTableFactory.Context"><path codeLine="45" d="M697.38,170.03 C699.34,147.05 698.72,118.62 695.53,99.08 " fill="none" id="DynamicTableFactory-backto-DynamicTableFactory.Context" style="stroke:#181818;stroke-width:1.0;"/><ellipse cx="696.512" cy="177.2968" fill="#FFFFFF" rx="8" ry="8" style="stroke:#181818;stroke-width:1.0;"/><line style="stroke:#181818;stroke-width:1.0;" x1="697.4639" x2="695.56" y1="169.3537" y2="185.24"/><line style="stroke:#181818;stroke-width:1.0;" x1="704.4551" x2="688.5688" y1="178.2488" y2="176.3449"/></g><!--MD5=[c990387f2619ebf01693953f115ef5c0]
+link DynamicTableFactory.Context to DynamicTableFactory--><!--MD5=[3c972dab8c244f932431e9571fa8f8b7]
+reverse link DynamicTableSink to DynamicTableSink.Context--><g id="link_DynamicTableSink_DynamicTableSink.Context"><path codeLine="46" d="M1398.3,159.11 C1368.53,138.53 1333.44,115.62 1306.02,99.08 " fill="none" id="DynamicTableSink-backto-DynamicTableSink.Context" style="stroke:#181818;stroke-width:1.0;"/><ellipse cx="1404.1336" cy="163.1759" fill="#FFFFFF" rx="8" ry="8" style="stroke:#181818;stroke-width:1.0;"/><line style="stroke:#181818;stroke-width:1.0;" x1="1397.5773" x2="1410.69" y1="158.5918" y2="167.76"/><line style="stroke:#181818;stroke-width:1.0;" x1="1408.7178" x2="1399.5495" y1="156.6195" y2="169.7322"/></g><!--MD5=[6b6669c201bc1464659cc4ecff564aec]
+link DynamicTableSink.Context to DynamicTableSink--><!--MD5=[f2449e0580116450f76854981fdc4073]
+reverse link DynamicTableSource to DynamicTableSource.Context--><g id="link_DynamicTableSource_DynamicTableSource.Context"><path codeLine="47" d="M954.38,170.03 C956.34,147.05 955.72,118.62 952.53,99.08 " fill="none" id="DynamicTableSource-backto-DynamicTableSource.Context" style="stroke:#181818;stroke-width:1.0;"/><ellipse cx="953.512" cy="177.2968" fill="#FFFFFF" rx="8" ry="8" style="stroke:#181818;stroke-width:1.0;"/><line style="stroke:#181818;stroke-width:1.0;" x1="954.4639" x2="952.56" y1="169.3537" y2="185.24"/><line style="stroke:#181818;stroke-width:1.0;" x1="961.4551" x2="945.5688" y1="178.2488" y2="176.3449"/></g><!--MD5=[f13c65b4f11174712e027af7eb8908d6]
+link DynamicTableSource.Context to DynamicTableSource--><!--MD5=[042c30fafb7525e9a833d2573814e63c]
+reverse link DynamicTableSinkFactory to DeltaDynamicTableFactory--><g id="link_DynamicTableSinkFactory_DeltaDynamicTableFactory"><path d="M909.57,393.55 C850.01,418.81 772.08,451.87 705.81,479.98 " fill="none" id="DynamicTableSinkFactory-backto-DeltaDynamicTableFactory" style="stroke:#181818;stroke-width:1.0;stroke-dasharray:7.0,7.0;"/><polygon fill="none" points="907.08,387,928.23,385.64,912.55,399.89,907.08,387" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[ceec7b140a2bd46be8208d0d11770bc5]
+reverse link DynamicTableSourceFactory to DeltaDynamicTableFactory--><g id="link_DynamicTableSourceFactory_DeltaDynamicTableFactory"><path d="M473.4,402.32 C490.16,426.1 510.43,454.87 527.98,479.79 " fill="none" id="DynamicTableSourceFactory-backto-DeltaDynamicTableFactory" style="stroke:#181818;stroke-width:1.0;stroke-dasharray:7.0,7.0;"/><polygon fill="none" points="467.44,406.02,461.64,385.64,478.89,397.95,467.44,406.02" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[97b7f9603959cdd9c34b947027c2c007]
+reverse link DynamicTableSink to DeltaDynamicTableSink--><g id="link_DynamicTableSink_DeltaDynamicTableSink"><path d="M1653.07,258.91 C1682.81,272.34 1711.41,289.39 1735,311 C1790.33,361.68 1819.22,447.13 1832.18,497.48 " fill="none" id="DynamicTableSink-backto-DeltaDynamicTableSink" style="stroke:#181818;stroke-width:1.0;stroke-dasharray:7.0,7.0;"/><polygon fill="none" points="1650.12,265.26,1634.44,251,1655.59,252.37,1650.12,265.26" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[e30f4a9692f7d357fa389d73e3893abc]
+reverse link SupportsPartitioning to DeltaDynamicTableSink--><g id="link_SupportsPartitioning_DeltaDynamicTableSink"><path d="M1658.02,117.32 C1682.73,130.82 1707.61,147.69 1727,168 C1815.99,261.23 1835.63,422.38 1839.88,497.4 " fill="none" id="SupportsPartitioning-backto-DeltaDynamicTableSink" style="stroke:#181818;stroke-width:1.0;stroke-dasharray:7.0,7.0;"/><polygon fill="none" points="1654.7,123.48,1640.14,108.09,1661.12,111.05,1654.7,123.48" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[8fe6bb452283de9011771667f08c1d2d]
+reverse link ScanTableSource to DeltaDynamicTableSource--><g id="link_ScanTableSource_DeltaDynamicTableSource"><path d="M1456.73,409.62 C1439.81,428.89 1420.69,450.65 1403.08,470.72 " fill="none" id="ScanTableSource-backto-DeltaDynamicTableSource" style="stroke:#181818;stroke-width:1.0;stroke-dasharray:7.0,7.0;"/><polygon fill="none" points="1451.59,404.86,1470.05,394.45,1462.11,414.09,1451.59,404.86" style="stroke:#181818;stroke-width:1.0;"/></g><!--MD5=[aaacb0e167172698d72f52e74a6a0ca5]
+link DeltaDynamicTableFactory to QueryOptions--><!--MD5=[e235f26d3848175cfe8397613764db8b]
+link QueryOptions to QueryMode--><rect fill="#FFFFFF" height="137.2656" id="_legend" rx="7.5" ry="7.5" style="stroke:#000000;stroke-width:1.0;" width="219" x="1065.5" y="856"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="4" x="1070.5" y="875.5332"> </text><text fill="#000000" font-family="sans-serif" font-size="14" font-weight="bold" lengthAdjust="spacing" textLength="31" x="1074.5" y="895.1426">field</text><text fill="#000000" font-family="sans-serif" font-size="14" font-weight="bold" lengthAdjust="spacing" textLength="53" x="1113.5" y="895.1426">method</text><text fill="#000000" font-family="sans-serif" font-size="14" font-weight="bold" lengthAdjust="spacing" textLength="8" x="1170.5" y="895.1426">  </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="8" x="1070.5" y="912.752">  </text><image height="9" width="11" x="1078.5" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAJCAYAAADkZNYtAAAAIElEQVR4XmP4TwJggDFOaBrgxFgVYwPDSjEujKGYGAAAweNd5L3ldi8AAAAASUVORK5CYII=" y="906.8281"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="20" x="1089.5" y="912.752">     </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="12" x="1109.5" y="912.752">   </text><image height="9" width="11" x="1121.5" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAJCAYAAADkZNYtAAAAI0lEQVR4XmP4TwJggDFOaBrgxFgVf/KNwcDDSjEujKGYGAAAZS47UlxPSKUAAAAASUVORK5CYII=" y="906.8281"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="20" x="1132.5" y="912.752">     </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="43" x="1174.5" y="912.752">private</text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="8" x="1070.5" y="930.3613">  </text><image height="9" width="11" x="1078.5" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAJCAYAAADkZNYtAAAAX0lEQVR4XmP4jwZePzzyf3Ov0v8Xd/eiS/1nQOaAFO6YYvD/yv5mMI2uAa4YphCmAJ0PV4xNAps4w68fH8FuvLS7BkUhDFw/3AWWB6kjzWRcEuh8FMUgQHRowAC+cAYAGoBjXc6wF6kAAAAASUVORK5CYII=" y="924.4375"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="12" x="1089.5" y="930.3613">   </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="12" x="1109.5" y="930.3613">   </text><image height="9" width="11" x="1121.5" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAJCAYAAADkZNYtAAAAgUlEQVR4XmP4jwZePzzwf3Ov0v8Xd/eiS/1nQOaAFO6YovH/yn4PIG2AoQGuGKbwxV0rIM8FyE/C0ABWjK4QhtE1MPz68RHsxku7DVAUwvD1w35geZA6qMlzgSaoYjHZHiiuizAZTGLRgK4QRTEIwDRc2W+CoRAEUBSDAEgDrnAGAFQBVAR28bEeAAAAAElFTkSuQmCC" y="924.4375"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="12" x="1132.5" y="930.3613">   </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="60" x="1174.5" y="930.3613">protected</text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="8" x="1070.5" y="947.9707">  </text><image height="9" width="11" x="1078.5" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAJCAYAAADkZNYtAAAAbklEQVR4XmP4jwW8/fwDXQgMGNAFXn749l8yecH/Z+++okthKo6buOd/cNeO/1H9u////vsPRQ5F8Zrjd+GKQJqWHrqFLI1QDLLerHwN3Hp0PopibCYh2wQCYMXogsgA2RAGmO8JYZBzMEIDHwAACEtiWrpEXIkAAAAASUVORK5CYII=" y="942.0469"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="20" x="1089.5" y="947.9707">     </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="12" x="1109.5" y="947.9707">   </text><image height="9" width="11" x="1121.5" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAJCAYAAADkZNYtAAAAk0lEQVR4XmP4jwW8/fwDXQgMGNAFbj/7+F8yecH/Z+++okthKrYsW/vfuHjV/6j+3f9///2HIoeiuGXVmf8qmUv+O5Sv/+/VvOX/0kO3kKURikHWK2Qs/m9buu6/I0hx/eb/JqWrUZwDVwyy3ih/JVghDEf37kJxDlgxsvXIisE2IDmH4eWHb2DfE8Ig52CEBj4AAPHgSvMnnUOnAAAAAElFTkSuQmCC" y="942.0469"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="16" x="1132.5" y="947.9707">    </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="101" x="1174.5" y="947.9707">package private</text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="8" x="1070.5" y="965.5801">  </text><image height="9" width="11" x="1078.5" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAJCAYAAADkZNYtAAAAZ0lEQVR4XmP4TwJgQOZsuXniv9ms3P/8bYH/9aZl/F9z9TCyNEIxSKHyhPj/B+5fBPNPPL4O5iNrgCsGmQhTCAMgDdpTUuF8uGLhjmC4IDLgbvGDs8kzmSQ3gwAsNEBWg0zEGRrEAABZTGJyS+bBWgAAAABJRU5ErkJggg==" y="959.6563"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="20" x="1089.5" y="965.5801">     </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="12" x="1109.5" y="965.5801">   </text><image height="9" width="11" x="1121.5" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAAJCAYAAADkZNYtAAAAm0lEQVR4XmP4TwJgQOZMPLb0v2J/xH+uZp//qhPj/6++cghZGqG4+/D8/yIdAf9T1pX+b9nX8j9jQ/l/mZ6I/2uuHsZULN8XBlcIw3mba/9rT0nFVMzd4o2iEITb9rcBxf0wFatPisMwuefwbOwmb7h+5L9kd+j/1PVlEFMPTP2v1B+H3c0gsOXmif8mM7PBVoNMRFYIAiiKCQEALytKAUy38jwAAAAASUVORK5CYII=" y="959.6563"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="20" x="1132.5" y="965.5801">     </text><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="37" x="1174.5" y="965.5801">public</text><line style="stroke:#000000;stroke-width:1.0;" x1="1070.5" x2="1279.5" y1="880.6094" y2="880.6094"/><line style="stroke:#000000;stroke-width:1.0;" x1="1070.5" x2="1279.5" y1="898.2188" y2="898.2188"/><line style="stroke:#000000;stroke-width:1.0;" x1="1070.5" x2="1279.5" y1="915.8281" y2="915.8281"/><line style="stroke:#000000;stroke-width:1.0;" x1="1070.5" x2="1279.5" y1="933.4375" y2="933.4375"/><line style="stroke:#000000;stroke-width:1.0;" x1="1070.5" x2="1279.5" y1="951.0469" y2="951.0469"/><line style="stroke:#000000;stroke-width:1.0;" x1="1070.5" x2="1279.5" y1="968.6563" y2="968.6563"/><line style="stroke:#000000;stroke-width:1.0;" x1="1070.5" x2="1070.5" y1="880.6094" y2="968.6563"/><line style="stroke:#000000;stroke-width:1.0;" x1="1109.5" x2="1109.5" y1="880.6094" y2="968.6563"/><line style="stroke:#000000;stroke-width:1.0;" x1="1170.5" x2="1170.5" y1="880.6094" y2="968.6563"/><line style="stroke:#000000;stroke-width:1.0;" x1="1279.5" x2="1279.5" y1="880.6094" y2="968.6563"/><text fill="#000000" font-family="sans-serif" font-size="14" lengthAdjust="spacing" textLength="4" x="1070.5" y="985.1895"> </text><!--MD5=[29cdba18276782a355dc94e3a852e84d]
+@startuml
+'https://plantuml.com/class-diagram
+
+package "org.apache.hadoop" #DDDDDD {
+  class Configuration
+}
+
+package "org.apache.flink" #DDDDDD {
+
+  interface DynamicTableFactory
+  interface DynamicTableFactory.Context
+
+  interface DynamicTableSinkFactory extends DynamicTableFactory {
+    + createDynamicTableSink(DynamicTableFactory.Context) : DynamicTableSink
+  }
+
+  interface DynamicTableSourceFactory extends DynamicTableFactory {
+    + createDynamicTableSource(DynamicTableFactory.Context) : DynamicTableSource
+  }
+
+  interface DynamicTableSink {
+    + getChangelogMode(ChangelogMode) : ChangelogMode
+    + getSinkRuntimeProvider(DynamicTableSink.Context) : SinkRuntimeProvider
+  }
+
+  interface DynamicTableSink.Context
+  interface DynamicTableSource
+  interface DynamicTableSource.Context
+
+  interface ScanTableSource extends DynamicTableSource {
+    + getChangelogMode() : ChangelogMode
+    + getScanRuntimeProvider(ScanContext) : ScanRuntimeProvider
+  }
+
+  interface SupportsPartitioning {
+    + applyStaticPartition(Map<String, String>) : void
+  }
+
+  interface ScanContext extends DynamicTableSource.Context
+  interface SinkRuntimeProvider
+  interface ScanRuntimeProvider {
+    isBounded() : boolean
+  }
+
+  /' inner interface '/
+  DynamicTableFactory +- - DynamicTableFactory.Context
+  DynamicTableSink +- - DynamicTableSink.Context
+  DynamicTableSource +- - DynamicTableSource.Context
+
+  /' start layout for org.apache.flink '/
+  DynamicTableFactory -[hidden]up- DynamicTableFactory.Context
+  DynamicTableSink -[hidden]up- DynamicTableSink.Context
+  DynamicTableSource -[hidden]up- DynamicTableSource.Context
+  /' end layout for org.apache.flink '/
+}
+
+/' - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - '/
+package "io.delta.flink" {
+
+  class DeltaDynamicTableFactory implements DynamicTableSinkFactory, DynamicTableSourceFactory {
+    - isFromCatalog : boolean
+
+    ~ {static} fromCatalog() : DeltaDynamicTableFactory
+    + createDynamicTableSink(DynamicTableFactory.Context) : DynamicTableSink
+    + createDynamicTableSource(DynamicTableFactory.Context) : DynamicTableSource
+  }
+
+  class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitioning {
+    + getChangelogMode(ChangelogMode) : ChangelogMode
+    + getSinkRuntimeProvider(DynamicTableSink.Context) : SinkRuntimeProvider
+  }
+
+  class DeltaDynamicTableSource implements ScanTableSource {
+    - hadoopConf : Configuration
+    - queryOptions : QueryOptions
+    - columns : List<String>
+
+    + getChangelogMode() : ChangelogMode
+    + getScanRuntimeProvider(ScanContext) : ScanRuntimeProvider
+  }
+
+  class QueryOptions {
+    - deltaTablePath : String
+    - queryMode : QueryMode
+    - jobSpecificOptions : Map<String, String>
+
+    + getDeltaTablePath() : String
+    + getQueryMode() : QueryMode
+    + getJobSpecificOptions() : Map<String, String>
+  }
+
+  enum QueryMode {
+    BATCH
+    STREAMING
+  }
+
+  note right of DeltaDynamicTableSink::getChangelogMode
+    Always returns Flink's
+    ChangelogMode::INSERT_ONLY.
+  end note
+
+  note right of DeltaDynamicTableSink::getSinkRuntimeProvider
+    Will use Delta Sink Builder
+    to set up a DeltaSink and return
+    its new instance wrapped in
+    Flink's SinkRuntimeProvider.
+  end note
+
+  note left of DeltaDynamicTableFactory::fromCatalog
+    Will be called from Delta Catalog
+    setting "isFromCatalog" flag to "true".
+  end note
+
+  note left of DeltaDynamicTableSource::getChangelogMode
+    Always returns Flink's
+    ChangelogMode::INSERT_ONLY.
+  end note
+
+  note left of DeltaDynamicTableSource::getScanRuntimeProvider
+    Will use Delta Source Builder
+    to set up a DeltaSource and return
+    its new instance wrapped in
+    Flink's ScanRuntimeProvider.
+  end note
+
+  /' start layout for io.delta.flink '/
+  QueryOptions -[hidden]up- DeltaDynamicTableFactory
+  QueryOptions -[hidden]right- QueryMode
+  /' end layout for io.delta.flink '/
+}
+
+/' legend '/
+skinparam legendBackgroundColor #ffffff
+legend
+
+|= field |= method |=  |
+|  <img:http://s.plantuml.com/private-field.png>     |   <img:http://s.plantuml.com/private-method.png>     | private |
+|  <img:http://s.plantuml.com/protected-field.png>   |   <img:http://s.plantuml.com/protected-method.png>   | protected |
+|  <img:http://s.plantuml.com/package-private-field.png>     |   <img:http://s.plantuml.com/package-private-method.png>    | package private |
+|  <img:http://s.plantuml.com/public-field.png>     |   <img:http://s.plantuml.com/public-method.png>     | public |
+
+endlegend
+
+@enduml
+
+@startuml
+
+package "org.apache.hadoop" #DDDDDD {
+  class Configuration
+}
+
+package "org.apache.flink" #DDDDDD {
+
+  interface DynamicTableFactory
+  interface DynamicTableFactory.Context
+
+  interface DynamicTableSinkFactory extends DynamicTableFactory {
+    + createDynamicTableSink(DynamicTableFactory.Context) : DynamicTableSink
+  }
+
+  interface DynamicTableSourceFactory extends DynamicTableFactory {
+    + createDynamicTableSource(DynamicTableFactory.Context) : DynamicTableSource
+  }
+
+  interface DynamicTableSink {
+    + getChangelogMode(ChangelogMode) : ChangelogMode
+    + getSinkRuntimeProvider(DynamicTableSink.Context) : SinkRuntimeProvider
+  }
+
+  interface DynamicTableSink.Context
+  interface DynamicTableSource
+  interface DynamicTableSource.Context
+
+  interface ScanTableSource extends DynamicTableSource {
+    + getChangelogMode() : ChangelogMode
+    + getScanRuntimeProvider(ScanContext) : ScanRuntimeProvider
+  }
+
+  interface SupportsPartitioning {
+    + applyStaticPartition(Map<String, String>) : void
+  }
+
+  interface ScanContext extends DynamicTableSource.Context
+  interface SinkRuntimeProvider
+  interface ScanRuntimeProvider {
+    isBounded() : boolean
+  }
+
+  DynamicTableFactory +- - DynamicTableFactory.Context
+  DynamicTableSink +- - DynamicTableSink.Context
+  DynamicTableSource +- - DynamicTableSource.Context
+
+  DynamicTableFactory -[hidden]up- DynamicTableFactory.Context
+  DynamicTableSink -[hidden]up- DynamicTableSink.Context
+  DynamicTableSource -[hidden]up- DynamicTableSource.Context
+}
+
+package "io.delta.flink" {
+
+  class DeltaDynamicTableFactory implements DynamicTableSinkFactory, DynamicTableSourceFactory {
+    - isFromCatalog : boolean
+
+    ~ {static} fromCatalog() : DeltaDynamicTableFactory
+    + createDynamicTableSink(DynamicTableFactory.Context) : DynamicTableSink
+    + createDynamicTableSource(DynamicTableFactory.Context) : DynamicTableSource
+  }
+
+  class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitioning {
+    + getChangelogMode(ChangelogMode) : ChangelogMode
+    + getSinkRuntimeProvider(DynamicTableSink.Context) : SinkRuntimeProvider
+  }
+
+  class DeltaDynamicTableSource implements ScanTableSource {
+    - hadoopConf : Configuration
+    - queryOptions : QueryOptions
+    - columns : List<String>
+
+    + getChangelogMode() : ChangelogMode
+    + getScanRuntimeProvider(ScanContext) : ScanRuntimeProvider
+  }
+
+  class QueryOptions {
+    - deltaTablePath : String
+    - queryMode : QueryMode
+    - jobSpecificOptions : Map<String, String>
+
+    + getDeltaTablePath() : String
+    + getQueryMode() : QueryMode
+    + getJobSpecificOptions() : Map<String, String>
+  }
+
+  enum QueryMode {
+    BATCH
+    STREAMING
+  }
+
+  note right of DeltaDynamicTableSink::getChangelogMode
+    Always returns Flink's
+    ChangelogMode::INSERT_ONLY.
+  end note
+
+  note right of DeltaDynamicTableSink::getSinkRuntimeProvider
+    Will use Delta Sink Builder
+    to set up a DeltaSink and return
+    its new instance wrapped in
+    Flink's SinkRuntimeProvider.
+  end note
+
+  note left of DeltaDynamicTableFactory::fromCatalog
+    Will be called from Delta Catalog
+    setting "isFromCatalog" flag to "true".
+  end note
+
+  note left of DeltaDynamicTableSource::getChangelogMode
+    Always returns Flink's
+    ChangelogMode::INSERT_ONLY.
+  end note
+
+  note left of DeltaDynamicTableSource::getScanRuntimeProvider
+    Will use Delta Source Builder
+    to set up a DeltaSource and return
+    its new instance wrapped in
+    Flink's ScanRuntimeProvider.
+  end note
+
+  QueryOptions -[hidden]up- DeltaDynamicTableFactory
+  QueryOptions -[hidden]right- QueryMode
+}
+
+skinparam legendBackgroundColor #ffffff
+legend
+
+|= field |= method |=  |
+|  <img:http://s.plantuml.com/private-field.png>     |   <img:http://s.plantuml.com/private-method.png>     | private |
+|  <img:http://s.plantuml.com/protected-field.png>   |   <img:http://s.plantuml.com/protected-method.png>   | protected |
+|  <img:http://s.plantuml.com/package-private-field.png>     |   <img:http://s.plantuml.com/package-private-method.png>    | package private |
+|  <img:http://s.plantuml.com/public-field.png>     |   <img:http://s.plantuml.com/public-method.png>     | public |
+
+endlegend
+
+@enduml
+
+PlantUML version 1.2022.12(Sun Oct 23 20:12:26 CEST 2022)
+(GPL source distribution)
+Java Runtime: OpenJDK Runtime Environment
+JVM: OpenJDK 64-Bit Server VM
+Default Encoding: Cp1250
+Language: pl
+Country: PL
+--></g></svg>
