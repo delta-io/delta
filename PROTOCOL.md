@@ -844,6 +844,7 @@ To achieve the requirements above, related actions from different delta files ne
  - The latest `metaData` action seen wins
  - For `txn` actions, the latest `version` seen for a given `appId` wins
  - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
+ - For `commitInfo` actions, only the `commitInfo` from the commit at the snapshot version is included in the snapshot. [Checkpoints](#checkpoints) and [log compaction files](#log-compaction-files) do not preserve `commitInfo` actions, so this information must be read from the JSON commit file at the snapshot version.
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
@@ -1832,11 +1833,9 @@ The following steps could be used to do cleanup of the DeltaLog directory:
 midnight UTC of that day as `cutOffTimestamp`. The newest commit not newer than the `cutOffTimestamp` is
 the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff. We want to retain everything including and after the `cutoffCommit`.
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
-We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
-time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
+We need to preserve the `cutOffCheckpoint` (both the checkpoint file and the JSON commit file at that version) and all commits after it. The JSON commit file at the `cutOffCheckpoint` version must be preserved because checkpoints do not preserve [commit provenance information](#commit-provenance-information) (e.g., `commitInfo` actions), which may be required by table features such as [In-Commit Timestamps](#in-commit-timestamps). All commits after `cutOffCheckpoint` must be preserved to enable time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
 3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the
-`cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
-startVersion <= `cutOffCheckpoint`'s version.
+`cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having startVersion <= `cutOffCheckpoint`'s version.
 4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
 the corresponding [sidecar files](#sidecar-files). These sidecar files need to be protected.
 5. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
