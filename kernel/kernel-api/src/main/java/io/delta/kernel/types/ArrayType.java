@@ -56,6 +56,25 @@ public class ArrayType extends DataType {
   }
 
   @Override
+  public boolean equivalentIgnoreCollations(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    ArrayType that = (ArrayType) dataType;
+    DataType thisElementType = elementField.getDataType();
+    DataType thatElementType = that.getElementType();
+    boolean elementsEqual =
+        (thisElementType == null && thatElementType == null)
+            || (thisElementType != null
+                && thisElementType.equivalentIgnoreCollations(thatElementType));
+
+    return elementsEqual && this.containsNull() == that.containsNull();
+  }
+
+  @Override
   public boolean isNested() {
     return true;
   }

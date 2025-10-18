@@ -176,6 +176,21 @@ public final class StructType extends DataType {
   }
 
   @Override
+  public boolean equivalentIgnoreCollations(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    StructType that = (StructType) dataType;
+    return this.length() == that.length()
+        && IntStream.range(0, this.length())
+            .mapToObj(i -> this.at(i).equalsIgnoreCollations(that.at(i)))
+            .allMatch(result -> result);
+  }
+
+  @Override
   public boolean isNested() {
     return true;
   }
