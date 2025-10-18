@@ -19,6 +19,7 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
@@ -28,15 +29,25 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.delta.DeltaErrors;
+import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.DeltaStartingVersion;
+import org.apache.spark.sql.delta.StartingVersion;
+import org.apache.spark.sql.delta.StartingVersionLatest$;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import scala.Option;
 
 public class SparkMicroBatchStream implements MicroBatchStream {
+
+  private static final Logger logger = LoggerFactory.getLogger(SparkMicroBatchStream.class);
 
   private static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
@@ -44,10 +55,17 @@ public class SparkMicroBatchStream implements MicroBatchStream {
 
   private final Engine engine;
   private final String tablePath;
+  private final DeltaOptions options;
+  private final StreamingHelper streamingHelper;
+  private final SparkSession spark;
 
-  public SparkMicroBatchStream(String tablePath, Configuration hadoopConf) {
+  public SparkMicroBatchStream(
+      SparkSession spark, String tablePath, Configuration hadoopConf, DeltaOptions options) {
+    this.spark = spark;
     this.tablePath = tablePath;
     this.engine = DefaultEngine.create(hadoopConf);
+    this.options = options;
+    this.streamingHelper = new StreamingHelper(tablePath, hadoopConf);
   }
 
   ////////////
@@ -95,6 +113,101 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   @Override
   public void stop() {
     throw new UnsupportedOperationException("stop is not supported");
+  }
+
+  ///////////////////////
+  // getStartingVersion //
+  ///////////////////////
+
+  /**
+   * Extracts whether users provided the option to time travel a relation. If a query restarts from
+   * a checkpoint and the checkpoint has recorded the offset, this method should never be called.
+   *
+   * <p>This is the DSv2 Kernel-based implementation of DeltaSource.getStartingVersion.
+   */
+  Optional<Long> getStartingVersion() {
+    if (options == null) {
+      return Optional.empty();
+    }
+
+    // TODO(#5319): DeltaSource.scala uses `allowOutOfRange` parameter from
+    // DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.
+    if (options.startingVersion().isDefined()) {
+      DeltaStartingVersion startingVersion = options.startingVersion().get();
+      if (startingVersion.equals(StartingVersionLatest$.MODULE$)) {
+        Snapshot latestSnapshot = streamingHelper.loadLatestSnapshot();
+        // "latest": start reading from the next commit
+        return Optional.of(latestSnapshot.getVersion() + 1);
+      } else if (startingVersion instanceof StartingVersion) {
+        long version = ((StartingVersion) startingVersion).version();
+        if (!validateProtocolAt(spark, tablePath, engine, version)) {
+          // When starting from a given version, we don't require that the snapshot of this
+          // version can be reconstructed, even though the input table is technically in an
+          // inconsistent state. If the snapshot cannot be reconstructed, then the protocol
+          // check is skipped, so this is technically not safe, but we keep it this way for
+          // historical reasons.
+          try {
+            streamingHelper.checkVersionExists(
+                version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
+          } catch (Exception e) {
+            throw new RuntimeException("Failed to validate starting version: " + version, e);
+          }
+        }
+        return Optional.of(version);
+      }
+    }
+    // TODO(#5319): Implement startingTimestamp support
+    return Optional.empty();
+  }
+
+  /**
+   * Validate the protocol at a given version. If the snapshot reconstruction fails for any other
+   * reason than unsupported feature exception, we suppress it. This allows fallback to previous
+   * behavior where the starting version/timestamp was not mandatory to point to reconstructable
+   * snapshot.
+   *
+   * <p>This is the DSv2 Kernel-based implementation of DeltaSource.validateProtocolAt.
+   *
+   * <p>Returns true when the validation was performed and succeeded.
+   */
+  private static boolean validateProtocolAt(
+      SparkSession spark, String tablePath, Engine engine, long version) {
+    boolean alwaysValidateProtocol =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL());
+    if (!alwaysValidateProtocol) {
+      return false;
+    }
+
+    try {
+      // Attempt to construct a snapshot at the startingVersion to validate the protocol
+      // If snapshot reconstruction fails, fall back to old behavior where the only
+      // requirement was for the commit to exist
+      TableManager.loadSnapshot(tablePath).atVersion(version).build(engine);
+      return true;
+    } catch (KernelException e) {
+      // Check if it's an unsupported table feature exception
+      // Kernel throws plain KernelException (not a subclass) for unsupported features,
+      // so we must check the message. See DeltaErrors.unsupportedTableFeature,
+      // DeltaErrors.unsupportedReaderFeatures, and DeltaErrors.unsupportedWriterFeatures.
+      String exceptionMessage = e.getMessage();
+      if (exceptionMessage != null
+          && (exceptionMessage.contains("Unsupported Delta table feature")
+              || exceptionMessage.contains("Unsupported Delta reader features")
+              || exceptionMessage.contains("Unsupported Delta writer feature"))) {
+        throw new RuntimeException(e);
+      }
+      // Suppress other KernelExceptions
+      logger.warn("Protocol validation failed at version {} with: {}", version, e.getMessage());
+      return false;
+    } catch (Exception e) {
+      // Suppress other exceptions
+      logger.warn("Protocol validation failed at version {} with: {}", version, e.getMessage());
+      return false;
+    }
   }
 
   ////////////////////
