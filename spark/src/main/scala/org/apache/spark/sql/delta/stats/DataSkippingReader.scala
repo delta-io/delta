@@ -1328,8 +1328,12 @@ trait DataSkippingReaderBase
     // For data skipping, avoid using the filters that either:
     // 1. involve subqueries.
     // 2. are non-deterministic.
+    // 3. involve file metadata struct fields
     var (ineligibleFilters, eligibleFilters) = filters.partition {
-      case f => containsSubquery(f) || !f.deterministic
+      case f => containsSubquery(f) || !f.deterministic || f.exists {
+        case MetadataAttribute(_) => true
+        case _ => false
+      }
     }
 
 
