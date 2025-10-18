@@ -160,8 +160,8 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       assertColumnMapping(updatedSchema.get("a"), 1)
 
       val updatedInnerStruct = updatedSchema.get("b").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(updatedInnerStruct.get("renamed-d"), 3)
-      assertColumnMapping(updatedInnerStruct.get("e"), 4)
+      assertColumnMapping(updatedInnerStruct.get("renamed-d"), 2)
+      assertColumnMapping(updatedInnerStruct.get("e"), 3)
       assertColumnMapping(updatedSchema.get("renamed-c"), 5)
     }
   }
@@ -207,8 +207,8 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       assertColumnMapping(updatedSchema.get("a"), 1)
 
       val updatedInnerStruct = updatedSchema.get("b").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(updatedInnerStruct.get("d"), 3)
-      assertColumnMapping(updatedInnerStruct.get("e"), 4)
+      assertColumnMapping(updatedInnerStruct.get("d"), 2)
+      assertColumnMapping(updatedInnerStruct.get("e"), 3)
       assertColumnMapping(updatedSchema.get("c"), 5)
 
       // Verify the top level and nested field reordering is maintained
@@ -355,7 +355,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 4)
     }
   }
 
@@ -409,7 +409,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 3)
 
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedArrayValue = mapType.getValueField.getDataType.asInstanceOf[ArrayType]
@@ -503,7 +503,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 3)
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
 
@@ -555,7 +555,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 3)
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
 
@@ -605,7 +605,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 4)
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
 
@@ -659,7 +659,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 4)
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
 
@@ -966,7 +966,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
             false),
           true,
           fieldMetadataForMapColumn(
-            2,
+            3,
             ColumnMapping.getPhysicalName(currentSchema.get("map")),
             "map",
             4,
