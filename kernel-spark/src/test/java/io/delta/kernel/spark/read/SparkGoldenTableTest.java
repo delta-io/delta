@@ -22,17 +22,15 @@ import io.delta.golden.GoldenTableUtils$;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.table.SparkTable;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.QueryTest;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Expression;
@@ -47,31 +45,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
-import scala.Function0;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class SparkGoldenTableTest extends QueryTest {
-
-  private SparkSession spark;
+public class SparkGoldenTableTest extends SparkDsv2TestBase {
 
   @BeforeAll
-  public void setUp(@TempDir File tempDir) {
-    SparkConf conf =
-        new SparkConf()
-            .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
-            .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
-            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .set(
-                "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-            .setMaster("local[*]")
-            .setAppName("SparkGoldenTableTest");
-    spark = SparkSession.builder().config(conf).getOrCreate();
-  }
-
-  @Override
-  public SparkSession spark() {
-    return spark;
+  public void setUpDsv2Catalog(@TempDir File tempDir) {
+    spark.conf().set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog");
+    spark.conf().set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath());
   }
 
   @Test
@@ -563,16 +544,7 @@ public class SparkGoldenTableTest extends QueryTest {
     }
     Dataset<Row> df = full.selectExpr(projectedCols.toArray(new String[0]));
 
-    Function0<Dataset<Row>> dfFunc =
-        new Function0<Dataset<Row>>() {
-          @Override
-          public Dataset<Row> apply() {
-            return df;
-          }
-        };
-    scala.collection.immutable.Seq<Row> expectedSeq =
-        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
-    checkAnswer(dfFunc, expectedSeq);
+    assertDatasetEquals(df, expected);
   }
 
   @Test
@@ -624,14 +596,8 @@ public class SparkGoldenTableTest extends QueryTest {
       Dataset<Row> df = spark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
       Dataset<Row> df2 = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
       assertEquals(df.schema(), df2.schema(), "Schema mismatch for table: " + tableName);
-      checkAnswer(
-          new Function0<Dataset<Row>>() {
-            @Override
-            public Dataset<Row> apply() {
-              return df;
-            }
-          },
-          df2);
+      assertDatasetEquals(
+          Arrays.asList((Row[]) df.collect()), Arrays.asList((Row[]) df2.collect()));
     }
   }
 
@@ -658,19 +624,8 @@ public class SparkGoldenTableTest extends QueryTest {
 
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
-
     Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
-    Function0<Dataset<Row>> dfFunc =
-        new Function0<Dataset<Row>>() {
-          @Override
-          public Dataset<Row> apply() {
-            return df;
-          }
-        };
-
-    scala.collection.immutable.Seq<Row> expectedSeq =
-        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
-    checkAnswer(dfFunc, expectedSeq);
+    assertDatasetEquals(df, expected);
   }
 
   private String goldenTablePath(String name) {
@@ -679,5 +634,42 @@ public class SparkGoldenTableTest extends QueryTest {
 
   private List<String> getAllGoldenTableNames() {
     return scala.collection.JavaConverters.seqAsJavaList(GoldenTableUtils$.MODULE$.allTableNames());
+  }
+
+  private void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
+    List<Row> actualRows = actual.collectAsList();
+    assertEquals(actualRows.size(), expectedRows.size());
+
+    Set<String> expectedSet = new HashSet<>();
+    for (Row row : expectedRows) {
+      expectedSet.add(normalizeRowString(row.toString()));
+    }
+
+    Set<String> actualSet = new HashSet<>();
+    for (Row row : actualRows) {
+      actualSet.add(normalizeRowString(row.toString()));
+    }
+
+    assertEquals(expectedSet, actualSet);
+  }
+
+  private void assertDatasetEquals(List<Row> actualRows, List<Row> expectedRows) {
+    assertEquals(actualRows.size(), expectedRows.size());
+
+    Set<String> expectedSet = new HashSet<>();
+    for (Row row : expectedRows) {
+      expectedSet.add(normalizeRowString(row.toString()));
+    }
+
+    Set<String> actualSet = new HashSet<>();
+    for (Row row : actualRows) {
+      actualSet.add(normalizeRowString(row.toString()));
+    }
+
+    assertEquals(expectedSet, actualSet);
+  }
+
+  private String normalizeRowString(String rowString) {
+    return rowString.replace("WrappedArray", "List");
   }
 }
