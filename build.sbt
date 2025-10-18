@@ -1317,7 +1317,7 @@ lazy val flink = (project in file("connectors/flink"))
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
       "org.apache.flink" % "flink-connector-files" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-runtime" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-scala_2.12" % flinkVersion % "provided",
+      // Note: flink-scala was removed in Flink 2.0 - Scala API is no longer supported
       "org.apache.flink" % "flink-table-planner_2.12" % flinkVersion % "provided",
 
       "org.apache.flink" % "flink-connector-files" % flinkVersion % "test" classifier "tests",
