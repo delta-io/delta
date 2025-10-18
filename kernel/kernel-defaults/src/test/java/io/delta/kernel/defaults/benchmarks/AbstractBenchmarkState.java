@@ -40,14 +40,14 @@ public abstract class AbstractBenchmarkState {
    * dynamically by JMH. The value is set in the main method.
    */
   @Param({})
-  private String workloadSpecJson;
+  public String workloadSpecJson;
 
   /**
    * The engine to use for this benchmark. Note: This parameter will be set dynamically by JMH. The
    * value is set in the main method.
    */
   @Param({})
-  private String engineName;
+  public String engineName;
 
   /** The workload runner initialized for this benchmark invocation. */
   private WorkloadRunner runner;
@@ -74,6 +74,17 @@ public abstract class AbstractBenchmarkState {
   @Setup(Level.Invocation)
   public void setupInvocation() throws Exception {
     runner.setup();
+  }
+
+  /**
+   * Teardown method that runs after each benchmark invocation. This calls the {@link
+   * WorkloadRunner#cleanup()} to clean up any state created during execution.
+   *
+   * @throws Exception If any error occurs during cleanup.
+   */
+  @TearDown(Level.Invocation)
+  public void teardownInvocation() throws Exception {
+    runner.cleanup();
   }
 
   /**

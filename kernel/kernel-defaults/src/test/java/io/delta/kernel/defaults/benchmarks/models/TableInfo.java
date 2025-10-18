@@ -16,10 +16,12 @@
 
 package io.delta.kernel.defaults.benchmarks.models;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.io.IOException;
-import org.codehaus.jackson.map.ObjectMapper;
+import java.nio.file.Paths;
 
 /**
  * Represents metadata about a Delta table used in benchmark workloads.
@@ -30,17 +32,26 @@ import org.codehaus.jackson.map.ObjectMapper;
  *
  * <p>TableInfo instances are typically loaded from JSON files in the workload specifications
  * directory structure. Each table directory should contain a {@code table_info.json} file with the
- * table metadata and a {@code delta} subdirectory containing the actual table data. The table root
- * path is the absolute path to the root of the table and is provided separately in {@link
- * WorkloadSpec#fromJsonPath(String, String, TableInfo)}.
+ * table metadata and a {@code delta} subdirectory containing the actual table data.
  *
- * <p>Example JSON structure:
+ * <p>Example JSON structure for relative table (default):
  *
  * <pre>{@code
  * {
- *   "name": "large-table",
- *   "description": "A large Delta table with multi-part checkpoints for performance testing",
- *   "engineInfo": "Apache-Spark/3.5.1 Delta-Lake/3.1.0"
+ *   "name": "basic_table",
+ *   "description": "A basic Delta table for benchmarking",
+ *   "engine_info": "Apache-Spark/3.5.1 Delta-Lake/3.1.0"
+ * }
+ * }</pre>
+ *
+ * <p>Example JSON structure for absolute path table:
+ *
+ * <pre>{@code
+ * {
+ *   "name": "s3_table",
+ *   "description": "Table stored in S3",
+ *   "table_type": "absolute",
+ *   "table_path": "s3://my-bucket/path/to/table"
  * }
  * }</pre>
  */
@@ -60,23 +71,28 @@ public class TableInfo {
   @JsonProperty("engine_info")
   public String engineInfo;
 
-  /** The root path where the Delta table is stored. */
-  @JsonProperty("table_root")
-  public String tableRoot;
-
-  /** @return the absolute path to the root of the table */
-  public String getTableRoot() {
-    return tableRoot;
-  }
+  /**
+   * The type of table location: "relative" (default) or "absolute".
+   *
+   * <p>When "relative", the table is located at {table_info_directory}/delta. When "absolute", the
+   * table is located at the path specified in {@link #tablePath}.
+   */
+  @JsonProperty("table_type")
+  private String tableType;
 
   /**
-   * Sets the root path of the Delta table.
-   *
-   * @param tableRoot the absolute path to the root of the table
+   * The absolute path to the table when {@link #tableType} is "absolute". Can be a local path
+   * (file:///) or S3 path (s3://). Null when table_type is "relative".
    */
-  public void setTableRoot(String tableRoot) {
-    this.tableRoot = tableRoot;
-  }
+  @JsonProperty("table_path")
+  private String tablePath;
+
+  /**
+   * The resolved absolute path to the root of the table. This is computed after deserialization
+   * based on {@link #tableType} and {@link #tablePath}.
+   */
+  @JsonProperty("table_info_path")
+  private String tableInfoPath;
 
   /**
    * Default constructor for Jackson deserialization.
@@ -86,23 +102,47 @@ public class TableInfo {
    */
   public TableInfo() {}
 
+  /** Resolves the table root path based on the table type and location configuration. */
+  @JsonIgnore
+  public String getResolvedTableRoot() {
+    if ("absolute".equals(tableType)) {
+      if (tablePath == null || tablePath.trim().isEmpty()) {
+        throw new IllegalStateException(
+            "table_path must be specified when table_type is 'absolute'");
+      }
+      return tablePath;
+    } else {
+      // Default to "relative" if tableType is null or "relative"
+      return Paths.get(tableInfoPath, "delta").toAbsolutePath().toString();
+    }
+  }
+
+  public String getTableInfoPath() {
+    return tableInfoPath;
+  }
+
+  public void setTableInfoPath(String tableInfoDirectory) {
+    this.tableInfoPath = tableInfoDirectory;
+  }
+
   /**
    * Creates a TableInfo instance by reading from a JSON file at the specified path.
    *
-   * <p>This method loads table metadata from a JSON file and sets the table root path. The JSON
-   * file should contain the table name and description, while the table root path is provided
-   * separately with the absolute path.
+   * <p>This method loads table metadata from a JSON file and resolves the table root path. The JSON
+   * file should contain the table name and description, while the table root path is computed based
+   * on the table_type and table_path fields.
    *
    * @param jsonPath the path to the JSON file containing the TableInfo metadata
-   * @param tableRoot the absolute path to the root of the Delta table
-   * @return a TableInfo instance populated from the JSON file and table root path
+   * @param tableInfoPath the directory containing the table_info.json file (used for relative path
+   *     resolution)
+   * @return a TableInfo instance populated from the JSON file with resolved table root path
    * @throws RuntimeException if there is an error reading or parsing the JSON file
    */
-  public static TableInfo fromJsonPath(String jsonPath, String tableRoot) {
+  public static TableInfo fromJsonPath(String jsonPath, String tableInfoPath) {
     ObjectMapper mapper = new ObjectMapper();
     try {
       TableInfo info = mapper.readValue(new File(jsonPath), TableInfo.class);
-      info.setTableRoot(tableRoot);
+      info.setTableInfoPath(tableInfoPath);
       return info;
     } catch (IOException e) {
       throw new RuntimeException("Failed to read TableInfo from JSON file: " + jsonPath, e);
@@ -112,8 +152,8 @@ public class TableInfo {
   /**
    * Returns a string representation of this TableInfo.
    *
-   * <p>The string includes the table name, description, and engine info, but excludes the table
-   * root path for security reasons (as it may contain sensitive path information).
+   * <p>The string includes the table name, description, engine info, and CCv2 status, but excludes
+   * the table root path for security reasons (as it may contain sensitive path information).
    *
    * @return a string representation of this TableInfo
    */
@@ -125,6 +165,8 @@ public class TableInfo {
         + description
         + "', engineInfo='"
         + engineInfo
-        + "'}";
+        + "', tableType='"
+        + tableType
+        + "}";
   }
 }

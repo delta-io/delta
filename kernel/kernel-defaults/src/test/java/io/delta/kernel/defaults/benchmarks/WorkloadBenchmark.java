@@ -33,6 +33,8 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 import org.openjdk.jmh.runner.options.TimeValue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Generic JMH benchmark for all workload types. Automatically loads and runs benchmarks based on
@@ -45,12 +47,23 @@ import org.openjdk.jmh.runner.options.TimeValue;
 @Measurement(iterations = 5, time = 1)
 public class WorkloadBenchmark<T> {
 
+  private static final Logger log = LoggerFactory.getLogger(WorkloadBenchmark.class);
+
   /** Default implementation of BenchmarkState that supports only the "default" engine. */
   public static class DefaultBenchmarkState extends AbstractBenchmarkState {
     @Override
     protected Engine getEngine(String engineName) {
       if (engineName.equals("default")) {
-        return DefaultEngine.create(new Configuration());
+        return DefaultEngine.create(
+            new Configuration() {
+              {
+                // Set the batch sizes to small so that we get to test the multiple batch/file
+                // scenarios.
+                set("delta.kernel.default.parquet.reader.batch-size", "20");
+                set("delta.kernel.default.json.reader.batch-size", "20");
+                set("delta.kernel.default.parquet.writer.targetMaxFileSize", "20");
+              }
+            });
       } else {
         throw new IllegalArgumentException("Unsupported engine: " + engineName);
       }
@@ -78,6 +91,7 @@ public class WorkloadBenchmark<T> {
   public static void main(String[] args) throws RunnerException, IOException {
     // Get workload specs from the workloads directory
     List<WorkloadSpec> workloadSpecs = BenchmarkUtils.loadAllWorkloads(WORKLOAD_SPECS_DIR);
+    System.out.println("Loaded " + workloadSpecs.size() + " workload specs");
     if (workloadSpecs.isEmpty()) {
       throw new RunnerException(
           "No workloads found. Please add workload specs to the workloads directory.");
@@ -87,7 +101,12 @@ public class WorkloadBenchmark<T> {
     List<WorkloadSpec> filteredSpecs = new ArrayList<>();
     for (WorkloadSpec spec : workloadSpecs) {
       // TODO: In the future, we can filter specific workloads using command line args here.
-      filteredSpecs.addAll(spec.getWorkloadVariants());
+      List<WorkloadSpec> variants = spec.getWorkloadVariants();
+      for (WorkloadSpec variant : variants) {
+        if (variant.getType().equals("write")) {
+          filteredSpecs.add(variant);
+        }
+      }
     }
 
     // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
@@ -102,13 +121,13 @@ public class WorkloadBenchmark<T> {
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
             .forks(1)
-            .warmupIterations(3) // Proper warmup for production benchmarks
-            .measurementIterations(5) // Proper measurement iterations for production benchmarks
+            .warmupIterations(3)
+            .measurementIterations(5)
             .warmupTime(TimeValue.seconds(1))
             .measurementTime(TimeValue.seconds(1))
             .addProfiler(KernelMetricsProfiler.class)
             .build();
 
-    new Runner(opt, new WorkloadOutputFormat()).run();
+    new Runner(opt).run();
   }
 }

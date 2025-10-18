@@ -56,8 +56,8 @@ public class ReadMetadataRunner extends WorkloadRunner {
   }
 
   @Override
-  public void setup() {
-    String workloadTableRoot = workloadSpec.getTableInfo().getTableRoot();
+  public void setup() throws Exception {
+    String workloadTableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
     SnapshotBuilder builder = TableManager.loadSnapshot(workloadTableRoot);
     if (workloadSpec.getVersion() != null) {
       builder.atVersion(workloadSpec.getVersion());
