@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.golden.GoldenTableUtils$;
@@ -573,6 +574,32 @@ public class SparkGoldenTableTest extends QueryTest {
     scala.collection.immutable.Seq<Row> expectedSeq =
         scala.collection.JavaConverters.asScalaBuffer(expected).toList();
     checkAnswer(dfFunc, expectedSeq);
+  }
+
+  @Test
+  public void testVariantUnsupportedDataType() {
+    String tablePath = goldenTablePath("spark-variant-checkpoint");
+
+    RuntimeException exception =
+        assertThrows(
+            RuntimeException.class,
+            () -> {
+              spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`").collect();
+            });
+
+    Throwable rootCause = getRootCause(exception);
+    String errorMessage = rootCause.getMessage();
+
+    assertTrue(errorMessage.contains("Unsupported data type"));
+    assertTrue(errorMessage.contains("variant"));
+  }
+
+  private Throwable getRootCause(Throwable throwable) {
+    Throwable cause = throwable;
+    while (cause.getCause() != null) {
+      cause = cause.getCause();
+    }
+    return cause;
   }
 
   @Test
