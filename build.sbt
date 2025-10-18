@@ -35,6 +35,7 @@ import sbtprotoc.ProtocPlugin.autoImport._
 import xsbti.compile.CompileAnalysis
 
 import Checkstyle._
+import ShadedIcebergBuild._
 import Mima._
 import Unidoc._
 
@@ -256,6 +257,8 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     name := "delta-connect-common",
     commonSettings,
     crossSparkSettings(),
+    // iceberg-core 1.8.0 brings jackson 2.18.2 thus force upgrade
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
@@ -672,7 +675,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
-  .dependsOn(spark % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
@@ -700,6 +702,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
+      "io.delta" %% "delta-spark" % "3.3.2" % "test",
 
       "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
@@ -716,7 +719,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 lazy val kernelSpark = (project in file("kernel-spark"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
-  .dependsOn(spark % "test->test")
+  .dependsOn(spark % "compile->compile")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "kernel-spark",
@@ -729,10 +732,20 @@ lazy val kernelSpark = (project in file("kernel-spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
+      // Using released delta-spark JAR instead of module dependency to break circular dependency
+      "io.delta" %% "delta-spark" % "3.3.2" % "test",
+
+      // Spark test dependencies for QueryTest and other test utilities
+      // Spark version(3.5.6) matches delta-spark's version 3.3.2
+      "org.apache.spark" %% "spark-sql" % "3.5.6" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % "3.5.6" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % "3.5.6" % "test" classifier "tests",
+
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
@@ -910,8 +923,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
-
+val icebergShadedVersion = "1.8.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -919,28 +931,46 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     name := "iceberg-shaded",
     commonSettings,
     skipReleaseSettings,
-
-    // Compile, patch and generated Iceberg JARs
-    generateIcebergJarsTask := {
-      import sys.process._
-      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
-      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
-      Seq("python3", scriptPath.getPath)!
-    },
-    Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
-    cleanFiles += baseDirectory.value / "iceberg_src",
-    cleanFiles += baseDirectory.value / "lib",
-
+    // must exclude all dependencies from Iceberg that delta-spark includes
+    libraryDependencies ++= Seq(
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
+      "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion excludeAll (
+        icebergExclusionRules: _*
+      ),
+      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergShadedVersion excludeAll (
+        icebergExclusionRules: _*
+      ),
+      // the hadoop client and hive metastore versions come from this file in the
+      // iceberg repo of icebergShadedVersion: iceberg/gradle/libs.versions.toml
+      "org.apache.hadoop" % "hadoop-client" % "2.7.3" % "provided" excludeAll (
+        hadoopClientExclusionRules: _*
+      ),
+      "org.apache.hive" % "hive-metastore" % "2.3.8" % "provided" excludeAll (
+        hiveMetastoreExclusionRules: _*
+      )
+    ),
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyShadeRules := Seq(
-      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
+      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll
     ),
+    assembly / assemblyExcludedJars := {
+      val cp = (fullClasspath in assembly).value
+      cp.filter { jar =>
+        val doExclude = jar.data.getName.contains("jackson-annotations") ||
+          jar.data.getName.contains("RoaringBitmap")
+        doExclude
+      }
+    },
+    // all following clases have Delta customized implementation under icebergShaded/src and thus
+    // require them to be 'first' to replace the class from iceberg jar
+    assembly / assemblyMergeStrategy := updateMergeStrategy((assembly / assemblyMergeStrategy).value),
     assemblyPackageScala / assembleArtifact := false,
-    // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
 
 lazy val hudi = (project in file("hudi"))
@@ -1230,7 +1260,6 @@ lazy val compatibility = (project in file("connectors/oss-compatibility-tests"))
  */
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
-  .dependsOn(spark % "test") // depends on delta-spark
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "golden-tables",
@@ -1240,6 +1269,8 @@ lazy val goldenTables = (project in file("connectors/golden-tables"))
       // Test Dependencies
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
+
+      "io.delta" %% "delta-spark" % "3.3.2" % "test",
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
@@ -1257,7 +1288,6 @@ def sqlDeltaImportScalaVersion(scalaBinaryVersion: String): String = {
 }
 
 lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
-  .dependsOn(spark)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "sql-delta-import",
@@ -1266,6 +1296,9 @@ lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
     publishArtifact := scalaBinaryVersion.value != "2.11",
     Test / publishArtifact := false,
     libraryDependencies ++= Seq(
+      // Using released delta-spark JAR instead of module dependency to break circular dependency
+      "io.delta" %% "delta-spark" % "3.3.2",
+      
       "io.netty" % "netty-buffer"  % "4.1.63.Final" % "test",
       "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % defaultSparkVersion % "provided",
       "org.rogach" %% "scallop" % "3.5.1",

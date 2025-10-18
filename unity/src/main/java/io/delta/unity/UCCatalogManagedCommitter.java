@@ -18,6 +18,7 @@ package io.delta.unity;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static io.delta.unity.UCCatalogManagedClient.UC_TABLE_ID_KEY;
 import static io.delta.unity.utils.OperationTimer.timeCheckedOperation;
 import static java.util.Objects.requireNonNull;
 
@@ -37,7 +38,9 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.unity.adapters.MetadataAdapter;
 import io.delta.unity.adapters.ProtocolAdapter;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -47,7 +50,7 @@ import org.slf4j.LoggerFactory;
  * An implementation of {@link Committer} that handles commits to Delta tables managed by Unity
  * Catalog. That is, these Delta tables must have the catalogManaged table feature supported.
  */
-public class UCCatalogManagedCommitter implements Committer, SupportsPublishing {
+public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
   protected final UCClient ucClient;
@@ -67,9 +70,9 @@ public class UCCatalogManagedCommitter implements Committer, SupportsPublishing 
     this.tablePath = new Path(requireNonNull(tablePath, "tablePath is null"));
   }
 
-  ////////////////////////////
-  // Commit-related methods //
-  ////////////////////////////
+  /////////////////
+  // Public APIs //
+  /////////////////
 
   @Override
   public CommitResponse commit(
@@ -91,6 +94,47 @@ public class UCCatalogManagedCommitter implements Committer, SupportsPublishing 
 
     throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
   }
+
+  @Override
+  public void publish(Engine engine, PublishMetadata publishMetadata)
+      throws PublishFailedException {
+    requireNonNull(engine, "engine is null");
+    requireNonNull(publishMetadata, "publishMetadata is null");
+
+    final List<ParsedCatalogCommitData> catalogCommits =
+        publishMetadata.getAscendingCatalogCommits();
+
+    if (catalogCommits.isEmpty()) {
+      return;
+    }
+
+    final String logPath = publishMetadata.getLogPath();
+    final long snapshotVersion = publishMetadata.getSnapshotVersion();
+
+    logger.info(
+        "[{}] Publishing {} catalog commits up to version {}",
+        ucTableId,
+        catalogCommits.size(),
+        snapshotVersion);
+
+    for (ParsedCatalogCommitData catalogCommit : catalogCommits) {
+      publishSingleCommit(engine, catalogCommit, logPath);
+    }
+
+    logger.info(
+        "[{}] Successfully published all catalog commits up to version {}",
+        snapshotVersion,
+        ucTableId);
+  }
+
+  @Override
+  public Map<String, String> getRequiredTableProperties() {
+    return Collections.singletonMap(UC_TABLE_ID_KEY, ucTableId);
+  }
+
+  ///////////////////////////
+  // Commit helper methods //
+  ///////////////////////////
 
   /**
    * Handles CATALOG_CREATE by writing the published delta file for version 0.
@@ -132,41 +176,9 @@ public class UCCatalogManagedCommitter implements Committer, SupportsPublishing 
     return new CommitResponse(ParsedCatalogCommitData.forFileStatus(kernelStagedCommitFileStatus));
   }
 
-  /////////////////////////////
-  // Publish-related methods //
-  /////////////////////////////
-
-  @Override
-  public void publish(Engine engine, PublishMetadata publishMetadata)
-      throws PublishFailedException {
-    requireNonNull(engine, "engine is null");
-    requireNonNull(publishMetadata, "publishMetadata is null");
-
-    final List<ParsedCatalogCommitData> catalogCommits =
-        publishMetadata.getAscendingCatalogCommits();
-
-    if (catalogCommits.isEmpty()) {
-      return;
-    }
-
-    final String logPath = publishMetadata.getLogPath();
-    final long snapshotVersion = publishMetadata.getSnapshotVersion();
-
-    logger.info(
-        "[{}] Publishing {} catalog commits up to version {}",
-        ucTableId,
-        catalogCommits.size(),
-        snapshotVersion);
-
-    for (ParsedCatalogCommitData catalogCommit : catalogCommits) {
-      publishSingleCommit(engine, catalogCommit, logPath);
-    }
-
-    logger.info(
-        "[{}] Successfully published all catalog commits up to version {}",
-        snapshotVersion,
-        ucTableId);
-  }
+  ////////////////////////////
+  // Publish helper methods //
+  ////////////////////////////
 
   private void publishSingleCommit(
       Engine engine, ParsedCatalogCommitData catalogCommit, String logPath)
@@ -293,7 +305,7 @@ public class UCCatalogManagedCommitter implements Committer, SupportsPublishing 
                 ucTableId,
                 tablePath.toUri(),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
-                Optional.empty() /* lastKnownBackfilledVersion */, // TODO: take this in as a hint
+                commitMetadata.getMaxKnownPublishedDeltaVersion(),
                 false /* isDisown */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new));

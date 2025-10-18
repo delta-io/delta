@@ -87,7 +87,6 @@ public interface SnapshotBuilder {
    *
    * @param committer the committer to use
    * @return a new builder instance with the provided committer
-   * @see io.delta.kernel.transaction.TransactionV2
    * @see Committer
    */
   SnapshotBuilder withCommitter(Committer committer);

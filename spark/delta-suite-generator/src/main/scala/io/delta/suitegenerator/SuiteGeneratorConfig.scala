@@ -164,7 +164,7 @@ object SuiteGeneratorConfig {
       "MergeIntoNotMatchedBySourceCDCPart2Tests",
       "MergeIntoSchemaEvolutionCoreTests",
       "MergeIntoSchemaEvolutionBaseTests",
-      "MergeIntoSchemaEvolutionStoreAssignmentPolicyTests",
+      "MergeIntoSchemaEvoStoreAssignmentPolicyTests",
       "MergeIntoSchemaEvolutionNotMatchedBySourceTests",
       "MergeIntoNestedStructInMapEvolutionTests",
       "MergeIntoNestedStructEvolutionTests"

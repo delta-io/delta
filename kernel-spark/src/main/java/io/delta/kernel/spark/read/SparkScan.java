@@ -126,7 +126,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    return new SparkMicroBatchStream();
+    return new SparkMicroBatchStream(tablePath, hadoopConf);
   }
 
   @Override
