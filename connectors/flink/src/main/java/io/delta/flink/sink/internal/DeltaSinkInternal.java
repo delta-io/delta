@@ -23,13 +23,12 @@ import java.util.List;
 import java.util.Optional;
 
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
-import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import io.delta.flink.sink.internal.writer.DeltaWriter;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketState;
 import org.apache.flink.api.connector.sink2.Committer;
+import org.apache.flink.api.connector.sink2.InitContext;
 import org.apache.flink.api.connector.sink2.Sink;
 import org.apache.flink.api.connector.sink2.SinkWriter;
-import org.apache.flink.api.connector.sink2.SupportsCommitter;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.slf4j.Logger;
