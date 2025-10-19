@@ -6,10 +6,10 @@ import java.util.Map;
 
 import org.apache.flink.table.catalog.Catalog;
 import org.apache.flink.table.catalog.GenericInMemoryCatalogFactory;
+import org.apache.flink.table.factories.CatalogFactory.Context;
 // TODO: Flink 2.0 - HiveCatalogFactory location changed or removed
 // Need to investigate new Hive Catalog integration
 // import org.apache.flink.table.catalog.hive.factories.HiveCatalogFactory;
-import org.apache.flink.table.factories.CatalogFactory.Context;
 import static io.delta.flink.internal.table.DeltaCatalogFactory.CATALOG_TYPE;
 
 /**
@@ -58,7 +58,7 @@ public interface CatalogLoader extends Serializable {
      * A catalog loader that creates Flink's {@link org.apache.flink.table.catalog.hive.HiveCatalog}
      * instance that will be used by {@link DeltaCatalog} as a metastore and to proxy none Delta
      * related queries to.
-     * 
+     *
      * TODO: Flink 2.0 - HiveCatalogFactory needs migration
      * The Hive Catalog integration needs to be updated for Flink 2.0.
      * Package structure and APIs have changed.
@@ -71,7 +71,7 @@ public interface CatalogLoader extends Serializable {
                 "Hive Catalog is temporarily disabled in Flink 2.0 migration. " +
                 "Use inMemory() catalog instead. " +
                 "Hive Catalog support will be re-added in a future update.");
-            
+
             // Context newContext = filterDeltaCatalogOptions(context);
             // Connectors like Iceberg have its own Hive Catalog implementation and his own
             // Catalog "like" interface currently we are reusing Flink's classes.
@@ -82,7 +82,7 @@ public interface CatalogLoader extends Serializable {
             // and remove "org.apache.flink" % "flink-table-test-utils" % flinkVersion % "test",
             // but this causes delta CI to fail for scala 2.11.12 that is way, after this change
             // Flink connector will not be build on scala 2.11.12.
-            
+
             // TODO: Need to find HiveCatalogFactory in Flink 2.0
             // return new HiveCatalogFactory().createCatalog(newContext);
         }

@@ -16,9 +16,9 @@ import io.delta.flink.internal.table.CatalogExceptionHelper.InvalidDdlOptions;
 import io.delta.flink.internal.table.CatalogExceptionHelper.MismatchedDdlOptionAndDeltaTableProperty;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.flink.table.api.Schema;
+import org.apache.flink.table.catalog.CatalogBaseTable;
 // TODO: Flink 2.0 - TableSchema was removed, replaced by Schema/ResolvedSchema
 // import org.apache.flink.table.api.TableSchema;
-import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.Column;
 import org.apache.flink.table.catalog.Column.ComputedColumn;
