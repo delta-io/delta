@@ -269,11 +269,15 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         return new DeltaCommitter(createBucketWriter());
     }
 
+    // TODO: GlobalCommitter was removed in Flink 2.0
+    // Need to implement alternative using SupportsCommitter pattern
+    /*
     GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>
         createGlobalCommitter() {
         return new DeltaGlobalCommitter(
             serializableConfiguration.conf(), tableBasePath, rowType, mergeSchema);
     }
+    */
 
     protected Path getTableBasePath() {
         return tableBasePath;
@@ -342,6 +346,8 @@ public class DeltaSinkBuilder<IN> implements Serializable {
                        bucketWriter.getProperties().getPendingFileRecoverableSerializer());
     }
 
+    // TODO: GlobalCommittable serializer no longer needed in Flink 2.0
+    /*
     SimpleVersionedSerializer<DeltaGlobalCommittable> getGlobalCommittableSerializer()
         throws IOException {
         BucketWriter<IN, String> bucketWriter = createBucketWriter();
@@ -349,6 +355,7 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         return new DeltaGlobalCommittableSerializer(
             bucketWriter.getProperties().getPendingFileRecoverableSerializer());
     }
+    */
 
     private DeltaBulkBucketWriter<IN, String> createBucketWriter() throws IOException {
         return new DeltaBulkBucketWriter<>(
