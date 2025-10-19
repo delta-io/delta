@@ -311,14 +311,15 @@ public class DeltaCatalog {
         Pair<String[], DataType[]> flinkTypesFromDelta =
             DeltaCatalogTableHelper.resolveFlinkTypesFromDelta(deltaSchema);
 
-        return CatalogTable.of(
-            Schema.newBuilder()
+        // TODO: Flink 2.0 - CatalogTable API changed, using builder pattern
+        return CatalogTable.newBuilder()
+            .schema(Schema.newBuilder()
                 .fromFields(flinkTypesFromDelta.getKey(), flinkTypesFromDelta.getValue())
-                .build(), // Table Schema is not stored in metastore, we take it from _delta_log.
-            metastoreTable.getComment(),
-            deltaMetadata.getPartitionColumns(),
-            metastoreTable.getOptions()
-        );
+                .build()) // Table Schema is not stored in metastore, from _delta_log.
+            .comment(metastoreTable.getComment())
+            .partitionKeys(deltaMetadata.getPartitionColumns())
+            .options(metastoreTable.getOptions())
+            .build();
     }
 
     /**

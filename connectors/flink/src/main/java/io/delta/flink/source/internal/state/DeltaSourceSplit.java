@@ -93,11 +93,17 @@ public class DeltaSourceSplit extends FileSourceSplit {
     public DeltaSourceSplit(Map<String, String> partitionValues, String id,
         Path filePath, long offset, long length, String[] hostnames,
         CheckpointedPosition readerPosition) {
-        super(id, filePath, offset, length, hostnames, readerPosition);
+        // TODO: Flink 2.0 changed FileSourceSplit constructor signature
+        // Need to pass fileSize and recordSkipCount as additional parameters
+        // Using length as fileSize and 0 as recordSkipCount for now
+        super(id, filePath, offset, length, length, 0L, hostnames);
 
         // Make split Partition a new Copy of original map to for immutability.
         this.partitionValues =
             (partitionValues == null) ? Collections.emptyMap() : new HashMap<>(partitionValues);
+
+        // TODO: Handle CheckpointedPosition in Flink 2.0
+        // Need to investigate how to restore reader position after constructor
     }
 
     @Override

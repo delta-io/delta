@@ -1,8 +1,10 @@
 package io.delta.flink.internal.table;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
@@ -86,6 +88,18 @@ public class DeltaCatalogFactory implements CatalogFactory {
     @Override
     public String factoryIdentifier() {
         return "delta-catalog";
+    }
+
+    @Override
+    public Set<ConfigOption<?>> requiredOptions() {
+        return new HashSet<>();
+    }
+
+    @Override
+    public Set<ConfigOption<?>> optionalOptions() {
+        Set<ConfigOption<?>> options = new HashSet<>();
+        options.add(DEFAULT_DATABASE);
+        return options;
     }
 
     private Catalog createDecoratedCatalog(Context context) {

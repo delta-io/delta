@@ -7,12 +7,11 @@ import java.util.Map;
 import org.apache.flink.table.catalog.Catalog;
 import org.apache.flink.table.catalog.GenericInMemoryCatalogFactory;
 import org.apache.flink.table.factories.CatalogFactory.Context;
-
 import static io.delta.flink.internal.table.DeltaCatalogFactory.CATALOG_TYPE;
 
 // TODO: Flink 2.0 - HiveCatalogFactory location changed or removed
-// Need to investigate new Hive Catalog integration
-// import org.apache.flink.table.catalog.hive.factories.HiveCatalogFactory;
+// Need to investigate new Hive Catalog integration for Flink 2.0
+// Previous import: org.apache.flink.table.catalog.hive.factories.HiveCatalogFactory
 
 /**
  * Creates a concrete catalog instance that will be used as decorated catalog by {@link

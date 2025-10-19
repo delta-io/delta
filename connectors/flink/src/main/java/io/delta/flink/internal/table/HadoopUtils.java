@@ -19,7 +19,6 @@ package io.delta.flink.internal.table;
 
 import java.io.File;
 
-import org.apache.flink.configuration.ConfigConstants;
 import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,6 +90,10 @@ public class HadoopUtils {
         }
 
         // Approach 2: Flink configuration (deprecated)
+        // TODO: Flink 2.0 removed ConfigConstants.HDFS_DEFAULT_CONFIG, HDFS_SITE_CONFIG,
+        // and PATH_HADOOP_CONFIG. Need to find alternative configuration keys.
+        // For now, these are commented out.
+        /*
         final String hdfsDefaultPath =
             flinkConfiguration.getString(ConfigConstants.HDFS_DEFAULT_CONFIG, null);
         if (hdfsDefaultPath != null) {
@@ -117,6 +120,7 @@ public class HadoopUtils {
             foundHadoopConfiguration =
                 addHadoopConfIfFound(result, hadoopConfigPath) || foundHadoopConfiguration;
         }
+        */
 
         // Approach 3: HADOOP_CONF_DIR environment variable
         String hadoopConfDir = System.getenv("HADOOP_CONF_DIR");

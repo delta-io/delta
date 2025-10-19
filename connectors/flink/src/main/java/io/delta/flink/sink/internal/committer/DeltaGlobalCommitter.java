@@ -87,7 +87,8 @@ import io.delta.standalone.internal.KernelDeltaLogDelegator;
  * </ol>
  */
 public class DeltaGlobalCommitter
-    implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> {
+    /* implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> */ {
+    // TODO: Flink 2.0 - GlobalCommitter removed, need to implement SupportsCommitter pattern
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaGlobalCommitter.class);
 
@@ -150,7 +151,7 @@ public class DeltaGlobalCommitter
      * @param globalCommittables list of combined committables objects
      * @return same as input
      */
-    @Override
+    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
     public List<DeltaGlobalCommittable> filterRecoveredCommittables(
             List<DeltaGlobalCommittable> globalCommittables) {
         return globalCommittables;
@@ -166,7 +167,7 @@ public class DeltaGlobalCommitter
      *                     intervals
      * @return {@link DeltaGlobalCommittable} serving as a wrapper class for received committables
      */
-    @Override
+    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
     public DeltaGlobalCommittable combine(List<DeltaCommittable> committables) {
 
         if (LOG.isTraceEnabled()) {
@@ -237,7 +238,7 @@ public class DeltaGlobalCommitter
      * @param globalCommittables list of combined committables objects
      * @return always empty collection as we do not want any retry behaviour
      */
-    @Override
+    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
     public List<DeltaGlobalCommittable> commit(List<DeltaGlobalCommittable> globalCommittables) {
         long start = System.nanoTime();
         String appId = resolveAppId(globalCommittables);
@@ -696,11 +697,11 @@ public class DeltaGlobalCommitter
         return true;
     }
 
-    @Override
+    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
     public void endOfInput() {
     }
 
-    @Override
+    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
     public void close() {
     }
 

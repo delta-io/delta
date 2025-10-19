@@ -30,9 +30,6 @@ import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.utils.LogicalTypeDataTypeConverter;
-
-// TODO: Flink 2.0 - TableSchema was removed, replaced by Schema/ResolvedSchema
-// import org.apache.flink.table.api.TableSchema;
 import static org.apache.flink.util.Preconditions.checkArgument;
 
 import io.delta.standalone.DeltaLog;
@@ -41,6 +38,9 @@ import io.delta.standalone.OptimisticTransaction;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.types.StructField;
 import io.delta.standalone.types.StructType;
+
+// TODO: Flink 2.0 - TableSchema was removed, replaced by Schema/ResolvedSchema
+// Previous import: org.apache.flink.table.api.TableSchema
 
 public final class DeltaCatalogTableHelper {
 
@@ -243,19 +243,17 @@ public final class DeltaCatalogTableHelper {
 
         // Flink's Hive catalog calls CatalogTable::getSchema method (deprecated) and apply null
         // check on the resul.
-        // The default implementation for this method returns null, and the DefaultCatalogTable
-        // returned by CatalogTable.of( ) does not override it,
-        // TODO: Flink 2.0 - TableSchema was removed, using getUnresolvedSchema() instead
+        // TODO: Flink 2.0 - CatalogTable API changed, using builder pattern
         return new DeltaMetastoreTable(
-            CatalogTable.of(
-                // by design don't store schema in metastore. Also watermark and primary key will
-                // not be stored in metastore and for now it will not be supported by Delta
-                // connector SQL.
-                Schema.newBuilder().build(),
-                table.getComment(),
-                Collections.emptyList(),
-                optionsToStoreInMetastore
-            )
+            CatalogTable.newBuilder()
+                // by design don't store schema in metastore. Also watermark and primary key
+                // will not be stored in metastore and for now it will not be supported by
+                // Delta connector SQL.
+                .schema(Schema.newBuilder().build())
+                .comment(table.getComment())
+                .partitionKeys(Collections.emptyList())
+                .options(optionsToStoreInMetastore)
+                .build()
         );
     }
 

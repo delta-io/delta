@@ -26,9 +26,9 @@ import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.writer.DeltaWriter;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketState;
 import org.apache.flink.api.connector.sink2.Committer;
-import org.apache.flink.api.connector.sink2.InitContext;
 import org.apache.flink.api.connector.sink2.Sink;
 import org.apache.flink.api.connector.sink2.SinkWriter;
+import org.apache.flink.api.connector.sink2.WriterInitContext;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.slf4j.Logger;
@@ -104,7 +104,7 @@ public class DeltaSinkInternal<IN>
      */
     @Override
     public SinkWriter<IN> createWriter(
-        InitContext context
+        WriterInitContext context
     ) throws IOException {
         // TODO: Implement proper state restoration for Flink 2.0
         // Flink 2.0 changed writer state management - need to use StatefulSinkWriter interface
@@ -142,7 +142,7 @@ public class DeltaSinkInternal<IN>
         return states.get(0).getAppId();
     }
 
-    @Override
+    // @Override // Removed: Sink interface changed in Flink 2.0
     public Optional<SimpleVersionedSerializer<DeltaWriterBucketState>>
         getWriterStateSerializer() {
         try {
@@ -152,12 +152,12 @@ public class DeltaSinkInternal<IN>
         }
     }
 
-    @Override
+    // @Override // Removed: Sink interface changed in Flink 2.0
     public Optional<Committer<DeltaCommittable>> createCommitter() throws IOException {
         return Optional.of(sinkBuilder.createCommitter());
     }
 
-    @Override
+    // @Override // Removed: Sink interface changed in Flink 2.0
     public Optional<SimpleVersionedSerializer<DeltaCommittable>>
         getCommittableSerializer() {
         try {

@@ -121,6 +121,8 @@ public final class DeltaSourceSplitSerializer
     private void serialize(DataOutputViewStreamWrapper outputWrapper, DeltaSourceSplit split)
         throws IOException {
 
+        // TODO: Flink 2.0 changed FileSourceSplit constructor signature
+        // Using split.length() as fileSize and 0 as recordSkipCount
         byte[] superBytes =
             FileSourceSplitSerializer.INSTANCE.serialize(
                 new FileSourceSplit(
@@ -128,8 +130,9 @@ public final class DeltaSourceSplitSerializer
                     split.path(),
                     split.offset(),
                     split.length(),
-                    split.hostnames(),
-                    split.getReaderPosition().orElse(null)));
+                    split.length(), // fileSize
+                    0L, // recordSkipCount
+                    split.hostnames()));
 
         outputWrapper.writeInt(superBytes.length);
         outputWrapper.write(superBytes);

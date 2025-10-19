@@ -31,8 +31,8 @@ import io.delta.flink.sink.internal.writer.DeltaWriter;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketState;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketStateSerializer;
 import org.apache.flink.api.connector.sink2.Committer;
-import org.apache.flink.api.connector.sink2.InitContext;
 import org.apache.flink.api.connector.sink2.Sink;
+import org.apache.flink.api.connector.sink2.WriterInitContext;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
@@ -313,17 +313,20 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     }
 
     DeltaWriter<IN> createWriter(
-            InitContext context,
+            WriterInitContext context,
             String appId,
             long nextCheckpointId) throws IOException {
 
+        // TODO: Flink 2.0 removed getProcessingTimeService() and metricGroup()
+        // from WriterInitContext. Need to find alternative ways to access these.
+        // For now, passing null and will need to refactor metrics collection
         return new DeltaWriter<>(
             tableBasePath,
             bucketAssigner,
             createBucketWriter(),
             rollingPolicy,
             outputFileConfig,
-            context.getProcessingTimeService(),
+            null, // processingTimeService removed in Flink 2.0
             context.metricGroup(),
             bucketCheckInterval,
             appId,

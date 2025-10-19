@@ -19,8 +19,7 @@
 package io.delta.flink.sink.internal.committer;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
+import java.util.Collection;
 
 import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
@@ -91,24 +90,34 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
      * the simple process of renaming the hidden file to make it visible and removing from the name
      * some 'in-progress file' marker. For details see internal interfaces in
      * {@link org.apache.flink.streaming.api.functions.sink.filesystem.BucketWriter}.
+     * <p>
+     * Flink 2.0 changed the commit signature to use Collection<CommitRequest<T>> instead of List<T>
      *
-     * @param committables list of committables. May contain committables from multiple checkpoint
-     *                     intervals
-     * @return always empty list as we do not allow or expect any retry behaviour
+     * @param commitRequests collection of commit requests. May contain committables from multiple
+     *                       checkpoint intervals
      * @throws IOException if committing files (e.g. I/O errors occurs)
      */
     @Override
-    public List<DeltaCommittable> commit(List<DeltaCommittable> committables) throws IOException {
-        for (DeltaCommittable committable : committables) {
+    public void commit(Collection<CommitRequest<DeltaCommittable>> commitRequests)
+            throws IOException {
+        for (CommitRequest<DeltaCommittable> request : commitRequests) {
+            DeltaCommittable committable = request.getCommittable();
             LOG.info("Committing delta committable locally: " +
                 "appId=" + committable.getAppId() +
                 " checkpointId=" + committable.getCheckpointId() +
                 " deltaPendingFile=" + committable.getDeltaPendingFile()
             );
-            bucketWriter.recoverPendingFile(committable.getDeltaPendingFile().getPendingFile())
-                .commitAfterRecovery();
+            try {
+                bucketWriter.recoverPendingFile(committable.getDeltaPendingFile().getPendingFile())
+                    .commitAfterRecovery();
+                // Signal success
+                request.signalAlreadyCommitted();
+            } catch (Exception e) {
+                // Signal failure with retry
+                request.retryLater();
+                throw e;
+            }
         }
-        return Collections.emptyList();
     }
 
     @Override
