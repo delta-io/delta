@@ -34,7 +34,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
-import org.apache.flink.table.connector.sink.SinkProvider;
+import org.apache.flink.table.connector.sink.SinkV2Provider;
 import org.apache.flink.table.connector.sink.abilities.SupportsPartitioning;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
@@ -171,7 +171,7 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
             builder.withBucketAssigner(partitionAssigner);
         }
 
-        return SinkProvider.of(builder.build());
+        return SinkV2Provider.of(builder.build());
     }
 
     @Override
