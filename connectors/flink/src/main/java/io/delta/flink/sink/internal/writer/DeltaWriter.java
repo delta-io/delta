@@ -71,8 +71,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * @param <IN> The type of input elements.
  */
-public class DeltaWriter<IN> implements SinkWriter<IN, DeltaCommittable, DeltaWriterBucketState>,
-                                            Sink.ProcessingTimeService.ProcessingTimeCallback {
+public class DeltaWriter<IN> implements SinkWriter<IN> {
+    // Note: Flink 2.0 removed ProcessingTimeService - timing functionality needs refactoring
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaWriter.class);
 

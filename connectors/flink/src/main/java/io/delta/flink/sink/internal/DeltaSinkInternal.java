@@ -74,7 +74,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * files to decouple DeltaLake's specific code from parts borrowed from FileSink.
  */
 public class DeltaSinkInternal<IN>
-    implements Sink<IN, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable> {
+    implements Sink<IN> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaSinkInternal.class);
 
@@ -104,12 +104,14 @@ public class DeltaSinkInternal<IN>
      * @throws IOException When the recoverable writer cannot be instantiated.
      */
     @Override
-    public SinkWriter<IN, DeltaCommittable, DeltaWriterBucketState> createWriter(
-        InitContext context,
-        List<DeltaWriterBucketState> states
+    public SinkWriter<IN> createWriter(
+        InitContext context
     ) throws IOException {
+        // TODO: Implement proper state restoration for Flink 2.0
+        // Flink 2.0 changed writer state management - need to use StatefulSinkWriter interface
+        List<DeltaWriterBucketState> states = List.of(); // Empty for now
         String appId = restoreOrCreateAppId(states);
-        long checkpointId = context.getRestoredCheckpointId().orElse(1);
+        long checkpointId = context.getRestoredCheckpointId().orElse(1L);
         DeltaWriter<IN> writer = sinkBuilder.createWriter(context, appId, checkpointId);
         writer.initializeState(states);
         LOG.info("Created new writer for: " +
@@ -166,6 +168,10 @@ public class DeltaSinkInternal<IN>
         }
     }
 
+    // TODO: GlobalCommitter was removed in Flink 2.0
+    // Need to implement SupportsCommitter interface instead and use two-phase commit pattern
+    // with CommittingSinkWriter
+    /*
     @Override
     public Optional<GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>>
         createGlobalCommitter() {
@@ -181,4 +187,5 @@ public class DeltaSinkInternal<IN>
             throw new FlinkRuntimeException("Could not create committable serializer.", e);
         }
     }
+    */
 }
