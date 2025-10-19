@@ -16,7 +16,8 @@ import io.delta.flink.internal.table.CatalogExceptionHelper.InvalidDdlOptions;
 import io.delta.flink.internal.table.CatalogExceptionHelper.MismatchedDdlOptionAndDeltaTableProperty;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.flink.table.api.Schema;
-import org.apache.flink.table.api.TableSchema;
+// TODO: Flink 2.0 - TableSchema was removed, replaced by Schema/ResolvedSchema
+// import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.Column;
@@ -243,8 +244,7 @@ public final class DeltaCatalogTableHelper {
         // check on the resul.
         // The default implementation for this method returns null, and the DefaultCatalogTable
         // returned by CatalogTable.of( ) does not override it,
-        // hence we need to have our own wrapper that will return empty TableSchema when
-        // getSchema method is called.
+        // TODO: Flink 2.0 - TableSchema was removed, using getUnresolvedSchema() instead
         return new DeltaMetastoreTable(
             CatalogTable.of(
                 // by design don't store schema in metastore. Also watermark and primary key will
@@ -396,10 +396,14 @@ public final class DeltaCatalogTableHelper {
             return decoratedTable.getOptions();
         }
 
+        // TODO: Flink 2.0 - TableSchema.getSchema() was removed
+        // The interface no longer requires this method
+        /*
         @Override
         public TableSchema getSchema() {
             return TableSchema.builder().build();
         }
+        */
 
         @Override
         public Schema getUnresolvedSchema() {
