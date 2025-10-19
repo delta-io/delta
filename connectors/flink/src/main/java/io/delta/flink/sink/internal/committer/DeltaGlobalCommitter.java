@@ -44,7 +44,8 @@ import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import io.delta.storage.CloseableIterator;
-import org.apache.flink.api.connector.sink.GlobalCommitter;
+// Note: GlobalCommitter removed in Flink 2.0 - will be refactored to use SupportsCommitter pattern
+// import org.apache.flink.api.connector.sink2.SupportsCommitter;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
 import org.apache.flink.table.types.logical.RowType;

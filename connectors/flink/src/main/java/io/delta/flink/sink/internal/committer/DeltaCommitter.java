@@ -25,7 +25,7 @@ import java.util.List;
 import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.writer.DeltaWriter;
-import org.apache.flink.api.connector.sink.Committer;
+import org.apache.flink.api.connector.sink2.Committer;
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
