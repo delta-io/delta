@@ -30,7 +30,6 @@ import io.delta.kernel.internal.TableChangesUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.util.List;
@@ -103,7 +102,7 @@ public class CommitRangeImpl implements CommitRange {
     // Build on top of getCommits() by flattening and adding version/timestamp columns
     CloseableIterator<CommitActions> commits = getCommits(engine, startSnapshot, actionSet);
 
-    return flattenCommitsAndAddMetadata(engine, commits);
+    return TableChangesUtils.flattenCommitsAndAddMetadata(engine, commits);
   }
 
   @Override
@@ -126,64 +125,5 @@ public class CommitRangeImpl implements CommitRange {
     checkArgument(
         startSnapshot.getVersion() == startVersion,
         "startSnapshot must have version = startVersion");
-  }
-
-  /** Flattens CommitActions iterator and adds version/timestamp columns to each batch. */
-  private CloseableIterator<ColumnarBatch> flattenCommitsAndAddMetadata(
-      Engine engine, CloseableIterator<CommitActions> commits) {
-    return new CloseableIterator<ColumnarBatch>() {
-      private CommitActions currentCommit = null;
-      private CloseableIterator<ColumnarBatch> currentBatches = null;
-
-      @Override
-      public boolean hasNext() {
-        while (true) {
-          if (currentBatches != null && currentBatches.hasNext()) {
-            return true;
-          }
-
-          if (currentBatches != null) {
-            Utils.closeCloseables(currentBatches);
-            currentBatches = null;
-          }
-
-          // Close previous CommitActions if it exists
-          if (currentCommit != null && currentCommit instanceof AutoCloseable) {
-            Utils.closeCloseables((AutoCloseable) currentCommit);
-          }
-
-          if (!commits.hasNext()) {
-            return false;
-          }
-
-          currentCommit = commits.next();
-          currentBatches = currentCommit.getActions();
-        }
-      }
-
-      @Override
-      public ColumnarBatch next() {
-        if (!hasNext()) {
-          throw new java.util.NoSuchElementException();
-        }
-
-        ColumnarBatch batch = currentBatches.next();
-        long version = currentCommit.getVersion();
-        long timestamp = currentCommit.getTimestamp();
-
-        // Add version and timestamp as first two columns
-        return TableChangesUtils.addVersionAndTimestampColumns(engine, batch, version, timestamp);
-      }
-
-      @Override
-      public void close() {
-        // Close current batches, current commit, and commits iterator
-        if (currentCommit != null && currentCommit instanceof AutoCloseable) {
-          Utils.closeCloseables(currentBatches, (AutoCloseable) currentCommit, commits);
-        } else {
-          Utils.closeCloseables(currentBatches, commits);
-        }
-      }
-    };
   }
 }

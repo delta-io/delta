@@ -260,30 +260,31 @@ public class DeltaLogActionUtils {
   }
 
   /**
-   * Returns the delta actions from the delta files provided in commitFiles. Reads and returns the
-   * actions requested in actionSet. In addition, this function does a few key things:
+   * Returns CommitActions objects for each commit file provided. Each CommitActions object
+   * represents actions from a single commit and provides access to the commit version, timestamp,
+   * and action batches.
+   *
+   * <p>This function performs the following operations:
    *
    * <ul>
-   *   <li>Performs protocol validations: we always read the protocol action. If we see a protocol
-   *       action, we validate that it is compatible with Kernel. If the protocol action was not
-   *       requested in actionSet, we remove it from the returned columnar batches.
-   *   <li>Adds commit version column: the first column in the returned batches will be the commit
-   *       version
-   *   <li>Add commit timestamp column: the second column in the returned batches will be the
-   *       timestamp column. This timestamp is the inCommitTimestamp if it is available, otherwise
-   *       it is the file modification time for the commit file.
+   *   <li>Performs protocol validation: always reads the protocol action and validates it is
+   *       compatible with Kernel
+   *   <li>Extracts commit timestamp: uses inCommitTimestamp if available, otherwise uses file
+   *       modification time
+   *   <li>Filters actions: if protocol or commitInfo were not requested in actionSet, they are
+   *       removed from the action batches returned by {@link CommitActions#getActions()}
    * </ul>
    *
-   * <p>For the returned columnar batches:
+   * <p>For the returned CommitActions iterator:
    *
    * <ul>
-   *   <li>Each row within the same batch is guaranteed to have the same commit version
-   *   <li>The batch commit versions are monotonically increasing
-   *   <li>The top-level columns include "version", "timestamp", and the actions requested in
-   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
-   *       respectively. The remaining columns are based on the actions requested and each have the
-   *       schema found in {@code DeltaAction.schema}.
-   *   <li>It is possible for a row to be all null
+   *   <li>CommitActions are ordered by increasing commit version
+   *   <li>Each CommitActions provides {@link CommitActions#getVersion()} and {@link
+   *       CommitActions#getTimestamp()}
+   *   <li>Each {@link CommitActions#getActions()} returns batches containing only actions from that
+   *       commit
+   *   <li>The action batches contain only the actions requested in actionSet (protocol and
+   *       commitInfo are excluded if not requested)
    * </ul>
    */
   public static CloseableIterator<CommitActions> getActionsFromCommitFilesWithProtocolValidation(

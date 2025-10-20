@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 
+import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
@@ -25,9 +26,11 @@ import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
 
 /** Utility class for table changes operations. */
 public class TableChangesUtils {
@@ -119,5 +122,71 @@ public class TableChangesUtils {
         .withNewColumn(0, new StructField("version", LongType.LONG, false), commitVersionVector)
         .withNewColumn(
             1, new StructField("timestamp", LongType.LONG, false), commitTimestampVector);
+  }
+
+  /**
+   * Flattens an iterator of CommitActions into an iterator of ColumnarBatch, adding version and
+   * timestamp columns to each batch.
+   *
+   * @param engine the engine for expression evaluation
+   * @param commits the iterator of CommitActions to flatten
+   * @return an iterator of ColumnarBatch with version and timestamp columns added
+   */
+  public static CloseableIterator<ColumnarBatch> flattenCommitsAndAddMetadata(
+      Engine engine, CloseableIterator<CommitActions> commits) {
+    return new CloseableIterator<ColumnarBatch>() {
+      private CommitActions currentCommit = null;
+      private CloseableIterator<ColumnarBatch> currentBatches = null;
+
+      @Override
+      public boolean hasNext() {
+        while (true) {
+          if (currentBatches != null && currentBatches.hasNext()) {
+            return true;
+          }
+
+          if (currentBatches != null) {
+            Utils.closeCloseables(currentBatches);
+            currentBatches = null;
+          }
+
+          // Close previous CommitActions if it exists and is AutoCloseable
+          if (currentCommit != null && currentCommit instanceof AutoCloseable) {
+            Utils.closeCloseables((AutoCloseable) currentCommit);
+          }
+
+          if (!commits.hasNext()) {
+            return false;
+          }
+
+          currentCommit = commits.next();
+          currentBatches = currentCommit.getActions();
+        }
+      }
+
+      @Override
+      public ColumnarBatch next() {
+        if (!hasNext()) {
+          throw new java.util.NoSuchElementException();
+        }
+
+        ColumnarBatch batch = currentBatches.next();
+        long version = currentCommit.getVersion();
+        long timestamp = currentCommit.getTimestamp();
+
+        // Add version and timestamp as first two columns
+        return addVersionAndTimestampColumns(engine, batch, version, timestamp);
+      }
+
+      @Override
+      public void close() {
+        // Close current batches, current commit, and commits iterator
+        if (currentCommit != null && currentCommit instanceof AutoCloseable) {
+          Utils.closeCloseables(currentBatches, (AutoCloseable) currentCommit, commits);
+        } else {
+          Utils.closeCloseables(currentBatches, commits);
+        }
+      }
+    };
   }
 }
