@@ -215,7 +215,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       None,
       None,
       None,
-      None
+      None,
+      useRefreshToken = true
     )
     val idToUrls = func(None).idToUrl
     assert(idToUrls.size == 3)
@@ -264,5 +265,60 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     assert(idToUrls.get("dv_file_id") == Some("fakeurl"))
     assert(idToUrls.contains("cdc_file_id"))
     assert(idToUrls.get("cdc_file_id") == Some("_change_data/cdc.c000.snappy.parquet"))
+  }
+
+  test("getRefresherForGetFiles respects useRefreshToken parameter") {
+    // Test client that tracks the refresh token parameter
+    class RefreshTokenTrackingClient extends SimpleTestDeltaSharingClient {
+      var lastRefreshToken: Option[String] = null
+
+      override def getFiles(
+        table: Table,
+        predicates: Seq[String],
+        limit: Option[Long],
+        versionAsOf: Option[Long],
+        timestampAsOf: Option[String],
+        jsonPredicateHints: Option[String],
+        refreshToken: Option[String]
+      ): DeltaTableFiles = {
+        lastRefreshToken = refreshToken
+        super.getFiles(table, predicates, limit, versionAsOf, timestampAsOf,
+          jsonPredicateHints, refreshToken)
+      }
+    }
+
+    val client = new RefreshTokenTrackingClient()
+    val table = Table(name = "table", schema = "schema", share = "share")
+    val testRefreshToken = Some("test-refresh-token")
+
+    // Test with useRefreshToken = true - should use the provided refresh token
+    val funcWithRefreshToken: RefresherFunction = getRefresherForGetFiles(
+      client,
+      table,
+      Seq.empty,
+      None,
+      Some(0L),
+      None,
+      None,
+      useRefreshToken = true
+    )
+    funcWithRefreshToken(testRefreshToken)
+    assert(client.lastRefreshToken == testRefreshToken,
+      "When useRefreshToken=true, the refresh token should be passed through")
+
+    // Test with useRefreshToken = false - should ignore the provided refresh token
+    val funcWithoutRefreshToken: RefresherFunction = getRefresherForGetFiles(
+      client,
+      table,
+      Seq.empty,
+      None,
+      Some(0L),
+      None,
+      None,
+      useRefreshToken = false
+    )
+    funcWithoutRefreshToken(testRefreshToken)
+    assert(client.lastRefreshToken == None,
+      "When useRefreshToken=false, the refresh token should be ignored and None should be used")
   }
 }
