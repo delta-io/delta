@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,7 +49,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
   @BeforeEach
   void setUp() {
-    microBatchStream = new SparkMicroBatchStream(null, new Configuration());
+    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    microBatchStream =
+        new SparkMicroBatchStream(null, new Configuration(), options, "test-table-id");
   }
 
   @Test
@@ -147,12 +150,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
       }
       sql("INSERT INTO %s VALUES %s", testTableName, insertValues.toString());
     }
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
 
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
-        createDeltaSource(deltaLog, testTablePath);
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
     scala.Option<DeltaSourceOffset> scalaEndOffset = scala.Option.empty();
     if (endVersion.isPresent()) {
@@ -176,6 +177,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // dsv2 SparkMicroBatchStream
+    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(testTablePath, new Configuration(), options, deltaLog.tableId());
     Option<DeltaSourceOffset> endOffsetOption = scalaEndOffset;
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
@@ -235,6 +239,99 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         // Empty Range
         Arguments.of(
             2L, 50L, notInitialSnapshot, Optional.of(2L), Optional.of(40L), "Empty Range"));
+  }
+
+  // ================================================================================================
+  // Tests for getFileChangesWithRateLimit parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Test that verifies parity between DSv1 DeltaSource.getFileChangesWithRateLimit and DSv2
+   * SparkMicroBatchStream.getFileChangesWithRateLimit.
+   */
+  @ParameterizedTest
+  @MethodSource("getFileChangesWithRateLimitParameters")
+  public void testGetFileChangesWithRateLimit(
+      Optional<Integer> maxFiles,
+      Optional<Long> maxBytes,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_rate_limit_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Create 5 versions with 10 rows each (versions 1-5)
+    for (int i = 0; i < 5; i++) {
+      StringBuilder values = new StringBuilder();
+      for (int j = 0; j < 10; j++) {
+        if (j > 0) values.append(", ");
+        int id = i * 10 + j;
+        values.append(String.format("(%d, 'User%d')", id, id));
+      }
+      sql("INSERT INTO %s VALUES %s", testTableName, values.toString());
+    }
+
+    // dsv1 DeltaSource
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+
+    scala.Option<Object> scalaMaxFiles =
+        maxFiles.isPresent() ? scala.Option.apply(maxFiles.get()) : scala.Option.empty();
+    scala.Option<Object> scalaMaxBytes =
+        maxBytes.isPresent() ? scala.Option.apply(maxBytes.get()) : scala.Option.empty();
+    Option<DeltaSource.AdmissionLimits> dsv1Limits =
+        deltaSource.createAdmissionLimits(scalaMaxFiles, scalaMaxBytes);
+
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChangesWithRateLimit(
+            /*fromVersion=*/ 0L,
+            /* fromIndex=*/ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot=*/ false,
+            dsv1Limits);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // dsv2 SparkMicroBatchStream
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(testTablePath, new Configuration(), options, deltaLog.tableId());
+    // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
+    scala.Option<DeltaSource.AdmissionLimits> dsv2Limits =
+        deltaSource.createAdmissionLimits(scalaMaxFiles, scalaMaxBytes);
+
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChangesWithRateLimit(
+            /*fromVersion=*/ 0L,
+            /* fromIndex=*/ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot=*/ false,
+            dsv2Limits)) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  /** Provides test parameters for the parameterized getFileChangesWithRateLimit test. */
+  private static Stream<Arguments> getFileChangesWithRateLimitParameters() {
+    Optional<Integer> noMaxFiles = Optional.empty();
+    Optional<Long> noMaxBytes = Optional.empty();
+
+    return Stream.of(
+        // No rate limits
+        Arguments.of(noMaxFiles, noMaxBytes, "No limits"),
+        // MaxFiles only
+        Arguments.of(Optional.of(5), noMaxBytes, "MaxFiles"),
+        // MaxBytes only
+        Arguments.of(noMaxFiles, Optional.of(5000L), "MaxBytes"),
+        // Both limits
+        Arguments.of(Optional.of(10), Optional.of(10000L), "MaxFiles and MaxBytes"));
   }
 
   private void compareFileChanges(
@@ -312,8 +409,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     // Test DSv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
-        createDeltaSource(deltaLog, testTablePath);
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
         deltaSource.getFileChanges(
@@ -325,7 +421,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // Test DSv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(testTablePath, new Configuration(), options, deltaLog.tableId());
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -390,8 +488,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     // Test DSv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
-        createDeltaSource(deltaLog, testTablePath);
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
     UnsupportedOperationException dsv1Exception =
         assertThrows(
@@ -414,7 +511,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
     // Test DSv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(testTablePath, new Configuration(), options, deltaLog.tableId());
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
@@ -536,8 +635,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   /** Helper method to create a DeltaSource instance for testing. */
-  private org.apache.spark.sql.delta.sources.DeltaSource createDeltaSource(
-      DeltaLog deltaLog, String tablePath) {
+  private DeltaSource createDeltaSource(DeltaLog deltaLog, String tablePath) {
     DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
     scala.collection.immutable.Seq<org.apache.spark.sql.catalyst.expressions.Expression> emptySeq =
         scala.collection.JavaConverters.asScalaBuffer(
@@ -545,7 +643,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             .toList();
     org.apache.spark.sql.delta.Snapshot snapshot =
         deltaLog.update(false, Option.empty(), Option.empty());
-    return new org.apache.spark.sql.delta.sources.DeltaSource(
+    return new DeltaSource(
         spark,
         deltaLog,
         /* catalogTableOpt= */ Option.empty(),

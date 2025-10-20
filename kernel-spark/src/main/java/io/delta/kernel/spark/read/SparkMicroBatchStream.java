@@ -32,15 +32,10 @@ import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.connector.read.streaming.Offset;
-import org.apache.spark.sql.connector.read.streaming.ReadAllAvailable;
-import org.apache.spark.sql.connector.read.streaming.ReadLimit;
-import org.apache.spark.sql.connector.read.streaming.ReadMaxFiles;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
-import org.apache.spark.sql.delta.sources.AdmissionLimits;
-import org.apache.spark.sql.delta.sources.CompositeLimit;
+import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
-import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import scala.Option;
 
 public class SparkMicroBatchStream implements MicroBatchStream {
@@ -123,7 +118,10 @@ public class SparkMicroBatchStream implements MicroBatchStream {
    * @return An iterator of IndexedFile with rate limiting applied
    */
   CloseableIterator<IndexedFile> getFileChangesWithRateLimit(
-      long fromVersion, long fromIndex, boolean isInitialSnapshot, Option<AdmissionLimits> limits) {
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Option<DeltaSource.AdmissionLimits> limits) {
     // TODO(#5319): CDC support is out of scope for now
 
     CloseableIterator<IndexedFile> changes =
@@ -133,7 +131,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     // represent file additions; we retain them for offset tracking, but they don't count toward
     // the maxFilesPerTrigger conf.
     if (limits.isDefined()) {
-      AdmissionLimits admissionControl = limits.get();
+      DeltaSource.AdmissionLimits admissionControl = limits.get();
       changes = changes.takeWhile(admissionControl::admit);
     }
 
