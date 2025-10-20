@@ -104,6 +104,25 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
     singletonCloseableIterator(simpleRow)
   }
 
+
+  /** Creates a UCCatalogManagedClient with an InMemoryUCClient for testing */
+  def createUCClientAndCatalogManagedClient(
+      metastoreId: String = "ucMetastoreId"): (InMemoryUCClient, UCCatalogManagedClient) = {
+    val ucClient = new InMemoryUCClient(metastoreId)
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+    (ucClient, ucCatalogManagedClient)
+  }
+
+  /**
+   * Initializes a UC table in the InMemoryUCClient after creation.
+   * This should be called after creating a table with buildCreateTableTransaction.
+   */
+  def initializeUCTable(ucClient: InMemoryUCClient, ucTableId: String): Unit = {
+    val tableData =
+      new InMemoryUCClient.TableData(-1, scala.collection.mutable.ArrayBuffer[Commit]())
+    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
+  }
+
   /** Version TS for the test table used in [[withUCClientAndTestTable]] */
   val v0Ts = 1749830855993L // published commit
   val v1Ts = 1749830871085L // ratified staged commit
@@ -163,5 +182,4 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
 
     def getNumGetCommitCalls: Long = numGetCommitsCalls
   }
-
 }
