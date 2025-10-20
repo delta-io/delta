@@ -331,7 +331,7 @@ public class SchemaUtils {
   }
 
   /** Helper method to create a copy of a column that is marked as an internal column. */
-  public static StructField createInternalColumn(StructField field) {
+  public static StructField asInternalColumn(StructField field) {
     FieldMetadata metadata =
         FieldMetadata.builder()
             .fromMetadata(field.getMetadata())
@@ -785,7 +785,8 @@ public class SchemaUtils {
         || dataType instanceof BinaryType
         || dataType instanceof DateType
         || dataType instanceof TimestampType
-        || dataType instanceof TimestampNTZType) {
+        || dataType instanceof TimestampNTZType
+        || dataType instanceof VariantType) {
       // supported types
       return;
     } else if (dataType instanceof StructType) {

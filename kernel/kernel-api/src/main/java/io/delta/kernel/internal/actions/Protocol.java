@@ -115,20 +115,57 @@ public class Protocol {
     this.supportsWriterFeatures = TableFeatures.supportsWriterFeatures(minWriterVersion);
   }
 
+  /** @return The minimum reader version required for this protocol */
   public int getMinReaderVersion() {
     return minReaderVersion;
   }
 
+  /** @return The minimum writer version required for this protocol */
   public int getMinWriterVersion() {
     return minWriterVersion;
   }
 
+  /**
+   * @return The set of explicitly specified reader features for this protocol. Will be empty if
+   *     this protocol does not support reader features.
+   */
   public Set<String> getReaderFeatures() {
     return readerFeatures;
   }
 
+  /**
+   * @return The set of explicitly specified writer features for this protocol. Will be empty if
+   *     this protocol does not support writer features.
+   */
   public Set<String> getWriterFeatures() {
     return writerFeatures;
+  }
+
+  /**
+   * @return The combined set of all reader and writer features for this protocol. Will be empty if
+   *     this protocol does not support reader or writer features.
+   */
+  public Set<String> getReaderAndWriterFeatures() {
+    final Set<String> allFeatureNames = new HashSet<>();
+    allFeatureNames.addAll(readerFeatures);
+    allFeatureNames.addAll(writerFeatures);
+    return allFeatureNames;
+  }
+
+  /**
+   * @return Whether this protocol supports explicitly specifying reader features, which occurs when
+   *     the minReaderVersion is greater than or equal to 3.
+   */
+  public boolean supportsReaderFeatures() {
+    return supportsReaderFeatures;
+  }
+
+  /**
+   * @return Whether this protocol supports explicitly specifying writer features, which occurs when
+   *     the minWriterVersion is greater than or equal to 7.
+   */
+  public boolean supportsWriterFeatures() {
+    return supportsWriterFeatures;
   }
 
   @Override

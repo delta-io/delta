@@ -31,7 +31,9 @@ import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringM
 import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
 
-object MockSnapshotUtils {
+object MockSnapshotUtils extends MockSnapshotUtils
+
+trait MockSnapshotUtils {
 
   /**
    * Creates a mock snapshot with valid metadata at the given version.
@@ -40,7 +42,9 @@ object MockSnapshotUtils {
   def getMockSnapshot(
       dataPath: Path,
       latestVersion: Long,
-      ictEnablementInfoOpt: Option[(Long, Long)] = None): SnapshotImpl = {
+      ictEnablementInfoOpt: Option[(Long, Long)] = None,
+      timestamp: Long = 0L,
+      deltaFileAtEndVersion: Option[FileStatus] = None): SnapshotImpl = {
     val configuration = ictEnablementInfoOpt match {
       case Some((version, _)) if version == 0L =>
         Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
@@ -64,18 +68,19 @@ object MockSnapshotUtils {
       stringStringMapValue(configuration.asJava));
     val logPath = new Path(dataPath, "_delta_log")
 
-    val fs = FileStatus.of(
+    val fs = deltaFileAtEndVersion.getOrElse(FileStatus.of(
       FileNames.deltaFile(logPath, latestVersion),
       1, /* size */
-      1 /* modificationTime */ )
+      1 /* modificationTime */ ))
     val logSegment = new LogSegment(
       logPath, /* logPath */
       latestVersion,
       Seq(fs).asJava, /* deltas */
       Seq.empty.asJava, /* compactions */
       Seq.empty.asJava, /* checkpoints */
+      fs, /* deltaAtEndVersion */
       Optional.empty(), /* lastSeenChecksum */
-      0L /* lastCommitTimestamp */
+      Optional.empty() /* maxPublishedDeltaVersion */
     )
     val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(dataPath.toString)
     new SnapshotImpl(
@@ -86,7 +91,8 @@ object MockSnapshotUtils {
       new Protocol(1, 2), /* protocol */
       metadata,
       DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
-      snapshotQueryContext /* snapshotContext */
+      snapshotQueryContext, /* snapshotContext */
+      Optional.empty() /* inCommitTimestampOpt */
     )
   }
 }

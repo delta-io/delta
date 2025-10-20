@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
@@ -41,10 +42,11 @@ import org.apache.hadoop.fs.Path
 import org.scalactic.source.Position
 import org.scalatest.{BeforeAndAfterEach, Tag}
 
-import org.apache.spark.{SparkContext, SparkFunSuite, SparkThrowable}
+import org.apache.spark.{SparkConf, SparkContext, SparkFunSuite, SparkThrowable}
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, DataFrameWriter, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
 import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
@@ -56,6 +58,19 @@ import org.apache.spark.util.{ManualClock, SystemClock, Utils}
 
 object DeltaTestUtilsBase {
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
+}
+
+trait CDCTestMixin extends SharedSparkSession {
+  // Setting the spark Conf is left to the test implementation.
+
+  def computeCDC(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      startVersion: Long,
+      endVersion: Long,
+      predicates: Seq[Expression] = Seq.empty): DataFrame = {
+    CDCReader.changesToBatchDF(deltaLog, startVersion, endVersion, spark)
+  }
 }
 
 trait DeltaTestUtilsBase {
@@ -569,7 +584,8 @@ trait DeltaTestUtilsForTempViews
 trait DeltaDMLTestUtils
   extends DeltaSQLTestUtils
   with DeltaTestUtilsBase
-  with BeforeAndAfterEach {
+  with BeforeAndAfterEach
+  with CDCTestMixin {
   self: SharedSparkSession =>
 
   import testImplicits._
@@ -700,12 +716,12 @@ trait DeltaDMLTestUtils
     assert(latestOperationVersion.nonEmpty,
       s"Latest ${operation} operation doesn't have a version associated with it")
 
-    CDCReader
-      .changesToBatchDF(
+    computeCDC(
+        spark,
         deltaLog,
         latestOperationVersion.get,
-        latestOperationVersion.get,
-        spark)
+        latestOperationVersion.get
+    )
       .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
       .drop(CDCReader.CDC_COMMIT_VERSION)
   }

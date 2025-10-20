@@ -1731,6 +1731,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_OPTIMIZE_CONDITIONAL_INCREMENT_METRIC_ENABLED =
+    buildConf("optimize.conditionalIncrementMetric.enabled")
+      .internal()
+      .doc("Whether to enable optimization of ConditionalIncrementMetric expressions with " +
+        "constant conditions.")
+      .booleanConf
+      .createWithDefault(true)
+
   val GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED =
     buildConf("generatedColumn.partitionFilterOptimization.enabled")
       .internal()
@@ -1928,6 +1936,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_RENAME_COLUMN_ESCAPE_NAME =
+    buildConf("changeColumn.renameColumnEscapeName")
+      .internal()
+      .doc(
+        """
+          |Properly escape column names when renaming a column in the metadata.
+          |
+          |This is a safety switch - we should only set this to false if the fix introduces some
+          |regression.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED =
     buildConf("alterTable.dropColumn.enabled")
       .internal()
@@ -2073,6 +2094,36 @@ trait DeltaSQLConfBase {
           |match the type in the underlying Delta table. When true, data is cast to the expected
           |type before the write. When false, the write fails.
           |The casting behavior is governed by 'spark.sql.storeAssignmentPolicy'.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
+    buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
+      .internal()
+      .doc(
+        """Controls when an implicit cast is added when writing data to a Delta table using
+          |streaming.
+          |When true, a cast is added only when there is a type mismatch between a column or
+          |nested field in the data and table schema.
+          |When false, missing, extra or reordered columns or nested fields also trigger adding an
+          |implicit cast.
+          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
+          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STREAMING_SINK_IMPLICIT_CAST_ESCAPE_COLUMN_NAMES =
+    buildConf("streaming.sink.implicitCastEscapeColumnNames")
+      .internal()
+      .doc(
+        """
+          |When true, the code paths handling implicit casting in streaming will escape column names
+          |to properly handle e.g. dots in column names.
+          |This is a kill-switch and shouldn't be disabled unless necessary to mitigate an issue.
+          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
+          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)

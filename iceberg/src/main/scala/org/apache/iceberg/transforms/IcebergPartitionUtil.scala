@@ -19,12 +19,13 @@ package org.apache.iceberg.transforms
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
+import org.apache.spark.sql.delta.commands.convert.TypeToSparkTypeWithCustomCast
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.iceberg.{PartitionField, PartitionSpec, Schema, StructLike}
-import org.apache.iceberg.spark.SparkSchemaUtil
 import org.apache.iceberg.types.Type.TypeID
 import org.apache.iceberg.types.Types
+import org.apache.iceberg.types.TypeUtil
 
 import org.apache.spark.sql.types.{DateType, IntegerType, MetadataBuilder, StringType, StructField}
 
@@ -116,7 +117,8 @@ object IcebergPartitionUtil {
     }
   }
 
-  def getPartitionFields(partSpec: PartitionSpec, schema: Schema): Seq[StructField] = {
+  def getPartitionFields(
+      partSpec: PartitionSpec, schema: Schema, castTimeType: Boolean): Seq[StructField] = {
     // Skip removed partition fields due to partition evolution.
     partSpec.fields.asScala.toSeq.collect {
       case partField if !partField.transform().isInstanceOf[VoidTransform[_]] &&
@@ -136,7 +138,7 @@ object IcebergPartitionUtil {
             // ids for other columns will be assigned later automatically during schema evolution
             metadataBuilder
               .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, sourceField.fieldId())
-            ("", SparkSchemaUtil.convert(sourceType))
+            ("", TypeUtil.visit(sourceType, new TypeToSparkTypeWithCustomCast(castTimeType)))
 
           case Timestamps.YEAR | Dates.YEAR =>
             (s"year($sourceColumnName)", IntegerType)
@@ -150,7 +152,7 @@ object IcebergPartitionUtil {
           case t: Truncate[_]
             if sourceType.typeId() == TypeID.LONG || sourceType.typeId() == TypeID.INTEGER =>
             (icebergNumericTruncateExpression(sourceColumnName, t.width().toLong),
-              SparkSchemaUtil.convert(sourceType))
+              TypeUtil.visit(sourceType, new TypeToSparkTypeWithCustomCast(castTimeType)))
 
           case Timestamps.MONTH | Dates.MONTH =>
             (s"date_format($sourceColumnName, 'yyyy-MM')", StringType)

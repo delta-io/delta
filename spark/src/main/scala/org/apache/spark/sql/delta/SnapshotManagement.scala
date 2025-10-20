@@ -990,7 +990,12 @@ trait SnapshotManagement { self: DeltaLog =>
         catalogTableOpt = catalogTableOpt,
         versionToLoad = None,
         includeMinorCompactions = includeCompactions)
-    val newFiles = newFilesOpt.getOrElse {
+    // The file listing may return the following results:
+    // 1. None => implies the log directory does not exist or is completely empty.
+    // 2. Some(empty) => implies the log directory exists but there are no usable files.
+    // 3. Some(non-empty) => implies the log directory exists and there are some usable files.
+    // Therefore, we need to handle both cases (1) and (2) here.
+    val newFiles = newFilesOpt.filter(_.nonEmpty).getOrElse {
       // An empty listing likely implies a list-after-write inconsistency or that somebody clobbered
       // the Delta log.
       return (oldLogSegment, Nil)
@@ -1122,7 +1127,8 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   private def tryUpdate(
     isAsync: Boolean,
-    catalogTableOpt: Option[CatalogTable]): Snapshot = {
+    catalogTableOpt: Option[CatalogTable]): Snapshot =
+    recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
     if (snapshotLock.tryLock()) {
       try {
         updateInternal(
@@ -1142,23 +1148,22 @@ trait SnapshotManagement { self: DeltaLog =>
    */
   protected def updateInternal(
       isAsync: Boolean,
-      catalogTableOpt: Option[CatalogTable]): Snapshot =
-    recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
-      val updateStartTimeMs = clock.getTimeMillis()
-      val previousSnapshot = currentSnapshot.snapshot
-      val commitCoordinatorOpt = populateCommitCoordinator(spark, catalogTableOpt, previousSnapshot)
-      val segmentOpt = createLogSegment(
-        previousSnapshot,
-        catalogTableOpt,
-        commitCoordinatorOpt)
-      val newSnapshot = getUpdatedSnapshot(
-        oldSnapshotOpt = Some(previousSnapshot),
-        initialSegmentForNewSnapshot = segmentOpt,
-        initialTableCommitCoordinatorClient = commitCoordinatorOpt,
-        catalogTableOpt = catalogTableOpt,
-        isAsync = isAsync)
-      installSnapshot(newSnapshot, updateStartTimeMs)
-    }
+      catalogTableOpt: Option[CatalogTable]): Snapshot = {
+    val updateStartTimeMs = clock.getTimeMillis()
+    val previousSnapshot = currentSnapshot.snapshot
+    val commitCoordinatorOpt = populateCommitCoordinator(spark, catalogTableOpt, previousSnapshot)
+    val segmentOpt = createLogSegment(
+      previousSnapshot,
+      catalogTableOpt,
+      commitCoordinatorOpt)
+    val newSnapshot = getUpdatedSnapshot(
+      oldSnapshotOpt = Some(previousSnapshot),
+      initialSegmentForNewSnapshot = segmentOpt,
+      initialTableCommitCoordinatorClient = commitCoordinatorOpt,
+      catalogTableOpt = catalogTableOpt,
+      isAsync = isAsync)
+    installSnapshot(newSnapshot, updateStartTimeMs)
+  }
 
   /**
    * Updates and installs a new snapshot in the `currentSnapshot`.
@@ -1178,7 +1183,7 @@ trait SnapshotManagement { self: DeltaLog =>
       initialTableCommitCoordinatorClient: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       isAsync: Boolean): Snapshot = {
-    var newSnapshot = getSnapshotForLogSegmentInternal(
+    var newSnapshot = getSnapshotForLogSegment(
       oldSnapshotOpt,
       initialSegmentForNewSnapshot,
       initialTableCommitCoordinatorClient,
@@ -1206,7 +1211,7 @@ trait SnapshotManagement { self: DeltaLog =>
         newSnapshot,
         catalogTableOpt,
         commitCoordinatorOpt)
-      newSnapshot = getSnapshotForLogSegmentInternal(
+      newSnapshot = getSnapshotForLogSegment(
         Some(newSnapshot),
         segmentOpt,
         commitCoordinatorOpt,
@@ -1216,15 +1221,53 @@ trait SnapshotManagement { self: DeltaLog =>
     newSnapshot
   }
 
-  /** Creates a Snapshot for the given `segmentOpt` */
-  protected def getSnapshotForLogSegmentInternal(
+
+  /**
+   * Creates a Snapshot for the given `segmentOpt` and handles log segment equality.
+   */
+  protected def getSnapshotForLogSegment(
       previousSnapshotOpt: Option[Snapshot],
       segmentOpt: Option[LogSegment],
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       isAsync: Boolean): Snapshot = {
+    val logSegmentsEqual = previousSnapshotOpt.nonEmpty &&
+      segmentOpt.nonEmpty &&
+      previousSnapshotOpt.get.logSegment == segmentOpt.get
+    getSnapshotForLogSegmentInternal(
+        previousSnapshotOpt,
+        segmentOpt,
+        tableCommitCoordinatorClientOpt,
+        catalogTableOpt,
+        previousSnapshotLogSegmentEquals = logSegmentsEqual,
+        isAsync)
+  }
+
+  /**
+   * Creates a Snapshot for the given `segmentOpt`
+   *
+   * @param previousSnapshotOpt The previous snapshot, if any.
+   * @param segmentOpt The log segment to create a snapshot for.
+   * @param tableCommitCoordinatorClientOpt The commit coordinator client to use.
+   * @param catalogTableOpt The catalog table to use.
+   * @param prefetchedCheckpoint The prefetched checkpoint and metadata.
+   * @param previousSnapshotLogSegmentEquals Whether the previous snapshot log segment equals the
+   *                                         given segment. If `previousSnapshotOpt` or `segmentOpt`
+   *                                         is empty, this should be false.
+   * @param isAsync Whether the update is async - if so, the checksum will also be computed.
+   * @return The new snapshot.
+   */
+  protected def getSnapshotForLogSegmentInternal(
+      previousSnapshotOpt: Option[Snapshot],
+      segmentOpt: Option[LogSegment],
+      tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
+      catalogTableOpt: Option[CatalogTable],
+      previousSnapshotLogSegmentEquals: Boolean,
+      isAsync: Boolean): Snapshot = {
     segmentOpt.map { segment =>
-      if (previousSnapshotOpt.exists(_.logSegment == segment)) {
+      if (previousSnapshotLogSegmentEquals) {
+        // If the previous snapshot log segment equals the given segment, the previous snapshot must
+        // be defined.
         val previousSnapshot = previousSnapshotOpt.get
         previousSnapshot.updateLastKnownBackfilledVersion(segment.lastBackfilledVersionInSegment)
         previousSnapshot
@@ -1370,40 +1413,46 @@ trait SnapshotManagement { self: DeltaLog =>
       commit: Commit,
       newChecksumOpt: Option[VersionChecksum],
       preCommitLogSegment: LogSegment,
-      catalogTableOpt: Option[CatalogTable]): Snapshot = withSnapshotLockInterruptibly {
+      catalogTableOpt: Option[CatalogTable]): Snapshot = {
+    var previousSnapshot: Snapshot = null
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
-      val updateTimestamp = clock.getTimeMillis()
-      val previousSnapshot = currentSnapshot.snapshot
-      // Somebody else could have already updated the snapshot while we waited for the lock
-      if (committedVersion <= previousSnapshot.version) return previousSnapshot
-      val commitCoordinatorOpt = populateCommitCoordinator(spark, catalogTableOpt, previousSnapshot)
-      val segment = getLogSegmentAfterCommit(
-        committedVersion,
-        newChecksumOpt,
-        preCommitLogSegment,
-        commit,
-        commitCoordinatorOpt,
-        catalogTableOpt,
-        previousSnapshot.checkpointProvider)
+      val updatedSnapshot = withSnapshotLockInterruptibly {
+        val updateTimestamp = clock.getTimeMillis()
+        previousSnapshot = currentSnapshot.snapshot
+        // Somebody else could have already updated the snapshot while we waited for the lock
+        if (committedVersion <= previousSnapshot.version) return previousSnapshot
+        val commitCoordinatorOpt = populateCommitCoordinator(
+          spark, catalogTableOpt, previousSnapshot
+        )
+        val segment = getLogSegmentAfterCommit(
+          committedVersion,
+          newChecksumOpt,
+          preCommitLogSegment,
+          commit,
+          commitCoordinatorOpt,
+          catalogTableOpt,
+          previousSnapshot.checkpointProvider)
 
-      // This likely implies a list-after-write inconsistency
-      if (segment.version < committedVersion) {
-        recordDeltaEvent(this, "delta.commit.inconsistentList", data = Map(
-          "committedVersion" -> committedVersion,
-          "currentVersion" -> segment.version
-        ))
-        throw DeltaErrors.invalidCommittedVersion(committedVersion, segment.version)
+        // This likely implies a list-after-write inconsistency
+        if (segment.version < committedVersion) {
+          recordDeltaEvent(this, "delta.commit.inconsistentList", data = Map(
+            "committedVersion" -> committedVersion,
+            "currentVersion" -> segment.version
+          ))
+          throw DeltaErrors.invalidCommittedVersion(committedVersion, segment.version)
+        }
+
+        val newSnapshot = createSnapshotAfterCommit(
+          segment,
+          newChecksumOpt,
+          commitCoordinatorOpt,
+          catalogTableOpt,
+          committedVersion)
+        installSnapshot(newSnapshot, updateTimestamp)
       }
-
-      val newSnapshot = createSnapshotAfterCommit(
-        segment,
-        newChecksumOpt,
-        commitCoordinatorOpt,
-        catalogTableOpt,
-        committedVersion)
-      logMetadataTableIdChange(previousSnapshot, newSnapshot)
-      logInfo(log"Updated snapshot to ${MDC(DeltaLogKeys.SNAPSHOT, newSnapshot)}")
-      installSnapshot(newSnapshot, updateTimestamp)
+      logMetadataTableIdChange(previousSnapshot, updatedSnapshot)
+      logInfo(log"Updated snapshot to ${MDC(DeltaLogKeys.SNAPSHOT, updatedSnapshot)}")
+      updatedSnapshot
     }
   }
 

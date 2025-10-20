@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.commands.convert
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.iceberg.Schema
-import org.apache.iceberg.spark.SparkSchemaUtil
 import org.apache.iceberg.types.TypeUtil
 
 import org.apache.spark.sql.types.{MetadataBuilder, StructType}
@@ -37,11 +36,10 @@ object IcebergSchemaUtils {
   def convertIcebergSchemaToSpark(icebergSchema: Schema,
       castTimeType: Boolean = false): StructType = {
     // Convert from Iceberg schema to Spark schema but without the column IDs
-    val baseConvertedSchema = if (castTimeType) {
-      TypeUtil.visit(icebergSchema, new TypeToSparkTypeWithCustomCast()).asInstanceOf[StructType]
-    } else {
-      SparkSchemaUtil.convert(icebergSchema)
-    }
+    val baseConvertedSchema =
+      TypeUtil.visit(
+        icebergSchema, new TypeToSparkTypeWithCustomCast(castTimeType)
+      ).asInstanceOf[StructType]
 
     // For each field, find the column ID (fieldId) and add to the StructField metadata
     SchemaMergingUtils.transformColumns(baseConvertedSchema) { (path, field, _) =>

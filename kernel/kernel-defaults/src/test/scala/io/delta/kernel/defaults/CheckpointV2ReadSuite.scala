@@ -20,7 +20,7 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, ExpressionTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
@@ -29,7 +29,6 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.hadoop.conf.Configuration
@@ -38,16 +37,20 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, StringType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
-  private final val supportedFileFormats = Seq("json", "parquet")
+class LegacyCheckpointV2ReadSuite extends AbstractCheckpointV2ReadSuite
+    with TestUtilsWithLegacyKernelAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
 
-  override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
-    {
-      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-      set("delta.kernel.default.parquet.reader.batch-size", "2");
-      set("delta.kernel.default.json.reader.batch-size", "2");
-    }
-  })
+class CheckpointV2ReadSuite extends AbstractCheckpointV2ReadSuite
+    with TestUtilsWithTableManagerAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
+
+trait AbstractCheckpointV2ReadSuite extends AnyFunSuite with ExpressionTestUtils {
+  self: AbstractTestUtils =>
+
+  private final val supportedFileFormats = Seq("json", "parquet")
 
   def createSourceTable(
       tbl: String,
@@ -68,8 +71,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       ckptVersionExpected: Option[Int] = None,
       expectV2CheckpointFormat: Boolean = true): Unit = {
     // Create a snapshot from Spark connector and from kernel.
-    val snapshot = latestSnapshot(path)
-    val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
+    val snapshotImpl = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, path)
 
     // Validate metadata/protocol loaded correctly from top-level v2 checkpoint file.
     val expectedMetadataId =
@@ -83,7 +85,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       snapshotFromSpark.protocol.readerFeatureNames)
     assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toSet ==
       snapshotFromSpark.protocol.writerFeatureNames)
-    assert(snapshot.getVersion() == snapshotFromSpark.version)
+    assert(snapshotImpl.getVersion() == snapshotFromSpark.version)
 
     // Validate that snapshot read from most recent checkpoint. For most cases, given a checkpoint
     // interval of 2, this will be the most recent even version.
@@ -97,7 +99,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       .contains(expectV2CheckpointFormat))
 
     // Validate AddFiles from sidecars found against Spark connector.
-    val scan = snapshot.getScanBuilder().build()
+    val scan = snapshotImpl.getScanBuilder().build()
     val foundFiles =
       collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
         _.getPath.split('/').last).toSet
@@ -193,7 +195,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       val protocol = Protocol(3, 7, Some(Set("v2Checkpoint")), Some(supportedFeatures))
       val add = AddFile(new Path("addfile").toUri.toString, Map.empty, 100L, 10L, dataChange = true)
 
-      log.startTransaction().commitManually(Seq(metadata, add): _*)
+      log.startTransaction().commitManuallyWithValidation(metadata, add)
       log.upgradeProtocol(None, log.update(), protocol)
       log.checkpoint(log.update())
 

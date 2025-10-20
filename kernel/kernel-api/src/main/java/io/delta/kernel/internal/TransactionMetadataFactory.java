@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal;
 
+import static io.delta.kernel.internal.ReplaceTableTransactionBuilderV2Impl.TABLE_PROPERTY_KEYS_TO_PRESERVE;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
@@ -26,6 +27,8 @@ import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Collections.*;
 import static java.util.stream.Collectors.toSet;
 
+import io.delta.kernel.commit.CatalogCommitter;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
@@ -89,26 +92,41 @@ public class TransactionMetadataFactory {
   static Output buildCreateTableMetadata(
       String tablePath,
       StructType schema,
-      Map<String, String> tableProperties,
+      Map<String, String> userInputTableProperties,
       Optional<List<String>> partitionColumns,
-      Optional<List<Column>> clusteringColumns) {
+      Optional<List<Column>> clusteringColumns,
+      Optional<Committer> committerOpt) {
     checkArgument(
         !partitionColumns.isPresent() || !clusteringColumns.isPresent(),
         "Cannot provide both partition columns and clustering columns");
     validateSchemaAndPartColsCreateOrReplace(
-        tableProperties, schema, partitionColumns.orElse(emptyList()));
+        userInputTableProperties, schema, partitionColumns.orElse(emptyList()));
+
+    final Map<String, String> requiredCatalogTableProperties =
+        committerOpt
+            .map(TransactionMetadataFactory::getRequiredCatalogTablePropertiesIfApplicable)
+            .orElse(Collections.emptyMap());
+
+    // We put the required catalog table properties *first* so that we persist the intent, if any,
+    // of the user explicitly setting a required catalog table property. If it's set to an invalid
+    // value, we will detect this and fail later inside TransactionMetadataFactory.
+    final Map<String, String> allCreateTableProperties = new HashMap<>();
+    allCreateTableProperties.putAll(requiredCatalogTableProperties);
+    allCreateTableProperties.putAll(userInputTableProperties);
+
     Output output =
         new TransactionMetadataFactory(
                 tablePath,
                 Optional.empty() /* readSnapshot */,
                 Optional.of(
                     getInitialMetadata(
-                        schema, tableProperties, partitionColumns.orElse(emptyList()))),
+                        schema, allCreateTableProperties, partitionColumns.orElse(emptyList()))),
                 Optional.of(getInitialProtocol()),
-                tableProperties,
+                userInputTableProperties /* originalUserInputProperties */,
                 true /* isCreateOrReplace */,
                 clusteringColumns,
-                false /* isSchemaEvolultion */)
+                false /* isSchemaEvolution */,
+                committerOpt)
             .finalOutput;
     checkState(
         output.newMetadata.isPresent() && output.newProtocol.isPresent(),
@@ -128,27 +146,40 @@ public class TransactionMetadataFactory {
         "Cannot provide both partition columns and clustering columns");
     validateSchemaAndPartColsCreateOrReplace(
         userInputTableProperties, schema, partitionColumns.orElse(emptyList()));
-    // In the case of Replace table there are a few delta-specific properties we want to preserve
-    Map<String, String> replaceTableProperties =
+    validateNotEnablingCatalogManagedOnReplace(userInputTableProperties);
+
+    final Map<String, String> requiredCatalogTableProperties =
+        getRequiredCatalogTablePropertiesIfApplicable(readSnapshot.getCommitter());
+
+    final Map<String, String> allReplaceTableProperties = new HashMap<>();
+
+    // Step 1: We put the required catalog table properties *first* so that we persist the intent,
+    // if any, of the user explicitly setting a required catalog table property. If it's set to an
+    // invalid value, we will detect this and fail later inside TransactionMetadataFactory.
+    allReplaceTableProperties.putAll(requiredCatalogTableProperties);
+
+    // Step 2: Preserve a few important delta properties
+    allReplaceTableProperties.putAll(
         readSnapshot.getMetadata().getConfiguration().entrySet().stream()
-            .filter(
-                e ->
-                    ReplaceTableTransactionBuilderImpl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
-                        e.getKey()))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-    replaceTableProperties.putAll(userInputTableProperties);
+            .filter(e -> TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(e.getKey()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+
+    // Step 3: Insert the new user-provided table properties
+    allReplaceTableProperties.putAll(userInputTableProperties);
+
     Output output =
         new TransactionMetadataFactory(
                 tablePath,
                 Optional.of(readSnapshot),
                 Optional.of(
                     getInitialMetadata(
-                        schema, replaceTableProperties, partitionColumns.orElse(emptyList()))),
+                        schema, allReplaceTableProperties, partitionColumns.orElse(emptyList()))),
                 Optional.of(readSnapshot.getProtocol()),
                 userInputTableProperties,
                 true /* isCreateOrReplace */,
                 clusteringColumns,
-                false /* isSchemaEvolultion */)
+                false /* isSchemaEvolution */,
+                Optional.of(readSnapshot.getCommitter()))
             .finalOutput;
     // TODO: reconsider whether we should always commit a new Protocol action regardless of whether
     //   there is a protocol upgrade
@@ -183,6 +214,7 @@ public class TransactionMetadataFactory {
         throw DeltaErrors.overlappingTablePropertiesSetAndUnset(overlappingPropertyKeys);
       }
     }
+
     Optional<Metadata> newMetadata = Optional.empty();
 
     Map<String, String> newProperties =
@@ -213,10 +245,11 @@ public class TransactionMetadataFactory {
             Optional.of(readSnapshot),
             newMetadata,
             Optional.empty(),
-            propertiesAdded.orElse(Collections.emptyMap()),
+            propertiesAdded.orElse(Collections.emptyMap()) /* originalUserInputProperties */,
             false /* isCreateOrReplace */,
             clusteringColumns,
-            newSchema.isPresent() /* isSchemaEvolultion */)
+            newSchema.isPresent() /* isSchemaEvolution */,
+            Optional.of(readSnapshot.getCommitter()))
         .finalOutput;
   }
 
@@ -231,6 +264,9 @@ public class TransactionMetadataFactory {
   /**
    * The table properties provided in this transaction. i.e. excludes any properties in the read
    * snapshot.
+   *
+   * <p>This helps validation code understand what the user is trying to do in *this* transaction,
+   * as opposed to what is the current state already in the table.
    */
   private final Map<String, String> originalUserInputProperties;
 
@@ -270,7 +306,8 @@ public class TransactionMetadataFactory {
       Map<String, String> originalUserInputProperties,
       boolean isCreateOrReplace,
       Optional<List<Column>> userProvidedLogicalClusteringColumns,
-      boolean isSchemaEvolution) {
+      boolean isSchemaEvolution,
+      Optional<Committer> committerOpt) {
     checkArgument(
         (initialNewMetadata.isPresent() && initialNewProtocol.isPresent())
             || latestSnapshotOpt.isPresent(),
@@ -291,10 +328,12 @@ public class TransactionMetadataFactory {
 
     performProtocolUpgrades(userProvidedLogicalClusteringColumns.isPresent());
     handleCatalogManagedEnablement();
+    handleInCommitTimestampDisablement();
     performIcebergCompatUpgradesAndValidation();
     updateColumnMappingMetadataAndResolveClusteringColumns(userProvidedLogicalClusteringColumns);
     updateRowTrackingMetadata();
     validateMetadataChangeAndApplyTypeWidening();
+    validateRequiredCatalogTablePropertiesSet(committerOpt);
     this.finalOutput = new Output(newProtocol, newMetadata, physicalNewClusteringColumns);
   }
 
@@ -354,7 +393,7 @@ public class TransactionMetadataFactory {
     }
   }
 
-  /** STEP 1.5: Handle catalogManaged enablement. Updates the METADATA if applicable. */
+  /** STEP 1.1: Handle catalogManaged enablement. Updates the METADATA if applicable. */
   private void handleCatalogManagedEnablement() {
     final boolean readVersionSupportsCatalogManaged =
         latestSnapshotOpt
@@ -400,6 +439,38 @@ public class TransactionMetadataFactory {
                 .withMergedConfiguration(
                     Collections.singletonMap(
                         TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey(), "true")));
+  }
+
+  /**
+   * Step 1.2: Handle inCommitTimestamp disablement. Updates the METADATA if applicable.
+   *
+   * <p>If the user explicitly disables inCommitTimestamp in this transaction, we then also
+   * explicitly remove the ICT enablement version and timestamp properties from the metadata.
+   */
+  private void handleInCommitTimestampDisablement() {
+    final String txnIctEnabledValue =
+        originalUserInputProperties.get(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey());
+    final boolean txnExplicitlyDisablesICT =
+        txnIctEnabledValue != null && txnIctEnabledValue.equalsIgnoreCase("false");
+
+    // Case 1: Txn is not explicitly disabling ICT. Exit.
+    if (!txnExplicitlyDisablesICT) {
+      return;
+    }
+
+    // Case 2: Txn is explicitly disabling ICT on a catalogManaged table. Throw.
+    if (getEffectiveProtocol().supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+      throw new KernelException("Cannot disable inCommitTimestamp on a catalogManaged table");
+    }
+
+    // Case 3 (normal case): Txn is explicitly disabling ICT. Remove the ICT enablement properties.
+    final Set<String> ictKeysToRemove =
+        new HashSet<>(
+            Arrays.asList(
+                TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(),
+                TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey()));
+
+    newMetadata = Optional.of(getEffectiveMetadata().withConfigurationKeysUnset(ictKeysToRemove));
   }
 
   /**
@@ -630,6 +701,53 @@ public class TransactionMetadataFactory {
     MaterializedRowTrackingColumn.throwIfColumnNamesConflictWithSchema(getEffectiveMetadata());
   }
 
+  /**
+   * STEP 6: Validate that required catalog table properties are set. Below is a complete summary of
+   * our required-catalog-property setting and validation:
+   *
+   * <p>First, during CREATE and REPLACE, we inject and set the required catalog table properties.
+   * Note that we do this *before* setting any user properties such that if a user overrides a
+   * required catalog property, we will detect that here.
+   *
+   * <p>Next, here, we validate that all required catalog table properties are, in fact, set to
+   * their required values. Thus, if a property was explicitly removed during UPDATE, changed to an
+   * invalid value during UPDATE, or set to an invalid value during CREATE or REPLACE, we will
+   * detect and fail.
+   */
+  private void validateRequiredCatalogTablePropertiesSet(Optional<Committer> committerOpt) {
+    if (!committerOpt.isPresent()) {
+      return;
+    }
+
+    final Committer committer = committerOpt.get();
+    final Map<String, String> requiredCatalogTableProperties =
+        getRequiredCatalogTablePropertiesIfApplicable(committer);
+
+    if (requiredCatalogTableProperties.isEmpty()) {
+      return;
+    }
+
+    final Map<String, String> effectiveTableProperties = getEffectiveMetadata().getConfiguration();
+    final Map<String, String> missingOrViolatingProperties = new HashMap<>();
+
+    for (Map.Entry<String, String> requiredEntry : requiredCatalogTableProperties.entrySet()) {
+      final String requiredKey = requiredEntry.getKey();
+      final String requiredValue = requiredEntry.getValue();
+      final String currentValue = effectiveTableProperties.get(requiredKey);
+      if (!Objects.equals(requiredValue, currentValue)) {
+        missingOrViolatingProperties.put(
+            requiredKey, Optional.ofNullable(currentValue).orElse("<not set>"));
+      }
+    }
+
+    if (!missingOrViolatingProperties.isEmpty()) {
+      throw DeltaErrors.metadataMissingRequiredCatalogTableProperty(
+          committer.getClass().getName(),
+          missingOrViolatingProperties,
+          requiredCatalogTableProperties);
+    }
+  }
+
   private static Metadata getInitialMetadata(
       StructType schema, Map<String, String> tableProperties, List<String> partitionColumns) {
     return new Metadata(
@@ -657,5 +775,23 @@ public class TransactionMetadataFactory {
 
     SchemaUtils.validateSchema(schema, isColumnMappingModeEnabled(mappingMode));
     SchemaUtils.validatePartitionColumns(schema, partitionColumns);
+  }
+
+  private static void validateNotEnablingCatalogManagedOnReplace(
+      Map<String, String> userInputTableProperties) {
+    if (TableFeatures.isPropertiesManuallySupportingTableFeature(
+        userInputTableProperties, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+      throw new UnsupportedOperationException(
+          "Cannot enable the catalogManaged feature during a REPLACE command.");
+    }
+  }
+
+  private static Map<String, String> getRequiredCatalogTablePropertiesIfApplicable(
+      Committer committer) {
+    if (committer instanceof CatalogCommitter) {
+      return ((CatalogCommitter) committer).getRequiredTableProperties();
+    }
+
+    return Collections.emptyMap();
   }
 }

@@ -92,21 +92,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
-  test("create table - provide unsupported column types - expect failure") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val ex = intercept[KernelException] {
-        getCreateTxn(
-          engine,
-          tablePath,
-          schema = new StructType().add("variant_type", VariantType.VARIANT))
-      }
-      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: variant") ||
-        ex.getMessage.contains(
-          "requires writer table feature \"[variantType]\" which is unsupported by " +
-            "this version of Delta Kernel"))
-    }
-  }
-
   test("create table - table already exists at the location") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
@@ -173,11 +158,23 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  test("create table with metadata columns in the schema - expect failure") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schemaWithMetadataCol =
+        testSchema.addMetadataColumn("_metadata.row_index", MetadataColumnSpec.ROW_INDEX)
+
+      val ex = intercept[IllegalArgumentException] {
+        getCreateTxn(engine, tablePath, schemaWithMetadataCol)
+      }
+      assert(ex.getMessage.contains("Table schema cannot contain metadata columns"))
+    }
+  }
+
   test("create un-partitioned table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn =
-        getCreateTxn(engine, tablePath, testSchema)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       assert(txn.getSchema(engine) === testSchema)
       assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
@@ -197,7 +194,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val table = Table.forPath(engine, tablePath)
       val txn1 = getCreateTxn(engine, tablePath, testSchema)
 
-      txn1.commit(engine, emptyIterable())
+      commitTransaction(txn1, engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
@@ -235,8 +232,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      getCreateTxn(engine, tablePath, testSchema)
-        .commit(engine, emptyIterable())
+      val txn0 = getCreateTxn(engine, tablePath, testSchema)
+      commitTransaction(txn0, engine, emptyIterable())
+
       // Create txn1 with config changes
       val txn1 = getUpdateTxn(
         engine,
@@ -263,8 +261,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      getCreateTxn(engine, tablePath, testSchema)
-        .commit(engine, emptyIterable())
+      val txn0 = getCreateTxn(engine, tablePath, testSchema)
+      commitTransaction(txn0, engine, emptyIterable())
 
       // Create txn1 with config changes
       val txn1 = getUpdateTxn(
@@ -425,8 +423,24 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         engine,
         tablePath,
         testSchema)
-      DeltaTable.forPath(spark, tablePath)
-        .addFeatureSupport("testUnsupportedWriter")
+
+      // Use your new commitUnsafe API to write an unsupported writer feature
+      import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
+      import org.apache.spark.sql.delta.actions.Protocol
+
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val txn = deltaLog.startTransaction()
+
+      // Create Protocol action with unsupported writer feature
+      val protocolAction = Protocol(
+        minReaderVersion = 3,
+        minWriterVersion = 7,
+        readerFeatures = Some(Set.empty),
+        writerFeatures = Some(Set("testUnsupportedWriter")))
+
+      // Use your elegant API to commit directly to version 1
+      txn.commitUnsafe(tablePath, 1L, protocolAction)
+
       val e = intercept[KernelException] {
         getUpdateTxn(engine, tablePath)
       }
@@ -1024,7 +1038,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
       // Create table with stats collection enabled.
       val txn = getCreateTxn(engine, tblPath, schema, tableProperties = tableProps)
-      txn.commit(engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
       // Write one batch of data.
       val dataBatches = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)

@@ -41,10 +41,12 @@ object InMemoryUCClient {
       private var maxRatifiedVersion: Long = -1L,
       private val commits: ArrayBuffer[Commit] = ArrayBuffer.empty) {
 
+    // For test only, since UC doesn't store these as top-level entities.
+    private var currentProtocolOpt: Option[AbstractProtocol] = None
+    private var currentMetadataOpt: Option[AbstractMetadata] = None
+
     /** @return the maximum ratified version, or -1 if no commits have been made. */
-    def getMaxRatifiedVersion: Long = synchronized {
-      maxRatifiedVersion
-    }
+    def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
 
     /** @return An immutable list of all commits. */
     def getCommits: List[Commit] = synchronized { commits.toList }
@@ -61,8 +63,17 @@ object InMemoryUCClient {
         .toList
     }
 
-    /** Appends a new commit to this table. */
-    def appendCommit(commit: Commit): Unit = synchronized {
+    /** @return the current protocol. For test only. */
+    def getCurrentProtocolOpt: Option[AbstractProtocol] = synchronized { currentProtocolOpt }
+
+    /** @return the current metadata. For test only. */
+    def getCurrentMetadataOpt: Option[AbstractMetadata] = synchronized { currentMetadataOpt }
+
+    /** Appends a new commit to this table and atomically updates protocol/metadata. */
+    def appendCommit(
+        commit: Commit,
+        newProtocol: Optional[AbstractProtocol] = Optional.empty(),
+        newMetadata: Optional[AbstractMetadata] = Optional.empty()): Unit = synchronized {
       // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
       // For UC, commit 0 is expected to go through the filesystem
       val expectedCommitVersion = if (maxRatifiedVersion == -1L) 1 else maxRatifiedVersion + 1
@@ -74,8 +85,22 @@ object InMemoryUCClient {
           s"Expected commit version $expectedCommitVersion but got ${commit.getVersion}")
       }
 
+      // Atomically update everything
       commits += commit
       maxRatifiedVersion = commit.getVersion
+      if (newProtocol.isPresent) currentProtocolOpt = Some(newProtocol.get())
+      if (newMetadata.isPresent) currentMetadataOpt = Some(newMetadata.get())
+    }
+
+    def forceRemoveCommitsUpToVersion(version: Long): Unit = synchronized {
+      if (version < 0) {
+        throw new IllegalArgumentException(s"Version must be non-negative, but got: $version")
+      }
+
+      val indexToRemove = commits.lastIndexWhere(_.getVersion <= version)
+      if (indexToRemove >= 0) {
+        commits.remove(0, indexToRemove + 1)
+      }
     }
   }
 }
@@ -122,26 +147,28 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   override def commit(
       tableId: String,
       tableUri: URI,
-      commit: Optional[Commit] = Optional.empty(),
-      lastKnownBackfilledVersion: Optional[JLong],
+      commitOpt: Optional[Commit] = Optional.empty(),
+      lastKnownBackfilledVersionOpt: Optional[JLong],
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
       newProtocol: Optional[AbstractProtocol]): Unit = {
     forceThrowInCommitMethod()
 
-    Seq(
-      (lastKnownBackfilledVersion.isPresent, "lastKnownBackfilledVersion"),
-      (disown, "disown"),
-      (newMetadata.isPresent, "newMetadata"),
-      (newProtocol.isPresent, "newProtocol")).foreach { case (isUnsupported, name) =>
-      if (isUnsupported) {
-        throw new UnsupportedOperationException(s"$name not supported yet in InMemoryUCClient")
-      }
+    if (disown) {
+      throw new UnsupportedOperationException("disown not yet supported in InMemoryUCClient")
     }
 
-    if (!commit.isPresent) return
+    val tableData = getOrCreateTableIfNotExists(tableId)
 
-    getOrCreateTableIfNotExists(tableId).appendCommit(commit.get())
+    tableData.synchronized {
+      commitOpt.ifPresent { commit =>
+        tableData.appendCommit(commit, newProtocol, newMetadata)
+      }
+
+      lastKnownBackfilledVersionOpt.ifPresent { lastKnownBackfilledVersion =>
+        tableData.forceRemoveCommitsUpToVersion(lastKnownBackfilledVersion)
+      }
+    }
   }
 
   override def getCommits(
@@ -170,14 +197,14 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     tables.asScala.toMap
   }
 
+  /** Retrieves table data for the given table ID or throws an exception if not found. */
+  private[unity] def getTableDataElseThrow(tableId: String): TableData = {
+    Option(tables.get(tableId))
+      .getOrElse(throw new InvalidTargetTableException(s"Table not found: $tableId"))
+  }
+
   /** Retrieves the table data for the given table ID, creating it if it does not exist. */
   private def getOrCreateTableIfNotExists(tableId: String): TableData = {
     tables.computeIfAbsent(tableId, _ => new TableData)
-  }
-
-  /** Retrieves table data for the given table ID or throws an exception if not found. */
-  private def getTableDataElseThrow(tableId: String): TableData = {
-    Option(tables.get(tableId))
-      .getOrElse(throw new InvalidTargetTableException(s"Table not found: $tableId"))
   }
 }

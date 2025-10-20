@@ -22,7 +22,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import java.util.List;
 
 /**
@@ -42,12 +41,39 @@ public interface SnapshotBuilder {
   /**
    * Configures the builder to resolve the table at a specific version.
    *
+   * <p>This method is mutually exclusive with {@link #atTimestamp(long, Snapshot)}. If both are
+   * called, an {@link IllegalArgumentException} will be thrown.
+   *
    * @param version the version number to resolve to
    * @return a new builder instance configured for the specified version
    */
   SnapshotBuilder atVersion(long version);
 
-  // TODO: atTimestamp
+  /**
+   * Configures the builder to resolve the table at a specific timestamp.
+   *
+   * <p>This returns a Snapshot for the latest version of the table that was committed before or at
+   * the given timestamp. Specifically:
+   *
+   * <ul>
+   *   <li>If a commit version exactly matches the provided timestamp, the snapshot at that version
+   *       is resolved.
+   *   <li>Otherwise, the latest commit version with a timestamp less than the provided one is
+   *       resolved.
+   *   <li>If the provided timestamp is less than the timestamp of any committed version, snapshot
+   *       resolution will fail.
+   *   <li>If the provided timestamp is after (strictly greater than) the timestamp of the latest
+   *       version of the table, snapshot resolution will fail.
+   * </ul>
+   *
+   * <p>This method is mutually exclusive with {@link #atVersion(long)}. If both are called, an
+   * {@link IllegalArgumentException} will be thrown.
+   *
+   * @param millisSinceEpochUTC timestamp to resolve the snapshot for in milliseconds since the unix
+   *     epoch
+   * @return a new builder instance configured for the specified timestamp
+   */
+  SnapshotBuilder atTimestamp(long millisSinceEpochUTC, Snapshot latestSnapshot);
 
   /**
    * Provides a custom committer to use at transaction commit time.
@@ -61,7 +87,6 @@ public interface SnapshotBuilder {
    *
    * @param committer the committer to use
    * @return a new builder instance with the provided committer
-   * @see io.delta.kernel.transaction.TransactionV2
    * @see Committer
    */
   SnapshotBuilder withCommitter(Committer committer);
@@ -70,8 +95,8 @@ public interface SnapshotBuilder {
    * Provides parsed log data to optimize table resolution.
    *
    * <p>When log data is provided, Kernel can avoid reading from the filesystem for information that
-   * is already available in the parsed data, improving performance. Currently, only log data of
-   * type {@link ParsedLogType#RATIFIED_STAGED_COMMIT} is supported.
+   * is already available in the parsed data, improving performance. Currently, only ratified staged
+   * commits are supported.
    *
    * @param logData the parsed log data to use for optimization
    * @return a new builder instance with the provided log data

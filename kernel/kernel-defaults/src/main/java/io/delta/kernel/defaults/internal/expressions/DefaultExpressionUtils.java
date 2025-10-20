@@ -17,12 +17,14 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.lang.String.format;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -500,7 +502,7 @@ class DefaultExpressionUtils {
   }
 
   static void checkIsStringType(DataType dataType, Expression parentExpr, String errorMessage) {
-    if (StringType.STRING.equals(dataType)) {
+    if (dataType instanceof StringType) {
       return;
     }
     throw unsupportedExpressionException(parentExpr, errorMessage);
@@ -510,5 +512,30 @@ class DefaultExpressionUtils {
     if (!(expr instanceof Literal)) {
       throw unsupportedExpressionException(parentExpr, errorMessage);
     }
+  }
+
+  /**
+   * Checks if the collation is `UTF8_BINARY`, since this is the only collation the default engine
+   * can evaluate.
+   */
+  static void checkIsUTF8BinaryCollation(
+      Predicate predicate, CollationIdentifier collationIdentifier) {
+    if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
+      String msg =
+          format(
+              "Unsupported collation: \"%s\". Default Engine supports just" + " \"%s\" collation.",
+              collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
+      throw unsupportedExpressionException(predicate, msg);
+    }
+  }
+
+  /**
+   * Checks if the given expression is a null literal.
+   *
+   * @param expression The expression to check
+   * @return true if the expression is a Literal with null value, false otherwise
+   */
+  static boolean isNullLiteral(Expression expression) {
+    return expression instanceof Literal && ((Literal) expression).getValue() == null;
   }
 }

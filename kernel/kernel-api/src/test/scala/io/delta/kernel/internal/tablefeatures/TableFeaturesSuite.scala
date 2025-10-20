@@ -273,7 +273,10 @@ class TableFeaturesSuite extends AnyFunSuite {
       "typeWidening",
       "icebergWriterCompatV1",
       "icebergWriterCompatV3",
-      "clustering")
+      "clustering",
+      "variantType-preview",
+      "variantType",
+      "variantShredding-preview")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -560,17 +563,17 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   Seq("variantType", "variantType-preview", "variantShredding-preview").foreach { feature =>
-    checkWriteUnsupported(
+    checkWriteSupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata doesn't contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
       testMetadata())
 
-    checkWriteUnsupported(
+    checkWriteSupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
-      testMetadata(includeInvariant = true))
+      testMetadata(includeVariantTypeCol = true))
   }
 
   checkWriteSupported(

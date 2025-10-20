@@ -24,7 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.Breaks._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, DeltaOperations, IcebergConstants, Snapshot, SnapshotDescriptor, UniversalFormat, UniversalFormatConverter}
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, DeltaOperations, IcebergCompat, IcebergConstants, Snapshot, SnapshotDescriptor, UniversalFormat, UniversalFormatConverter}
 import org.apache.spark.sql.delta.DeltaOperations.OPTIMIZE_OPERATION_NAME
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
@@ -307,11 +307,11 @@ class IcebergConverter(spark: SparkSession)
       .getLastConvertedDeltaVersion(lastConvertedIcebergTable)
     val maxCommitsToConvert =
       spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_COMMITS_TO_CONVERT)
-
     // Conversion is up-to-date
     if (lastDeltaVersionConverted.contains(snapshotToConvert.version)) {
       return None
     }
+    val conversionStartTime = System.currentTimeMillis()
 
     val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
       // The provided Snapshot is the last converted Snapshot
@@ -353,7 +353,8 @@ class IcebergConverter(spark: SparkSession)
           spark = spark,
           deltaLog = log,
           startVersion = prevSnapshot.version + 1,
-          endVersion = snapshotToConvert.version)
+          endVersion = snapshotToConvert.version,
+          catalogTableOpt = Some(catalogTable))
 
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
@@ -424,6 +425,18 @@ class IcebergConverter(spark: SparkSession)
 
     icebergTxn.commit()
     validateIcebergCommit(snapshotToConvert, cleanedCatalogTable)
+
+    recordDeltaEvent(
+      snapshotToConvert.deltaLog,
+      "delta.iceberg.conversion",
+      data = Map(
+        "deltaVersion" -> snapshotToConvert.version,
+        "compatVersion" -> IcebergCompat.getEnabledVersion(snapshotToConvert.metadata)
+          .getOrElse(0),
+        "elapsedTimeMs" -> (System.currentTimeMillis() - conversionStartTime)
+      )
+    )
+
     Some(snapshotToConvert.version, snapshotToConvert.timestamp)
   }
 

@@ -275,7 +275,9 @@ These files reside in the `_delta_log/_sidecars` directory.
 
 ### Log Compaction Files
 
-Log compaction files reside in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name:
+Log compaction files reside in the `_delta_log` directory. A log compaction
+file from a start version `x` to an end version `y` (`y` must be _greater_ than `x`)
+will have the following name:
 `<x>.<y>.compacted.json`. This contains the aggregated
 actions for commit range `[x, y]`. Similar to commits, each row in the log
 compaction file represents an [action](#actions).
@@ -2131,6 +2133,7 @@ It is highly recommended that modern writers adjust the timestamp to UTC and sto
 ## Schema Serialization Format
 
 Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
+All column names must be unique regardless of casing.
 A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
 
 ### Primitive Types

@@ -384,7 +384,8 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
       "variantType-preview",
       "variantShredding-preview",
       "icebergCompatV2",
-      "icebergWriterCompatV1")
+      "icebergWriterCompatV1",
+      "catalogOwned-preview")
     val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
     validateAndUpdateIcebergWriterCompatV3Metadata(true, metadata, protocol)

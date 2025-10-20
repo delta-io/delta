@@ -419,9 +419,9 @@ abstract class CloneTableBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       opName: String): Protocol = {
+    // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table.
     val sourceProtocol =
-      // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table.
-      CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol = sourceTable.protocol)
+      sourceTable.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
     // Pre-transaction version of the target table.
     val targetProtocol = txn.snapshot.protocol
     // Overriding properties during the CLONE can change the minimum required protocol for target.

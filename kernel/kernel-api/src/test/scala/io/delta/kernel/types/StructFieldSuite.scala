@@ -105,7 +105,9 @@ class StructFieldSuite extends AnyFunSuite {
     // Create a metadata field
     val metadataFieldName = "_metadata.custom"
     val metadataBuilder = FieldMetadata.builder()
-    metadataBuilder.putBoolean("isMetadataColumn", true)
+    metadataBuilder.putMetadataColumnSpec(
+      StructField.METADATA_SPEC_KEY,
+      MetadataColumnSpec.ROW_INDEX)
     val metadataField =
       new StructField(metadataFieldName, LongType.LONG, false, metadataBuilder.build())
 

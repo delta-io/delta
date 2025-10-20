@@ -17,7 +17,8 @@ package io.delta.kernel.defaults.utils
 
 import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
-import java.nio.file.Files
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
 import java.util.{Optional, TimeZone, UUID}
 
 import scala.collection.JavaConverters._
@@ -37,19 +38,21 @@ import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.stats.FileSizeHistogram
+import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.internal.util.FileNames.checksumFile
-import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
+import org.apache.spark.sql.delta.{sources, OptimisticTransaction}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.{types => sparktypes, SparkSession}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
@@ -69,12 +72,27 @@ trait TestUtilsWithTableManagerAPIs extends AbstractTestUtils {
   override def getTableManagerAdapter: AbstractTableManagerAdapter = new TableManagerAdapter()
 }
 
-trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtils {
+object TestUtilsWithTableManagerAPIs extends TestUtilsWithTableManagerAPIs
+
+trait AbstractTestUtils
+    extends Assertions
+    with SQLHelper
+    with TestCommitterUtils
+    with TestFixtures {
 
   def getTableManagerAdapter: AbstractTableManagerAdapter
 
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
+
+  // Used in child suites to override defaultEngine
+  lazy val defaultEngineBatchSize2 = DefaultEngine.create(new Configuration() {
+    {
+      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+      set("delta.kernel.default.parquet.reader.batch-size", "2");
+      set("delta.kernel.default.json.reader.batch-size", "2");
+    }
+  })
 
   lazy val spark = SparkSession
     .builder()
@@ -154,6 +172,36 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
     def toScala: Option[T] = if (optional.isPresent) Some(optional.get()) else None
   }
 
+  /**
+   * Provides test-only apis to internal Delta Spark APIs.
+   */
+  implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
+
+    /**
+     * Test only method to commit arbitrary actions to delta table.
+     */
+    def commitManuallyWithValidation(actions: Action*): Unit = {
+      txn.commit(actions.toSeq, ManualUpdate)
+    }
+
+    /**
+     * Test only method to unsafe commit - writes actions directly to transaction log.
+     * Note: This bypasses Delta Spark transaction logic.
+     *
+     * @param tablePath The path to the Delta table
+     * @param version The commit version number
+     * @param actions Sequence of Action objects to write
+     */
+    def commitUnsafe(tablePath: String, version: Long, actions: Action*): Unit = {
+      val logPath = new org.apache.hadoop.fs.Path(tablePath, "_delta_log")
+      val commitFile = org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile(logPath, version)
+      val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
+      Files.write(Paths.get(commitFile.toString), commitContent)
+      // Generate crc file for this commit version.
+      Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
+    }
+  }
+
   implicit object ResourceLoader {
     lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
@@ -180,20 +228,16 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
     testFunc(tablePath)
   }
 
-  def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
-    Table.forPath(engine, path)
-      .getLatestSnapshot(engine)
+  def latestSnapshot(path: String, engine: Engine = defaultEngine): SnapshotImpl = {
+    getTableManagerAdapter.getSnapshotAtLatest(engine, path)
   }
 
   def tableSchema(path: String): StructType = {
-    Table.forPath(defaultEngine, path)
-      .getLatestSnapshot(defaultEngine)
-      .getSchema()
+    latestSnapshot(path).getSchema()
   }
 
   def hasTableProperty(tablePath: String, propertyKey: String, expValue: String): Boolean = {
-    val table = Table.forPath(defaultEngine, tablePath)
-    val schema = table.getLatestSnapshot(defaultEngine).getSchema()
+    val schema = tableSchema(tablePath)
     schema.fields().asScala.exists { field =>
       field.getMetadata.getString(propertyKey) == expValue
     }
@@ -297,8 +341,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
       engine: Engine,
       tablePath: String,
       readSchema: StructType): Seq[FilteredColumnarBatch] = {
-    val scan = Table.forPath(engine, tablePath)
-      .getLatestSnapshot(engine)
+    val scan = latestSnapshot(tablePath, engine)
       .getScanBuilder()
       .withReadSchema(readSchema)
       .build()
@@ -341,28 +384,6 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
       TimeZone.setDefault(currentDefault)
     }
   }
-
-  /** All simple data type used in parameterized tests where type is one of the test dimensions. */
-  val SIMPLE_TYPES = Seq(
-    BooleanType.BOOLEAN,
-    ByteType.BYTE,
-    ShortType.SHORT,
-    IntegerType.INTEGER,
-    LongType.LONG,
-    FloatType.FLOAT,
-    DoubleType.DOUBLE,
-    DateType.DATE,
-    TimestampType.TIMESTAMP,
-    TimestampNTZType.TIMESTAMP_NTZ,
-    StringType.STRING,
-    BinaryType.BINARY,
-    new DecimalType(10, 5))
-
-  /** All types. Used in parameterized tests where type is one of the test dimensions. */
-  val ALL_TYPES = SIMPLE_TYPES ++ Seq(
-    new ArrayType(BooleanType.BOOLEAN, true),
-    new MapType(IntegerType.INTEGER, LongType.LONG, true),
-    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
 
   /**
    * Compares the rows in the tables latest snapshot with the expected answer and fails if they
@@ -537,6 +558,22 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
   protected def withTempDir(f: File => Unit): Unit = {
     val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
     try f(tempDir)
+    finally {
+      FileUtils.deleteDirectory(tempDir)
+    }
+  }
+
+  /**
+   * Creates a temporary directory with Delta log structure (_delta_log, _staged_commits,
+   * _sidecars), passes (tablePath, logPath) to `f`, and deletes the directory after `f` returns.
+   */
+  protected def withTempDirAndAllDeltaSubDirs(f: (String, String) => Unit): Unit = {
+    val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
+    val deltaLogDir = new File(tempDir, "_delta_log")
+    deltaLogDir.mkdirs()
+    new File(deltaLogDir, FileNames.STAGED_COMMIT_DIRECTORY).mkdirs()
+    new File(deltaLogDir, FileNames.SIDECAR_DIRECTORY).mkdirs()
+    try f(tempDir.getAbsolutePath, deltaLogDir.getAbsolutePath)
     finally {
       FileUtils.deleteDirectory(tempDir)
     }
@@ -820,8 +857,8 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
       engine: Engine,
       tablePath: String,
       version: Long): Unit = {
-    val logPath = new KernelPath(s"$tablePath/_delta_log");
-    val crcInfo = ChecksumReader.getCRCInfo(
+    val logPath = new Path(s"$tablePath/_delta_log");
+    val crcInfo = ChecksumReader.tryReadChecksumFile(
       engine,
       FileStatus.of(checksumFile(
         logPath,
@@ -845,10 +882,14 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
   }
 
   def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-      .forEach(hook => hook.threadSafeInvoke(engine))
+    val crcSimpleHook = result
+      .getPostCommitHooks
+      .asScala
+      .find(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .getOrElse(throw new IllegalStateException("CRC simple hook not found"))
+
+    crcSimpleHook.threadSafeInvoke(engine)
+
     result
   }
 
@@ -867,7 +908,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
       snapshot: Snapshot,
       expectEmptyTable: Boolean = false): Unit = {
     val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
-    val crcInfoOpt = ChecksumReader.getCRCInfo(
+    val crcInfoOpt = ChecksumReader.tryReadChecksumFile(
       defaultEngine,
       FileStatus.of(checksumFile(
         logPath,
@@ -920,5 +961,12 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
 
   protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
     new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
+  }
+
+  protected def optionToJava[T](option: Option[T]): Optional[T] = {
+    option match {
+      case Some(value) => Optional.of(value)
+      case None => Optional.empty()
+    }
   }
 }

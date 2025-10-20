@@ -163,6 +163,9 @@ trait BaseMockFileSystemClient extends FileSystemClient {
 
   override def getFileStatus(path: String): FileStatus =
     throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def copyFileAtomically(srcPath: String, destPath: String, overwrite: Boolean): Unit =
+    throw new UnsupportedOperationException("not supported in this test suite")
 }
 
 /**
@@ -172,7 +175,9 @@ trait BaseMockFileSystemClient extends FileSystemClient {
  *
  * @param deltaVersionToICTMapping A mapping from delta version to inCommitTimestamp.
  */
-class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
+class MockReadICTFileJsonHandler(
+    deltaVersionToICTMapping: Map[Long, Long],
+    add10ForStagedFiles: Boolean = false)
     extends BaseMockJsonHandler with VectorTestUtils {
   override def readJsonFiles(
       fileIter: CloseableIterator[FileStatus],
@@ -184,7 +189,12 @@ class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
     val deltaVersion = FileNames.getFileVersion(new Path(filePathStr))
     assert(deltaVersionToICTMapping.contains(deltaVersion))
 
-    val ict = deltaVersionToICTMapping(deltaVersion)
+    var ict = deltaVersionToICTMapping(deltaVersion)
+    // This enables us to have different ICT times for staged vs published delta files, which lets
+    // us test that we use the correct file when both exist for a specific version
+    if (add10ForStagedFiles && FileNames.isStagedDeltaFile(filePathStr)) {
+      ict += 10
+    }
     val schema = new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
     Utils.singletonCloseableIterator(
       new ColumnarBatch {

@@ -128,6 +128,8 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     testNullRangeBoundary(start, EndingVersion("null"))
   }
 
+  testNullRangeBoundary(StartingVersion("CAST(null AS INT)"), Unbounded)
+
   test("select individual column should push down filters") {
     val tblName = "tbl"
     withTable(tblName) {

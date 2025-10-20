@@ -213,6 +213,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           endOffset.reservoirVersion,
           groupedFileAndCommitInfoActions,
           spark,
+          catalogTableOpt,
           isStreaming = true)
         .fileChangeDf
     }
@@ -250,7 +251,8 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       //    in that case, we need to recompute the start snapshot and evolve the schema if needed
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
-      deltaLog.getChanges(startVersion, options.failOnDataLoss).map { case (version, actions) =>
+      deltaLog.getChanges(
+          startVersion, catalogTableOpt, options.failOnDataLoss).map { case (version, actions) =>
         // skipIndexedFile must be applied after creating IndexedFile so that
         // IndexedFile.index is consistent across all versions.
         val (fileActions, skipIndexedFile, metadataOpt, protocolOpt, commitInfoOpt) =

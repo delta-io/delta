@@ -1035,10 +1035,10 @@ case class Metadata(
 
   /**
    * Compare this metadata with other.
-   * Returns a sequence of field names that differ between the two metadata objects.
-   * Returns an empty sequence when there are no differences.
+   * Returns a set of field names that differ between the two metadata objects.
+   * Returns an empty set when there are no differences.
    */
-  def diffFieldNames(other: Metadata): Seq[String] = {
+  def diffFieldNames(other: Metadata): Set[String] = {
     import scala.reflect.runtime.universe._
 
     // In scala 2.13, we can directly use productElementName(n: Int) along with productArity.
@@ -1048,7 +1048,7 @@ case class Metadata(
     // It relies on the fact that members.sorted outputs fields in declaration order.
     fieldNames.zipWithIndex.collect {
       case (name, i) if this.productElement(i) != other.productElement(i) => name
-    }
+    }.toSet
   }
 
   /**
@@ -1214,23 +1214,6 @@ case class CommitInfo(
   @JsonIgnore
   override def getVersion: Long = version.get
 
-  /**
-   * Returns the legacy value of operation parameters after deserialization.
-   * See [[JsonMapDeserializer]] for more details about how operation
-   * parameter deserialization was broken before. These legacy values are the
-   * same as the original broken version.
-   */
-  @JsonIgnore
-  def getLegacyPostDeserializationOperationParameters: Map[String, String] = {
-    // Use JsonMapSerializer to serialize the operation parameters
-    val serializedOperationParameters =
-      JsonUtils.toJson(CommitInfoOperationParametersOnly(operationParameters))
-    // Instead of using JsonMapDeserializer,
-    // we can use JsonUtils.fromJson to deserialize the operation parameters
-    JsonUtils.fromJson[CommitInfoOperationParametersOnly](serializedOperationParameters)
-      .operationParameters
-  }
-
 }
 
 case class JobInfo(
@@ -1345,6 +1328,23 @@ object CommitInfo {
     commitInfo.inCommitTimestamp.getOrElse {
       throw DeltaErrors.missingCommitTimestamp(version)
     }
+  }
+
+  /**
+   * Returns the legacy value of operation parameters after deserialization.
+   * See [[CommitInfoOperationParametersOnly]] and [[JsonMapDeserializer]] for more
+   * details about how operation parameter deserialization was broken before. These
+   * legacy values are the same as the original broken version.
+   */
+  def getLegacyPostDeserializationOperationParameters(
+      operationParameters: Map[String, String]): Map[String, String] = {
+    // Use JsonMapSerializer to serialize the operation parameters
+    val serializedOperationParameters =
+      JsonUtils.toJson(CommitInfoOperationParametersOnly(operationParameters))
+    // Instead of using JsonMapDeserializer,
+    // we can use JsonUtils.fromJson to deserialize the operation parameters
+    JsonUtils.fromJson[CommitInfoOperationParametersOnly](serializedOperationParameters)
+      .operationParameters
   }
 
 }
@@ -1485,50 +1485,50 @@ class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
  * This is effectively performs an inverse of [[JsonMapSerializer]].
  *
  * The in-memory representation of operation params of any Delta Operation can be
-  * a combination of json encoded strings, simple strings, or primitives single-encoded
-  * as strings. i.e. the values can be any of "abc", "123", "true", "1.0", "\"true\"",
-  * "\"1.0\"" or more complex json encoded strings.
-  * Due to how [[JsonMapSerializer]] strips one level of encoding for these values
-  * during serialization, these can end up being written out in this form:
-  * "123" -> 123
-  * "true" -> true
-  * "1.0" -> 1.0
-  * "\"true\"" -> "true"
-  * "\"1.0\"" -> "1.0"
-  * Since operationParameters is a Map[String, String], during the deserialization phase, the
-  * deserializer intelligently converts primitive types from above to simple strings.
-  * i.e.
-  * "123" -> 123 -> "123"
-  * "true" -> true -> "true"
-  * "1.0" -> 1.0 -> "1.0"
-  * "\"true\"" -> "true" -> "true"
-  * "\"1.0\"" -> "1.0" -> "1.0"
-  * Since we stripped one level of encoding during serialization, we need to add it back to
-  * get closer to the original in-memory representation.
-  * i.e.
-  * "123" -> 123 -> "123" -> "\"123\""
-  * "true" -> true -> "true" -> "\"true\""
-  * "1.0" -> 1.0 -> "1.0" -> "\"1.0\""
-  * "\"true\"" -> "true" -> "true" -> "\"true\""
-  * "\"1.0\"" -> "1.0" -> "1.0" -> "\"1.0\""
-  * Note how values that were single-encoded as strings originally are now double-encoded as
-  * strings.
-  * (i.e. "true" -> true -> "true" -> "\"true\""). This is because the deserializer converted
-  * the primitive values to strings as well as retained simple strings as strings. In this process,
-  * we lost some information about the original values. To fix this, we first deserialize the
-  * values as a java.util.HashMap[String, Any] i.e.:
-  * "123" -> 123 -> 123 (type: Integer)
-  * "true" -> true -> true (type: Boolean)
-  * "1.0" -> 1.0 -> 1.0 (type: Double)
-  * "\"true\"" -> "true" -> "true" (type: String)
-  * "\"1.0\"" -> "1.0" -> "1.0" (type: String)
-  * and then JsonEncode them once to get the original in-memory representation. i.e.
-  * "123" -> 123 -> 123 -> "123"
-  * "true" -> true -> true -> "true"
-  * "1.0" -> 1.0 -> 1.0 -> "1.0"
-  * "\"true\"" -> "true" -> "true" -> "\"true\""
-  * "\"1.0\"" -> "1.0" -> "1.0" -> "\"1.0\""
-  */
+ * a combination of json encoded strings, simple strings, or primitives single-encoded
+ * as strings. i.e. the values can be any of "abc", "123", "true", "1.0", "\"true\"",
+ * "\"1.0\"" or more complex json encoded strings.
+ * Due to how [[JsonMapSerializer]] strips one level of encoding for these values
+ * during serialization, these can end up being written out in this form:
+ * "123" -> 123
+ * "true" -> true
+ * "1.0" -> 1.0
+ * "\"true\"" -> "true"
+ * "\"1.0\"" -> "1.0"
+ * Since operationParameters is a Map[String, String], during the deserialization phase, the
+ * deserializer intelligently converts primitive types from above to simple strings.
+ * i.e.
+ * "123" -> 123 -> "123"
+ * "true" -> true -> "true"
+ * "1.0" -> 1.0 -> "1.0"
+ * "\"true\"" -> "true" -> "true"
+ * "\"1.0\"" -> "1.0" -> "1.0"
+ * Since we stripped one level of encoding during serialization, we need to add it back to
+ * get closer to the original in-memory representation.
+ * i.e.
+ * "123" -> 123 -> "123" -> "\"123\""
+ * "true" -> true -> "true" -> "\"true\""
+ * "1.0" -> 1.0 -> "1.0" -> "\"1.0\""
+ * "\"true\"" -> "true" -> "true" -> "\"true\""
+ * "\"1.0\"" -> "1.0" -> "1.0" -> "\"1.0\""
+ * Note how values that were single-encoded as strings originally are now double-encoded as
+ * strings.
+ * (i.e. "true" -> true -> "true" -> "\"true\""). This is because the deserializer converted
+ * the primitive values to strings as well as retained simple strings as strings. In this process,
+ * we lost some information about the original values. To fix this, we first deserialize the
+ * values as a java.util.HashMap[String, Any] i.e.:
+ * "123" -> 123 -> 123 (type: Integer)
+ * "true" -> true -> true (type: Boolean)
+ * "1.0" -> 1.0 -> 1.0 (type: Double)
+ * "\"true\"" -> "true" -> "true" (type: String)
+ * "\"1.0\"" -> "1.0" -> "1.0" (type: String)
+ * and then JsonEncode them once to get the original in-memory representation. i.e.
+ * "123" -> 123 -> 123 -> "123"
+ * "true" -> true -> true -> "true"
+ * "1.0" -> 1.0 -> 1.0 -> "1.0"
+ * "\"true\"" -> "true" -> "true" -> "\"true\""
+ * "\"1.0\"" -> "1.0" -> "1.0" -> "\"1.0\""
+ */
 class JsonMapDeserializer extends JsonDeserializer[Map[String, String]] {
   def deserialize(jp: JsonParser, ctxt: DeserializationContext): Map[String, String] = {
     // First read the map as a Map[String, Any]. Then use JsonUtils.toJson to convert
@@ -1541,7 +1541,21 @@ class JsonMapDeserializer extends JsonDeserializer[Map[String, String]] {
 /**
  * This class is only used by [[CommitInfo.getLegacyPostDeserializationOperationParameters]]
  * to regenerate legacy operation parameters.
-*/
+ * The legacy deserialization of operationParameters goes as follows.
+ *   - The in-memory representation of a Delta operation's parameters was a (String -> Any) map.
+ *   - When setting the operation parameters in a [[CommitInfo]], the map is transformed into
+ *     (String -> JsonEncodedString(Any)).
+ *   - A [[CommitInfo]] is serialized with a `JsonMapSerializer`, which wrote the values as raw
+ *     strings.
+ *   - However, the deserialization process used a default deserializer that was not an inverse of
+ *     JsonMapSerializer. The default deserializer automatically decoded JSON strings into their
+ *     inferred types, and then cast the values to strings. This meant the output of the
+ *     deserialization process was a (String -> String(Any)).
+ *   - Note that String() and JsonEncodedString() are not the same. For example, if the original
+ *     value was a string "abc", then String("abc") is still "abc", but JsonEncodedString("abc") is
+ *     "\"abc\"". In the new deserializer, we have changed it so that the deserialization process to
+ *     recover the input of the serialization process, i.e. (String -> JsonEncodedString(Any)).
+ */
 case class CommitInfoOperationParametersOnly(
   @JsonSerialize(using = classOf[JsonMapSerializer])
   operationParameters: Map[String, String]

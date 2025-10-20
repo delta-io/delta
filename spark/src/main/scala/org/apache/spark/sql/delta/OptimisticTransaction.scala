@@ -2251,19 +2251,20 @@ trait OptimisticTransactionImpl extends TransactionHelper
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       isolationLevel: IsolationLevel)
-    : (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
+    : (Long, Snapshot, CurrentTransactionInfo) = recordDeltaOperation(
+      deltaLog, "delta.commit.allAttempts") {
+    lockCommitIfEnabled {
+      var commitVersion = attemptVersion
+      var updatedCurrentTransactionInfo = currentTransactionInfo
+      val isFsToCcCommit =
+        snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
+          metadata.coordinatedCommitsCoordinatorName.nonEmpty
+      val maxRetryAttempts = spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)
+      val maxNonConflictRetryAttempts =
+        spark.conf.get(DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS)
+      var nonConflictAttemptNumber = 0
+      var shouldCheckForConflicts = false
 
-    var commitVersion = attemptVersion
-    var updatedCurrentTransactionInfo = currentTransactionInfo
-    val isFsToCcCommit =
-      snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
-        metadata.coordinatedCommitsCoordinatorName.nonEmpty
-    val maxRetryAttempts = spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)
-    val maxNonConflictRetryAttempts =
-      spark.conf.get(DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS)
-    var nonConflictAttemptNumber = 0
-    var shouldCheckForConflicts = false
-    recordDeltaOperation(deltaLog, "delta.commit.allAttempts") {
       for (attemptNumber <- 0 to maxRetryAttempts) {
         try {
           val postCommitSnapshot = if (!shouldCheckForConflicts) {
@@ -2305,15 +2306,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
             }
         }
       }
+
+      // retries all failed
+      val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTimeMillis
+      throw DeltaErrors.maxCommitRetriesExceededException(
+        maxRetryAttempts + 1,
+        commitVersion,
+        attemptVersion,
+        updatedCurrentTransactionInfo.finalActionsToCommit.length,
+        totalCommitAttemptTime)
     }
-    // retries all failed
-    val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTimeMillis
-    throw DeltaErrors.maxCommitRetriesExceededException(
-      maxRetryAttempts + 1,
-      commitVersion,
-      attemptVersion,
-      updatedCurrentTransactionInfo.finalActionsToCommit.length,
-      totalCommitAttemptTime)
   }
 
   /**
@@ -2372,7 +2374,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
     partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
     collectAutoOptimizeStatsAndFinalize(actions, deltaLog.tableId)
-    val commitSizeBytes = jsonActions.map(_.length).sum
+    val commitSizeBytes: Long = jsonActions.map(_.length.toLong).sum
     commitStatsComputer.finalizeAndEmitCommitStats(
       spark,
       attemptVersion,
@@ -2589,19 +2591,20 @@ trait OptimisticTransactionImpl extends TransactionHelper
         log"${MDC(DeltaLogKeys.VERSION2, nextAttemptVersion)}) " +
         log"with current txn having " + txnDetailsLog)
 
-      var updatedCurrentTransactionInfo = currentTransactionInfo
-      (checkVersion until nextAttemptVersion)
-        .zip(fileStatuses)
-        .foreach { case (otherCommitVersion, otherCommitFileStatus) =>
-        updatedCurrentTransactionInfo = checkForConflictsAgainstVersion(
-          updatedCurrentTransactionInfo,
-          otherCommitFileStatus,
-          commitIsolationLevel)
-        logInfo(logPrefix +
-          log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
-          log"${MDC(DeltaLogKeys.DURATION,
-            clock.getTimeMillis() - commitAttemptStartTimeMillis)} ms since start")
+      val updatedCurrentTransactionInfo = {
+        if (expected.isEmpty) {
+          currentTransactionInfo
+        }
+        else {
+          resolveConflicts(
+            currentTransactionInfo = currentTransactionInfo,
+            firstWinningVersion = expected.head,
+            lastWinningVersion = expected.last,
+            conflictingCommitFiles = fileStatuses,
+            commitIsolationLevel = commitIsolationLevel)
+        }
       }
+
 
       logInfo(logPrefix +
         log"No conflicts with versions " +
@@ -2614,17 +2617,45 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
-  protected def checkForConflictsAgainstVersion(
+  /**
+   * Loads the summaries of the conflicting commits and uses [[ConflictChecker]] to
+   * resolve conflicts.
+   *
+   * @param currentTransactionInfo The current transaction information to check for conflicts
+   * @param firstWinningVersion The first version number for conflict checking (inclusive)
+   * @param lastWinningVersion The last version number for conflict checking (inclusive)
+   * @param conflictingCommitFiles The sequence of file statuses representing conflicting commits
+   * @param commitIsolationLevel The isolation level to use for conflict checking
+   * @return Updated transaction information after resolving all conflicts
+   */
+  protected def resolveConflicts(
       currentTransactionInfo: CurrentTransactionInfo,
-      otherCommitFileStatus: FileStatus,
-      commitIsolationLevel: IsolationLevel): CurrentTransactionInfo = {
+      firstWinningVersion: Long,
+      lastWinningVersion: Long,
+      conflictingCommitFiles: Seq[FileStatus],
+      commitIsolationLevel: IsolationLevel) : CurrentTransactionInfo = {
 
-    val conflictChecker = new ConflictChecker(
-      spark,
-      currentTransactionInfo,
-      otherCommitFileStatus,
-      commitIsolationLevel)
-    conflictChecker.checkConflicts()
+    var updatedCurrentTransactionInfo = currentTransactionInfo
+    (firstWinningVersion to lastWinningVersion)
+      .zip(conflictingCommitFiles)
+      .foreach { case (otherCommitVersion, otherCommitFileStatus) =>
+        val winningCommitSummary = WinningCommitSummary.createFromFileStatus(
+          deltaLog, otherCommitFileStatus)
+
+        val conflictChecker = new ConflictChecker(
+          spark,
+          updatedCurrentTransactionInfo,
+          winningCommitSummary,
+          commitIsolationLevel)
+
+        updatedCurrentTransactionInfo = conflictChecker.checkConflicts()
+
+        logInfo(logPrefix +
+          log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
+          log"${MDC(DeltaLogKeys.DURATION,
+            clock.getTimeMillis() - commitAttemptStartTimeMillis)} ms since start")
+      }
+    updatedCurrentTransactionInfo
   }
 
   /** Returns the version that the first attempt will try to commit at. */

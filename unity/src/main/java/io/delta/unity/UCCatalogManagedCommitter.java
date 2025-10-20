@@ -18,24 +18,29 @@ package io.delta.unity;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static io.delta.unity.UCCatalogManagedClient.UC_TABLE_ID_KEY;
 import static io.delta.unity.utils.OperationTimer.timeCheckedOperation;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.commit.CommitFailedException;
-import io.delta.kernel.commit.CommitMetadata;
-import io.delta.kernel.commit.CommitResponse;
-import io.delta.kernel.commit.Committer;
+import io.delta.kernel.commit.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
-import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.unity.adapters.MetadataAdapter;
+import io.delta.unity.adapters.ProtocolAdapter;
 import java.io.IOException;
-import java.nio.file.FileAlreadyExistsException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -45,12 +50,12 @@ import org.slf4j.LoggerFactory;
  * An implementation of {@link Committer} that handles commits to Delta tables managed by Unity
  * Catalog. That is, these Delta tables must have the catalogManaged table feature supported.
  */
-public class UCCatalogManagedCommitter implements Committer {
+public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
-  private final UCClient ucClient;
-  private final String ucTableId;
-  private final Path tablePath;
+  protected final UCClient ucClient;
+  protected final String ucTableId;
+  protected final Path tablePath;
 
   /**
    * Creates a new UCCatalogManagedCommitter for the specified Unity Catalog-managed Delta table.
@@ -64,6 +69,10 @@ public class UCCatalogManagedCommitter implements Committer {
     this.ucTableId = requireNonNull(ucTableId, "ucTableId is null");
     this.tablePath = new Path(requireNonNull(tablePath, "tablePath is null"));
   }
+
+  /////////////////
+  // Public APIs //
+  /////////////////
 
   @Override
   public CommitResponse commit(
@@ -86,6 +95,47 @@ public class UCCatalogManagedCommitter implements Committer {
     throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
   }
 
+  @Override
+  public void publish(Engine engine, PublishMetadata publishMetadata)
+      throws PublishFailedException {
+    requireNonNull(engine, "engine is null");
+    requireNonNull(publishMetadata, "publishMetadata is null");
+
+    final List<ParsedCatalogCommitData> catalogCommits =
+        publishMetadata.getAscendingCatalogCommits();
+
+    if (catalogCommits.isEmpty()) {
+      return;
+    }
+
+    final String logPath = publishMetadata.getLogPath();
+    final long snapshotVersion = publishMetadata.getSnapshotVersion();
+
+    logger.info(
+        "[{}] Publishing {} catalog commits up to version {}",
+        ucTableId,
+        catalogCommits.size(),
+        snapshotVersion);
+
+    for (ParsedCatalogCommitData catalogCommit : catalogCommits) {
+      publishSingleCommit(engine, catalogCommit, logPath);
+    }
+
+    logger.info(
+        "[{}] Successfully published all catalog commits up to version {}",
+        snapshotVersion,
+        ucTableId);
+  }
+
+  @Override
+  public Map<String, String> getRequiredTableProperties() {
+    return Collections.singletonMap(UC_TABLE_ID_KEY, ucTableId);
+  }
+
+  ///////////////////////////
+  // Commit helper methods //
+  ///////////////////////////
+
   /**
    * Handles CATALOG_CREATE by writing the published delta file for version 0.
    *
@@ -96,10 +146,16 @@ public class UCCatalogManagedCommitter implements Committer {
   private CommitResponse createImpl(
       Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
       throws CommitFailedException {
-    final FileStatus kernelPublishedDeltaFileStatus =
-        writePublishedDeltaFileForVersion0(engine, finalizedActions, commitMetadata);
+    checkArgument(
+        commitMetadata.getVersion() == 0,
+        "Expected version 0, but got %s",
+        commitMetadata.getVersion());
 
-    return new CommitResponse(ParsedLogData.forFileStatus(kernelPublishedDeltaFileStatus));
+    final FileStatus kernelPublishedDeltaFileStatus =
+        writeDeltaFile(engine, finalizedActions, commitMetadata.getPublishedDeltaFilePath());
+
+    return new CommitResponse(
+        ParsedPublishedDeltaData.forFileStatus(kernelPublishedDeltaFileStatus));
   }
 
   /**
@@ -109,21 +165,69 @@ public class UCCatalogManagedCommitter implements Committer {
   private CommitResponse writeImpl(
       Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
       throws CommitFailedException {
-    if (commitMetadata.getNewProtocolOpt().isPresent()) {
-      // TODO: support this
-      throw new UnsupportedOperationException("Protocol change is not yet implemented");
-    }
-    if (commitMetadata.getNewMetadataOpt().isPresent()) {
-      // TODO: support this
-      throw new UnsupportedOperationException("Metadata change is not yet implemented");
-    }
+    checkArgument(
+        commitMetadata.getVersion() > 0, "Can only write staged commit files for versions > 0");
 
     final FileStatus kernelStagedCommitFileStatus =
-        writeStagedCommitFile(engine, finalizedActions, commitMetadata);
+        writeDeltaFile(engine, finalizedActions, commitMetadata.generateNewStagedCommitFilePath());
 
     commitToUC(commitMetadata, kernelStagedCommitFileStatus);
 
-    return new CommitResponse(ParsedLogData.forFileStatus(kernelStagedCommitFileStatus));
+    return new CommitResponse(ParsedCatalogCommitData.forFileStatus(kernelStagedCommitFileStatus));
+  }
+
+  ////////////////////////////
+  // Publish helper methods //
+  ////////////////////////////
+
+  private void publishSingleCommit(
+      Engine engine, ParsedCatalogCommitData catalogCommit, String logPath)
+      throws PublishFailedException {
+    final long commitVersion = catalogCommit.getVersion();
+
+    if (catalogCommit.isInline()) {
+      throw new UnsupportedOperationException(
+          "Publishing inline catalog commits is not yet supported");
+    }
+
+    final String sourcePath = catalogCommit.getFileStatus().getPath();
+    final String targetPath = FileNames.deltaFile(logPath, commitVersion);
+
+    try {
+      logger.info("[{}] Publishing catalog commit: {} -> {}", ucTableId, sourcePath, targetPath);
+
+      // Copy the staged commit file to the published delta file location. We use overwrite=false to
+      // ensure PUT-if-absent semantics, since UC catalogManaged tables expect immutability of
+      // published delta files (e.g. never want the e-tag to change).
+      engine
+          .getFileSystemClient()
+          .copyFileAtomically(sourcePath, targetPath, false /* overwrite */);
+
+      logger.info("[{}] Successfully published version {}", ucTableId, commitVersion);
+    } catch (java.nio.file.FileAlreadyExistsException e) {
+      // File already exists - this is okay, it means this version was already published
+      logger.info("[{}] Version {} already published", ucTableId, commitVersion);
+    } catch (Exception ex) {
+      throw new PublishFailedException(
+          String.format(
+              "Failed to publish version %d from %s to %s: %s",
+              commitVersion, sourcePath, targetPath, ex.getMessage()),
+          ex);
+    }
+  }
+
+  /////////////////////////////////////////
+  // Protected Methods for Extensibility //
+  /////////////////////////////////////////
+
+  /**
+   * Generates the metadata payload for UC commit operations.
+   *
+   * <p>This method allows subclasses to customize or enhance metadata before sending to Unity
+   * Catalog.
+   */
+  protected Optional<Metadata> generateMetadataPayloadOpt(CommitMetadata commitMetadata) {
+    return commitMetadata.getNewMetadataOpt();
   }
 
   ////////////////////
@@ -144,78 +248,43 @@ public class UCCatalogManagedCommitter implements Committer {
         providedDeltaLogPathNormalized);
   }
 
-  private FileStatus writeStagedCommitFile(
-      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
-      throws CommitFailedException {
-    checkArgument(
-        commitMetadata.getVersion() > 0, "Can only write staged commit files for versions > 0");
-    try {
-      // Do not use Put-If-Absent for staged commit files since we assume that UUID-based
-      // commit files are globally unique, and so we will never have concurrent writers
-      // attempting to write the same commit file.
-      return writeDeltaFile(
-          engine,
-          finalizedActions,
-          commitMetadata.generateNewStagedCommitFilePath(),
-          true /* overwrite */);
-    } catch (IOException ex) {
-      throw new CommitFailedException(
-          true /* retryable */,
-          false /* conflict */,
-          "Failed to write staged commit file due to: " + ex.getMessage(),
-          ex);
-    }
-  }
-
-  private FileStatus writePublishedDeltaFileForVersion0(
-      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
-      throws CommitFailedException {
-    checkArgument(
-        commitMetadata.getVersion() == 0,
-        "Expected version 0, but got %s",
-        commitMetadata.getVersion());
-    try {
-      return writeDeltaFile(
-          engine,
-          finalizedActions,
-          commitMetadata.getPublishedDeltaFilePath(),
-          false /* overwrite */);
-    } catch (FileAlreadyExistsException ex) {
-      logger.warn(
-          "[{}] File already exists for version 0, treating as successful commit: {}",
-          ucTableId,
-          commitMetadata.getPublishedDeltaFilePath());
-      // This can happen if a previous commit attempt from this writer succeeded in writing 00.json,
-      // but the client was not successfully notified of that write (e.g. due to network
-      // issues).
-      //
-      // Since we know we are conflicting with our previous write, we can safely return a successful
-      // response.
-      return FileStatus.of(commitMetadata.getPublishedDeltaFilePath());
-    } catch (IOException ex) {
-      throw new CommitFailedException(
-          true /* retryable */,
-          false /* conflict */,
-          "Failed to write published delta file due to: " + ex.getMessage(),
-          ex);
-    }
-  }
-
+  /**
+   * Writes either a published delta file (for CREATE) or a staged commit file (for WRITE).
+   *
+   * <p>For both cases, writes using {@code overwrite=true} since:
+   *
+   * <ul>
+   *   <li>For CREATE, we can assume we are the only writer writing to the staging location
+   *   <li>For WRITE, we are writing to a UUID commit file
+   * </ul>
+   */
   private FileStatus writeDeltaFile(
-      Engine engine, CloseableIterator<Row> finalizedActions, String filePath, boolean overwrite)
-      throws IOException {
-    return timeCheckedOperation(
-        logger,
-        "Write file: " + filePath,
-        ucTableId,
-        () -> {
-          // Note: the engine is responsible for closing the actions iterator once it has been
-          //       fully consumed.
-          engine.getJsonHandler().writeJsonFileAtomically(filePath, finalizedActions, overwrite);
+      Engine engine, CloseableIterator<Row> finalizedActions, String filePath)
+      throws CommitFailedException {
+    try {
+      return timeCheckedOperation(
+          logger,
+          "Write file: " + filePath,
+          ucTableId,
+          () -> {
+            // Note: the engine is responsible for closing the actions iterator once it has been
+            //       fully consumed.
+            engine
+                .getJsonHandler()
+                .writeJsonFileAtomically(filePath, finalizedActions, true /* overwrite */);
 
-          // TODO: [delta-io/delta#5021] Use FileSystemClient::getFileStatus API instead
-          return FileStatus.of(filePath);
-        });
+            return engine.getFileSystemClient().getFileStatus(filePath);
+          });
+    } catch (IOException ex) {
+      // Note that as per the JsonHandler::writeJsonFileAtomically API contract with overwrite=true,
+      // FileAlreadyExistsException should not be possible here.
+
+      throw new CommitFailedException(
+          true /* retryable */,
+          false /* conflict */,
+          "Failed to write delta file due to: " + ex.getMessage(),
+          ex);
+    }
   }
 
   private void commitToUC(CommitMetadata commitMetadata, FileStatus kernelStagedCommitFileStatus)
@@ -236,10 +305,10 @@ public class UCCatalogManagedCommitter implements Committer {
                 ucTableId,
                 tablePath.toUri(),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
-                Optional.empty() /* lastKnownBackfilledVersion */, // TODO: take this in as a hint
+                commitMetadata.getMaxKnownPublishedDeltaVersion(),
                 false /* isDisown */,
-                Optional.empty() /* newMetadata */, // TODO: support sending newMetadata
-                Optional.empty()); /* newProtocol */ // TODO: support sending newProtocol
+                generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
+                commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new));
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);

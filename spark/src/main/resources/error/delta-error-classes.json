@@ -2145,6 +2145,12 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED" : {
+    "message" : [
+      "Path-based access is not allowed for Catalog-Managed table: <path>. Please access the table via its name and retry."
+    ],
+    "sqlState" : "KD00G"
+  },
   "DELTA_PATH_DOES_NOT_EXIST" : {
     "message" : [
       "<path> doesn't exist, or is not a Delta table."

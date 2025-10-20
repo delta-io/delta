@@ -18,34 +18,58 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table}
+import io.delta.kernel.{Operation, Table, TableManager}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode
+import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types.{ByteType, DataType, DateType, FieldMetadata, IntegerType, LongType, ShortType, StructField, StructType, TimestampNTZType, TypeChange, VariantType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.assertj.core.api.Assertions.assertThat
 import org.scalatest.funsuite.AnyFunSuite
 
-class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
-    with ColumnMappingSuiteBase {
+class IcebergWriterCompatV1TransactionBuilderV1Suite extends IcebergWriterCompatV1SuiteBase
+    with WriteUtils {}
 
-  private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
-    TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
+class IcebergWriterCompatV1TransactionBuilderV2Suite extends IcebergWriterCompatV1SuiteBase
+    with WriteUtilsWithV2Builders {}
 
-  private val tblPropertiesIcebergCompatV2Enabled = Map(
-    TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
+class CatalogManagedWithIcebergWriterCompatV1Suite
+    extends AnyFunSuite
+    with WriteUtilsWithV2Builders
+    with IcebergWriterCompatV1TestUtils {
 
-  private val tblPropertiesColumnMappingModeId = Map(
-    TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
+  test("can create a catalogManaged table with icebergWriterCompatV1") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      val createTxn = TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withCommitter(committerUsingPutIfAbsent)
+        .withTableProperties(
+          Map(
+            "delta.feature.catalogOwned-preview" -> "supported",
+            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true").asJava)
+        .build(engine)
 
+      // ===== WHEN =====
+      createTxn.commit(engine, emptyIterable[Row])
+
+      // ===== THEN =====
+      verifyIcebergWriterCompatV1Enabled(tablePath, engine)
+      val protocol = getProtocol(engine, tablePath)
+      assert(protocol.supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW))
+    }
+  }
+
+}
+
+trait IcebergWriterCompatV1TestUtils { self: AbstractWriteUtils =>
   def verifyIcebergWriterCompatV1Enabled(tablePath: String, engine: Engine): Unit = {
     val protocol = getProtocol(engine, tablePath)
     val metadata = getMetadata(engine, tablePath)
@@ -60,6 +84,23 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
     assert(TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata))
     assert(TableConfig.COLUMN_MAPPING_MODE.fromMetadata(metadata) == ColumnMappingMode.ID)
   }
+}
+
+trait IcebergWriterCompatV1SuiteBase
+    extends AnyFunSuite
+    with AbstractWriteUtils
+    with TestFixtures
+    with IcebergWriterCompatV1TestUtils
+    with ColumnMappingSuiteBase {
+
+  private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
+    TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
+
+  private val tblPropertiesIcebergCompatV2Enabled = Map(
+    TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
+
+  private val tblPropertiesColumnMappingModeId = Map(
+    TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
 
   Seq(
     (Map(), "no other properties"),
@@ -243,10 +284,12 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
                 .build())
         }
         val e = intercept[KernelException] {
-          updateTableMetadata(
+          appendData(
             engine,
             tablePath,
+            isNewTable = isNewTable,
             schema = schemaToCommit,
+            data = Seq.empty,
             tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
         }
         val expectedInvalidColumnId = if (isNewTable) 1 else 2
@@ -472,7 +515,7 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
       .add("c2", VariantType.VARIANT),
     testOnExistingTable = false, // we don't currently support schema updates
     // We throw an error earlier for variant for some reason
-    expectedErrorMessage = "Kernel doesn't support writing data of type: variant")
+    expectedErrorMessage = "icebergCompatV2 does not support the data types: [variant]")
 
   testIncompatibleTableFeature(
     "rowTracking",
@@ -493,7 +536,9 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
 
   testIncompatibleUnsupportedTableFeature(
     "variantType inactive",
-    tablePropertiesToEnable = Map("delta.feature.variantType" -> "supported"))
+    tablePropertiesToEnable = Map("delta.feature.variantType" -> "supported"),
+    expectedErrorMessage = "Table features [variantType] are " +
+      "incompatible with icebergWriterCompatV1")
 
   // deletionVectors is blocked by both icebergCompatV2 and icebergWriterCompatV1; since the
   // icebergCompatV2 checks are executed first as part of ICEBERG_COMPAT_V2_ENABLED.postProcess we
@@ -503,12 +548,6 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
     tablePropertiesToEnable = Map("delta.feature.deletionVectors" -> "supported"),
     expectedErrorMessage =
       "Table features [deletionVectors] are incompatible with icebergCompatV2")
-
-  testIncompatibleTableFeature(
-    "rowTracking inactive",
-    tablePropertiesToEnable = Map("delta.feature.rowTracking" -> "supported"),
-    expectedErrorMessage =
-      "Table features [rowTracking] are incompatible with icebergWriterCompatV1")
 
   // defaultColumns is not added to Kernel yet --> throws an error on feature lookup
   testIncompatibleUnsupportedTableFeature(
@@ -533,7 +572,8 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
         "identityColumns",
         "generatedColumns",
         "typeWidening",
-        "typeWidening-preview")
+        "typeWidening-preview",
+        "rowTracking")
         .map(tableFeature => s"delta.feature.$tableFeature" -> "supported")
         .toMap
 
@@ -700,7 +740,7 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
   // We cannot test enabling icebergCompatV1 since it is not a table feature in Kernel; This is
   // tested in the unit tests in IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
-  (SIMPLE_TYPES ++ COMPLEX_TYPES)
+  (PRIMITIVE_TYPES ++ NESTED_TYPES)
     // filter out the types unsupported by icebergWriterCompatV1
     .filter(dataType => dataType != ByteType.BYTE && dataType != ShortType.SHORT)
     .foreach { dataType: DataType =>

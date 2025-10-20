@@ -57,7 +57,8 @@ trait DeleteCDCMixin extends DeleteSQLMixin with CDCEnabled {
 
 }
 
-trait DeleteCDCTests extends DeleteCDCMixin {
+trait DeleteCDCTests extends DeleteCDCMixin
+  with CDCTestMixin {
   import testImplicits._
 
   testCDCDelete("unconditional")(

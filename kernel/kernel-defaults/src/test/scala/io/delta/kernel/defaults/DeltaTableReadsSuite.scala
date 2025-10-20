@@ -270,11 +270,8 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     expectTableNotFoundException { () =>
       tableManager.getSnapshotAtVersion(defaultEngine, invalidPath, 1)
     }
-
-    if (tableManager.supportsTimestampResolution) {
-      expectTableNotFoundException { () =>
-        tableManager.getSnapshotAtTimestamp(defaultEngine, invalidPath, 1)
-      }
+    expectTableNotFoundException { () =>
+      tableManager.getSnapshotAtTimestamp(defaultEngine, invalidPath, 1)
     }
   }
 
@@ -999,8 +996,6 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("getSnapshotAtTimestamp: basic end-to-end read") {
-    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
-
     withTempDir { tempDir =>
       val start = 1540415658000L
       val minuteInMilliseconds = 60000L
@@ -1057,8 +1052,6 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("getSnapshotAtTimestamp: empty _delta_log folder") {
-    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
-
     withTempDir { dir =>
       new File(dir, "_delta_log").mkdirs()
       intercept[TableNotFoundException] {
@@ -1069,8 +1062,6 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("getSnapshotAtTimestamp: empty folder no _delta_log dir") {
-    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
-
     withTempDir { dir =>
       intercept[TableNotFoundException] {
         getTableManagerAdapter
@@ -1080,8 +1071,6 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("getSnapshotAtTimestamp: non-empty folder not a delta table") {
-    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
-
     withTempDir { dir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(dir.getCanonicalPath)
       intercept[TableNotFoundException] {

@@ -371,7 +371,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
    * Helper method to get all of the [[AddCDCFile]]s that exist in the delta table
    */
   protected def getCDCFiles(deltaLog: DeltaLog): Seq[AddCDCFile] = {
-    val changes = deltaLog.getChanges(startVersion = 0, failOnDataLoss = true)
+    val changes = deltaLog.getChanges(
+      startVersion = 0, catalogTableOpt = None, failOnDataLoss = true)
     changes.flatMap(_._2).collect { case a: AddCDCFile => a }.toList
   }
 
@@ -1375,11 +1376,10 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
             .format("delta")
             .option("delta.deletedFileRetentionDuration", s"interval $retentionHours hours")
             .save(dir.getAbsolutePath)
-          val table = DeltaTableV2(spark, dir, clock)
           // The following is done to ensure deltaLog object uses the same clock that Vacuum
           // logic uses.
           DeltaLog.clearCache()
-          DeltaLog.forTable(spark, dir, clock)
+          val table = DeltaTableV2(spark, dir, clock)
 
           setCommitClock(table, 0L, clock)
           val expectedReturn = if (isDryRun) {

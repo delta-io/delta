@@ -19,17 +19,43 @@ package io.delta.unity
 import java.net.URI
 import java.util.Optional
 
-import io.delta.kernel.defaults.utils.TestUtils
+import scala.collection.JavaConverters._
+
+import io.delta.kernel.commit.PublishMetadata
+import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.test.ActionUtils
+import io.delta.kernel.utils.CloseableIterator
 import io.delta.storage.commit.Commit
 
 import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
 
-trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils {
+trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUtils {
   val fakeURI = new URI("s3://bucket/table")
   val baseTestTablePath = "/path/to/table"
   val baseTestLogPath = "/path/to/table/_delta_log"
+  val emptyLongOpt = Optional.empty[java.lang.Long]()
+
+  /** Helper method with reasonable defaults */
+  def loadSnapshot(
+      ucCatalogManagedClient: UCCatalogManagedClient,
+      engine: Engine = defaultEngine,
+      ucTableId: String = "ucTableId",
+      tablePath: String = "tablePath",
+      versionToLoad: Optional[java.lang.Long] = emptyLongOpt,
+      timestampToLoad: Optional[java.lang.Long] = emptyLongOpt): SnapshotImpl = {
+    ucCatalogManagedClient.loadSnapshot(
+      engine,
+      ucTableId,
+      tablePath,
+      versionToLoad,
+      timestampToLoad).asInstanceOf[SnapshotImpl]
+  }
 
   def hadoopCommitFileStatus(version: Long): HadoopFileStatus = {
     val filePath = FileNames.stagedCommitFile(baseTestLogPath, version)
@@ -56,5 +82,21 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils {
       client.commitWithDefaults(tableId, fakeURI, Optional.of(createCommit(v)))
     }
     client
+  }
+
+  def createPublishMetadata(
+      snapshotVersion: Long,
+      logPath: String,
+      catalogCommits: List[ParsedCatalogCommitData]): PublishMetadata = {
+    new PublishMetadata(snapshotVersion, logPath, catalogCommits.asJava)
+  }
+
+  def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
+    import io.delta.kernel.defaults.integration.DataBuilderUtils
+    import io.delta.kernel.types.{StringType, StructField, StructType}
+
+    val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
+    val simpleRow = DataBuilderUtils.row(schema, elem)
+    singletonCloseableIterator(simpleRow)
   }
 }

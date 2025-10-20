@@ -20,16 +20,21 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.{WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.util.{ColumnMapping, VectorUtils}
 import io.delta.kernel.types.{DataType, DateType, FieldMetadata, IntegerType, LongType, StructField, StructType, TimestampNTZType, TypeChange, VariantType}
 
-/** This suite tests reading or writing into Delta table that have `icebergCompatV3` enabled. */
-class DeltaIcebergCompatV3Suite extends DeltaIcebergCompatBaseSuite {
+class DeltaIcebergCompatV3TransactionBuilderV1Suite extends DeltaIcebergCompatV3SuiteBase
+    with WriteUtils {}
 
-  import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase._
+class DeltaIcebergCompatV3TransactionBuilderV2Suite extends DeltaIcebergCompatV3SuiteBase
+    with WriteUtilsWithV2Builders {}
+
+/** This suite tests reading or writing into Delta table that have `icebergCompatV3` enabled. */
+trait DeltaIcebergCompatV3SuiteBase extends DeltaIcebergCompatBaseSuite {
 
   override def icebergCompatVersion: String = "icebergCompatV3"
 
@@ -42,9 +47,9 @@ class DeltaIcebergCompatV3Suite extends DeltaIcebergCompatBaseSuite {
 
   override def supportedDataColumnTypes: Seq[DataType] =
     // TODO add VARIANT_TYPE once it is supported
-    (Seq.empty ++ SIMPLE_TYPES ++ COMPLEX_TYPES) // ++ Seq(VariantType.VARIANT))
+    (PRIMITIVE_TYPES.toList ++ NESTED_TYPES.toList) // ++ Seq(VariantType.VARIANT))
 
-  override def supportedPartitionColumnTypes: Seq[DataType] = Seq.empty ++ SIMPLE_TYPES
+  override def supportedPartitionColumnTypes: Seq[DataType] = PRIMITIVE_TYPES.toList
 
   test(s"enable $icebergCompatVersion on a new table - verify row tracking is enabled") {
     withTempDirAndEngine { (tablePath, engine) =>

@@ -29,6 +29,7 @@ import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -472,6 +473,46 @@ public final class DeltaErrors {
   public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
     return new KernelException(
         String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
+  }
+
+  public static InvalidTableException tableWithIctMissingCommitInfo(String dataPath, long version) {
+    return new InvalidTableException(
+        dataPath,
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "the CommitInfo action in every commit. However, the CommitInfo action is "
+                + "missing from commit version %d.",
+            version));
+  }
+
+  public static InvalidTableException tableWithIctMissingIct(String dataPath, long version) {
+    return new InvalidTableException(
+        dataPath,
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "inCommitTimestamp in the CommitInfo action. However, this field has not been "
+                + "set in commit version %d.",
+            version));
+  }
+
+  public static KernelException metadataMissingRequiredCatalogTableProperty(
+      String committerClassName,
+      Map<String, String> missingOrViolatingProperties,
+      Map<String, String> requiredCatalogTableProperties) {
+    final String details =
+        missingOrViolatingProperties.entrySet().stream()
+            .map(
+                entry ->
+                    String.format(
+                        "%s (current: '%s', required: '%s')",
+                        entry.getKey(),
+                        entry.getValue(),
+                        requiredCatalogTableProperties.get(entry.getKey())))
+            .collect(Collectors.joining(", "));
+    return new KernelException(
+        String.format(
+            "[%s] Metadata is missing or has incorrect values for required catalog properties: %s.",
+            committerClassName, details));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */
