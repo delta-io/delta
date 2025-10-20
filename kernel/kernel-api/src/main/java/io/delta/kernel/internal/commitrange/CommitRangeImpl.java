@@ -17,23 +17,22 @@
 package io.delta.kernel.internal.commitrange;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.TableChangesUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -41,11 +40,6 @@ import java.util.stream.Collectors;
 
 /** Implementation of {@link CommitRange}. */
 public class CommitRangeImpl implements CommitRange {
-
-  // Column indices for version and timestamp in batches returned by
-  // DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation
-  private static final int VERSION_COLUMN_INDEX = 0;
-  private static final int TIMESTAMP_COLUMN_INDEX = 1;
 
   private final Path dataPath;
   private final Optional<CommitRangeBuilder.CommitBoundary> startBoundaryOpt;
@@ -106,16 +100,18 @@ public class CommitRangeImpl implements CommitRange {
   public CloseableIterator<ColumnarBatch> getActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     validateParameters(engine, startSnapshot, actionSet);
-    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
-        engine, dataPath.toString(), getDeltaFiles(), actionSet);
+    // Build on top of getCommits() by flattening and adding version/timestamp columns
+    CloseableIterator<CommitActions> commits = getCommits(engine, startSnapshot, actionSet);
+
+    return flattenCommitsAndAddMetadata(engine, commits);
   }
 
   @Override
-  public CloseableIterator<io.delta.kernel.CommitActions> getCommits(
+  public CloseableIterator<CommitActions> getCommits(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     validateParameters(engine, startSnapshot, actionSet);
-    return toCloseableIterator(getDeltaFiles().iterator())
-        .map(commitFile -> convertToCommitActions(engine, commitFile, actionSet));
+    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+        engine, dataPath.toString(), getDeltaFiles(), actionSet);
   }
 
   //////////////////////
@@ -132,38 +128,62 @@ public class CommitRangeImpl implements CommitRange {
         "startSnapshot must have version = startVersion");
   }
 
-  private io.delta.kernel.CommitActions convertToCommitActions(
-      Engine engine, FileStatus commitFile, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Get actions for this single commit file
-    // This returns batches with version and timestamp as the first two columns
-    CloseableIterator<ColumnarBatch> actionsWithMetadata =
-        DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
-            engine, dataPath.toString(), Collections.singletonList(commitFile), actionSet);
+  /** Flattens CommitActions iterator and adds version/timestamp columns to each batch. */
+  private CloseableIterator<ColumnarBatch> flattenCommitsAndAddMetadata(
+      Engine engine, CloseableIterator<CommitActions> commits) {
+    return new CloseableIterator<ColumnarBatch>() {
+      private CommitActions currentCommit = null;
+      private CloseableIterator<ColumnarBatch> currentBatches = null;
 
-    if (!actionsWithMetadata.hasNext()) {
-      return new CommitActionsImpl(
-          FileNames.deltaVersion(new Path(commitFile.getPath())),
-          commitFile.getModificationTime(),
-          actionsWithMetadata);
-    }
+      @Override
+      public boolean hasNext() {
+        while (true) {
+          if (currentBatches != null && currentBatches.hasNext()) {
+            return true;
+          }
 
-    // Peek at the first batch to extract version and timestamp, then rewind
-    ColumnarBatch firstBatch = actionsWithMetadata.next();
-    // Extract version and timestamp from first two columns
-    ColumnVector versionVector = firstBatch.getColumnVector(VERSION_COLUMN_INDEX);
-    ColumnVector timestampVector = firstBatch.getColumnVector(TIMESTAMP_COLUMN_INDEX);
-    long version = versionVector.getLong(0 /*RowId*/);
-    long timestamp = timestampVector.getLong(0 /*RowId*/);
+          if (currentBatches != null) {
+            Utils.closeCloseables(currentBatches);
+            currentBatches = null;
+          }
 
-    CloseableIterator<ColumnarBatch> actionsWithoutVersionAndTimestamp =
-        toCloseableIterator(Collections.singletonList(firstBatch).iterator())
-            .combine(actionsWithMetadata)
-            .map(
-                batch ->
-                    batch
-                        .withDeletedColumnAt(TIMESTAMP_COLUMN_INDEX)
-                        .withDeletedColumnAt(VERSION_COLUMN_INDEX));
+          // Close previous CommitActions if it exists
+          if (currentCommit != null && currentCommit instanceof AutoCloseable) {
+            Utils.closeCloseables((AutoCloseable) currentCommit);
+          }
 
-    return new CommitActionsImpl(version, timestamp, actionsWithoutVersionAndTimestamp);
+          if (!commits.hasNext()) {
+            return false;
+          }
+
+          currentCommit = commits.next();
+          currentBatches = currentCommit.getActions();
+        }
+      }
+
+      @Override
+      public ColumnarBatch next() {
+        if (!hasNext()) {
+          throw new java.util.NoSuchElementException();
+        }
+
+        ColumnarBatch batch = currentBatches.next();
+        long version = currentCommit.getVersion();
+        long timestamp = currentCommit.getTimestamp();
+
+        // Add version and timestamp as first two columns
+        return TableChangesUtils.addVersionAndTimestampColumns(engine, batch, version, timestamp);
+      }
+
+      @Override
+      public void close() {
+        // Close current batches, current commit, and commits iterator
+        if (currentCommit != null && currentCommit instanceof AutoCloseable) {
+          Utils.closeCloseables(currentBatches, (AutoCloseable) currentCommit, commits);
+        } else {
+          Utils.closeCloseables(currentBatches, commits);
+        }
+      }
+    };
   }
 }

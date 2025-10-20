@@ -23,12 +23,13 @@ import io.delta.kernel.utils.CloseableIterator;
 /**
  * Represents all actions from a single commit version in a table.
  *
- * <p>The actions iterator must be closed after use to release any underlying resources.
+ * <p><b>Important:</b> Each iterator returned by {@link #getActions()} must be closed after use to
+ * release underlying resources.
  *
  * @since 4.1.0
  */
 @Evolving
-public interface CommitActions extends AutoCloseable {
+public interface CommitActions {
 
   /**
    * Returns the commit version number.
@@ -51,15 +52,14 @@ public interface CommitActions extends AutoCloseable {
    *
    * <p>Note: All rows within all batches have the same version (returned by {@link #getVersion()}).
    *
+   * <p>This method can be called multiple times, and each call returns a new iterator over the same
+   * set of batches. This supports use cases like two-pass processing (e.g., validation pass
+   * followed by processing pass).
+   *
+   * <p><b>Callers are responsible for closing each iterator returned by this method.</b> Each
+   * iterator must be closed after use to release underlying resources.
+   *
    * @return a {@link CloseableIterator} over columnar batches containing this commit's actions
    */
   CloseableIterator<ColumnarBatch> getActions();
-
-  /**
-   * Closes this CommitActions and releases any underlying resources.
-   *
-   * <p>This will also close the actions iterator if it hasn't been fully consumed.
-   */
-  @Override
-  void close() throws Exception;
 }

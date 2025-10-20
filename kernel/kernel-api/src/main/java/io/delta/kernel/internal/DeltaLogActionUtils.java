@@ -18,20 +18,16 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.CommitActions;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
-import io.delta.kernel.expressions.ExpressionEvaluator;
-import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
-import io.delta.kernel.internal.replay.ActionsIterator;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
@@ -137,60 +133,6 @@ public class DeltaLogActionUtils {
     verifyDeltaVersions(commitFiles, startVersion, endVersionOpt, tablePath);
 
     return commitFiles;
-  }
-
-  /**
-   * Read the given commitFiles and return the contents as an iterator of batches. Also adds two
-   * columns "version" and "timestamp" that store the commit version and timestamp for the commit
-   * file that the batch was read from. The "version" and "timestamp" columns are the first and
-   * second columns in the returned schema respectively and both of {@link LongType}
-   *
-   * @param commitFiles list of delta commit files to read
-   * @param readSchema JSON schema to read
-   * @return an iterator over the contents of the files in the same order as the provided files
-   */
-  public static CloseableIterator<ColumnarBatch> readCommitFiles(
-      Engine engine, List<FileStatus> commitFiles, StructType readSchema) {
-    return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty())
-        .map(
-            actionWrapper -> {
-              long timestamp =
-                  actionWrapper
-                      .getTimestamp()
-                      .orElseThrow(
-                          () ->
-                              new RuntimeException("Commit files should always have a timestamp"));
-              ExpressionEvaluator commitVersionGenerator =
-                  wrapEngineException(
-                      () ->
-                          engine
-                              .getExpressionHandler()
-                              .getEvaluator(
-                                  readSchema,
-                                  Literal.ofLong(actionWrapper.getVersion()),
-                                  LongType.LONG),
-                      "Get the expression evaluator for the commit version");
-              ExpressionEvaluator commitTimestampGenerator =
-                  wrapEngineException(
-                      () ->
-                          engine
-                              .getExpressionHandler()
-                              .getEvaluator(readSchema, Literal.ofLong(timestamp), LongType.LONG),
-                      "Get the expression evaluator for the commit timestamp");
-              ColumnVector commitVersionVector =
-                  wrapEngineException(
-                      () -> commitVersionGenerator.eval(actionWrapper.getColumnarBatch()),
-                      "Evaluating the commit version expression");
-              ColumnVector commitTimestampVector =
-                  wrapEngineException(
-                      () -> commitTimestampGenerator.eval(actionWrapper.getColumnarBatch()),
-                      "Evaluating the commit timestamp expression");
-
-              return actionWrapper
-                  .getColumnarBatch()
-                  .withNewColumn(0, COMMIT_VERSION_STRUCT_FIELD, commitVersionVector)
-                  .withNewColumn(1, COMMIT_TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
-            });
   }
 
   /**
@@ -344,7 +286,7 @@ public class DeltaLogActionUtils {
    *   <li>It is possible for a row to be all null
    * </ul>
    */
-  public static CloseableIterator<ColumnarBatch> getActionsFromCommitFilesWithProtocolValidation(
+  public static CloseableIterator<CommitActions> getActionsFromCommitFilesWithProtocolValidation(
       Engine engine,
       String tablePath,
       List<FileStatus> commitFiles,
@@ -371,27 +313,17 @@ public class DeltaLogActionUtils {
                 .collect(Collectors.toList()));
     logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
 
-    return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema)
+    // For each commit file, create a CommitActions
+    return toCloseableIterator(commitFiles.iterator())
         .map(
-            batch -> {
-              int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
-              ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-              for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
-                if (!protocolVector.isNullAt(rowId)) {
-                  Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                  TableFeatures.validateKernelCanReadTheTable(protocol, tablePath);
-                }
-              }
-              ColumnarBatch batchToReturn = batch;
-              if (shouldDropProtocolColumn) {
-                batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
-              }
-              int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
-              if (shouldDropCommitInfoColumn) {
-                batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
-              }
-              return batchToReturn;
-            });
+            commitFile ->
+                new CommitActionsImpl(
+                    engine,
+                    commitFile,
+                    readSchema,
+                    tablePath,
+                    shouldDropProtocolColumn,
+                    shouldDropCommitInfoColumn));
   }
 
   //////////////////////

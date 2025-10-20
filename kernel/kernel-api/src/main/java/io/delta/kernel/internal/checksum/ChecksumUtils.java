@@ -23,13 +23,15 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.ActionWrapper;
+import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
@@ -262,9 +264,10 @@ public class ChecksumUtils {
     validateDeltaContinuity(deltaFiles, lastSeenCrcInfo.getVersion());
     Collections.reverse(deltaFiles);
     // Create iterator for delta files newer than last CRC
+    StructType readSchema = CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA);
     try (CloseableIterator<ColumnarBatch> iterator =
-        DeltaLogActionUtils.readCommitFiles(
-            engine, deltaFiles, CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA))) {
+        new ActionsIterator(engine, deltaFiles, readSchema, java.util.Optional.empty())
+            .map(ActionWrapper::getColumnarBatch)) {
       Optional<Long> lastSeenVersion = Optional.empty();
 
       while (iterator.hasNext()) {
