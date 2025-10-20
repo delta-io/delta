@@ -41,6 +41,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -393,26 +394,18 @@ public class UCCatalogManagedClient {
       Optional<Long> startVersion,
       Optional<Long> endVersion,
       long maxRatifiedVersion) {
-    startVersion.ifPresent(
-        v -> {
-          if (v > maxRatifiedVersion) {
+    BiConsumer<Long, String> validateVersion =
+        (version, type) -> {
+          if (version > maxRatifiedVersion) {
             throw new IllegalArgumentException(
                 String.format(
-                    "[%s] Cannot load commit range with start version %s as the latest version "
-                        + "ratified by UC is %s",
-                    ucTableId, v, maxRatifiedVersion));
+                    "[%s] Cannot load commit range with %s version %d as the latest version "
+                        + "ratified by UC is %d",
+                    ucTableId, type, version, maxRatifiedVersion));
           }
-        });
-    endVersion.ifPresent(
-        v -> {
-          if (v > maxRatifiedVersion) {
-            throw new IllegalArgumentException(
-                String.format(
-                    "[%s] Cannot load commit range with end version %s as the latest version "
-                        + "ratified by UC is %s",
-                    ucTableId, v, maxRatifiedVersion));
-          }
-        });
+        };
+    startVersion.ifPresent(v -> validateVersion.accept(v, "start"));
+    endVersion.ifPresent(v -> validateVersion.accept(v, "end"));
   }
 
   private Map<String, String> getRequiredTablePropertiesForCreate(String ucTableId) {

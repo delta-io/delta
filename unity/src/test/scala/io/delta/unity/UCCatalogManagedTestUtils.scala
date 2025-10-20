@@ -135,6 +135,19 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
     textFx(ucClient, tablePath, maxRatifiedVersion)
   }
 
+  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
+  /**
+   * When a new UC table is created, it will have Delta version 0 but the max ratified verison in
+   * UC is -1. This is a special edge case.
+   */
+  def createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne(
+      ucTableId: String = "ucTableId"): UCCatalogManagedClient = {
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val tableData = new TableData(-1, ArrayBuffer[Commit]())
+    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
+    new UCCatalogManagedClient(ucClient)
+  }
+
   /** Wrapper class around InMemoryUCClient that tracks number of getCommit calls made */
   class InMemoryUCClientWithMetrics(ucMetastoreId: String) extends InMemoryUCClient(ucMetastoreId) {
     private var numGetCommitsCalls: Long = 0
@@ -151,16 +164,4 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
     def getNumGetCommitCalls: Long = numGetCommitsCalls
   }
 
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-  /**
-   * When a new UC table is created, it will have Delta version 0 but the max ratified verison in
-   * UC is -1. This is a special edge case.
-   */
-  def createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne(
-      ucTableId: String = "ucTableId"): UCCatalogManagedClient = {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableData = new TableData(-1, ArrayBuffer[Commit]())
-    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
-    new UCCatalogManagedClient(ucClient)
-  }
 }
