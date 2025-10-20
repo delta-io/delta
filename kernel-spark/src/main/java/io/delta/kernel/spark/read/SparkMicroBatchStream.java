@@ -116,7 +116,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       long fromIndex,
       boolean isInitialSnapshot,
       Option<DeltaSource.AdmissionLimits> limits) {
-    // TODO(#5319): getFileChangesForCDC
+    // TODO(#5319): getFileChangesForCDC if CDC is enabled.
 
     CloseableIterator<IndexedFile> changes =
         getFileChanges(fromVersion, fromIndex, isInitialSnapshot, /*endOffset=*/ Option.empty());
