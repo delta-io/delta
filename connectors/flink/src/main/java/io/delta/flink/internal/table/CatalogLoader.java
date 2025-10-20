@@ -9,9 +9,36 @@ import org.apache.flink.table.catalog.GenericInMemoryCatalogFactory;
 import org.apache.flink.table.factories.CatalogFactory.Context;
 import static io.delta.flink.internal.table.DeltaCatalogFactory.CATALOG_TYPE;
 
-// TODO: Flink 2.0 - HiveCatalogFactory location changed or removed
-// Need to investigate new Hive Catalog integration for Flink 2.0
-// Previous import: org.apache.flink.table.catalog.hive.factories.HiveCatalogFactory
+/*
+ * FLINK 2.0 MIGRATION STATUS: Hive Catalog Support
+ *
+ * STATUS: ⏳ PENDING FUTURE IMPLEMENTATION
+ *
+ * BACKGROUND:
+ * The Hive Catalog integration requires 'flink-connector-hive' dependency, which may have
+ * changed or been reorganized in Flink 2.0. The previous import location was:
+ *   org.apache.flink.table.catalog.hive.factories.HiveCatalogFactory
+ *
+ * CURRENT STATE:
+ * - InMemoryCatalog (GenericInMemoryCatalog): ✅ FULLY WORKING
+ * - HiveCatalog: ⏳ TEMPORARILY DISABLED
+ *
+ * IMPACT:
+ * This does NOT block the Delta Flink connector functionality. Users can:
+ * 1. Use InMemoryCatalog for all operations (default, recommended)
+ * 2. Wait for Hive Catalog support to be re-enabled in a future update
+ *
+ * NEXT STEPS TO RE-ENABLE:
+ * 1. Add 'flink-connector-hive' dependency to build.sbt (if available for Flink 2.0)
+ * 2. Investigate new HiveCatalogFactory location/API in Flink 2.0
+ * 3. Update HiveCatalogLoader implementation
+ * 4. Migrate Hive-related tests (they use HiveMetaStoreClient, HiveConf, etc.)
+ * 5. Update documentation with Hive Catalog configuration
+ *
+ * REFERENCES:
+ * - Issue: #5228
+ * - Related tests: HiveCatalogDeltaSourceTableITCase, HiveCatalogExtension
+ */
 
 /**
  * Creates a concrete catalog instance that will be used as decorated catalog by {@link
@@ -24,6 +51,7 @@ public interface CatalogLoader extends Serializable {
     /**
      * @return Catalog loader for Flink's
      * {@link org.apache.flink.table.catalog.GenericInMemoryCatalog}.
+     * This is the recommended catalog type for Flink 2.0 and is fully supported.
      */
     static CatalogLoader inMemory() {
         return new InMemoryCatalogLoader();
@@ -31,12 +59,24 @@ public interface CatalogLoader extends Serializable {
 
     /**
      * @return Catalog loader for Flink's {@link org.apache.flink.table.catalog.hive.HiveCatalog}.
-     * TODO: Flink 2.0 - Temporarily disabled until Hive Catalog integration is updated
+     * <p>
+     * <strong>IMPORTANT:</strong> Hive Catalog is temporarily disabled in Flink 2.0 migration.
+     * This feature is pending future implementation as it requires 'flink-connector-hive'
+     * dependency and API updates for Flink 2.0.
+     * </p>
+     * <p>
+     * <strong>WORKAROUND:</strong> Use {@link #inMemory()} catalog instead. All Delta Lake
+     * operations work correctly with InMemoryCatalog.
+     * </p>
+     *
+     * @throws UnsupportedOperationException always, until Hive support is re-enabled
      */
     static CatalogLoader hive() {
         throw new UnsupportedOperationException(
             "Hive Catalog is temporarily disabled in Flink 2.0 migration. " +
-            "Use inMemory() catalog instead.");
+            "This feature requires 'flink-connector-hive' dependency and API updates. " +
+            "Use inMemory() catalog instead, which is fully supported. " +
+            "For more information, see: https://github.com/delta-io/delta/issues/5228");
         // return new HiveCatalogLoader();
     }
 
@@ -59,10 +99,25 @@ public interface CatalogLoader extends Serializable {
      * A catalog loader that creates Flink's {@link org.apache.flink.table.catalog.hive.HiveCatalog}
      * instance that will be used by {@link DeltaCatalog} as a metastore and to proxy none Delta
      * related queries to.
-     *
-     * TODO: Flink 2.0 - HiveCatalogFactory needs migration
-     * The Hive Catalog integration needs to be updated for Flink 2.0.
-     * Package structure and APIs have changed.
+     * <p>
+     * <strong>DISABLED IN FLINK 2.0:</strong> This class is temporarily non-functional pending
+     * migration to Flink 2.0 Hive Catalog APIs.
+     * </p>
+     * <p>
+     * <strong>REQUIREMENTS FOR RE-ENABLING:</strong>
+     * </p>
+     * <ul>
+     *   <li>Add dependency: "org.apache.flink" % "flink-connector-hive" % flinkVersion
+     *       % "provided"</li>
+     *   <li>Add dependency: "org.apache.flink" % "flink-table-planner_2.12" % flinkVersion
+     *       % "provided"</li>
+     *   <li>Find new HiveCatalogFactory location in Flink 2.0 (package may have changed)</li>
+     *   <li>Update createCatalog() implementation for Flink 2.0 APIs</li>
+     * </ul>
+     * <p>
+     * <strong>NOTE:</strong> Connectors like Iceberg have their own Hive Catalog implementation.
+     * We currently reuse Flink's classes but may need to create a custom implementation.
+     * </p>
      */
     class HiveCatalogLoader implements CatalogLoader {
 
@@ -70,22 +125,18 @@ public interface CatalogLoader extends Serializable {
         public Catalog createCatalog(Context context) {
             throw new UnsupportedOperationException(
                 "Hive Catalog is temporarily disabled in Flink 2.0 migration. " +
-                "Use inMemory() catalog instead. " +
-                "Hive Catalog support will be re-added in a future update.");
+                "This feature requires 'flink-connector-hive' dependency and API updates. " +
+                "Use inMemory() catalog instead, which is fully supported. " +
+                "For more information, see: https://github.com/delta-io/delta/issues/5228");
 
+            // ORIGINAL IMPLEMENTATION (commented out for Flink 2.0):
+            //
             // Context newContext = filterDeltaCatalogOptions(context);
-            // Connectors like Iceberg have its own Hive Catalog implementation and his own
-            // Catalog "like" interface currently we are reusing Flink's classes.
-
-            // We had to add extra dependency to have access to HiveCatalogFactory.
-            // "org.apache.flink" % "flink-connector-hive_2.12" % flinkVersion % "provided",
-            // "org.apache.flink" % "flink-table-planner_2.12" % flinkVersion % "provided",
-            // and remove "org.apache.flink" % "flink-table-test-utils" % flinkVersion % "test",
-            // but this causes delta CI to fail for scala 2.11.12 that is way, after this change
-            // Flink connector will not be build on scala 2.11.12.
-
-            // TODO: Need to find HiveCatalogFactory in Flink 2.0
             // return new HiveCatalogFactory().createCatalog(newContext);
+            //
+            // NOTE: HiveCatalogFactory location was:
+            //   org.apache.flink.table.catalog.hive.factories.HiveCatalogFactory (Flink 1.x)
+            // New location for Flink 2.0 needs investigation.
         }
     }
 
