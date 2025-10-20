@@ -99,4 +99,22 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
     val simpleRow = DataBuilderUtils.row(schema, elem)
     singletonCloseableIterator(simpleRow)
   }
+
+  /** Creates a UCCatalogManagedClient with an InMemoryUCClient for testing */
+  def createUCClientAndCatalogManagedClient(
+      metastoreId: String = "ucMetastoreId"): (InMemoryUCClient, UCCatalogManagedClient) = {
+    val ucClient = new InMemoryUCClient(metastoreId)
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+    (ucClient, ucCatalogManagedClient)
+  }
+
+  /**
+   * Initializes a UC table in the InMemoryUCClient after creation.
+   * This should be called after creating a table with buildCreateTableTransaction.
+   */
+  def initializeUCTable(ucClient: InMemoryUCClient, ucTableId: String): Unit = {
+    val tableData =
+      new InMemoryUCClient.TableData(-1, scala.collection.mutable.ArrayBuffer[Commit]())
+    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
+  }
 }
