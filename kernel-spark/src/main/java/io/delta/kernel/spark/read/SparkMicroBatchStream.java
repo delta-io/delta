@@ -33,7 +33,6 @@ import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.delta.DeltaErrors;
-import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import scala.Option;
@@ -46,15 +45,10 @@ public class SparkMicroBatchStream implements MicroBatchStream {
 
   private final Engine engine;
   private final String tablePath;
-  private final DeltaOptions options;
-  private final String tableId;
 
-  public SparkMicroBatchStream(
-      String tablePath, Configuration hadoopConf, DeltaOptions options, String tableId) {
+  public SparkMicroBatchStream(String tablePath, Configuration hadoopConf) {
     this.tablePath = tablePath;
     this.engine = DefaultEngine.create(hadoopConf);
-    this.options = options;
-    this.tableId = tableId;
   }
 
   ////////////
