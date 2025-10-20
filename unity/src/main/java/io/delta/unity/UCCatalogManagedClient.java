@@ -180,12 +180,14 @@ public class UCCatalogManagedClient {
    *     with startTimestampOpt.
    * @param startTimestampOpt The optional start timestamp boundary. This must be mutually exclusive
    *     with startVersionOpt.
-   * @param endVersionOpt The optional end version boundary. This must be mutually exclusive * with
+   * @param endVersionOpt The optional end version boundary. This must be mutually exclusive with
    *     endTimestampOpt.
    * @param endTimestampOpt The optional end timestamp boundary. This must be mutually exclusive
    *     with endVersionOpt.
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
+   * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and
+   *     is greater than the latest ratified version from UC
    */
   public CommitRange loadCommitRange(
       Engine engine,
