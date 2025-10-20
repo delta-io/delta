@@ -89,38 +89,20 @@ public class HadoopUtils {
             }
         }
 
-        // Approach 2: Flink configuration (deprecated)
-        // TODO: Flink 2.0 removed ConfigConstants.HDFS_DEFAULT_CONFIG, HDFS_SITE_CONFIG,
-        // and PATH_HADOOP_CONFIG. Need to find alternative configuration keys.
-        // For now, these are commented out.
-        /*
-        final String hdfsDefaultPath =
-            flinkConfiguration.getString(ConfigConstants.HDFS_DEFAULT_CONFIG, null);
-        if (hdfsDefaultPath != null) {
-            result.addResource(new org.apache.hadoop.fs.Path(hdfsDefaultPath));
-            LOG.debug(
-                "Using hdfs-default configuration-file path from Flink config: {}",
-                hdfsDefaultPath);
-            foundHadoopConfiguration = true;
-        }
-
-        final String hdfsSitePath =
-            flinkConfiguration.getString(ConfigConstants.HDFS_SITE_CONFIG, null);
-        if (hdfsSitePath != null) {
-            result.addResource(new org.apache.hadoop.fs.Path(hdfsSitePath));
-            LOG.debug(
-                "Using hdfs-site configuration-file path from Flink config: {}", hdfsSitePath);
-            foundHadoopConfiguration = true;
-        }
-
-        final String hadoopConfigPath =
-            flinkConfiguration.getString(ConfigConstants.PATH_HADOOP_CONFIG, null);
-        if (hadoopConfigPath != null) {
-            LOG.debug("Searching Hadoop configuration files in Flink config: {}", hadoopConfigPath);
-            foundHadoopConfiguration =
-                addHadoopConfIfFound(result, hadoopConfigPath) || foundHadoopConfiguration;
-        }
-        */
+        // Approach 2: Flink configuration via ConfigConstants (REMOVED in Flink 2.0)
+        //
+        // This approach was deprecated and removed in Flink 2.0. The ConfigConstants class
+        // (ConfigConstants.HDFS_DEFAULT_CONFIG, HDFS_SITE_CONFIG, PATH_HADOOP_CONFIG) no longer
+        // exists.
+        //
+        // ALTERNATIVES: Use one of the following approaches instead:
+        // - Approach 1: Set HADOOP_HOME environment variable
+        // - Approach 3: Set HADOOP_CONF_DIR environment variable
+        // - Approach 4: Use flink.hadoop.* prefix in Flink configuration
+        //   Example: flink.hadoop.fs.defaultFS=hdfs://namenode:8020
+        //
+        // For more details, see:
+        // https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/filesystems/overview/
 
         // Approach 3: HADOOP_CONF_DIR environment variable
         String hadoopConfDir = System.getenv("HADOOP_CONF_DIR");
