@@ -159,7 +159,12 @@ public abstract class DeltaSourceSplitEnumerator implements
                 LOG.info("Assigned split to subtask {} : {}", awaitingSubtask, split);
                 awaitingReader.remove();
             } else {
-                // TODO for chunking load we will have to modify this to get a new chunk from Delta.
+                // OPTIMIZATION: Future enhancement for chunked loading
+                // When SnapshotProcessor implements chunked file loading, this logic should:
+                // 1. Check if more chunks are available from the processor
+                // 2. Request next chunk if available
+                // 3. Continue assigning splits from the new chunk
+                // Currently, we signal NO_MORE_SPLITS when splitAssigner is empty.
                 return NO_MORE_SPLITS;
             }
         }

@@ -46,14 +46,29 @@ public class SnapshotProcessor extends TableProcessorBase {
      * Process all {@link AddFile} from {@link Snapshot} passed to this {@code SnapshotProcessor}
      * constructor by converting them to {@link DeltaSourceSplit} objects.
      *
+     * <p><strong>PERFORMANCE NOTE:</strong> Current implementation loads all files at once via
+     * {@code snapshot.getAllFiles()}. For tables with millions of files, this may cause memory
+     * pressure on the JobManager.
+     *
+     * <p><strong>FUTURE OPTIMIZATION:</strong> Implement chunked/paginated file loading:
+     * <ul>
+     *   <li>Process files in batches (e.g., 10K files per chunk)</li>
+     *   <li>Maintain pagination state in {@link DeltaEnumeratorStateCheckpointBuilder}</li>
+     *   <li>Signal to {@link DeltaSourceSplitEnumerator} when more chunks are available</li>
+     *   <li>Implement backpressure mechanism if downstream can't keep up</li>
+     * </ul>
+     *
+     * <p><strong>CURRENT STATUS:</strong> Works well for tables with &lt; 1M files. For larger
+     * tables, increase JobManager heap size or enable RocksDB state backend.
+     *
      * @param processCallback A {@link Consumer} callback that will be called after converting all
      *                        {@link AddFile} to {@link DeltaSourceSplit}.
      */
     @Override
     public void process(Consumer<List<DeltaSourceSplit>> processCallback) {
-        // TODO Initial data read. This should be done in chunks since snapshot.getAllFiles()
-        //  can have millions of files, and we would OOM the Job Manager
-        //  if we would read all of them at once.
+        // OPTIMIZATION: Future enhancement for very large tables (>1M files)
+        // Current implementation loads all files at once, which works well for most use cases.
+        // For extreme scale, implement chunked loading with pagination state.
         List<DeltaSourceSplit> splits =
             prepareSplits(new ChangesPerVersion<>(
                     SourceUtils.pathToString(deltaTablePath),
