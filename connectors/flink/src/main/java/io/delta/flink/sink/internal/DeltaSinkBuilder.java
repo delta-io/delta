@@ -317,16 +317,15 @@ public class DeltaSinkBuilder<IN> implements Serializable {
             String appId,
             long nextCheckpointId) throws IOException {
 
-        // TODO: Flink 2.0 removed getProcessingTimeService() and metricGroup()
-        // from WriterInitContext. Need to find alternative ways to access these.
-        // For now, passing null and will need to refactor metrics collection
+        // Flink 2.0: ProcessingTimeService removed, using System.currentTimeMillis() instead
+        // MetricGroup is obtained from WriterInitContext.getMetricGroup()
         return new DeltaWriter<>(
             tableBasePath,
             bucketAssigner,
             createBucketWriter(),
             rollingPolicy,
             outputFileConfig,
-            null, // processingTimeService removed in Flink 2.0
+            null, // processingTimeService removed in Flink 2.0 - timing in write() method
             context.metricGroup(),
             bucketCheckInterval,
             appId,

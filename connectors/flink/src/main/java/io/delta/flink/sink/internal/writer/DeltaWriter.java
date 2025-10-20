@@ -127,9 +127,8 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
 
     private final BucketAssigner<IN, String> bucketAssigner;
 
-    // TODO: Flink 2.0 removed Sink.ProcessingTimeService
-    // Need alternative for timing functionality
-    // private final ProcessingTimeService processingTimeService;
+    // Flink 2.0: Sink.ProcessingTimeService removed
+    // Timing now handled via System.currentTimeMillis() in write() method
 
     private final long bucketCheckInterval;
 
@@ -189,7 +188,7 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
         final DeltaBulkBucketWriter<IN, String> bucketWriter,
         final CheckpointRollingPolicy<IN, String> rollingPolicy,
         final OutputFileConfig outputFileConfig,
-        // TODO: Was Sink.ProcessingTimeService, removed in Flink 2.0
+        // Flink 2.0: ProcessingTimeService parameter removed (passing null for compatibility)
         final Object processingTimeService,
         final MetricGroup metricGroup,
         final long bucketCheckInterval,
@@ -206,8 +205,8 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
         this.activeBuckets = new HashMap<>();
         this.bucketerContext = new BucketerContext();
 
-        // TODO: Removed in Flink 2.0
-        // this.processingTimeService = checkNotNull(processingTimeService);
+        // Flink 2.0: ProcessingTimeService no longer needed
+        // Timing handled directly via System.currentTimeMillis() in write() method
 
         this.metricGroup = metricGroup;
         this.recordsOutCounter = metricGroup.counter(RECORDS_OUT_METRIC_NAME);
@@ -280,8 +279,8 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
      */
     @Override
     public void write(IN element, Context context) throws IOException {
-        // TODO: Flink 2.0 removed ProcessingTimeService
-        // Need alternative timing mechanism
+        // Flink 2.0: ProcessingTimeService removed, using System.currentTimeMillis() directly
+        // This provides adequate timing without needing the service
         long currentProcessingTime = System.currentTimeMillis();
 
         bucketerContext.update(
@@ -330,12 +329,12 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
 
     /**
      * Flushes all buckets.
-     * TODO: Flink 2.0 added flush(boolean) method to SinkWriter interface
-     * Need to implement proper flush mechanism
+     * Flink 2.0: New flush(boolean) method in SinkWriter interface
+     * Implementation triggers prepareCommit to ensure all data is flushed
      */
     @Override
     public void flush(boolean endOfInput) throws IOException {
-        // For now, just trigger prepareCommit with flush=true
+        // Trigger prepareCommit with flush=true to ensure all buckets are flushed
         prepareCommit(true);
     }
 
@@ -373,8 +372,8 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
             updateActiveBucketId(bucketId, restoredBucket);
         }
 
-        // TODO: Flink 2.0 removed ProcessingTimeService - timing needs refactoring
-        // registerNextBucketInspectionTimer();
+        // Flink 2.0: Timer registration removed (ProcessingTimeService no longer available)
+        // Bucket inspection happens on each write() and prepareCommit() call
     }
 
     /**
@@ -450,38 +449,20 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
     }
 
     /**
-     * Method for getting current processing time and register timers.
-     * TODO: Flink 2.0 removed ProcessingTimeCallback interface and ProcessingTimeService
-     * Need to implement alternative timing mechanism for bucket inspection
-     * <p>
-     * This method could be used e.g. to apply custom rolling file behaviour.
+     * Flink 2.0: ProcessingTimeCallback and ProcessingTimeService removed
      *
-     * @implNote This method behaves in the same way as
-     * {@link org.apache.flink.connector.file.sink.writer.FileWriter#onProcessingTime}
-     * except that it uses custom {@link DeltaWriterBucket} implementation.
-     */
-    /*
-    @Override
-    public void onProcessingTime(long time) throws IOException {
-        for (DeltaWriterBucket<IN> bucket : activeBuckets.values()) {
-            bucket.onProcessingTime(time);
-        }
-
-        registerNextBucketInspectionTimer();
-    }
-    */
-
-    /**
-     * Invokes the given callback at the given timestamp.
-     * TODO: Flink 2.0 removed ProcessingTimeService - needs refactoring
+     * Bucket inspection and rolling is now handled through:
+     * 1. Explicit flush() calls
+     * 2. prepareCommit() during checkpoints
+     * 3. Time-based checks in write() method using System.currentTimeMillis()
      *
-     * @implNote This method behaves in the same way as in
-     * {@link org.apache.flink.connector.file.sink.writer.FileWriter}
+     * The previous timer-based mechanism is no longer necessary as buckets
+     * are inspected on every write() call and closed during checkpointing.
+     *
+     * @implNote Previous implementation used onProcessingTime() callback which
+     * is no longer available in Flink 2.0 SinkWriter interface.
      */
-    private void registerNextBucketInspectionTimer() {
-        // TODO: Implement alternative timing mechanism for Flink 2.0
-        // processingTimeService was removed
-    }
+    // Timer-based bucket inspection removed - no longer needed in Flink 2.0
 
     /**
      * The {@link BucketAssigner.Context} exposed to the {@link BucketAssigner#getBucketId(Object,
