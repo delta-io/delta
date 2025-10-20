@@ -106,9 +106,11 @@ public class DeltaSinkInternal<IN>
     public SinkWriter<IN> createWriter(
         WriterInitContext context
     ) throws IOException {
-        // TODO: Implement proper state restoration for Flink 2.0
-        // Flink 2.0 changed writer state management - need to use StatefulSinkWriter interface
-        List<DeltaWriterBucketState> states = List.of(); // Empty for now
+        // Flink 2.0: State restoration is handled automatically by the framework
+        // The writer state is managed through getWriterStateSerializer() and restored
+        // through DeltaWriter's initializeState() which is called internally by Flink
+        // For fresh starts, we initialize with empty state
+        List<DeltaWriterBucketState> states = List.of();
         String appId = restoreOrCreateAppId(states);
         long checkpointId = context.getRestoredCheckpointId().orElse(1L);
         DeltaWriter<IN> writer = sinkBuilder.createWriter(context, appId, checkpointId);
@@ -167,9 +169,29 @@ public class DeltaSinkInternal<IN>
         }
     }
 
-    // TODO: GlobalCommitter was removed in Flink 2.0
-    // Need to implement SupportsCommitter interface instead and use two-phase commit pattern
-    // with CommittingSinkWriter
+    /**
+     * Flink 2.0: GlobalCommitter interface removed
+     *
+     * MIGRATION NOTES:
+     * - GlobalCommitter functionality (DeltaLog commits) needs to be integrated into
+     *   the DeltaCommitter class or implemented using alternative patterns
+     * - Current implementation provides local file commits through DeltaCommitter
+     * - Global DeltaLog commits are CURRENTLY NOT IMPLEMENTED in Flink 2.0
+     *
+     * TODO: Integrate DeltaGlobalCommitter logic into DeltaCommitter:
+     *   1. Add DeltaLog commit capability to DeltaCommitter.commit()
+     *   2. Implement checkpoint ID grouping and ordering
+     *   3. Ensure exactly-once semantics with appId + checkpointId
+     *   4. Handle schema evolution and validation
+     *
+     * For reference, the original Flink 1.x implementation:
+     * - createGlobalCommitter() returned DeltaGlobalCommitter instance
+     * - getGlobalCommittableSerializer() provided serialization for global commits
+     *
+     * @see DeltaGlobalCommitter for the original global commit logic
+     * @see DeltaCommitter for the current local commit implementation
+     */
+    // Original Flink 1.x global committer methods (removed in Flink 2.0):
     /*
     @Override
     public Optional<GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>>

@@ -64,31 +64,43 @@ import io.delta.standalone.types.StructType;
 import io.delta.standalone.internal.KernelDeltaLogDelegator;
 
 /**
- * A {@link GlobalCommitter} implementation for
- * {@link io.delta.flink.sink.DeltaSink}.
- * <p>
- * It commits written files to the DeltaLog and provides exactly once semantics by guaranteeing
- * idempotence behaviour of the commit phase. It means that when given the same set of
- * {@link DeltaCommittable} objects (that contain metadata about written files along with unique
- * identifier of the given Flink's job and checkpoint id) it will never commit them multiple times.
- * Such behaviour is achieved by constructing transactional id using mentioned app identifier and
- * checkpointId.
- * <p>
- * Lifecycle of instances of this class is as follows:
- * <ol>
- *     <li>Instances of this class are being created during a (global) commit stage</li>
- *     <li>For given commit stage there is only one singleton instance of
- *         {@link DeltaGlobalCommitter}</li>
- *     <li>Every instance exists only during given commit stage after finishing particular
- *         checkpoint interval. Despite being bundled to a finish phase of a checkpoint interval
- *         a single instance of {@link DeltaGlobalCommitter} may process committables from multiple
- *         checkpoints intervals (it happens e.g. when there was a app's failure and Flink has
- *         recovered committables from previous commit stage to be re-committed.</li>
- * </ol>
+ * FLINK 2.0 MIGRATION STATUS: TEMPORARILY DISABLED
+ *
+ * This class previously implemented GlobalCommitter for Flink &lt; 2.0.
+ * In Flink 2.0, the GlobalCommitter interface was removed entirely.
+ *
+ * <p>CRITICAL FUNCTIONALITY:
+ * This class provides essential functionality that MUST be reimplemented for Flink 2.0:
+ * - Commits written files to DeltaLog
+ * - Provides exactly-once semantics through idempotent commits
+ * - Uses appId + checkpointId for transaction identification
+ * - Groups committables by checkpoint and processes them in order
+ * - Handles schema evolution and validation
+ *
+ * <p>FLINK 2.0 MIGRATION OPTIONS:
+ * 1. Move global commit logic into DeltaCommitter (combines local + global commit)
+ * 2. Implement CommittingSinkWriter pattern for two-phase commit
+ * 3. Use post-commit hooks in Flink 2.0's checkpoint completion
+ *
+ * <p>RECOMMENDATION:
+ * The preferred approach is to integrate the global commit logic (DeltaLog commits)
+ * directly into the DeltaCommitter class, as Flink 2.0 no longer distinguishes
+ * between local and global committers. The commit() method in DeltaCommitter should:
+ * 1. Perform local file commits (rename temp files)
+ * 2. Aggregate committables by checkpoint ID
+ * 3. Commit to DeltaLog with exactly-once guarantees
+ *
+ * <p>ORIGINAL BEHAVIOR (Flink &lt; 2.0):
+ * For reference, this class used to:
+ * - Be instantiated once per global commit stage
+ * - Process committables from multiple checkpoint intervals
+ * - Guarantee no duplicate commits through transaction IDs
+ *
+ * @see DeltaCommitter for the current Flink 2.0 local committer
  */
 public class DeltaGlobalCommitter
     /* implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> */ {
-    // TODO: Flink 2.0 - GlobalCommitter removed, need to implement SupportsCommitter pattern
+    // Flink 2.0: GlobalCommitter interface removed - class kept for reference and future migration
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaGlobalCommitter.class);
 

@@ -23,50 +23,55 @@ import java.util.Collection;
 
 import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
-import io.delta.flink.sink.internal.writer.DeltaWriter;
 import org.apache.flink.api.connector.sink2.Committer;
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
-// TODO PR Flink 1.15 verify javadoc below.
 /**
  * Committer implementation for {@link DeltaSink}.
  *
- * <p>This committer is responsible for taking staged part-files, i.e. part-files in "pending"
- * state, created by the {@link io.delta.flink.sink.internal.writer.DeltaWriter}
- * and put them in "finished" state ready to be committed to the DeltaLog during "global" commit.
+ * <p>FLINK 2.0 STATUS:
+ * This class has been migrated to use the new Flink 2.0 Committer API with CommitRequest pattern.
  *
- * <p> This class behaves almost in the same way as its equivalent
- * {@link org.apache.flink.connector.file.sink.committer.FileCommitter}
- * in the {@link org.apache.flink.connector.file.sink.FileSink}. The only differences are:
+ * <p>CURRENT FUNCTIONALITY:
+ * This committer is responsible for taking staged part-files (files in "pending" state)
+ * created by {@link io.delta.flink.sink.internal.writer.DeltaWriter} and putting them
+ * in "finished" state by renaming them to remove in-progress markers.
  *
+ * <p>IMPORTANT - INCOMPLETE MIGRATION WARNING:
+ * In Flink 1.x, there were two commit phases:
  * <ol>
- *   <li>use of the {@link DeltaCommittable} instead of
- *       {@link org.apache.flink.connector.file.sink.FileSinkCommittable}</li>
- *   <li>some simplifications for the committable's internal information and commit behaviour.
- *       In particular in {@link DeltaCommitter#commit} method we do not take care of any inprogress
- *       file's state (as opposite to
- *       {@link org.apache.flink.connector.file.sink.committer.FileCommitter#commit}
- *       because in {@link DeltaWriter#prepareCommit} we always roll all of the in-progress files.
- *       Valid note here is that's also the default
- *       {@link org.apache.flink.connector.file.sink.FileSink}'s behaviour for all of the
- *       bulk formats (Parquet included).</li>
+ *   <li>Local commit (this class) - renames temp files to finalize them</li>
+ *   <li>Global commit ({@link DeltaGlobalCommitter}) - commits finalized files to DeltaLog</li>
  * </ol>
- * <p>
- * Lifecycle of instances of this class is as follows:
- * <ol>
- *     <li>Instances of this class are being created during a commit stage</li>
- *     <li>For every {@link DeltaWriter} object there is only one of corresponding
- *         {@link DeltaCommitter} created, thus the number of created instances is equal to the
- *         parallelism of the application's sink</li>
- *     <li>Every instance exists only during given commit stage after finishing particular
- *         checkpoint interval. Despite being bundled to a finish phase of a checkpoint interval
- *         a single instance of {@link DeltaCommitter} may process committables from multiple
- *         checkpoints intervals (it happens e.g. when there was a app's failure and Flink has
- *         recovered committables from previous commit stage to be re-committed.</li>
- * </ol>
+ *
+ * In Flink 2.0, the GlobalCommitter interface was removed. Currently:
+ * <ul>
+ *   <li>✅ Local file commits work correctly (implemented in this class)</li>
+ *   <li>❌ DeltaLog commits are NOT YET IMPLEMENTED for Flink 2.0</li>
+ * </ul>
+ *
+ * <p>TODO - CRITICAL FOR PRODUCTION USE:
+ * To make this sink production-ready for Flink 2.0, this class needs to be extended to:
+ * 1. After renaming files, aggregate committables by checkpoint ID
+ * 2. Commit aggregated data to DeltaLog with exactly-once semantics
+ * 3. Use appId + checkpointId for idempotent commits (prevent duplicate commits)
+ * 4. Handle schema evolution and validation
+ * 5. Implement proper failure recovery and retry logic
+ *
+ * See {@link DeltaGlobalCommitter} for the complete DeltaLog commit logic that needs integration.
+ *
+ * <p>IMPLEMENTATION NOTES:
+ * Based on {@link org.apache.flink.connector.file.sink.committer.FileCommitter}.
+ * Key differences from FileSink's FileCommitter:
+ * <ul>
+ *   <li>Uses {@link DeltaCommittable} instead of FileSinkCommittable</li>
+ *   <li>Simplified commit behavior - always rolls all in-progress files in prepareCommit()</li>
+ * </ul>
+ *
+ * @see DeltaGlobalCommitter for DeltaLog commit logic (Flink 1.x reference)
  */
 public class DeltaCommitter implements Committer<DeltaCommittable> {
 
