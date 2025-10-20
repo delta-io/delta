@@ -12,7 +12,6 @@ import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.source.SourceFunction.SourceContext;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
@@ -349,19 +348,13 @@ public abstract class DeltaEndToEndTableTestSuite {
         );
 
         @Override
-        public int emitRecordsBatch(int nextValue, SourceContext<RowData> ctx, int batchSize) {
-            for (int i = 0; i < batchSize; ++i) {
-                RowData row = rowTypeConverter.toInternal(
-                    Row.of(
-                        nextValue,
-                        Row.of(nextValue, nextValue * 2)
-                    )
-                );
-                ctx.collect(row);
-                nextValue++;
-            }
-
-            return nextValue;
+        public RowData createRow(int value) {
+            return rowTypeConverter.toInternal(
+                Row.of(
+                    value,
+                    Row.of(value, value * 2)
+                )
+            );
         }
 
         @Override

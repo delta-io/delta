@@ -24,21 +24,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.PriorityQueue;
-import java.util.Queue;
 
 import io.delta.flink.sink.internal.DeltaBucketAssigner;
 import io.delta.flink.sink.internal.DeltaPartitionComputer;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.utils.DeltaSinkTestUtils;
-import org.apache.flink.api.connector.sink.Sink;
-import org.apache.flink.api.connector.sink.SinkWriter;
-import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.connector.sink2.SinkWriter;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.MetricGroup;
@@ -47,7 +42,6 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.BasePathBucketAssigner;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.util.ExceptionUtils;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -300,7 +294,7 @@ public class DeltaWriterTest {
             DeltaSinkTestUtils.createBucketWriter(basePath),
             DeltaSinkTestUtils.ON_CHECKPOINT_ROLLING_POLICY,
             OutputFileConfig.builder().withPartSuffix(".snappy.parquet").build(),
-            new ManuallyTriggeredProcessingTimeService(),
+            null, // Flink 2.0: ProcessingTimeService removed
             metricGroup,
             10,
             APP_ID,
@@ -346,49 +340,6 @@ public class DeltaWriterTest {
         @Override
         public Long timestamp() {
             return timestamp;
-        }
-    }
-
-    /**
-     * Borrowed from {@code org.apache.flink.connector.file.sink.writer.FileWriterTest}
-     */
-    private static class ManuallyTriggeredProcessingTimeService
-        implements Sink.ProcessingTimeService {
-
-        private long now;
-
-        private final Queue<Tuple2<Long, ProcessingTimeCallback>> timers =
-            new PriorityQueue<>(Comparator.comparingLong(o -> o.f0));
-
-        @Override
-        public long getCurrentProcessingTime() {
-            return now;
-        }
-
-        @Override
-        public void registerProcessingTimer(
-            long time, ProcessingTimeCallback processingTimeCallback) {
-            if (time <= now) {
-                try {
-                    processingTimeCallback.onProcessingTime(now);
-                } catch (IOException | InterruptedException e) {
-                    ExceptionUtils.rethrow(e);
-                }
-            } else {
-                timers.add(new Tuple2<>(time, processingTimeCallback));
-            }
-        }
-
-        public void advanceTo(long time) throws IOException, InterruptedException {
-            if (time > now) {
-                now = time;
-
-                Tuple2<Long, ProcessingTimeCallback> timer;
-                while ((timer = timers.peek()) != null && timer.f0 <= now) {
-                    timer.f1.onProcessingTime(now);
-                    timers.poll();
-                }
-            }
         }
     }
 }

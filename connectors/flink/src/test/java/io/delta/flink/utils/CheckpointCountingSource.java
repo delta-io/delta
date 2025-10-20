@@ -1,55 +1,40 @@
 package io.delta.flink.utils;
 
 import java.io.Serializable;
-import java.util.Collections;
 
-import io.delta.flink.sink.utils.DeltaSinkTestUtils;
-import org.apache.flink.api.common.state.CheckpointListener;
-import org.apache.flink.api.common.state.ListState;
-import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.connector.source.Boundedness;
+import org.apache.flink.api.connector.source.Source;
+import org.apache.flink.api.connector.source.SourceReader;
+import org.apache.flink.api.connector.source.SourceReaderContext;
+import org.apache.flink.api.connector.source.SplitEnumerator;
+import org.apache.flink.api.connector.source.SplitEnumeratorContext;
 import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
-import org.apache.flink.runtime.state.FunctionInitializationContext;
-import org.apache.flink.runtime.state.FunctionSnapshotContext;
-import org.apache.flink.streaming.api.checkpoint.CheckpointedFunction;
-import org.apache.flink.streaming.api.functions.source.RichParallelSourceFunction;
+import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.RowType.RowField;
-import org.apache.flink.types.Row;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import static io.delta.flink.sink.utils.DeltaSinkTestUtils.TEST_ROW_TYPE;
 
 /**
+ * Flink 2.0 Source API v2 implementation of CheckpointCountingSource.
+ * <p>
  * Each of the source operators outputs records in given number of checkpoints. Number of records
  * per checkpoint is constant between checkpoints, and defined by user. When all records are
  * emitted, the source waits for two more checkpoints until it finishes.
  * <p>
- * All credits for this implementation goes to <b>Grzegorz Kolakowski<b> who implemented the
- * original version of this class for end2end tests. This class was copied from his Pull Request
- * here.
+ * Migrated from Flink 1.x SourceFunction API to Flink 2.0 Source API v2.
  */
-public class CheckpointCountingSource extends RichParallelSourceFunction<RowData>
-    implements CheckpointListener, CheckpointedFunction, ResultTypeQueryable<RowData> {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(CheckpointCountingSource.class);
+public class CheckpointCountingSource
+    implements Source<RowData, CheckpointCountingSplit, CheckpointCountingSplitState>,
+    ResultTypeQueryable<RowData> {
 
     private final int numberOfCheckpoints;
-
     private final int recordsPerCheckpoint;
-
     private final RowProducer rowProducer;
-
-    private ListState<Integer> nextValueState;
-
-    private int nextValue;
-
-    private volatile boolean isCanceled;
-
-    private volatile boolean waitingForCheckpoint;
 
     public CheckpointCountingSource(int recordsPerCheckpoint, int numberOfCheckpoints) {
         this(recordsPerCheckpoint, numberOfCheckpoints, new DefaultRowProducer());
@@ -59,97 +44,50 @@ public class CheckpointCountingSource extends RichParallelSourceFunction<RowData
             int recordsPerCheckpoint,
             int numberOfCheckpoints,
             RowProducer rowProducer) {
-
         this.numberOfCheckpoints = numberOfCheckpoints;
         this.recordsPerCheckpoint = recordsPerCheckpoint;
         this.rowProducer = rowProducer;
     }
 
     @Override
-    public void initializeState(FunctionInitializationContext context) throws Exception {
-        nextValueState = context.getOperatorStateStore()
-            .getListState(new ListStateDescriptor<>("nextValue", Integer.class));
-
-        if (nextValueState.get() != null && nextValueState.get().iterator().hasNext()) {
-            nextValue = nextValueState.get().iterator().next();
-        }
-        waitingForCheckpoint = false;
+    public Boundedness getBoundedness() {
+        return Boundedness.BOUNDED;
     }
 
     @Override
-    public void run(SourceContext<RowData> ctx) throws Exception {
-        LOGGER.info("Run subtask={}; attempt={}.",
-            getRuntimeContext().getIndexOfThisSubtask(),
-            getRuntimeContext().getAttemptNumber());
-
-        sendRecordsUntil(numberOfCheckpoints, ctx);
-        idleUntilNextCheckpoint(ctx);
-        LOGGER.info("Source task done; subtask={}.",
-            getRuntimeContext().getIndexOfThisSubtask());
-    }
-
-    private void sendRecordsUntil(int targetCheckpoints, SourceContext<RowData> ctx)
-        throws InterruptedException {
-        while (!isCanceled && nextValue < targetCheckpoints * recordsPerCheckpoint) {
-            synchronized (ctx.getCheckpointLock()) {
-                emitRecordsBatch(recordsPerCheckpoint, ctx);
-                waitingForCheckpoint = true;
-            }
-            LOGGER.info("Waiting for checkpoint to complete; subtask={}.",
-                getRuntimeContext().getIndexOfThisSubtask());
-            while (waitingForCheckpoint) {
-                Thread.sleep(1);
-            }
-        }
-    }
-
-    private void emitRecordsBatch(int batchSize, SourceContext<RowData> ctx) {
-        nextValue = rowProducer.emitRecordsBatch(nextValue, ctx, batchSize);
-        LOGGER.info("Emitted {} records (total {}); subtask={}.", batchSize, nextValue,
-            getRuntimeContext().getIndexOfThisSubtask());
-    }
-
-    private void idleUntilNextCheckpoint(SourceContext<RowData> ctx) throws InterruptedException {
-        if (!isCanceled) {
-            // Idle until the next checkpoint completes to avoid any premature job termination and
-            // race conditions.
-            LOGGER.info("Waiting for an additional checkpoint to complete; subtask={}.",
-                getRuntimeContext().getIndexOfThisSubtask());
-            synchronized (ctx.getCheckpointLock()) {
-                waitingForCheckpoint = true;
-            }
-            while (waitingForCheckpoint) {
-                Thread.sleep(1L);
-            }
-        }
+    public SourceReader<RowData, CheckpointCountingSplit> createReader(
+            SourceReaderContext readerContext) {
+        return new CheckpointCountingSourceReader(
+            readerContext,
+            numberOfCheckpoints,
+            recordsPerCheckpoint,
+            rowProducer);
     }
 
     @Override
-    public void snapshotState(FunctionSnapshotContext context) throws Exception {
-        nextValueState.update(Collections.singletonList(nextValue));
-        LOGGER.info("state snapshot done; checkpointId={}; subtask={}.",
-            context.getCheckpointId(),
-            getRuntimeContext().getIndexOfThisSubtask());
+    public SplitEnumerator<CheckpointCountingSplit, CheckpointCountingSplitState> createEnumerator(
+            SplitEnumeratorContext<CheckpointCountingSplit> enumContext) {
+        return new CheckpointCountingSplitEnumerator(
+            enumContext,
+            numberOfCheckpoints,
+            recordsPerCheckpoint);
     }
 
     @Override
-    public void notifyCheckpointComplete(long checkpointId) {
-        waitingForCheckpoint = false;
-        LOGGER.info("Checkpoint {} complete; subtask={}.", checkpointId,
-            getRuntimeContext().getIndexOfThisSubtask());
+    public SplitEnumerator<CheckpointCountingSplit, CheckpointCountingSplitState> restoreEnumerator(
+            SplitEnumeratorContext<CheckpointCountingSplit> enumContext,
+            CheckpointCountingSplitState checkpoint) {
+        return new CheckpointCountingSplitEnumerator(enumContext, checkpoint);
     }
 
     @Override
-    public void notifyCheckpointAborted(long checkpointId) throws Exception {
-        LOGGER.info("Checkpoint {} aborted; subtask={}.", checkpointId,
-            getRuntimeContext().getIndexOfThisSubtask());
-        CheckpointListener.super.notifyCheckpointAborted(checkpointId);
+    public SimpleVersionedSerializer<CheckpointCountingSplit> getSplitSerializer() {
+        return new CheckpointCountingSplitSerializer();
     }
 
     @Override
-    public void cancel() {
-        isCanceled = true;
-        waitingForCheckpoint = false;
+    public SimpleVersionedSerializer<CheckpointCountingSplitState> getEnumeratorCheckpointSerializer() {
+        return new CheckpointCountingSplitStateSerializer();
     }
 
     @Override
@@ -157,29 +95,29 @@ public class CheckpointCountingSource extends RichParallelSourceFunction<RowData
         return rowProducer.getProducedType();
     }
 
+    /**
+     * Interface for producing RowData records.
+     */
     public interface RowProducer extends Serializable {
-
-        int emitRecordsBatch(int nextValue, SourceContext<RowData> ctx, int batchSize);
+        RowData createRow(int value);
 
         TypeInformation<RowData> getProducedType();
     }
 
+    /**
+     * Default implementation of RowProducer.
+     */
     private static class DefaultRowProducer implements RowProducer {
 
         @Override
-        public int emitRecordsBatch(int nextValue, SourceContext<RowData> ctx, int batchSize) {
-            for (int i = 0; i < batchSize; ++i) {
-                RowData row = DeltaSinkTestUtils.TEST_ROW_TYPE_CONVERTER.toInternal(
-                    Row.of(
-                        String.valueOf(nextValue),
-                        String.valueOf((nextValue + nextValue)),
-                        nextValue
-                    )
-                );
-                ctx.collect(row);
-                nextValue++;
-            }
-            return nextValue;
+        public RowData createRow(int value) {
+            return io.delta.flink.sink.utils.DeltaSinkTestUtils.TEST_ROW_TYPE_CONVERTER.toInternal(
+                org.apache.flink.types.Row.of(
+                    String.valueOf(value),
+                    String.valueOf((value + value)),
+                    value
+                )
+            );
         }
 
         @Override
@@ -190,5 +128,4 @@ public class CheckpointCountingSource extends RichParallelSourceFunction<RowData
             return InternalTypeInfo.of(RowType.of(fieldTypes, fieldNames));
         }
     }
-
 }

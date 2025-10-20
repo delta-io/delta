@@ -3,6 +3,7 @@ package io.delta.flink.source;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import io.delta.flink.internal.options.DeltaConfigOption;
@@ -11,7 +12,6 @@ import io.delta.flink.internal.options.DeltaOptionValidationException;
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.builder.DeltaSourceBuilderBase;
 import org.apache.hadoop.conf.Configuration;
-import org.codehaus.janino.util.Producer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -324,9 +324,9 @@ public abstract class RowDataDeltaSourceBuilderTestBase {
     protected abstract DeltaSourceBuilderBase<?, ?>
         getBuilderWithNullMandatoryFieldsAndExcludedOption();
 
-    protected Optional<Exception> testValidation(Producer<DeltaSource<?>> builder) {
+    protected Optional<Exception> testValidation(Supplier<DeltaSource<?>> builder) {
         try {
-            builder.produce();
+            builder.get();
         } catch (Exception e) {
             LOG.info("Caught exception during builder validation tests", e);
             return Optional.of(e);

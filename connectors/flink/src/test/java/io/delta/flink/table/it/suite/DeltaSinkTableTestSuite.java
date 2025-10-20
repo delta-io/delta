@@ -37,7 +37,6 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.source.SourceFunction.SourceContext;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.ValidationException;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
@@ -587,20 +586,14 @@ public abstract class DeltaSinkTableTestSuite {
         );
 
         @Override
-        public int emitRecordsBatch(int nextValue, SourceContext<RowData> ctx, int batchSize) {
-            for (int i = 0; i < batchSize; ++i) {
-                RowData row = ROW_TYPE_CONVERTER.toInternal(
-                    Row.of(
-                        String.valueOf(nextValue),
-                        String.valueOf((nextValue + nextValue)),
-                        nextValue
-                    )
-                );
-                ctx.collect(row);
-                nextValue++;
-            }
-
-            return nextValue;
+        public RowData createRow(int value) {
+            return ROW_TYPE_CONVERTER.toInternal(
+                Row.of(
+                    String.valueOf(value),
+                    String.valueOf((value + value)),
+                    value
+                )
+            );
         }
 
         @Override
