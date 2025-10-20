@@ -17,11 +17,7 @@ package io.delta.kernel.defaults.engine;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.engine.MetricsReporter;
-import io.delta.kernel.internal.metrics.MetricsReportSerializers;
 import io.delta.kernel.metrics.MetricsReport;
-import io.delta.kernel.metrics.ScanReport;
-import io.delta.kernel.metrics.SnapshotReport;
-import io.delta.kernel.metrics.TransactionReport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,23 +32,7 @@ public class LoggingMetricsReporter implements MetricsReporter {
   @Override
   public void report(MetricsReport report) {
     try {
-      if (report instanceof SnapshotReport) {
-        logger.info(
-            "SnapshotReport = {}",
-            MetricsReportSerializers.serializeSnapshotReport((SnapshotReport) report));
-      } else if (report instanceof ScanReport) {
-        logger.info(
-            "ScanReport = {}", MetricsReportSerializers.serializeScanReport((ScanReport) report));
-      } else if (report instanceof TransactionReport) {
-        logger.info(
-            "TransactionReport = {}",
-            MetricsReportSerializers.serializeTransactionReport((TransactionReport) report));
-      } else {
-        logger.info(
-            "{} = [{} does not support serializing this type of MetricReport]",
-            report.getClass(),
-            this.getClass());
-      }
+      logger.info("{} = {}", report.getClass().getSimpleName(), report.toJson());
     } catch (JsonProcessingException e) {
       logger.info("Encountered exception while serializing report {}: {}", report, e);
     }
