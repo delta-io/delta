@@ -39,7 +39,8 @@ import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.types.StructField;
 import io.delta.standalone.types.StructType;
 
-// TODO: Flink 2.0 - TableSchema was removed, replaced by Schema/ResolvedSchema
+// FLINK 2.0: TableSchema was removed, replaced by Schema/ResolvedSchema
+// Migration complete - now using Schema.newBuilder() and ResolvedSchema
 // Previous import: org.apache.flink.table.api.TableSchema
 
 public final class DeltaCatalogTableHelper {
@@ -242,8 +243,8 @@ public final class DeltaCatalogTableHelper {
             deltaTablePath);
 
         // Flink's Hive catalog calls CatalogTable::getSchema method (deprecated) and apply null
-        // check on the resul.
-        // TODO: Flink 2.0 - CatalogTable API changed, using builder pattern
+        // check on the result.
+        // FLINK 2.0: CatalogTable API changed - now using builder pattern with DefaultCatalogTable
         return new DeltaMetastoreTable(
             CatalogTable.newBuilder()
                 // by design don't store schema in metastore. Also watermark and primary key
@@ -395,8 +396,8 @@ public final class DeltaCatalogTableHelper {
             return decoratedTable.getOptions();
         }
 
-        // TODO: Flink 2.0 - TableSchema.getSchema() was removed
-        // The interface no longer requires this method
+        // FLINK 2.0: TableSchema.getSchema() was removed - using getUnresolvedSchema() instead
+        // The CatalogBaseTable interface now uses Schema instead of TableSchema
         /*
         @Override
         public TableSchema getSchema() {

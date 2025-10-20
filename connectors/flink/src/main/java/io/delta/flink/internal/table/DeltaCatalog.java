@@ -311,7 +311,7 @@ public class DeltaCatalog {
         Pair<String[], DataType[]> flinkTypesFromDelta =
             DeltaCatalogTableHelper.resolveFlinkTypesFromDelta(deltaSchema);
 
-        // TODO: Flink 2.0 - CatalogTable API changed, using builder pattern
+        // FLINK 2.0: CatalogTable API changed - now using builder pattern with Schema
         return CatalogTable.newBuilder()
             .schema(Schema.newBuilder()
                 .fromFields(flinkTypesFromDelta.getKey(), flinkTypesFromDelta.getValue())

@@ -266,8 +266,9 @@ public class DeltaSinkBuilder<IN> implements Serializable {
         return new DeltaCommitter(createBucketWriter());
     }
 
-    // TODO: GlobalCommitter was removed in Flink 2.0
-    // Need to implement alternative using SupportsCommitter pattern
+    // FLINK 2.0: GlobalCommitter was removed and replaced by DeltaGlobalCommitCoordinator
+    // Global commits are now handled via checkpoint-based coordination pattern
+    // See DeltaGlobalCommitCoordinator for the complete implementation
     /*
     GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>
         createGlobalCommitter() {
@@ -345,7 +346,8 @@ public class DeltaSinkBuilder<IN> implements Serializable {
                        bucketWriter.getProperties().getPendingFileRecoverableSerializer());
     }
 
-    // TODO: GlobalCommittable serializer no longer needed in Flink 2.0
+    // FLINK 2.0: GlobalCommittable serializer no longer needed
+    // Global commit state is now managed by DeltaGlobalCommitCoordinator
     /*
     SimpleVersionedSerializer<DeltaGlobalCommittable> getGlobalCommittableSerializer()
         throws IOException {
