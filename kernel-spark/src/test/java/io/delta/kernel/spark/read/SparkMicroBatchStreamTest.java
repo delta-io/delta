@@ -49,9 +49,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
   @BeforeEach
   void setUp() {
-    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
-    microBatchStream =
-        new SparkMicroBatchStream(null, new Configuration(), options, "test-table-id");
+    microBatchStream = new SparkMicroBatchStream(null, new Configuration());
   }
 
   @Test
@@ -141,15 +139,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     // Create 5 versions of data (versions 1-5, version 0 is the CREATE TABLE)
     // Insert 100 rows per commit to potentially trigger multiple batches
-    for (int i = 0; i < 5; i++) {
-      StringBuilder insertValues = new StringBuilder();
-      for (int j = 0; j < 100; j++) {
-        if (j > 0) insertValues.append(", ");
-        int id = i * 100 + j;
-        insertValues.append(String.format("(%d, 'User%d')", id, id));
-      }
-      sql("INSERT INTO %s VALUES %s", testTableName, insertValues.toString());
-    }
+    insertVersions(testTableName, /* numVersions= */ 5, /* rowsPerVersion= */ 100);
 
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -177,9 +167,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // dsv2 SparkMicroBatchStream
-    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
-    SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(testTablePath, new Configuration(), options, deltaLog.tableId());
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     Option<DeltaSourceOffset> endOffsetOption = scalaEndOffset;
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
@@ -263,15 +251,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     createEmptyTestTable(testTablePath, testTableName);
 
     // Create 5 versions with 10 rows each (versions 1-5)
-    for (int i = 0; i < 5; i++) {
-      StringBuilder values = new StringBuilder();
-      for (int j = 0; j < 10; j++) {
-        if (j > 0) values.append(", ");
-        int id = i * 10 + j;
-        values.append(String.format("(%d, 'User%d')", id, id));
-      }
-      sql("INSERT INTO %s VALUES %s", testTableName, values.toString());
-    }
+    insertVersions(testTableName, /* numVersions= */ 5, /* rowsPerVersion= */ 10);
 
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -298,8 +278,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // dsv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(testTablePath, new Configuration(), options, deltaLog.tableId());
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
     scala.Option<DeltaSource.AdmissionLimits> dsv2Limits =
         deltaSource.createAdmissionLimits(scalaMaxFiles, scalaMaxBytes);
@@ -422,8 +401,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     // Test DSv2 SparkMicroBatchStream
     DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
-    SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(testTablePath, new Configuration(), options, deltaLog.tableId());
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -512,8 +490,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     // Test DSv2 SparkMicroBatchStream
     DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
-    SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(testTablePath, new Configuration(), options, deltaLog.tableId());
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
@@ -632,6 +609,25 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /** Helper method to execute SQL with String.format. */
   private static void sql(String query, Object... args) {
     SparkDsv2TestBase.spark.sql(String.format(query, args));
+  }
+
+  /**
+   * Helper method to insert multiple versions of data into a test table.
+   *
+   * @param tableName The name of the table to insert into
+   * @param numVersions The number of versions (commits) to create
+   * @param rowsPerVersion The number of rows to insert per version
+   */
+  private void insertVersions(String tableName, int numVersions, int rowsPerVersion) {
+    for (int i = 0; i < numVersions; i++) {
+      StringBuilder values = new StringBuilder();
+      for (int j = 0; j < rowsPerVersion; j++) {
+        if (j > 0) values.append(", ");
+        int id = i * rowsPerVersion + j;
+        values.append(String.format("(%d, 'User%d')", id, id));
+      }
+      sql("INSERT INTO %s VALUES %s", tableName, values.toString());
+    }
   }
 
   /** Helper method to create a DeltaSource instance for testing. */
