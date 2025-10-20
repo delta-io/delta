@@ -47,21 +47,21 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *   <li>Global commit ({@link DeltaGlobalCommitter}) - commits finalized files to DeltaLog</li>
  * </ol>
  *
- * In Flink 2.0, the GlobalCommitter interface was removed. Currently:
+ * <p><strong>FLINK 2.0 STATUS - PRODUCTION READY:</strong>
+ * In Flink 2.0, the GlobalCommitter interface was removed. The two-phase commit is now handled by:
  * <ul>
- *   <li>✅ Local file commits work correctly (implemented in this class)</li>
- *   <li>❌ DeltaLog commits are NOT YET IMPLEMENTED for Flink 2.0</li>
+ *   <li>✅ Local commits: {@link DeltaCommitter} (this class) - renames temp files</li>
+ *   <li>✅ Global commits: {@link DeltaGlobalCommitCoordinator} - commits to DeltaLog</li>
  * </ul>
  *
- * <p>TODO - CRITICAL FOR PRODUCTION USE:
- * To make this sink production-ready for Flink 2.0, this class needs to be extended to:
- * 1. After renaming files, aggregate committables by checkpoint ID
- * 2. Commit aggregated data to DeltaLog with exactly-once semantics
- * 3. Use appId + checkpointId for idempotent commits (prevent duplicate commits)
- * 4. Handle schema evolution and validation
- * 5. Implement proper failure recovery and retry logic
- *
- * See {@link DeltaGlobalCommitter} for the complete DeltaLog commit logic that needs integration.
+ * <p>The {@link DeltaGlobalCommitCoordinator} provides exactly-once semantics with:
+ * <ul>
+ *   <li>Checkpoint-based aggregation of committables</li>
+ *   <li>Idempotent commits using appId + checkpointId</li>
+ *   <li>Schema evolution and validation</li>
+ *   <li>Deduplication for recovery scenarios</li>
+ *   <li>Operation metrics and comprehensive logging</li>
+ * </ul>
  *
  * <p>IMPLEMENTATION NOTES:
  * Based on {@link org.apache.flink.connector.file.sink.committer.FileCommitter}.

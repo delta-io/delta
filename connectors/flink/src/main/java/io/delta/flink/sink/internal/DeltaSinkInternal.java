@@ -176,13 +176,14 @@ public class DeltaSinkInternal<IN>
      * - GlobalCommitter functionality (DeltaLog commits) needs to be integrated into
      *   the DeltaCommitter class or implemented using alternative patterns
      * - Current implementation provides local file commits through DeltaCommitter
-     * - Global DeltaLog commits are CURRENTLY NOT IMPLEMENTED in Flink 2.0
+     * - Global DeltaLog commits are handled by {@link DeltaGlobalCommitCoordinator}
      *
-     * TODO: Integrate DeltaGlobalCommitter logic into DeltaCommitter:
-     *   1. Add DeltaLog commit capability to DeltaCommitter.commit()
-     *   2. Implement checkpoint ID grouping and ordering
-     *   3. Ensure exactly-once semantics with appId + checkpointId
-     *   4. Handle schema evolution and validation
+     * GLOBAL COMMITS IMPLEMENTED:
+     * The {@link DeltaGlobalCommitCoordinator} provides exactly-once semantics with:
+     *   1. Checkpoint-based aggregation and ordering of committables
+     *   2. Idempotent commits using appId + checkpointId
+     *   3. Schema evolution and validation
+     *   4. Deduplication for recovery scenarios
      *
      * For reference, the original Flink 1.x implementation:
      * - createGlobalCommitter() returned DeltaGlobalCommitter instance
