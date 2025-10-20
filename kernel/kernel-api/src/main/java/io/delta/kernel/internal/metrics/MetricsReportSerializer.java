@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.metrics;
 
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
@@ -29,28 +28,22 @@ import io.delta.kernel.metrics.MetricsReport;
 import io.delta.kernel.types.StructType;
 import java.io.IOException;
 
-/** Defines JSON serializer for {@link MetricsReport} types */
+/** Provides Jackson ObjectMapper configuration for serializing {@link MetricsReport} types */
 public final class MetricsReportSerializer {
 
   /**
-   * Serializes a {@link MetricsReport} to a JSON string.
+   * ObjectMapper configured for serializing metrics reports.
    *
-   * <p>This method handles all types of metrics reports, using Jackson's type information to
-   * properly serialize the specific report implementation.
+   * <p>This ObjectMapper is pre-configured with custom serializers for:
    *
-   * @param report the metrics report to serialize
-   * @return a JSON string representation of the report
-   * @throws JsonProcessingException if serialization fails
+   * <ul>
+   *   <li>Java 8 Optional types (serialized as null when empty)
+   *   <li>Exceptions (serialized using their toString() representation)
+   *   <li>Complex types like StructType and Predicate (using string representation)
+   *   <li>Column objects (serialized as arrays of field names)
+   * </ul>
    */
-  public static String serialize(MetricsReport report) throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(report);
-  }
-
-  /////////////////////////////////
-  // Private fields and methods //
-  ////////////////////////////////
-
-  private static final ObjectMapper OBJECT_MAPPER =
+  public static final ObjectMapper OBJECT_MAPPER =
       new ObjectMapper()
           .registerModule(new Jdk8Module()) // To support Optional
           .registerModule( // Serialize Exception using toString()

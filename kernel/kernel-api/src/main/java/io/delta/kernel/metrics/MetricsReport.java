@@ -17,7 +17,6 @@
 package io.delta.kernel.metrics;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import io.delta.kernel.internal.metrics.MetricsReportSerializer;
 
 /**
  * Interface containing the metrics for a given operation.
@@ -31,19 +30,8 @@ public interface MetricsReport {
   /**
    * Converts this metrics report to a JSON string representation.
    *
-   * <p>The JSON format includes all metrics data from this report in a structured format suitable
-   * for logging, monitoring systems, or further analysis. The exact structure depends on the
-   * specific report type (e.g., {@link SnapshotReport}, {@link ScanReport}, {@link
-   * TransactionReport}).
-   *
-   * <p>The default serialization is performed using Jackson. See {@link MetricsReportSerializer}
-   * for more details.
-   *
    * @return a JSON string representation of this metrics report
-   * @throws JsonProcessingException if the report cannot be serialized to JSON (e.g., due to
-   *     circular references or unsupported types)
+   * @throws JsonProcessingException if the report cannot be serialized to JSON
    */
-  default String toJson() throws JsonProcessingException {
-    return MetricsReportSerializer.serialize(this);
-  }
+  String toJson() throws JsonProcessingException;
 }
