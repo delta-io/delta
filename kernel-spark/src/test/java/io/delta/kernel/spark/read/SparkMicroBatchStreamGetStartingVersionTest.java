@@ -26,6 +26,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -51,25 +52,10 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     createEmptyTestTable(testTablePath, testTableName);
 
     // Create 5 versions (version 0 = CREATE TABLE, versions 1-5 = INSERTs)
-    for (int i = 1; i <= 5; i++) {
-      sql("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, i, i);
-    }
+    createVersions(testTableName, 5);
 
-    // DSv1: Create DeltaSource and get starting version
-    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
-        createDeltaSource(deltaLog, testTablePath, createDeltaOptions(startingVersion));
-    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
-
-    // DSv2: Create SparkMicroBatchStream and get starting version
-    SparkMicroBatchStream dsv2Stream =
-        new SparkMicroBatchStream(
-            spark, testTablePath, new Configuration(), createDeltaOptions(startingVersion));
-    Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
-
-    // Compare results
-    compareStartingVersionResults(
-        dsv1Result, dsv2Result, expectedVersion, "startingVersion=" + startingVersion);
+    testAndCompareStartingVersion(
+        testTablePath, startingVersion, expectedVersion, "startingVersion=" + startingVersion);
   }
 
   /** Provides test parameters for the parameterized getStartingVersion test. */
@@ -95,11 +81,7 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     createEmptyTestTable(testTablePath, testTableName);
 
     // Create 5 versions (version 0 = CREATE TABLE, versions 1-5 = INSERTs)
-    for (int i = 1; i <= 5; i++) {
-      sql("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, i, i);
-    }
-
-    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    createVersions(testTableName, 5);
 
     // Test with -1: Both DSv1 and DSv2 should throw during DeltaOptions creation
     assertThrows(IllegalArgumentException.class, () -> createDeltaOptions("-1"));
@@ -114,8 +96,8 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
    * disabled, the code immediately falls back to checkVersionExists without protocol validation.
    */
   @ParameterizedTest
-  @MethodSource("protocolValidationFallbackParameters")
-  public void testGetStartingVersion_ProtocolValidationEnabled(
+  @MethodSource("protocolValidationParameters")
+  public void testGetStartingVersion_ProtocolValidationFlag(
       boolean enableProtocolValidation,
       String startingVersion,
       String testDescription,
@@ -127,36 +109,24 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     createEmptyTestTable(testTablePath, testTableName);
 
     // Create 5 versions (version 0 = CREATE TABLE, versions 1-5 = INSERTs)
-    for (int i = 1; i <= 5; i++) {
-      sql("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, i, i);
-    }
+    createVersions(testTableName, 5);
 
     // Test with protocol validation enabled/disabled
-    withProtocolValidationConfig(
-        enableProtocolValidation,
-        () -> {
-          // DSv1: Create DeltaSource and get starting version
-          DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-          org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
-              createDeltaSource(deltaLog, testTablePath, createDeltaOptions(startingVersion));
-          scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
-
-          // DSv2: Create SparkMicroBatchStream and get starting version
-          SparkMicroBatchStream dsv2Stream =
-              new SparkMicroBatchStream(
-                  spark, testTablePath, new Configuration(), createDeltaOptions(startingVersion));
-          Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
-
-          compareStartingVersionResults(
-              dsv1Result,
-              dsv2Result,
-              Optional.of(Long.parseLong(startingVersion)),
-              testDescription);
-        });
+    String configKey = DeltaSQLConf.FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL().key();
+    try {
+      spark.conf().set(configKey, String.valueOf(enableProtocolValidation));
+      testAndCompareStartingVersion(
+          testTablePath,
+          startingVersion,
+          Optional.of(Long.parseLong(startingVersion)),
+          testDescription);
+    } finally {
+      spark.conf().unset(configKey);
+    }
   }
 
   /** Provides test parameters for protocol validation scenarios. */
-  private static Stream<Arguments> protocolValidationFallbackParameters() {
+  private static Stream<Arguments> protocolValidationParameters() {
     return Stream.of(
         Arguments.of(
             /* enableProtocolValidation= */ true,
@@ -190,9 +160,7 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     createEmptyTestTable(testTablePath, testTableName);
 
     // Create 10 versions (version 0 = CREATE TABLE, versions 1-10 = INSERTs)
-    for (int i = 1; i <= 10; i++) {
-      sql("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, i, i);
-    }
+    createVersions(testTableName, 10);
 
     // Create a checkpoint at version 10
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -211,59 +179,57 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
 
     // Test with startingVersion=3 (a version that's no longer recreatable)
     String startingVersion = "3";
+    DeltaLog freshDeltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
+        createDeltaSource(freshDeltaLog, testTablePath, createDeltaOptions(startingVersion));
+    SparkMicroBatchStream dsv2Stream =
+        new SparkMicroBatchStream(
+            testTablePath, new Configuration(), spark, createDeltaOptions(startingVersion));
 
-    withProtocolValidationConfig(
-        /* enableProtocolValidation= */ true,
-        () -> {
-          DeltaLog freshDeltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-          org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
-              createDeltaSource(freshDeltaLog, testTablePath, createDeltaOptions(startingVersion));
-          SparkMicroBatchStream dsv2Stream =
-              new SparkMicroBatchStream(
-                  spark, testTablePath, new Configuration(), createDeltaOptions(startingVersion));
+    // Both should succeed: protocol validation fails (can't reconstruct snapshot at version
+    // 3), but falls back to checkVersionExists which succeeds (version 3 logically exists)
+    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+    Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
-          // Both should succeed: protocol validation fails (can't reconstruct snapshot at version
-          // 3), but falls back to checkVersionExists which succeeds (version 3 logically exists)
-          scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
-          Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
-
-          compareStartingVersionResults(
-              dsv1Result,
-              dsv2Result,
-              Optional.of(Long.parseLong(startingVersion)),
-              "Protocol validation fallback with non-recreatable version");
-        });
+    compareStartingVersionResults(
+        dsv1Result,
+        dsv2Result,
+        Optional.of(Long.parseLong(startingVersion)),
+        "Protocol validation fallback with non-recreatable version");
   }
 
   // ================================================================================================
   // Helper methods
   // ================================================================================================
 
-  /**
-   * Helper method to execute code with a specific protocol validation configuration. This wraps the
-   * execution in a try-finally block to ensure the config is restored.
-   */
-  private void withProtocolValidationConfig(boolean enableValidation, ThrowingRunnable runnable)
-      throws Exception {
-    String configKey = "spark.databricks.delta.streaming.fastDropFeature.alwaysValidateProtocol";
-    Object originalValue = spark.conf().getOption(configKey).getOrElse(() -> null);
-
-    try {
-      spark.conf().set(configKey, String.valueOf(enableValidation));
-      runnable.run();
-    } finally {
-      if (originalValue != null) {
-        spark.conf().set(configKey, originalValue.toString());
-      } else {
-        spark.conf().unset(configKey);
-      }
+  /** Helper method to create multiple versions by inserting rows. */
+  private void createVersions(String testTableName, int numVersions) {
+    for (int i = 1; i <= numVersions; i++) {
+      sql("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, i, i);
     }
   }
 
-  /** Functional interface for test code that can throw exceptions. */
-  @FunctionalInterface
-  interface ThrowingRunnable {
-    void run() throws Exception;
+  /** Helper method to test and compare getStartingVersion results from DSv1 and DSv2. */
+  private void testAndCompareStartingVersion(
+      String testTablePath,
+      String startingVersion,
+      Optional<Long> expectedVersion,
+      String testDescription)
+      throws Exception {
+    // DSv1: Create DeltaSource and get starting version
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
+        createDeltaSource(deltaLog, testTablePath, createDeltaOptions(startingVersion));
+    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+
+    // DSv2: Create SparkMicroBatchStream and get starting version
+    SparkMicroBatchStream dsv2Stream =
+        new SparkMicroBatchStream(
+            testTablePath, new Configuration(), spark, createDeltaOptions(startingVersion));
+    Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
+
+    // Compare results
+    compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);
   }
 
   /** Helper method to execute SQL with String.format. */

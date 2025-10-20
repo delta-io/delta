@@ -59,8 +59,12 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   private final StreamingHelper streamingHelper;
   private final SparkSession spark;
 
+  public SparkMicroBatchStream(String tablePath, Configuration hadoopConf) {
+    this(tablePath, hadoopConf, SparkSession.active(), /* options= */ null);
+  }
+
   public SparkMicroBatchStream(
-      SparkSession spark, String tablePath, Configuration hadoopConf, DeltaOptions options) {
+      String tablePath, Configuration hadoopConf, SparkSession spark, DeltaOptions options) {
     this.spark = spark;
     this.tablePath = tablePath;
     this.engine = DefaultEngine.create(hadoopConf);
@@ -193,11 +197,10 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       // Kernel throws plain KernelException (not a subclass) for unsupported features,
       // so we must check the message. See DeltaErrors.unsupportedTableFeature,
       // DeltaErrors.unsupportedReaderFeatures, and DeltaErrors.unsupportedWriterFeatures.
+      // TODO(#5369): Use specific exception types instead of message parsing
       String exceptionMessage = e.getMessage();
       if (exceptionMessage != null
-          && (exceptionMessage.contains("Unsupported Delta table feature")
-              || exceptionMessage.contains("Unsupported Delta reader features")
-              || exceptionMessage.contains("Unsupported Delta writer feature"))) {
+          && exceptionMessage.contains("Unsupported Delta reader features")) {
         throw new RuntimeException(e);
       }
       // Suppress other KernelExceptions
