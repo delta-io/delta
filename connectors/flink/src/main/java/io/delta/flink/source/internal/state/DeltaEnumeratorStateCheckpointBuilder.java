@@ -39,12 +39,28 @@ public class DeltaEnumeratorStateCheckpointBuilder<SplitT extends DeltaSourceSpl
      */
     private boolean monitoringForChanges;
 
+    /**
+     * The number of files already processed from the snapshot. Used for chunked file loading.
+     * <p>
+     * The default value is 0 (no files processed yet).
+     */
+    private long filesProcessedCount;
+
+    /**
+     * Flag indicating whether there are more files to process from the snapshot.
+     * <p>
+     * The default value is false (all files processed).
+     */
+    private boolean hasMoreFiles;
+
     public DeltaEnumeratorStateCheckpointBuilder(
         Path deltaTablePath, long snapshotVersion, Collection<SplitT> splits) {
         this.deltaTablePath = deltaTablePath;
         this.snapshotVersion = snapshotVersion;
         this.splits = splits;
         this.monitoringForChanges = false;
+        this.filesProcessedCount = 0L;
+        this.hasMoreFiles = false;
     }
 
     public static <T extends DeltaSourceSplit> DeltaEnumeratorStateCheckpointBuilder<T>
@@ -68,11 +84,35 @@ public class DeltaEnumeratorStateCheckpointBuilder<SplitT extends DeltaSourceSpl
         return this;
     }
 
+    /**
+     * Sets the number of files already processed from the snapshot.
+     *
+     * @param filesProcessedCount the count of files already processed
+     * @return this builder instance for method chaining
+     */
+    public DeltaEnumeratorStateCheckpointBuilder<SplitT> withFilesProcessedCount(
+        long filesProcessedCount) {
+        this.filesProcessedCount = filesProcessedCount;
+        return this;
+    }
+
+    /**
+     * Sets the flag indicating whether there are more files to process.
+     *
+     * @param hasMoreFiles {@code true} if more files remain, {@code false} otherwise
+     * @return this builder instance for method chaining
+     */
+    public DeltaEnumeratorStateCheckpointBuilder<SplitT> withHasMoreFiles(
+        boolean hasMoreFiles) {
+        this.hasMoreFiles = hasMoreFiles;
+        return this;
+    }
+
     public DeltaEnumeratorStateCheckpoint<SplitT> build() {
         PendingSplitsCheckpoint<SplitT> splitsCheckpoint =
             PendingSplitsCheckpoint.fromCollectionSnapshot(splits, processedPaths);
 
         return new DeltaEnumeratorStateCheckpoint<>(deltaTablePath, snapshotVersion,
-            monitoringForChanges, splitsCheckpoint);
+            monitoringForChanges, splitsCheckpoint, filesProcessedCount, hasMoreFiles);
     }
 }

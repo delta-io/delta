@@ -43,4 +43,26 @@ public interface TableProcessor {
      */
     DeltaEnumeratorStateCheckpointBuilder<DeltaSourceSplit> snapshotState(
         DeltaEnumeratorStateCheckpointBuilder<DeltaSourceSplit> checkpointBuilder);
+
+    /**
+     * Checks if there are more files to process from the Delta table.
+     *
+     * <p><strong>Chunked File Loading:</strong> For processors that implement chunked file
+     * loading (e.g., {@link SnapshotProcessor}), this method returns {@code true} if more
+     * file chunks are available to be loaded and processed.
+     *
+     * <p><strong>Continuous Processing:</strong> For processors that monitor Delta table
+     * for changes (e.g., {@link ChangesProcessor}), this method always returns {@code false}
+     * since they process changes as they occur rather than enumerating a fixed set of files.
+     *
+     * <p><strong>Default Behavior:</strong> The default implementation returns {@code false},
+     * indicating all files have been processed. Processors that support chunked loading should
+     * override this method to track their pagination state.
+     *
+     * @return {@code true} if more files are available to process, {@code false} if all files
+     * have been enumerated or if the processor doesn't support chunked loading
+     */
+    default boolean hasMoreFiles() {
+        return false;
+    }
 }

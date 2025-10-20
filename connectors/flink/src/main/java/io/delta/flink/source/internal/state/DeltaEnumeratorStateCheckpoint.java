@@ -48,13 +48,34 @@ public class DeltaEnumeratorStateCheckpoint<SplitT extends DeltaSourceSplit> {
      */
     private final PendingSplitsCheckpoint<SplitT> pendingSplitsCheckpoint;
 
+    /**
+     * The number of files already processed from the snapshot. Used for chunked file loading
+     * to resume from the correct position after recovery.
+     * <p>
+     * A value of 0 indicates no files have been processed yet from this snapshot.
+     */
+    private final long filesProcessedCount;
+
+    /**
+     * Flag indicating whether there are more files to process from the snapshot.
+     * <p>
+     * When {@code true}, the enumerator should continue requesting more file chunks from
+     * the processor. When {@code false}, all files from the snapshot have been enumerated.
+     * <p>
+     * This is critical for chunked file loading in tables with millions of files.
+     */
+    private final boolean hasMoreFiles;
+
     protected DeltaEnumeratorStateCheckpoint(Path deltaTablePath,
         long snapshotVersion, boolean monitoringForChanges,
-        PendingSplitsCheckpoint<SplitT> pendingSplitsCheckpoint) {
+        PendingSplitsCheckpoint<SplitT> pendingSplitsCheckpoint,
+        long filesProcessedCount, boolean hasMoreFiles) {
         this.deltaTablePath = deltaTablePath;
         this.snapshotVersion = snapshotVersion;
         this.monitoringForChanges = monitoringForChanges;
         this.pendingSplitsCheckpoint = pendingSplitsCheckpoint;
+        this.filesProcessedCount = filesProcessedCount;
+        this.hasMoreFiles = hasMoreFiles;
     }
 
     /**
@@ -92,6 +113,22 @@ public class DeltaEnumeratorStateCheckpoint<SplitT extends DeltaSourceSplit> {
      */
     public boolean isMonitoringForChanges() {
         return monitoringForChanges;
+    }
+
+    /**
+     * @return The number of files already processed from the snapshot. Used for resuming
+     * chunked file processing after checkpoint recovery.
+     */
+    public long getFilesProcessedCount() {
+        return filesProcessedCount;
+    }
+
+    /**
+     * @return {@code true} if there are more files to process from the snapshot,
+     * {@code false} if all files have been enumerated.
+     */
+    public boolean hasMoreFiles() {
+        return hasMoreFiles;
     }
 
     // Package protected For (De)Serializer only

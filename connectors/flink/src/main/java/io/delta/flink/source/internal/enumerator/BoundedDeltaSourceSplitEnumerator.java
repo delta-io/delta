@@ -39,10 +39,30 @@ public class BoundedDeltaSourceSplitEnumerator extends DeltaSourceSplitEnumerato
 
     /**
      * Starts Delta table processing.
+     *
+     * <p><strong>Chunked Processing:</strong> With the chunked file loading implementation,
+     * this method processes the first chunk of files from the snapshot. Subsequent chunks
+     * are processed automatically after splits are assigned (see {@link #assignSplits()}).
+     *
+     * <p>This ensures that we don't load all files into memory at once for tables with
+     * millions of files, while still providing continuous split assignment to readers.
      */
     @Override
     public void start() {
-        snapshotProcessor.process(this::addSplits);
+        processNextChunk();
+    }
+
+    /**
+     * Processes the next chunk of files from the snapshot and adds them as splits.
+     *
+     * <p>This method delegates to {@link SnapshotProcessor#process(java.util.function.Consumer)}
+     * which handles the chunked file loading internally. If more chunks are available after
+     * this call, they will be processed when {@link #assignSplits()} is called.
+     */
+    private void processNextChunk() {
+        if (snapshotProcessor.hasMoreFiles()) {
+            snapshotProcessor.process(this::addSplits);
+        }
     }
 
     @Override
@@ -56,6 +76,32 @@ public class BoundedDeltaSourceSplitEnumerator extends DeltaSourceSplitEnumerato
 
         checkpointBuilder = snapshotProcessor.snapshotState(checkpointBuilder);
         return checkpointBuilder.build();
+    }
+
+    /**
+     * Overrides the default split assignment to support chunked file loading.
+     *
+     * <p>When no more splits are available in the current chunk but more files exist
+     * in the snapshot, this method automatically processes the next chunk before signaling
+     * "no more splits" to readers.
+     *
+     * <p>This ensures continuous split assignment for tables with millions of files without
+     * loading all files into memory at once.
+     *
+     * @return the status of the split assignment operation
+     */
+    @Override
+    protected AssignSplitStatus assignSplits() {
+        AssignSplitStatus status = super.assignSplits();
+
+        // If no more splits in current batch but more files available, process next chunk
+        if (status == AssignSplitStatus.NO_MORE_SPLITS && snapshotProcessor.hasMoreFiles()) {
+            processNextChunk();
+            // Try assigning splits from the newly loaded chunk
+            status = super.assignSplits();
+        }
+
+        return status;
     }
 
     @Override

@@ -41,8 +41,14 @@ public class DeltaPendingSplitsCheckpointSerializer<SplitT extends DeltaSourceSp
      * {@link DeltaPendingSplitsCheckpointSerializer#deserialize(int, byte[])} method.
      * <p>
      * It can be used to choose proper deserialization schema.
+     * <p>
+     * <strong>Version History:</strong>
+     * <ul>
+     *   <li>Version 1: Initial version</li>
+     *   <li>Version 2: Added chunked file loading support (filesProcessedCount, hasMoreFiles)</li>
+     * </ul>
      */
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
 
     /**
      * A de/serializer for {@link org.apache.flink.connector.file.src.FileSourceSplit} that {@link
@@ -93,6 +99,10 @@ public class DeltaPendingSplitsCheckpointSerializer<SplitT extends DeltaSourceSp
 
             outputWrapper.writeInt(serPath.length);
             outputWrapper.write(serPath);
+
+            // Version 2 fields: chunked file loading support
+            outputWrapper.writeLong(state.getFilesProcessedCount());
+            outputWrapper.writeBoolean(state.hasMoreFiles());
         }
 
         return byteArrayOutputStream.toByteArray();
@@ -103,6 +113,9 @@ public class DeltaPendingSplitsCheckpointSerializer<SplitT extends DeltaSourceSp
         byte[] serialized) throws IOException {
         if (version == 1) {
             return tryDeserializeV1(serialized);
+        }
+        if (version == 2) {
+            return tryDeserializeV2(serialized);
         }
 
         throw new IOException("Unknown version: " + version);
@@ -131,7 +144,43 @@ public class DeltaPendingSplitsCheckpointSerializer<SplitT extends DeltaSourceSp
 
         Path deltaTablePath = new Path(new String(bytes, StandardCharsets.UTF_8));
 
+        // Version 1 doesn't have chunked file loading fields, use defaults
+        // filesProcessedCount = 0 (no files processed yet)
+        // hasMoreFiles = false (assume all files processed in single pass)
         return new DeltaEnumeratorStateCheckpoint<>(
-            deltaTablePath, snapshotVersion, monitoringForChanges, decoratedCheckPoint);
+            deltaTablePath, snapshotVersion, monitoringForChanges, decoratedCheckPoint,
+            0L, false);
+    }
+
+    private DeltaEnumeratorStateCheckpoint<SplitT> tryDeserializeV2(byte[] serialized)
+        throws IOException {
+        try (DataInputViewStreamWrapper inputWrapper =
+            new DataInputViewStreamWrapper(new ByteArrayInputStream(serialized))) {
+            return deserializeV2(inputWrapper);
+        }
+    }
+
+    private DeltaEnumeratorStateCheckpoint<SplitT> deserializeV2(
+        DataInputViewStreamWrapper inputWrapper) throws IOException {
+        byte[] decoratedBytes = new byte[inputWrapper.readInt()];
+        inputWrapper.readFully(decoratedBytes);
+        PendingSplitsCheckpoint<SplitT> decoratedCheckPoint =
+            decoratedSerDe.deserialize(decoratedSerDe.getVersion(), decoratedBytes);
+
+        long snapshotVersion = inputWrapper.readLong();
+        boolean monitoringForChanges = inputWrapper.readBoolean();
+
+        final byte[] bytes = new byte[inputWrapper.readInt()];
+        inputWrapper.readFully(bytes);
+
+        Path deltaTablePath = new Path(new String(bytes, StandardCharsets.UTF_8));
+
+        // Version 2 fields: chunked file loading support
+        long filesProcessedCount = inputWrapper.readLong();
+        boolean hasMoreFiles = inputWrapper.readBoolean();
+
+        return new DeltaEnumeratorStateCheckpoint<>(
+            deltaTablePath, snapshotVersion, monitoringForChanges, decoratedCheckPoint,
+            filesProcessedCount, hasMoreFiles);
     }
 }
