@@ -186,8 +186,8 @@ public class UCCatalogManagedClient {
    *     with endVersionOpt.
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
-   * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and
-   *     is greater than the latest ratified version from UC
+   * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and is
+   *     greater than the latest ratified version from UC
    */
   public CommitRange loadCommitRange(
       Engine engine,
