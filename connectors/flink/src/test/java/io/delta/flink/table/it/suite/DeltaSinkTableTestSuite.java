@@ -32,7 +32,7 @@ import io.delta.flink.utils.CheckpointCountingSource.RowProducer;
 import io.delta.flink.utils.DeltaTestUtils;
 import io.delta.flink.utils.TestParquetReader;
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import static io.delta.flink.utils.DeltaTestUtils.configureNoRestartStrategy;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
@@ -530,7 +530,7 @@ public abstract class DeltaSinkTableTestSuite {
 
     private StreamExecutionEnvironment getTestStreamEnv(boolean streamingMode) {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.getConfig().setRestartStrategy(RestartStrategies.noRestart());
+        configureNoRestartStrategy(env);
 
         if (streamingMode) {
             env.setRuntimeMode(RuntimeExecutionMode.STREAMING);

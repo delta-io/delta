@@ -23,8 +23,8 @@ import io.delta.flink.utils.RecordCounterToFail.FailCheck;
 import org.apache.commons.io.FileUtils;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestartStrategyOptions;
 import org.apache.flink.configuration.CoreOptions;
 import org.apache.flink.runtime.highavailability.nonha.embedded.HaLeadershipControl;
 import org.apache.flink.runtime.minicluster.MiniCluster;
@@ -577,9 +577,39 @@ public class DeltaTestUtils {
         }
     }
 
+    /**
+     * Configure no restart strategy for Flink StreamExecutionEnvironment.
+     * Flink 2.0 migration: Uses Configuration API instead of deprecated RestartStrategies.
+     */
+    public static void configureNoRestartStrategy(StreamExecutionEnvironment env) {
+        Configuration config = new Configuration();
+        config.set(RestartStrategyOptions.RESTART_STRATEGY, "none");
+        env.configure(config);
+    }
+
+    /**
+     * Configure fixed delay restart strategy for Flink StreamExecutionEnvironment.
+     * Flink 2.0 migration: Uses Configuration API instead of deprecated RestartStrategies.
+     *
+     * @param env StreamExecutionEnvironment to configure
+     * @param restartAttempts number of restart attempts
+     * @param delayMillis delay between restarts in milliseconds
+     */
+    public static void configureFixedDelayRestartStrategy(
+            StreamExecutionEnvironment env,
+            int restartAttempts,
+            long delayMillis) {
+        Configuration config = new Configuration();
+        config.set(RestartStrategyOptions.RESTART_STRATEGY, "fixed-delay");
+        config.set(RestartStrategyOptions.RESTART_STRATEGY_FIXED_DELAY_ATTEMPTS, restartAttempts);
+        config.set(RestartStrategyOptions.RESTART_STRATEGY_FIXED_DELAY_DELAY,
+            java.time.Duration.ofMillis(delayMillis));
+        env.configure(config);
+    }
+
     public static StreamExecutionEnvironment getTestStreamEnv(boolean streamingMode) {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.getConfig().setRestartStrategy(RestartStrategies.noRestart());
+        configureNoRestartStrategy(env);
 
         if (streamingMode) {
             env.setRuntimeMode(RuntimeExecutionMode.STREAMING);

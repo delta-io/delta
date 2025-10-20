@@ -19,7 +19,7 @@ import io.github.artsok.ParameterizedRepeatedIfExceptionsTest;
 import io.github.artsok.RepeatedIfExceptionsTest;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import static io.delta.flink.utils.DeltaTestUtils.configureFixedDelayRestartStrategy;
 import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -401,7 +401,7 @@ public class DeltaSourceBoundedExecutionITCaseTest extends DeltaSourceITBase {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(PARALLELISM);
         env.setRuntimeMode(RuntimeExecutionMode.AUTOMATIC);
-        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(5, 1000));
+        configureFixedDelayRestartStrategy(env, 5, 1000);
 
         DataStream<T> stream =
             env.fromSource(source, WatermarkStrategy.noWatermarks(), "delta-source");

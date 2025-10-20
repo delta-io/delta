@@ -34,7 +34,8 @@ import io.delta.flink.sink.utils.DeltaSinkTestUtils;
 import io.delta.flink.utils.DeltaTestUtils;
 import io.delta.flink.utils.TestParquetReader;
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import static io.delta.flink.utils.DeltaTestUtils.configureFixedDelayRestartStrategy;
+import static io.delta.flink.utils.DeltaTestUtils.configureNoRestartStrategy;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.connector.sink.GlobalCommitter;
 import org.apache.flink.api.connector.sink.Sink;
@@ -220,9 +221,9 @@ public class DeltaSinkBatchExecutionITCase extends DeltaSinkExecutionITCaseBase 
         env.configure(config, getClass().getClassLoader());
 
         if (triggerFailover) {
-            env.setRestartStrategy(RestartStrategies.fixedDelayRestart(1, Time.milliseconds(100)));
+            configureFixedDelayRestartStrategy(env, 1, 100);
         } else {
-            env.setRestartStrategy(RestartStrategies.noRestart());
+            configureNoRestartStrategy(env);
         }
 
         return env;

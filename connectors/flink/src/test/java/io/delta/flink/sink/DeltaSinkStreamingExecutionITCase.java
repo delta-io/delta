@@ -49,7 +49,8 @@ import io.delta.flink.utils.DeltaTestUtils;
 import io.delta.flink.utils.TestParquetReader;
 import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import static io.delta.flink.utils.DeltaTestUtils.configureFixedDelayRestartStrategy;
+import static io.delta.flink.utils.DeltaTestUtils.configureNoRestartStrategy;
 import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
@@ -594,9 +595,9 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
         env.enableCheckpointing(1000, CheckpointingMode.EXACTLY_ONCE);
 
         if (triggerFailover) {
-            env.setRestartStrategy(RestartStrategies.fixedDelayRestart(10, Time.milliseconds(100)));
+            configureFixedDelayRestartStrategy(env, 10, 100);
         } else {
-            env.setRestartStrategy(RestartStrategies.noRestart());
+            configureNoRestartStrategy(env);
         }
 
         return env;

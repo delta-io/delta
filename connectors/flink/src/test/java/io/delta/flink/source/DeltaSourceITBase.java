@@ -18,7 +18,7 @@ import io.delta.flink.utils.ExecutionITCaseTestConstants;
 import io.delta.flink.utils.TestDescriptor;
 import io.github.artsok.RepeatedIfExceptionsTest;
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import static io.delta.flink.utils.DeltaTestUtils.configureFixedDelayRestartStrategy;
 import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.data.RowData;
@@ -376,7 +376,7 @@ public abstract class DeltaSourceITBase extends TestLogger {
         env.setParallelism(parallelismLevel);
         env.setRuntimeMode(RuntimeExecutionMode.AUTOMATIC);
         env.enableCheckpointing(200L);
-        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(5, 1000));
+        configureFixedDelayRestartStrategy(env, 5, 1000);
         return env;
     }
 

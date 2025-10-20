@@ -5,7 +5,7 @@ import java.io.IOException;
 import io.delta.flink.utils.CheckpointCountingSource;
 import io.delta.flink.utils.DeltaTestUtils;
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import static io.delta.flink.utils.DeltaTestUtils.configureNoRestartStrategy;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.runtime.jobgraph.JobGraph;
@@ -123,7 +123,7 @@ public class MultipleSinkJobsItCaseTest {
         config.set(ExecutionOptions.RUNTIME_MODE, RuntimeExecutionMode.STREAMING);
         env.configure(config, getClass().getClassLoader());
         env.enableCheckpointing(1000, CheckpointingMode.EXACTLY_ONCE);
-        env.setRestartStrategy(RestartStrategies.noRestart());
+        configureNoRestartStrategy(env);
 
         return env;
     }

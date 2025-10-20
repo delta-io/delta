@@ -3,7 +3,7 @@ package io.delta.flink.table.it;
 import java.io.IOException;
 
 import org.apache.flink.api.common.RuntimeExecutionMode;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import static io.delta.flink.utils.DeltaTestUtils.configureNoRestartStrategy;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.TableEnvironment;
@@ -154,7 +154,7 @@ public class FlinkSqlTestITCase {
 
     private StreamExecutionEnvironment getTestStreamEnv() {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.getConfig().setRestartStrategy(RestartStrategies.noRestart());
+        configureNoRestartStrategy(env);
         env.setRuntimeMode(RuntimeExecutionMode.STREAMING);
         env.enableCheckpointing(100, CheckpointingMode.EXACTLY_ONCE);
         return env;
