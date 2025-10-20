@@ -116,7 +116,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       long fromIndex,
       boolean isInitialSnapshot,
       Option<DeltaSource.AdmissionLimits> limits) {
-    // TODO(#5319): CDC support is out of scope for now
+    // TODO(#5319): getFileChangesForCDC
 
     CloseableIterator<IndexedFile> changes =
         getFileChanges(fromVersion, fromIndex, isInitialSnapshot, /*endOffset=*/ Option.empty());
@@ -321,6 +321,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
         output.add(new IndexedFile(version, index++, addFile));
       }
     }
+
     return index;
   }
 }

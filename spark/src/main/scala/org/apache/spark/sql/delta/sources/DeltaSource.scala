@@ -76,7 +76,7 @@ private[delta] case class IndexedFile(
     add: AddFile,
     remove: RemoveFile = null,
     cdc: AddCDCFile = null,
-    shouldSkip: Boolean = false) extends org.apache.spark.sql.delta.sources.AdmittableFile {
+    shouldSkip: Boolean = false) extends AdmittableFile {
 
   require(Option(add).size + Option(remove).size + Option(cdc).size <= 1,
     "IndexedFile must have at most one of add, remove, or cdc")
