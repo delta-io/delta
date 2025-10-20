@@ -1280,6 +1280,20 @@ case class DeltaSource(
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
 
   /**
+   * Helper method for Java callers to create AdmissionLimits.
+   * Returns None if both maxFiles and maxBytes are empty/None.
+   */
+  def createAdmissionLimits(
+      maxFiles: Option[Int],
+      maxBytes: Option[Long]): Option[AdmissionLimits] = {
+    if (maxFiles.isEmpty && maxBytes.isEmpty) {
+      None
+    } else {
+      Some(new AdmissionLimits(maxFiles, maxBytes.getOrElse(Long.MaxValue)))
+    }
+  }
+
+  /**
    * Class that helps controlling how much data should be processed by a single micro-batch.
    */
   case class AdmissionLimits(
