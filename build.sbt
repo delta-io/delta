@@ -1319,6 +1319,9 @@ lazy val flink = (project in file("connectors/flink"))
       "org.apache.flink" % "flink-table-runtime" % flinkVersion % "provided",
       // Note: flink-scala was removed in Flink 2.0 - Scala API is no longer supported
       "org.apache.flink" % "flink-table-planner_2.12" % flinkVersion % "provided",
+      // HiveCatalog: flink-connector-hive is NOT YET AVAILABLE for Flink 2.x
+      // Tracked at: https://github.com/delta-io/delta/issues/5228
+      // When available, uncomment: "org.apache.flink" % "flink-connector-hive_2.12" % flinkVersion % "provided",
 
       "org.apache.flink" % "flink-connector-files" % flinkVersion % "test" classifier "tests",
       "org.apache.flink" % "flink-runtime-web" % flinkVersion % "test",

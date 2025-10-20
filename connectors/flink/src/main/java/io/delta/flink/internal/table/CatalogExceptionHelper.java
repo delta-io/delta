@@ -5,9 +5,11 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.StringJoiner;
 import java.util.stream.Collectors;
 
+import io.delta.flink.internal.table.exceptions.DeltaPropertyMismatchException;
+import io.delta.flink.internal.table.exceptions.DeltaSchemaMismatchException;
+import io.delta.flink.internal.table.exceptions.DeltaUnsupportedColumnTypeException;
 import org.apache.flink.table.api.ValidationException;
 import org.apache.flink.table.catalog.Column;
 import org.apache.flink.table.catalog.ObjectPath;
@@ -16,8 +18,18 @@ import org.apache.flink.table.catalog.exceptions.CatalogException;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.types.StructType;
 
-// TODO DC - consider extending CatalogException for more concrete types like
-//  "DeltaSchemaMismatchException" etc.
+/**
+ * Helper class for creating Delta-specific catalog exceptions.
+ *
+ * <p>This class provides factory methods for creating various types of exceptions
+ * that can occur during Delta Catalog operations, including:
+ * <ul>
+ *   <li>{@link DeltaSchemaMismatchException} - Schema/partition mismatches</li>
+ *   <li>{@link DeltaPropertyMismatchException} - Property override conflicts</li>
+ *   <li>{@link DeltaUnsupportedColumnTypeException} - Unsupported column types</li>
+ *   <li>{@link ValidationException} - Invalid job properties</li>
+ * </ul>
+ */
 public final class CatalogExceptionHelper {
 
     private static final String INVALID_PROPERTY_TEMPLATE = " - '%s'";
@@ -29,77 +41,31 @@ public final class CatalogExceptionHelper {
 
     private CatalogExceptionHelper() {}
 
-    static CatalogException deltaLogAndDdlSchemaMismatchException(
+    static DeltaSchemaMismatchException deltaLogAndDdlSchemaMismatchException(
             ObjectPath catalogTablePath,
             String deltaTablePath,
             Metadata deltaMetadata,
             StructType ddlDeltaSchema,
             List<String> ddlPartitions) {
 
-        String deltaSchemaString = (deltaMetadata.getSchema() == null)
-            ? "null"
-            : deltaMetadata.getSchema().getTreeString();
-
-        return new CatalogException(
-            String.format(
-                " Delta table [%s] from filesystem path [%s] has different schema or partition "
-                    + "spec than one defined in CREATE TABLE DDL.\n"
-                    + "DDL schema:\n[%s],\nDelta table schema:\n[%s]\n"
-                    + "DDL partition spec:\n[%s],\nDelta Log partition spec\n[%s]\n",
-                catalogTablePath,
-                deltaTablePath,
-                ddlDeltaSchema.getTreeString(),
-                deltaSchemaString,
-                ddlPartitions,
-                deltaMetadata.getPartitionColumns())
-        );
+        return new DeltaSchemaMismatchException(
+            catalogTablePath,
+            deltaTablePath,
+            deltaMetadata,
+            ddlDeltaSchema,
+            ddlPartitions);
     }
 
-    public static CatalogException mismatchedDdlOptionAndDeltaTablePropertyException(
+    public static DeltaPropertyMismatchException mismatchedDdlOptionAndDeltaTablePropertyException(
             ObjectPath catalogTablePath,
             List<MismatchedDdlOptionAndDeltaTableProperty> invalidOptions) {
 
-        StringJoiner invalidOptionsString = new StringJoiner("\n");
-        for (MismatchedDdlOptionAndDeltaTableProperty invalidOption : invalidOptions) {
-            invalidOptionsString.add(
-                String.join(
-                    " | ",
-                    invalidOption.optionName,
-                    invalidOption.ddlOptionValue,
-                    invalidOption.deltaLogPropertyValue
-                )
-            );
-        }
-
-        return new CatalogException(
-            String.format(
-                "Invalid DDL options for table [%s]. "
-                    + "DDL options for Delta table connector cannot override table properties "
-                    + "already defined in _delta_log.\n"
-                    + "DDL option name | DDL option value | Delta option value \n%s",
-                catalogTablePath.getFullName(),
-                invalidOptionsString
-            )
-        );
+        return new DeltaPropertyMismatchException(catalogTablePath, invalidOptions);
     }
 
-    public static CatalogException unsupportedColumnType(Collection<Column> unsupportedColumns) {
-        StringJoiner sj = new StringJoiner("\n");
-        for (Column unsupportedColumn : unsupportedColumns) {
-            sj.add(
-                String.join(
-                    " -> ",
-                    unsupportedColumn.getName(),
-                    unsupportedColumn.getClass().getSimpleName()
-                )
-            );
-        }
-
-        return new CatalogException(String.format(
-            "Table definition contains unsupported column types. "
-                + "Currently, only physical columns are supported by Delta Flink connector.\n"
-                + "Invalid columns and types:\n%s", sj)
-        );
+    public static DeltaUnsupportedColumnTypeException unsupportedColumnType(
+            Collection<Column> unsupportedColumns) {
+        return new DeltaUnsupportedColumnTypeException(unsupportedColumns);
     }
 
     public static CatalogException invalidDdlOptionException(InvalidDdlOptions invalidOptions) {
@@ -185,6 +151,18 @@ public final class CatalogExceptionHelper {
             this.optionName = optionName;
             this.ddlOptionValue = ddlOptionValue;
             this.deltaLogPropertyValue = deltaLogPropertyValue;
+        }
+
+        public String getOptionName() {
+            return optionName;
+        }
+
+        public String getDdlOptionValue() {
+            return ddlOptionValue;
+        }
+
+        public String getDeltaLogPropertyValue() {
+            return deltaLogPropertyValue;
         }
     }
 
