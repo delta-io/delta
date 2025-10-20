@@ -26,46 +26,24 @@ import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.metrics.MetricsReport;
-import io.delta.kernel.metrics.ScanReport;
-import io.delta.kernel.metrics.SnapshotReport;
-import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import java.io.IOException;
 
-/** Defines JSON serializers for {@link MetricsReport} types */
-public final class MetricsReportSerializers {
-
-  /////////////////
-  // Public APIs //
-  /////////////////
+/** Defines JSON serializer for {@link MetricsReport} types */
+public final class MetricsReportSerializer {
 
   /**
-   * Serializes a {@link SnapshotReport} to a JSON string
+   * Serializes a {@link MetricsReport} to a JSON string.
    *
-   * @throws JsonProcessingException
-   */
-  public static String serializeSnapshotReport(SnapshotReport snapshotReport)
-      throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(snapshotReport);
-  }
-
-  /**
-   * Serializes a {@link ScanReport} to a JSON string
+   * <p>This method handles all types of metrics reports, using Jackson's type information to
+   * properly serialize the specific report implementation.
    *
-   * @throws JsonProcessingException
+   * @param report the metrics report to serialize
+   * @return a JSON string representation of the report
+   * @throws JsonProcessingException if serialization fails
    */
-  public static String serializeScanReport(ScanReport scanReport) throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(scanReport);
-  }
-
-  /**
-   * Serializes a {@link TransactionReport} to a JSON string
-   *
-   * @throws JsonProcessingException
-   */
-  public static String serializeTransactionReport(TransactionReport transactionReport)
-      throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(transactionReport);
+  public static String serialize(MetricsReport report) throws JsonProcessingException {
+    return OBJECT_MAPPER.writeValueAsString(report);
   }
 
   /////////////////////////////////
@@ -96,5 +74,5 @@ public final class MetricsReportSerializers {
     }
   }
 
-  private MetricsReportSerializers() {}
+  private MetricsReportSerializer() {}
 }
