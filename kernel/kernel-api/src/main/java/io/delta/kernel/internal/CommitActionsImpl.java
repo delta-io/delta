@@ -55,7 +55,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
   private final boolean shouldDropProtocolColumn;
   private final boolean shouldDropCommitInfoColumn;
 
-  private CloseableIterator<ColumnarBatch> firstReadCache;
+  private CloseableIterator<ColumnarBatch> firstReadIterator;
   private boolean firstCallDone = false;
 
   /**
@@ -91,7 +91,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
       // Empty commit file - use fallback
       this.version = FileNames.deltaVersion(new Path(commitFile.getPath()));
       this.timestamp = commitFile.getModificationTime();
-      this.firstReadCache = toCloseableIterator(Collections.emptyIterator());
+      this.firstReadIterator = toCloseableIterator(Collections.emptyIterator());
     } else {
       ActionWrapper firstWrapper = wrappers.next();
       this.version = firstWrapper.getVersion();
@@ -109,7 +109,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
               shouldDropProtocolColumn,
               shouldDropCommitInfoColumn);
 
-      this.firstReadCache =
+      this.firstReadIterator =
           toCloseableIterator(Collections.singletonList(firstBatch).iterator())
               .combine(
                   wrappers.map(
@@ -138,8 +138,8 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
       firstCallDone = true;
       // First call: return cached iterator and clear internal reference
       // Caller is now responsible for closing this iterator
-      CloseableIterator<ColumnarBatch> result = firstReadCache;
-      firstReadCache = null; // Clear reference - caller owns it now
+      CloseableIterator<ColumnarBatch> result = firstReadIterator;
+      firstReadIterator = null; // Clear reference - caller owns it now
       return result;
     } else {
       // Subsequent calls: re-read from file for memory efficiency
@@ -167,9 +167,9 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
    */
   @Override
   public synchronized void close() {
-    if (firstReadCache != null) {
-      Utils.closeCloseablesSilently(firstReadCache);
-      firstReadCache = null;
+    if (firstReadIterator != null) {
+      Utils.closeCloseablesSilently(firstReadIterator);
+      firstReadIterator = null;
     }
   }
 }
