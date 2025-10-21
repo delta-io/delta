@@ -103,7 +103,8 @@ public class WorkloadBenchmark<T> {
       // TODO: In the future, we can filter specific workloads using command line args here.
       List<WorkloadSpec> variants = spec.getWorkloadVariants();
       for (WorkloadSpec variant : variants) {
-        if (variant.getType().equals("write")) {
+        System.out.println("Variant: " + variant.getFullName());
+        if (variant.getTableInfo().name.equals("basic_ccv2")) {
           filteredSpecs.add(variant);
         }
       }
@@ -112,6 +113,8 @@ public class WorkloadBenchmark<T> {
     // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
     String[] workloadSpecsArray =
         filteredSpecs.stream().map(WorkloadSpec::toJsonString).toArray(String[]::new);
+
+    System.out.println("Filtered specs list: " + Arrays.toString(workloadSpecsArray));
 
     // Configure and run JMH benchmark with the loaded workload specs
     Options opt =
@@ -128,6 +131,6 @@ public class WorkloadBenchmark<T> {
             .addProfiler(KernelMetricsProfiler.class)
             .build();
 
-    new Runner(opt).run();
+    new Runner(opt, new WorkloadOutputFormat()).run();
   }
 }

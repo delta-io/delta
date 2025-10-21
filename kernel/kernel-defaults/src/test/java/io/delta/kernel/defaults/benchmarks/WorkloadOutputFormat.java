@@ -24,10 +24,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.IterationParams;
-import org.openjdk.jmh.results.BenchmarkResult;
-import org.openjdk.jmh.results.IterationResult;
-import org.openjdk.jmh.results.Result;
-import org.openjdk.jmh.results.RunResult;
+import org.openjdk.jmh.results.*;
 import org.openjdk.jmh.runner.format.OutputFormat;
 import org.openjdk.jmh.util.Statistics;
 
@@ -313,33 +310,40 @@ public class WorkloadOutputFormat implements OutputFormat {
     HashMap<String, BenchmarkDetails> benchmarks = new HashMap<>();
 
     for (RunResult res : result) {
-      for (BenchmarkResult br : res.getBenchmarkResults()) {
-        try {
-          WorkloadSpec spec =
-              WorkloadSpec.fromJsonString(br.getParams().getParam("workloadSpecJson"));
-          HashMap<String, String> additionalParams = new HashMap<>();
-          additionalParams.put("engine", br.getParams().getParam("engineName"));
+      System.out.println("Run result: " + res.toString());
+      BenchmarkResult br = res.getAggregatedResult();
+      System.out.println("Benchmark results: " + br.toString());
+      try {
+        WorkloadSpec spec =
+            WorkloadSpec.fromJsonString(br.getParams().getParam("workloadSpecJson"));
+        HashMap<String, String> additionalParams = new HashMap<>();
+        additionalParams.put("engine", br.getParams().getParam("engineName"));
 
-          HashMap<String, Object> secondaryMetrics = new HashMap<>();
-          for (String resultKey : br.getSecondaryResults().keySet()) {
-            Result r = br.getSecondaryResults().get(resultKey);
-            if (r instanceof org.openjdk.jmh.results.SampleTimeResult) {
-              secondaryMetrics.put(r.getLabel(), TimingMetric.fromResult(r));
-            } else if (r instanceof org.openjdk.jmh.results.ScalarResult) {
+        HashMap<String, Object> secondaryMetrics = new HashMap<>();
+        for (String resultKey : br.getSecondaryResults().keySet()) {
+          Result r = br.getSecondaryResults().get(resultKey);
+          if (r instanceof org.openjdk.jmh.results.SampleTimeResult) {
+            secondaryMetrics.put(r.getLabel(), TimingMetric.fromResult(r));
+          } else if (r instanceof org.openjdk.jmh.results.ScalarResult) {
+            ScalarResult scalarResult = (ScalarResult) r;
+            if (scalarResult.getScoreUnit().equals("count")) {
+              // Treat as a long count metric
               secondaryMetrics.put(r.getLabel(), (long) r.getScore());
+            } else {
+              secondaryMetrics.put(r.getLabel(), r.getScore());
             }
           }
-
-          BenchmarkDetails details =
-              new BenchmarkDetails(
-                  spec,
-                  additionalParams,
-                  TimingMetric.fromResult(br.getPrimaryResult()),
-                  secondaryMetrics);
-          benchmarks.put(spec.getFullName(), details);
-        } catch (IOException e) {
-          throw new RuntimeException(e);
         }
+
+        BenchmarkDetails details =
+            new BenchmarkDetails(
+                spec,
+                additionalParams,
+                TimingMetric.fromResult(br.getPrimaryResult()),
+                secondaryMetrics);
+        benchmarks.put(spec.getFullName(), details);
+      } catch (IOException e) {
+        throw new RuntimeException(e);
       }
     }
 

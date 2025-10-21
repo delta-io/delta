@@ -95,6 +95,19 @@ public class TableInfo {
   private String tableInfoPath;
 
   /**
+   * Whether this table is a CCv2 (Coordinated Commits v2) table. If true, the CCv2 info is loaded
+   * from a fixed path: ccv2_info.json in the same directory as table_info.json.
+   */
+  @JsonProperty("ccv2_enabled")
+  private boolean ccv2Enabled;
+
+  /**
+   * Lazily loaded CCv2 information. This is populated when {@link #getCCv2Info()} is called for the
+   * first time.
+   */
+  @JsonIgnore private CCv2Info ccv2Info;
+
+  /**
    * Default constructor for Jackson deserialization.
    *
    * <p>This constructor is required for Jackson to deserialize JSON into TableInfo objects. All
@@ -123,6 +136,43 @@ public class TableInfo {
 
   public void setTableInfoPath(String tableInfoDirectory) {
     this.tableInfoPath = tableInfoDirectory;
+  }
+
+  /**
+   * Checks if this table is a CCv2 (Coordinated Commits v2) table.
+   *
+   * @return true if ccv2_enabled is true, false otherwise
+   */
+  @JsonIgnore
+  public boolean isCCv2Table() {
+    return ccv2Enabled;
+  }
+
+  /**
+   * Gets the CCv2 information for this table. Lazily loads the CCv2Info from ccv2_info.json in the
+   * same directory as table_info.json if not already loaded.
+   *
+   * @return the CCv2Info for this table
+   * @throws IllegalStateException if this is not a CCv2 table
+   * @throws RuntimeException if there is an error loading the CCv2Info
+   */
+  @JsonIgnore
+  public CCv2Info getCCv2Info() {
+    if (!isCCv2Table()) {
+      throw new IllegalStateException(
+          "This is not a CCv2 table. ccv2_enabled is not set to true in table_info.json");
+    }
+
+    if (ccv2Info == null) {
+      String ccv2InfoFullPath = Paths.get(tableInfoPath, "ccv2_info.json").toString();
+      try {
+        ccv2Info = CCv2Info.fromJsonPath(ccv2InfoFullPath);
+      } catch (java.io.IOException e) {
+        throw new RuntimeException("Failed to load CCv2Info from: " + ccv2InfoFullPath, e);
+      }
+    }
+
+    return ccv2Info;
   }
 
   /**

@@ -21,6 +21,7 @@ import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import io.delta.kernel.*;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.defaults.benchmarks.CCv2Context;
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.defaults.benchmarks.models.WriteSpec;
 import io.delta.kernel.engine.Engine;
@@ -36,8 +37,11 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import org.jetbrains.annotations.NotNull;
 import org.openjdk.jmh.infra.Blackhole;
 
 /**
@@ -58,6 +62,8 @@ public class WriteRunner extends WorkloadRunner {
   private List<Long> committedVersions;
   private Snapshot currentSnapshot;
   private long originalVersion;
+  private Table table;
+  private Set<String> initialDeltaLogFiles;
 
   /**
    * Constructs the WriteRunner from the workload spec and engine.
@@ -78,8 +84,21 @@ public class WriteRunner extends WorkloadRunner {
 
     String tableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
 
+    // Capture initial state of delta log directory (both main log and staged commits)
+    io.delta.kernel.internal.fs.Path deltaLogPath =
+        new io.delta.kernel.internal.fs.Path(tableRoot, "_delta_log");
+
+    // Capture initial listing of delta log files
+    initialDeltaLogFiles = getCurrentDirectoryListing();
+
+    // Create CCv2Context if this is a CCv2 table
+    Optional<CCv2Context> ccv2ContextOpt = createCCv2Context(workloadSpec.getTableInfo(), engine);
+
+    // Create Table object once - will be reused for all commits
+    table = Table.forPath(engine, tableRoot);
+
     // Get the current version before any commits
-    SnapshotBuilder builder = TableManager.loadSnapshot(tableRoot);
+    SnapshotBuilder builder = getSnapshotBuilder(tableRoot, ccv2ContextOpt);
     currentSnapshot = builder.build(engine);
     originalVersion = currentSnapshot.getVersion();
 
@@ -221,49 +240,66 @@ public class WriteRunner extends WorkloadRunner {
   }
 
   /**
+   * Captures a listing of all files whose paths start with the given prefix. Use a trailing slash
+   * to list files inside a directory.
+   *
+   * @param pathPrefix the path prefix to list from (e.g., "/path/to/dir/" to list files in dir)
+   * @return a set of all file paths starting with that prefix
+   */
+  private Set<String> captureInitialListing(String pathPrefix) throws IOException {
+    Set<String> files = new HashSet<>();
+    // List from the lowest version in the prefix
+    String listFrom = pathPrefix + "/0";
+    try (CloseableIterator<FileStatus> filesIter =
+        engine.getFileSystemClient().listFrom(listFrom)) {
+      while (filesIter.hasNext()) {
+        FileStatus file = filesIter.next();
+        files.add(file.getPath());
+      }
+    }
+    return files;
+  }
+
+  /**
    * Cleans up the state created during benchmark execution by reverting all committed changes.
    *
-   * <p>This method removes the commit files for any version greater than the original version,
+   * <p>This method removes any files in the delta log directory that weren't present at setup time,
    * effectively reverting all changes made during the benchmark. This ensures the table is returned
    * to its original state for the next benchmark iteration.
    */
   @Override
   public void cleanup() throws Exception {
-    if (originalVersion < 0) {
+    if (originalVersion < 0 || initialDeltaLogFiles == null) {
       // Setup was never called or failed
       return;
     }
 
-    // Delete all Delta log files with version > originalVersion
-    io.delta.kernel.internal.fs.Path deltaLogPath =
-        new io.delta.kernel.internal.fs.Path(
-            workloadSpec.getTableInfo().getResolvedTableRoot(), "_delta_log");
+    Set<String> currentFiles = getCurrentDirectoryListing();
 
-    // Use listingPrefix to start listing from originalVersion + 1
-    // This is more efficient than listing from version 0
-    String startPath = FileNames.listingPrefix(deltaLogPath, originalVersion + 1);
-
-    try (CloseableIterator<FileStatus> filesIter =
-        engine.getFileSystemClient().listFrom(startPath)) {
-
-      while (filesIter.hasNext()) {
-        FileStatus file = filesIter.next();
-        String filePath = file.getPath();
-
-        try {
-          // Get version from any recognized Delta log file (commit, checkpoint, checksum/CRC, etc.)
-          // FileNames.getFileVersion handles: .json, .checkpoint.parquet, .crc, .compacted.json
-          long version = FileNames.getFileVersion(new io.delta.kernel.internal.fs.Path(filePath));
-          if (version > originalVersion) {
-            // Delete this file (includes CRC files automatically)
-            engine.getFileSystemClient().delete(filePath);
-          }
-        } catch (IllegalArgumentException e) {
-          // Skip unrecognized files - ensures forward compatibility
-        }
+    // Delete any files that weren't present initially
+    for (String filePath : currentFiles) {
+      if (!initialDeltaLogFiles.contains(filePath)) {
+        engine.getFileSystemClient().delete(filePath);
       }
     }
 
     committedVersions.clear();
+  }
+
+  private @NotNull Set<String> getCurrentDirectoryListing() throws IOException {
+    // Get current state of delta log directory (both main log and staged commits)
+    io.delta.kernel.internal.fs.Path deltaLogPath =
+        new io.delta.kernel.internal.fs.Path(
+            workloadSpec.getTableInfo().getResolvedTableRoot(), "_delta_log");
+
+    // Add trailing slash to list files INSIDE the directory
+    Set<String> currentFiles = new HashSet<>(captureInitialListing(deltaLogPath + "/"));
+
+    if (workloadSpec.getTableInfo().isCCv2Table()) {
+      // Also capture staged commits directory if it exists
+      String stagedCommitsPath = FileNames.stagedCommitDirectory(deltaLogPath);
+      currentFiles.addAll(captureInitialListing(stagedCommitsPath + "/"));
+    }
+    return currentFiles;
   }
 }

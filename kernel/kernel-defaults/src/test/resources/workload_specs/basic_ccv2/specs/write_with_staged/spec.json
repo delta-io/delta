@@ -1,0 +1,6 @@
+{
+  "type": "write",
+  "commits": [
+    {"data_files_path": "add_back_files.json"}
+  ]
+}
