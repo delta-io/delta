@@ -26,6 +26,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionWrapper;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -167,11 +168,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
   @Override
   public synchronized void close() {
     if (firstReadCache != null) {
-      try {
-        firstReadCache.close();
-      } catch (Exception e) {
-        // Log but don't throw - close() should be best-effort
-      }
+      Utils.closeCloseablesSilently(firstReadCache);
       firstReadCache = null;
     }
   }
