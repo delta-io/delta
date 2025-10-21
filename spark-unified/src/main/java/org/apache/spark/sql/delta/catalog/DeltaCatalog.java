@@ -24,4 +24,3 @@ package org.apache.spark.sql.delta.catalog;
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
 }
-
