@@ -20,7 +20,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     env:
-      SCALA_VERSION: 2.12.18
+      SCALA_VERSION: 2.13.13
       NUM_SHARDS: 4
       DISABLE_UNIDOC: true # Another unidoc workflow will test unidoc.
       TEST_PARALLELISM_COUNT: 4
@@ -41,7 +41,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: "zulu"
-          java-version: "11"
+          java-version: "17"
       - name: Cache SBT and dependencies
         id: cache-sbt
         uses: actions/cache@v4
@@ -72,7 +72,7 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "11"
+          java-version: "17"
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local
