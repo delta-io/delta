@@ -17,12 +17,11 @@
 package org.apache.spark.sql.delta;
 
 /**
- * Intentionally duplicate class in sparkV2 to test duplicate detection.
- * This should cause a build failure when building the spark-unified module.
+ * Intentionally duplicate class in sparkV2 to test duplicate detection. This should cause a build
+ * failure when building the spark-unified module.
  */
 public class DuplicateTestClass {
-    public static String getVersion() {
-        return "v2";
-    }
+  public static String getVersion() {
+    return "v2";
+  }
 }
-
