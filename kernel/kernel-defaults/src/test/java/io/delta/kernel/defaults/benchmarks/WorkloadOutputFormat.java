@@ -20,14 +20,13 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.HashMap;
 import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.IterationParams;
-import org.openjdk.jmh.results.BenchmarkResult;
-import org.openjdk.jmh.results.IterationResult;
-import org.openjdk.jmh.results.Result;
-import org.openjdk.jmh.results.RunResult;
+import org.openjdk.jmh.results.*;
 import org.openjdk.jmh.runner.format.OutputFormat;
 import org.openjdk.jmh.util.Statistics;
 
@@ -300,7 +299,6 @@ public class WorkloadOutputFormat implements OutputFormat {
 
   @Override
   public void endRun(Collection<RunResult> result) {
-    System.out.println("End run results:");
     ReportMetadata metadata =
         new ReportMetadata(
             String.valueOf(System.currentTimeMillis()),
@@ -313,33 +311,43 @@ public class WorkloadOutputFormat implements OutputFormat {
     HashMap<String, BenchmarkDetails> benchmarks = new HashMap<>();
 
     for (RunResult res : result) {
-      for (BenchmarkResult br : res.getBenchmarkResults()) {
-        try {
-          WorkloadSpec spec =
-              WorkloadSpec.fromJsonString(br.getParams().getParam("workloadSpecJson"));
-          HashMap<String, String> additionalParams = new HashMap<>();
-          additionalParams.put("engine", br.getParams().getParam("engineName"));
+      // We use getAggregatedResult() instead of iterating over getBenchmarkResults() because the
+      // aggregated result properly combines all iterations  and provides accurate statistics,
+      // whereas individual benchmark results would give us  multiple entries per benchmark (one per
+      // iteration).
+      BenchmarkResult br = res.getAggregatedResult();
+      try {
+        WorkloadSpec spec =
+            WorkloadSpec.fromJsonString(br.getParams().getParam("workloadSpecJson"));
+        HashMap<String, String> additionalParams = new HashMap<>();
+        additionalParams.put("engine", br.getParams().getParam("engineName"));
 
-          HashMap<String, Object> secondaryMetrics = new HashMap<>();
-          for (String resultKey : br.getSecondaryResults().keySet()) {
-            Result r = br.getSecondaryResults().get(resultKey);
-            if (r instanceof org.openjdk.jmh.results.SampleTimeResult) {
-              secondaryMetrics.put(r.getLabel(), TimingMetric.fromResult(r));
-            } else if (r instanceof org.openjdk.jmh.results.ScalarResult) {
+        HashMap<String, Object> secondaryMetrics = new HashMap<>();
+        for (String resultKey : br.getSecondaryResults().keySet()) {
+          Result r = br.getSecondaryResults().get(resultKey);
+          if (r instanceof org.openjdk.jmh.results.SampleTimeResult) {
+            secondaryMetrics.put(r.getLabel(), TimingMetric.fromResult(r));
+          } else if (r instanceof org.openjdk.jmh.results.ScalarResult) {
+            ScalarResult scalarResult = (ScalarResult) r;
+            if (scalarResult.getScoreUnit().equals("count")) {
+              // Convert count metrics to long integers to avoid decimal representation in JSON
+              // output (e.g., report "42" instead of "42.0" for file counts)
               secondaryMetrics.put(r.getLabel(), (long) r.getScore());
+            } else {
+              secondaryMetrics.put(r.getLabel(), r.getScore());
             }
           }
-
-          BenchmarkDetails details =
-              new BenchmarkDetails(
-                  spec,
-                  additionalParams,
-                  TimingMetric.fromResult(br.getPrimaryResult()),
-                  secondaryMetrics);
-          benchmarks.put(spec.getFullName(), details);
-        } catch (IOException e) {
-          throw new RuntimeException(e);
         }
+
+        BenchmarkDetails details =
+            new BenchmarkDetails(
+                spec,
+                additionalParams,
+                TimingMetric.fromResult(br.getPrimaryResult()),
+                secondaryMetrics);
+        benchmarks.put(spec.getFullName(), details);
+      } catch (IOException e) {
+        throw new RuntimeException(e);
       }
     }
 
@@ -349,12 +357,10 @@ public class WorkloadOutputFormat implements OutputFormat {
     ObjectMapper mapper = new ObjectMapper();
     try {
       String jsonReport = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report);
+      System.out.println(jsonReport);
 
-      System.out.println("Generated benchmark report:\n" + jsonReport);
       String outputPath = System.getProperty("user.dir");
-      System.out.println("Writing benchmark report to " + outputPath + "/benchmark_report.json");
-      java.nio.file.Files.write(
-          java.nio.file.Paths.get(outputPath, "benchmark_report.json"), jsonReport.getBytes());
+      Files.write(Paths.get(outputPath, "benchmark_report.json"), jsonReport.getBytes());
     } catch (IOException e) {
       throw new RuntimeException("Failed to serialize benchmark report to JSON", e);
     }
