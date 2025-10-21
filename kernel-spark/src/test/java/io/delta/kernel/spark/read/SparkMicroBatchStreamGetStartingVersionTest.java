@@ -24,9 +24,13 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.delta.CheckpointInstance;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -70,21 +74,40 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
   }
 
   /**
-   * Test that verifies both DSv1 and DSv2 handle negative startingVersion values identically.
-   * Negative values are rejected during DeltaOptions parsing, before getStartingVersion is called.
+   * Test that verifies both DSv1 and DSv2 handle the case where no DeltaOptions are provided. DSv1
+   * receives an empty DeltaOptions (no parameters), while DSv2 receives Optional.empty(). This
+   * tests the equivalence between these two approaches.
    */
   @Test
-  public void testGetStartingVersion_NegativeVersion_throwsError(@TempDir File tempDir)
-      throws Exception {
+  public void testGetStartingVersion_NoOptions(@TempDir File tempDir) throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_negative_version_" + System.nanoTime();
+    String testTableName = "test_no_options_" + System.nanoTime();
     createEmptyTestTable(testTablePath, testTableName);
 
     // Create 5 versions (version 0 = CREATE TABLE, versions 1-5 = INSERTs)
     createVersions(testTableName, 5);
 
-    // Test with -1: Both DSv1 and DSv2 should throw during DeltaOptions creation
-    assertThrows(IllegalArgumentException.class, () -> createDeltaOptions("-1"));
+    // dsv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaOptions emptyOptions = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, emptyOptions);
+    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+
+    // dsv2
+    SparkMicroBatchStream dsv2Stream =
+        new SparkMicroBatchStream(
+            testTablePath, new Configuration(), spark, /* options= */ Optional.empty());
+    Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
+
+    compareStartingVersionResults(dsv1Result, dsv2Result, Optional.empty(), "No options provided");
+  }
+
+  /** Test that verifies both DSv1 and DSv2 handle negative startingVersion values identically. */
+  @Test
+  public void testGetStartingVersion_NegativeVersion_throwsError(@TempDir File tempDir)
+      throws Exception {
+    // Negative values are rejected during DeltaOptions parsing, before getStartingVersion is
+    // called.
     assertThrows(IllegalArgumentException.class, () -> createDeltaOptions("-1"));
   }
 
@@ -146,11 +169,12 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
 
   /**
    * Test case where protocol validation fails with a non-feature exception (snapshot cannot be
-   * reconstructed), but checkVersionExists succeeds (commit logically exists).
+   * recreated), but checkVersionExists succeeds (commit logically exists).
    *
-   * <p>Scenario: After creating a checkpoint, old log files are deleted, making early versions
-   * non-recreatable. Protocol validation fails when trying to build snapshot at those versions, but
-   * checkVersionExists succeeds because the commits still logically exist.
+   * <p>Scenario: After creating a checkpoint at version 10, old log files 0-5 are deleted
+   * (simulating log cleanup by timestamp). This makes version 7 non-recreatable (it exists between
+   * the deleted logs and the checkpoint). Protocol validation fails when trying to build snapshot
+   * at version 7, but checkVersionExists succeeds because the commit still logically exists.
    */
   @Test
   public void testGetStartingVersion_ProtocolValidationNonFeatureExceptionFallback(
@@ -160,16 +184,19 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     createEmptyTestTable(testTablePath, testTableName);
 
     // Create 10 versions (version 0 = CREATE TABLE, versions 1-10 = INSERTs)
-    createVersions(testTableName, 10);
+    createVersions(testTableName, /* numVersions= */ 10);
 
-    // Create a checkpoint at version 10
+    // Create checkpoint at version 10
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    deltaLog.checkpoint();
+    Snapshot snapshotV10 =
+        deltaLog.getSnapshotAt(
+            10, Option.<CheckpointInstance>empty(), Option.<CatalogTable>empty(), false);
+    deltaLog.checkpoint(snapshotV10, Option.<CatalogTable>empty());
 
-    // Delete log files for versions 1-5 to make them non-recreatable
-    // Note: Version 0 is kept because it contains the table schema
+    // Simulate log cleanup by timestamp: delete logs 0-5
+    // This makes version 7 non-recreatable while allowing DeltaLog to load the latest snapshot
     Path logPath = new Path(testTablePath, "_delta_log");
-    for (long version = 1; version <= 5; version++) {
+    for (long version = 0; version <= 5; version++) {
       Path logFile = new Path(logPath, String.format("%020d.json", version));
       File file = new File(logFile.toUri().getPath());
       if (file.exists()) {
@@ -177,18 +204,22 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
       }
     }
 
-    // Test with startingVersion=3 (a version that's no longer recreatable)
-    String startingVersion = "3";
+    // Test with startingVersion=7 (a version that's no longer recreatable but logically exists)
+    String startingVersion = "7";
+
+    // dsv1
     DeltaLog freshDeltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
+    DeltaSource deltaSource =
         createDeltaSource(freshDeltaLog, testTablePath, createDeltaOptions(startingVersion));
+    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+
+    // dsv2
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            testTablePath, new Configuration(), spark, createDeltaOptions(startingVersion));
-
-    // Both should succeed: protocol validation fails (can't reconstruct snapshot at version
-    // 3), but falls back to checkVersionExists which succeeds (version 3 logically exists)
-    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+            testTablePath,
+            new Configuration(),
+            spark,
+            Optional.ofNullable(createDeltaOptions(startingVersion)));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(
@@ -218,17 +249,19 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
       throws Exception {
     // DSv1: Create DeltaSource and get starting version
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.sources.DeltaSource deltaSource =
+    DeltaSource deltaSource =
         createDeltaSource(deltaLog, testTablePath, createDeltaOptions(startingVersion));
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
     // DSv2: Create SparkMicroBatchStream and get starting version
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            testTablePath, new Configuration(), spark, createDeltaOptions(startingVersion));
+            testTablePath,
+            new Configuration(),
+            spark,
+            Optional.ofNullable(createDeltaOptions(startingVersion)));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
-    // Compare results
     compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);
   }
 
@@ -238,15 +271,13 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
   }
 
   /** Helper method to create a DeltaSource instance with custom options for testing. */
-  private org.apache.spark.sql.delta.sources.DeltaSource createDeltaSource(
-      DeltaLog deltaLog, String tablePath, DeltaOptions options) {
+  private DeltaSource createDeltaSource(DeltaLog deltaLog, String tablePath, DeltaOptions options) {
     scala.collection.immutable.Seq<org.apache.spark.sql.catalyst.expressions.Expression> emptySeq =
         scala.collection.JavaConverters.asScalaBuffer(
                 new java.util.ArrayList<org.apache.spark.sql.catalyst.expressions.Expression>())
             .toList();
-    org.apache.spark.sql.delta.Snapshot snapshot =
-        deltaLog.update(false, Option.empty(), Option.empty());
-    return new org.apache.spark.sql.delta.sources.DeltaSource(
+    Snapshot snapshot = deltaLog.update(false, Option.empty(), Option.empty());
+    return new DeltaSource(
         spark,
         deltaLog,
         /* catalogTableOpt= */ Option.empty(),

@@ -55,16 +55,19 @@ public class SparkMicroBatchStream implements MicroBatchStream {
 
   private final Engine engine;
   private final String tablePath;
-  private final DeltaOptions options;
+  private final Optional<DeltaOptions> options;
   private final StreamingHelper streamingHelper;
   private final SparkSession spark;
 
   public SparkMicroBatchStream(String tablePath, Configuration hadoopConf) {
-    this(tablePath, hadoopConf, SparkSession.active(), /* options= */ null);
+    this(tablePath, hadoopConf, SparkSession.active(), /* options= */ Optional.empty());
   }
 
   public SparkMicroBatchStream(
-      String tablePath, Configuration hadoopConf, SparkSession spark, DeltaOptions options) {
+      String tablePath,
+      Configuration hadoopConf,
+      SparkSession spark,
+      Optional<DeltaOptions> options) {
     this.spark = spark;
     this.tablePath = tablePath;
     this.engine = DefaultEngine.create(hadoopConf);
@@ -130,15 +133,17 @@ public class SparkMicroBatchStream implements MicroBatchStream {
    * <p>This is the DSv2 Kernel-based implementation of DeltaSource.getStartingVersion.
    */
   Optional<Long> getStartingVersion() {
-    if (options == null) {
+    if (!options.isPresent()) {
       return Optional.empty();
     }
 
+    DeltaOptions opts = options.get();
+
     // TODO(#5319): DeltaSource.scala uses `allowOutOfRange` parameter from
     // DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.
-    if (options.startingVersion().isDefined()) {
-      DeltaStartingVersion startingVersion = options.startingVersion().get();
-      if (startingVersion.equals(StartingVersionLatest$.MODULE$)) {
+    if (opts.startingVersion().isDefined()) {
+      DeltaStartingVersion startingVersion = opts.startingVersion().get();
+      if (startingVersion instanceof StartingVersionLatest$) {
         Snapshot latestSnapshot = streamingHelper.loadLatestSnapshot();
         // "latest": start reading from the next commit
         return Optional.of(latestSnapshot.getVersion() + 1);
@@ -153,8 +158,13 @@ public class SparkMicroBatchStream implements MicroBatchStream {
           try {
             streamingHelper.checkVersionExists(
                 version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
-          } catch (Exception e) {
-            throw new RuntimeException("Failed to validate starting version: " + version, e);
+          } catch (io.delta.kernel.spark.exception.VersionNotFoundException e) {
+            // Re-throw as DSv1 VersionNotFoundException wrapped in RuntimeException
+            // This maintains the same error message and semantics as DSv1
+            org.apache.spark.sql.delta.VersionNotFoundException dsv1Exception =
+                org.apache.spark.sql.delta.VersionNotFoundException$.MODULE$.apply(
+                    e.getUserVersion(), e.getEarliest(), e.getLatest());
+            throw new RuntimeException(dsv1Exception);
           }
         }
         return Optional.of(version);
@@ -200,14 +210,15 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       // TODO(#5369): Use specific exception types instead of message parsing
       String exceptionMessage = e.getMessage();
       if (exceptionMessage != null
-          && exceptionMessage.contains("Unsupported Delta reader features")) {
-        throw new RuntimeException(e);
+          && (exceptionMessage.contains("Unsupported Delta reader features")
+              || exceptionMessage.contains("Unsupported Delta table feature"))) {
+        throw e;
       }
-      // Suppress other KernelExceptions
+      // Suppress other non-fatal KernelExceptions
       logger.warn("Protocol validation failed at version {} with: {}", version, e.getMessage());
       return false;
     } catch (Exception e) {
-      // Suppress other exceptions
+      // Suppress other non-fatal exceptions
       logger.warn("Protocol validation failed at version {} with: {}", version, e.getMessage());
       return false;
     }

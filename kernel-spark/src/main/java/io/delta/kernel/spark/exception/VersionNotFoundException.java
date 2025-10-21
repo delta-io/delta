@@ -18,10 +18,29 @@ package io.delta.kernel.spark.exception;
 /** Exception thrown when a requested version is not available in the Delta log. */
 public class VersionNotFoundException extends Exception {
 
+  private final long userVersion;
+  private final long earliest;
+  private final long latest;
+
   public VersionNotFoundException(long userVersion, long earliest, long latest) {
     super(
         String.format(
             "Cannot time travel Delta table to version %d. Available versions: [%d, %d].",
             userVersion, earliest, latest));
+    this.userVersion = userVersion;
+    this.earliest = earliest;
+    this.latest = latest;
+  }
+
+  public long getUserVersion() {
+    return userVersion;
+  }
+
+  public long getEarliest() {
+    return earliest;
+  }
+
+  public long getLatest() {
+    return latest;
   }
 }
