@@ -84,8 +84,6 @@ import org.apache.spark.sql.internal.SQLConf
 class LegacyDeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension
 
 // Abstract base class that contains the core Delta Spark Session extension logic.
-// This is extended by both LegacyDeltaSparkSessionExtension (V1-only) and
-// DeltaSparkSessionExtension (unified V1+V2) in the spark-unified module.
 class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (_, parser) =>
