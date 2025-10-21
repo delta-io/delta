@@ -42,7 +42,7 @@ import Unidoc._
 // Scala versions
 val scala212 = "2.12.18"
 val scala213 = "2.13.13"
-val all_scala_versions = Seq(scala212, scala213)
+val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
@@ -51,10 +51,10 @@ val all_scala_versions = Seq(scala212, scala213)
 // sbt 'set default_scala_version := 2.13.13' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala212
+Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
-val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
+val SPARK_MASTER_VERSION = "4.0.0"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 kernelSpark / sparkVersion := getSparkVersion()
@@ -65,7 +65,7 @@ sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -104,7 +104,7 @@ def getSparkVersion(): String = {
   )
 
   // e.g. build/sbt -DsparkVersion=master, build/sbt -DsparkVersion=4.0.0-SNAPSHOT
-  val input = sys.props.getOrElse("sparkVersion", LATEST_RELEASED_SPARK_VERSION)
+  val input = sys.props.getOrElse("sparkVersion", SPARK_MASTER_VERSION)
   input match {
     case LATEST_RELEASED_SPARK_VERSION | "latest" | `latestReleasedSparkVersionShort` =>
       LATEST_RELEASED_SPARK_VERSION
