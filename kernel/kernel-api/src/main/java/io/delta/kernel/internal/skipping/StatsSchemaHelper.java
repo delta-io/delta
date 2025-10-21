@@ -56,10 +56,10 @@ public class StatsSchemaHelper {
    * limited set of data types and only literals of those types are skipping eligible.
    */
   public static boolean isSkippingEligibleLiteral(Literal literal) {
-    // Even if the literal is in a collation-aware `Predicate`, it can be cast to `StringType`
-    // and used for collation-aware skipping. Therefore, we check for non-collated skipping
-    // eligibility here.
-    // For columns, we can't do that since we don't have stats for non-`StringType` columns under
+    // Even if the literal's data type is not `StringType` and it is used in a collation-aware `Predicate`,
+    // it can be cast to `StringType` and used for collation-aware skipping. Therefore, we check for
+    // non-collated skipping eligibility here.
+    // For columns, we can't do this because we don't have statistics for non-`StringType` columns under
     // collation-aware stats.
     return isSkippingEligibleDataType(literal.getDataType(), false);
   }
