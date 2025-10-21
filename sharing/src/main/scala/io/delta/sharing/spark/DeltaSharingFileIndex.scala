@@ -187,7 +187,8 @@ case class DeltaSharingFileIndex(
         limit = overrideLimit.orElse(limitHint),
         versionAsOf = params.options.versionAsOf,
         timestampAsOf = params.options.timestampAsOf,
-        jsonPredicateHints = jsonPredicateHints
+        jsonPredicateHints = jsonPredicateHints,
+        useRefreshToken = true
       ),
       expirationTimestamp =
         if (CachedTableManager.INSTANCE
