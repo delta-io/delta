@@ -152,7 +152,7 @@ public class SparkBatch implements Batch {
     int minPartitionNum =
         minPartitionNumOption.isDefined()
             ? ((Number) minPartitionNumOption.get()).intValue()
-            : sparkSession.sparkContext().defaultParallelism();
+            : sparkSession.leafNodeDefaultParallelism();
     if (minPartitionNum <= 0) {
       minPartitionNum = 1;
     }

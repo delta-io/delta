@@ -428,7 +428,7 @@ lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
   )
 
 // ============================================================
-// Module 1: sparkV1 (prod code only, no tests)
+// Spark Module 1: sparkV1 (prod code only, no tests)
 // ============================================================
 lazy val sparkV1 = (project in file("spark"))
   .dependsOn(storage)
@@ -476,9 +476,9 @@ lazy val sparkV1 = (project in file("spark"))
     Antlr4 / antlr4GenListener := true,
     Antlr4 / antlr4GenVisitor := true,
 
-    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
+    // Hack to avoid errors related to missing repo-root/target/scala-2.13/classes/
     createTargetClassesDir := {
-      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.13" / "classes"
       Files.createDirectories(dir.toPath)
     },
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
@@ -497,13 +497,17 @@ lazy val sparkV1 = (project in file("spark"))
   )
 
 // ============================================================
-// Module 2: sparkV1Shaded (v1 without DeltaLog for v2 dependency)
+// Spark Module 2: sparkV1Filtered (v1 without DeltaLog and actions.scala for v2 dependency)
+// This filtered version of sparkV1 is needed because sparkV2 (kernel-spark) depends on some
+// V1 classes for utilities and common functionality, but must NOT have access to DeltaLog,
+// Snapshot, OptimisticTransaction, or actions.scala to avoid Kernel connector depending on
+// V1 delta libraries.
 // ============================================================
-lazy val sparkV1Shaded = (project in file("spark-v1-shaded"))
+lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
   .dependsOn(sparkV1)
   .dependsOn(storage)
   .settings(
-    name := "delta-spark-v1-shaded",
+    name := "delta-spark-v1-filtered",
     commonSettings,
     skipReleaseSettings, // Internal module - not published to Maven
     exportJars := true,  // Export as JAR to avoid classpath conflicts
@@ -516,20 +520,21 @@ lazy val sparkV1Shaded = (project in file("spark-v1-shaded"))
     Compile / packageBin / mappings := {
       val v1Mappings = (sparkV1 / Compile / packageBin / mappings).value
       
-      // Filter out DeltaLog, Snapshot, OptimisticTransaction classes
+      // Filter out DeltaLog, Snapshot, OptimisticTransaction, and actions.scala classes
       v1Mappings.filterNot { case (file, path) =>
         path.contains("org/apache/spark/sql/delta/DeltaLog") ||
         path.contains("org/apache/spark/sql/delta/Snapshot") ||
-        path.contains("org/apache/spark/sql/delta/OptimisticTransaction")
+        path.contains("org/apache/spark/sql/delta/OptimisticTransaction") ||
+        path.contains("org/apache/spark/sql/delta/actions/actions")
       }
     },
   )
 
 // ============================================================
-// Module 3: sparkV2 (kernel-spark based, depends on v1-shaded)
+// Spark Module 3: sparkV2 (kernel-spark based, depends on v1-filtered)
 // ============================================================
 lazy val sparkV2 = (project in file("kernel-spark"))
-  .dependsOn(sparkV1Shaded)
+  .dependsOn(sparkV1Filtered)
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(goldenTables % "test")
@@ -563,7 +568,7 @@ lazy val sparkV2 = (project in file("kernel-spark"))
 
 
 // ============================================================
-// Module 4: delta-spark (final published module - combined v1+v2)
+// Spark Module 4: delta-spark (final published module - combined v1+v2)
 // ============================================================
 lazy val spark = (project in file("spark-combined"))
   .dependsOn(sparkV1)
@@ -656,7 +661,7 @@ lazy val spark = (project in file("spark-combined"))
     
     // Filter internal modules from project dependencies
     // This works together with pomPostProcess to ensure internal modules
-    // (sparkV1, sparkV2, sparkV1Shaded) are not listed as dependencies in POM
+    // (sparkV1, sparkV2, sparkV1Filtered) are not listed as dependencies in POM
     projectDependencies := {
       val internalModules = internalModuleNames.value
       projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
@@ -746,9 +751,9 @@ lazy val contribs = (project in file("contribs"))
       "-Xmx1024m"
     ),
 
-    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
+    // Hack to avoid errors related to missing repo-root/target/scala-2.13/classes/
     createTargetClassesDir := {
-      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.13" / "classes"
       Files.createDirectories(dir.toPath)
     },
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
@@ -793,7 +798,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     
     // Use unique classDirectory name to avoid conflicts in connectClient test setup
     // This allows connectClient to create symlinks without FileAlreadyExistsException
-    Compile / classDirectory := target.value / "scala-2.12" / "kernel-api-classes",
+    Compile / classDirectory := target.value / "scala-2.13" / "kernel-api-classes",
     
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
@@ -891,7 +896,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     
     // Use unique classDirectory name to avoid conflicts in connectClient test setup
     // This allows connectClient to create symlinks without FileAlreadyExistsException
-    Compile / classDirectory := target.value / "scala-2.12" / "kernel-defaults-classes",
+    Compile / classDirectory := target.value / "scala-2.13" / "kernel-defaults-classes",
     
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
@@ -1513,7 +1518,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Shaded, sparkV2, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
