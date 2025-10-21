@@ -639,8 +639,7 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
   }
 
   private void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
-    List<Row> actualRows = actual.collectAsList();
-    assertDatasetEquals(actualRows, expectedRows);
+    assertDatasetEquals(actual.collectAsList(), expectedRows);
   }
 
   private void assertDatasetEquals(List<Row> actualRows, List<Row> expectedRows) {
