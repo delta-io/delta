@@ -16,44 +16,24 @@
 
 package io.delta.unity
 
-import java.lang.{Long => JLong}
-import java.net.URI
 import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.{CreateTableTransactionBuilderImpl, SnapshotImpl}
+import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
-import io.delta.kernel.internal.util.FileNames
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
-import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 import io.delta.unity.InMemoryUCClient.TableData
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Unit tests for [[UCCatalogManagedClient]]. */
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
   import UCCatalogManagedClientSuite._
-
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-  /**
-   * When a new UC table is created, it will have Delta version 0 but the max ratified verison in
-   * UC is -1. This is a special edge case.
-   */
-  private def createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne(
-      ucTableId: String = "ucTableId"): UCCatalogManagedClient = {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableData = new TableData(-1, ArrayBuffer[Commit]())
-    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
-    new UCCatalogManagedClient(ucClient)
-  }
 
   /**
    * If present, loads the given `versionToLoad`, else loads the maxRatifiedVersion of 2.
@@ -68,43 +48,23 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     // If timestamp time-travel, must provide expected version
     require(!timestampToLoad.isPresent || expectedVersion.isDefined)
 
-    // Step 1: Create the in-memory table data (ratified commits v1, v2)
-    val maxRatifiedVersion = 2L
-    val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucClient = new InMemoryUCClientWithMetrics("ucMetastoreId")
-    val fs = FileSystem.get(new Configuration())
-    val catalogCommits = Seq(
-      // scalastyle:off line.size.limit
-      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000001.4cb9708e-b478-44de-b203-53f9ba9b2876.json"),
-      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json"))
-      // scalastyle:on line.size.limit
-      .map { path => fs.getFileStatus(new Path(path)) }
-      .map { fileStatus =>
-        new Commit(
-          FileNames.deltaVersion(fileStatus.getPath.toString),
-          fileStatus,
-          fileStatus.getModificationTime)
-      }
-    val tableData = new TableData(maxRatifiedVersion, ArrayBuffer(catalogCommits: _*))
-    ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val snapshot = loadSnapshot(
+        ucCatalogManagedClient,
+        tablePath = tablePath,
+        versionToLoad = versionToLoad,
+        timestampToLoad = timestampToLoad)
 
-    // Step 2: Load the table using UCCatalogManagedClient
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-    val snapshot = loadSnapshot(
-      ucCatalogManagedClient,
-      tablePath = tablePath,
-      versionToLoad = versionToLoad,
-      timestampToLoad = timestampToLoad)
-
-    // Step 3: Validate
-    val version = expectedVersion.getOrElse(versionToLoad.orElse(maxRatifiedVersion))
-    val protocol = snapshot.getProtocol
-    assert(snapshot.getVersion == version)
-    assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
-    assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
-    assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
-    assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
-    assert(ucClient.getNumGetCommitCalls == 1)
+      val version = expectedVersion.getOrElse(versionToLoad.orElse(maxRatifiedVersion))
+      val protocol = snapshot.getProtocol
+      assert(snapshot.getVersion == version)
+      assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
+      assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
+      assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
+      assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
+      assert(ucClient.getNumGetCommitCalls == 1)
+    }
   }
 
   test("constructor throws on invalid input") {
@@ -220,9 +180,6 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
   }
 
   /* ---- Time-travel-by-timestamp tests --- */
-  val v0Ts = 1749830855993L // published commit
-  val v1Ts = 1749830871085L // ratified staged commit
-  val v2Ts = 1749830881799L // ratified staged commit
 
   test("loadTable correctly loads a UC table -- " +
     "timestampToLoad is exactly a ratified commit (the max)") {
@@ -329,21 +286,5 @@ object UCCatalogManagedClientSuite {
 
   private def javaLongOpt(value: Long): Optional[java.lang.Long] = {
     Optional.of(value)
-  }
-
-  /** Wrapper class around InMemoryUCClient that tracks number of getCommit calls made */
-  class InMemoryUCClientWithMetrics(ucMetastoreId: String) extends InMemoryUCClient(ucMetastoreId) {
-    private var numGetCommitsCalls: Long = 0
-
-    override def getCommits(
-        tableId: String,
-        tableUri: URI,
-        startVersion: Optional[JLong],
-        endVersion: Optional[JLong]): GetCommitsResponse = {
-      numGetCommitsCalls += 1
-      super.getCommits(tableId, tableUri, startVersion, endVersion)
-    }
-
-    def getNumGetCommitCalls: Long = numGetCommitsCalls
   }
 }
