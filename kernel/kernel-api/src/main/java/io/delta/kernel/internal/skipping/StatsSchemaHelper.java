@@ -56,12 +56,19 @@ public class StatsSchemaHelper {
    * limited set of data types and only literals of those types are skipping eligible.
    */
   public static boolean isSkippingEligibleLiteral(Literal literal) {
+    // Even if the literal is in a collation-aware `Predicate`, it can be cast to `StringType`
+    // and used for collation-aware skipping. Therefore, we check for non-collated skipping
+    // eligibility here.
+    // For columns, we can't do that since we don't have stats for non-`StringType` columns under
+    // collation-aware stats.
     return isSkippingEligibleDataType(literal.getDataType(), false);
   }
 
   /** Returns true if the given data type is eligible for MIN/MAX data skipping. */
   public static boolean isSkippingEligibleDataType(DataType dataType, boolean isCollatedSkipping) {
     if (isCollatedSkipping) {
+      // Collation-aware min/max statistics are only applicable to `StringType`.
+      // For other types, such statistics are not computed and therefore cannot be used.
       return dataType instanceof StringType;
     } else {
       return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
