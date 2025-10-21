@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
+import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
@@ -181,7 +182,7 @@ class Snapshot(
    * check, if we can reuse the post commit snapshot or if we need to create a new snapshot.
    * The update performs a listing and creates a new LogSegment and the criteria for
    * keeping or replacing the old snapshot is whether the old snapshot's LogSegment is equal
-   * to the LogSegment created by the update() call (see getSnapshotForLogSegmentInternal).
+   * to the LogSegment created by the update() call (see getSnapshotForLogSegment).
    *
    * If an unbackfilled commit has been backfilled before update() is called, the new LogSegment
    * would contain the backfilled version of this commit and so the old and new LogSegments are
@@ -511,7 +512,7 @@ class Snapshot(
         .mapPartitions { iter =>
           val state: LogReplay =
             new InMemoryLogReplay(
-              localMinFileRetentionTimestamp,
+              Some(localMinFileRetentionTimestamp),
               localMinSetTransactionRetentionTimestamp)
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
@@ -736,7 +737,7 @@ object Snapshot extends DeltaLogging {
     // to avoid bloating the .crc file.
     val numIndexedColsThreshold = spark.sessionState.conf
       .getConf(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_THRESHOLD_INDEXED_COLS)
-      .getOrElse(DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE)
+      .getOrElse(DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE)
     val configuredNumIndexCols =
       DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(snapshot.metadata)
     if (configuredNumIndexCols > numIndexedColsThreshold) return false

@@ -18,10 +18,14 @@ package org.apache.spark.sql.delta.util
 
 import scala.util.Random
 
-import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.Metadata
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.{functions, Column, Dataset}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.ElementAt
 
 /**
@@ -49,6 +53,22 @@ object Utils {
   /** Generates a string created of `randomPrefixLength` alphanumeric characters. */
   def getRandomPrefix(numChars: Int): String = {
     Random.alphanumeric.take(numChars).mkString
+  }
+
+  /**
+   * Construct a delta log from either the catalog table or a path.
+   *
+   * If catalogTableOpt is defined, use it to construct the delta log; otherwise, fall back to use
+   * path-based delta log construction.
+   */
+  def getDeltaLogFromTableOrPath(
+      sparkSession: SparkSession,
+      catalogTableOpt: Option[CatalogTable],
+      path: Path,
+      options: Map[String, String] = Map.empty): DeltaLog = {
+    catalogTableOpt
+      .map(catalogTable => DeltaLog.forTable(sparkSession, catalogTable, options))
+      .getOrElse(DeltaLog.forTable(sparkSession, path, options))
   }
 
   /**

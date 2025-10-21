@@ -16,19 +16,69 @@
 package io.delta.kernel.defaults
 
 import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
 
-import io.delta.kernel.Table
+import io.delta.kernel.{Table, TableManager}
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.{KernelException, UnknownConfigurationException}
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
+
+import org.scalatest.funsuite.AnyFunSuite
+
+class TablePropertiesTransactionBuilderV1Suite extends TablePropertiesSuiteBase with WriteUtils {}
+
+class TablePropertiesTransactionBuilderV2Suite extends TablePropertiesSuiteBase
+    with WriteUtilsWithV2Builders {
+  test("create table (V2 only) - withTableProperties can be called multiple times") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withTableProperties(Map("key1" -> "value1").asJava)
+        .withTableProperties(Map("key2" -> "value2").asJava)
+        .build(defaultEngine)
+        .commit(defaultEngine, emptyIterable())
+
+      assertHasProp(tablePath, Map("key1" -> "value1", "key2" -> "value2"))
+    }
+  }
+
+  test("create table (V2 only) - withTableProperties throws on same key with different value") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+
+      val createBuilder = TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withTableProperties(Map("key1" -> "value1", "key2" -> "value2").asJava)
+
+      val ex = intercept[IllegalArgumentException] {
+        createBuilder.withTableProperties(Map("key2" -> "different_value").asJava)
+      }
+      assert(ex.getMessage.contains("Table property 'key2' has already been set"))
+    }
+  }
+
+  test("create table (V2 only) - withTableProperties allows setting same key with same value") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withTableProperties(Map("key1" -> "value1", "key2" -> "value2").asJava)
+        .withTableProperties(Map("key2" -> "value2").asJava) // Same value, should not throw
+        .build(defaultEngine)
+        .commit(defaultEngine, emptyIterable())
+
+      assertHasProp(tablePath, Map("key1" -> "value1", "key2" -> "value2"))
+    }
+  }
+}
 
 /**
  * Suite to set or get table properties.
- * TODO: for now we just have the support for `set`. API `get` will be added in the next PRs.
  */
-class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
-  test("create/update table - allow arbitrary properties") {
+trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
+  test("create/update/replace table - allow arbitrary properties") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
 
@@ -36,11 +86,11 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       createUpdateTableWithProps(
         tablePath,
         createTable = true,
-        props = Map("my key" -> "10", "my key2" -> "20"))
+        propsAdded = Map("my key" -> "10", "my key2" -> "20"))
       assertHasProp(tablePath, expProps = Map("my key" -> "10", "my key2" -> "20"))
 
       // update table by modifying the arbitrary properties and check if they are updated
-      createUpdateTableWithProps(tablePath, props = Map("my key" -> "30"))
+      createUpdateTableWithProps(tablePath, propsAdded = Map("my key" -> "30"))
       assertHasProp(tablePath, expProps = Map("my key" -> "30", "my key2" -> "20"))
 
       // update table without any new properties and check if the existing properties are retained
@@ -48,14 +98,27 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       assertHasProp(tablePath, expProps = Map("my key" -> "30", "my key2" -> "20"))
 
       // update table by adding new arbitrary properties and check if they are set
-      createUpdateTableWithProps(tablePath, props = Map("new key3" -> "str"))
+      createUpdateTableWithProps(tablePath, propsAdded = Map("new key3" -> "str"))
       assertHasProp(
         tablePath,
         expProps = Map("my key" -> "30", "my key2" -> "20", "new key3" -> "str"))
+
+      // replace table and set new arbitrary properties and check if they are set (and old ones are
+      // removed)
+      getReplaceTxn(
+        defaultEngine,
+        tablePath,
+        testSchema,
+        tableProperties = Map("my key" -> "40", "my replace key" -> "0"))
+        .commit(defaultEngine, emptyIterable())
+      assertHasProp(
+        tablePath,
+        expProps = Map("my key" -> "40", "my replace key" -> "0"))
+      assertPropsDNE(tablePath, Set("my key2", "my key3"))
     }
   }
 
-  test("create/update table - disallow unknown delta.* properties to Kernel") {
+  test("create/update/replace table - disallow unknown delta.* properties to Kernel") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
       val ex1 = intercept[UnknownConfigurationException] {
@@ -66,13 +129,24 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       // Try updating in an existing table
       createUpdateTableWithProps(tablePath, createTable = true)
       val ex2 = intercept[UnknownConfigurationException] {
-        createUpdateTableWithProps(tablePath, props = Map("Delta.unknown" -> "str"))
+        createUpdateTableWithProps(tablePath, propsAdded = Map("Delta.unknown" -> "str"))
       }
       assert(ex2.getMessage.contains("Unknown configuration was specified: Delta.unknown"))
+
+      // Try replacing an existing table
+      val ex3 = intercept[UnknownConfigurationException] {
+        getReplaceTxn(
+          defaultEngine,
+          tablePath,
+          testSchema,
+          tableProperties = Map("Delta.unknown" -> "str"))
+      }
+      assert(ex3.getMessage.contains("Unknown configuration was specified: Delta.unknown"))
     }
   }
 
-  test("create/update table - delta configs are stored with same case as defined in TableConfig") {
+  test("create/update/replace table - delta configs are stored with same case as " +
+    "defined in TableConfig") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
       createUpdateTableWithProps(
@@ -84,7 +158,16 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       // Try updating in an existing table
       createUpdateTableWithProps(
         tablePath,
-        props = Map("DELTA.CHECKPOINTINTERVAL" -> "30"))
+        propsAdded = Map("DELTA.CHECKPOINTINTERVAL" -> "30"))
+      assertHasProp(tablePath, expProps = Map("delta.checkpointInterval" -> "30"))
+
+      // Try replacing an existing table
+      getReplaceTxn(
+        defaultEngine,
+        tablePath,
+        testSchema,
+        tableProperties = Map("DELTA.CHECKPOINTINTERVAL" -> "30"))
+        .commit(defaultEngine, emptyIterable())
       assertHasProp(tablePath, expProps = Map("delta.checkpointInterval" -> "30"))
     }
   }
@@ -102,7 +185,18 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       // Try updating in an existing table
       createUpdateTableWithProps(
         tablePath,
-        props = Map("user.facing.prop" -> "30"))
+        propsAdded = Map("user.facing.prop" -> "30"))
+      assertHasProp(
+        tablePath,
+        expProps = Map("user.facing.PROP" -> "20", "user.facing.prop" -> "30"))
+
+      // Try replacing an existing table
+      getReplaceTxn(
+        defaultEngine,
+        tablePath,
+        testSchema,
+        tableProperties = Map("user.facing.prop" -> "30", "user.facing.PROP" -> "20"))
+        .commit(defaultEngine, emptyIterable())
       assertHasProp(
         tablePath,
         expProps = Map("user.facing.PROP" -> "20", "user.facing.prop" -> "30"))
@@ -111,10 +205,16 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
 
   test("Cannot unset delta table properties") {
     withTempDir { tablePath =>
+      // Create empty table with delta props
+      createUpdateTableWithProps(
+        tablePath.getAbsolutePath,
+        createTable = true,
+        propsAdded = Map("delta.checkpointInterval" -> "10"))
       Seq("delta.checkpointInterval", "DELTA.checkpointInterval").foreach { key =>
         val e = intercept[IllegalArgumentException] {
-          createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath.getAbsolutePath))
-            .withTablePropertiesRemoved(Set(key).asJava)
+          createUpdateTableWithProps(
+            tablePath.getAbsolutePath,
+            propsRemoved = Set(key))
         }
         assert(
           e.getMessage.contains("Unsetting 'delta.' table properties is currently unsupported"))
@@ -128,10 +228,10 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       createEmptyTable(tablePath = tablePath, schema = testSchema)
 
       val e = intercept[KernelException] {
-        createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .withTablePropertiesRemoved(Set("foo.key").asJava)
-          .withTableProperties(defaultEngine, Map("foo.key" -> "value").asJava)
-          .build(defaultEngine)
+        createUpdateTableWithProps(
+          tablePath,
+          propsAdded = Map("foo.key" -> "value"),
+          propsRemoved = Set("foo.key"))
       }
       assert(e.getMessage.contains(
         "Cannot set and unset the same table property in the same transaction. "
@@ -151,10 +251,10 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
 
       // Try to set and unset the existing property
       val e = intercept[KernelException] {
-        createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .withTablePropertiesRemoved(Set("foo.key").asJava)
-          .withTableProperties(defaultEngine, Map("foo.key" -> "value").asJava)
-          .build(defaultEngine)
+        createUpdateTableWithProps(
+          tablePath,
+          propsAdded = Map("foo.key" -> "value"),
+          propsRemoved = Set("foo.key"))
       }
       assert(e.getMessage.contains(
         "Cannot set and unset the same table property in the same transaction. "
@@ -174,29 +274,26 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       assertHasProp(tablePath, Map("foo.key" -> "value", "FOO.KEY" -> "VALUE"))
 
       // Remove 1 of the properties set
-      createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withTablePropertiesRemoved(Set("foo.key").asJava)
-        .build(defaultEngine)
-        .commit(defaultEngine, emptyIterable())
+      createUpdateTableWithProps(
+        tablePath,
+        propsRemoved = Set("foo.key"))
       assertPropsDNE(tablePath, Set("foo.key"))
       // Check that the other property is not touched
       assertHasProp(tablePath, Map("FOO.KEY" -> "VALUE"))
 
       // Can unset a property that DNE
-      createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withTablePropertiesRemoved(Set("not.a.key").asJava)
-        .build(defaultEngine)
-        .commit(defaultEngine, emptyIterable())
+      createUpdateTableWithProps(
+        tablePath,
+        propsRemoved = Set("not.a.key"))
       assertPropsDNE(tablePath, Set("not.a.key"))
       // Check that the other property is not touched
       assertHasProp(tablePath, Map("FOO.KEY" -> "VALUE"))
 
       // Can be simultaneous with setTblProps as long as no overlap
-      createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withTablePropertiesRemoved(Set("FOO.KEY").asJava)
-        .withTableProperties(defaultEngine, Map("foo.key" -> "value-new").asJava)
-        .build(defaultEngine)
-        .commit(defaultEngine, emptyIterable())
+      createUpdateTableWithProps(
+        tablePath,
+        propsAdded = Map("foo.key" -> "value-new"),
+        propsRemoved = Set("FOO.KEY"))
       assertPropsDNE(tablePath, Set("FOO.KEY"))
       // Check that the other property is added successfully
       assertHasProp(tablePath, Map("foo.key" -> "value-new"))
@@ -206,17 +303,29 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
   def createUpdateTableWithProps(
       tablePath: String,
       createTable: Boolean = false,
-      props: Map[String, String] = null): Unit = {
-    createTxn(defaultEngine, tablePath, createTable, testSchema, Seq.empty, props)
-      .commit(defaultEngine, emptyIterable())
+      propsAdded: Map[String, String] = null,
+      propsRemoved: Set[String] = null): Unit = {
+    val txn = if (createTable) {
+      getCreateTxn(
+        defaultEngine,
+        tablePath,
+        testSchema,
+        tableProperties = propsAdded)
+    } else {
+      getUpdateTxn(
+        defaultEngine,
+        tablePath,
+        tableProperties = propsAdded,
+        tablePropertiesRemoved = propsRemoved)
+    }
+    txn.commit(defaultEngine, emptyIterable())
   }
 
-  // TODO: this will be replaced with get API in the next PRs.
   def assertHasProp(tablePath: String, expProps: Map[String, String]): Unit = {
     val snapshot = Table.forPath(defaultEngine, tablePath)
-      .getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      .getLatestSnapshot(defaultEngine)
     expProps.foreach { case (key, value) =>
-      assert(snapshot.getMetadata.getConfiguration.get(key) === value, key)
+      assert(snapshot.getTableProperties.get(key) === value, key)
     }
   }
 

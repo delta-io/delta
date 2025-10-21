@@ -90,8 +90,9 @@ case class DeltaInvariantCheckerExec(
     val newInvariantsPlan = optimizer.ComputeCurrentTime(invariantsFakePlan)
     val constraintsWithFixedTime = newInvariantsPlan.expressions.toArray
 
+    val childOutput = child.output
     child.execute().mapPartitionsInternal { rows =>
-      val assertions = UnsafeProjection.create(constraintsWithFixedTime, child.output)
+      val assertions = UnsafeProjection.create(constraintsWithFixedTime, childOutput)
       rows.map { row =>
         assertions(row)
         row
@@ -199,19 +200,24 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
           // Cap the maximum length when logging an unresolved expression to avoid issues. This is a
           // CHECK constraint expression and should be relatively simple.
           val MAX_OUTPUT_LENGTH = 10 * 1024
-          deltaAssert(
-            resolvedExpr.resolved,
-            name = "invariant.unresolvedExpression",
-            msg = s"CHECK constraint child expression was not properly resolved",
-            data = Map(
-              "name" -> name,
-              "checkExpr" -> expr.treeString.take(MAX_OUTPUT_LENGTH),
-              "attributesExtracted" -> attributesExtracted.treeString.take(MAX_OUTPUT_LENGTH),
-              "analyzedLogicalPlan" -> analyzedLogicalPlan.treeString.take(MAX_OUTPUT_LENGTH),
-              "optimizedLogicalPlan" -> optimizedLogicalPlan.treeString.take(MAX_OUTPUT_LENGTH),
-              "resolvedExpr" -> resolvedExpr.treeString.take(MAX_OUTPUT_LENGTH)
+          if (!resolvedExpr.resolved) {
+            // If the plan is not resolved, check the plan so that a user-facing exception is
+            // thrown.
+            spark.sessionState.analyzer.checkAnalysis(wrappedPlan)
+            deltaAssert(
+              check = false,
+              name = "invariant.unresolvedExpression",
+              msg = s"CHECK constraint child expression was not properly resolved",
+              data = Map(
+                "name" -> name,
+                "checkExpr" -> expr.treeString.take(MAX_OUTPUT_LENGTH),
+                "attributesExtracted" -> attributesExtracted.treeString.take(MAX_OUTPUT_LENGTH),
+                "analyzedLogicalPlan" -> analyzedLogicalPlan.treeString.take(MAX_OUTPUT_LENGTH),
+                "optimizedLogicalPlan" -> optimizedLogicalPlan.treeString.take(MAX_OUTPUT_LENGTH),
+                "resolvedExpr" -> resolvedExpr.treeString.take(MAX_OUTPUT_LENGTH)
+              )
             )
-          )
+          }
           resolvedExpr
       }
 

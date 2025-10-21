@@ -21,9 +21,10 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.DeltaOperations.ROW_TRACKING_BACKFILL_OPERATION_NAME
+import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
@@ -37,7 +38,7 @@ import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{Metadata => FieldMetadata, MetadataBuilder, StructType}
 
 /**
  * A class representing different attributes of current transaction needed for conflict detection.
@@ -103,6 +104,7 @@ private[delta] case class CurrentTransactionInfo(
 
   // Whether this is a row tracking backfill transaction or not.
   val isRowTrackingBackfillTxn = op.name == ROW_TRACKING_BACKFILL_OPERATION_NAME
+  val isRowTrackingUnBackfillTxn = op.name == ROW_TRACKING_UNBACKFILL_OPERATION_NAME
 
   def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
 }
@@ -110,10 +112,16 @@ private[delta] case class CurrentTransactionInfo(
 /**
  * Summary of the Winning commit against which we want to check the conflict
  * @param actions - delta log actions committed by the winning commit
- * @param commitVersion - winning commit version
+ * @param fileStatus - descriptor for the commit file
+ * @param readTimeMs - time taken to read the commit file
  */
-private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVersion: Long) {
+private[delta] class WinningCommitSummary(
+      val actions: Seq[Action],
+      val fileStatus: FileStatus,
+      val readTimeMs: Long) {
 
+  val commitVersion: Long = FileNames.deltaVersion(fileStatus)
+  val commitFileTimestamp: Long = fileStatus.getModificationTime
   val metadataUpdates: Seq[Metadata] = actions.collect { case a: Metadata => a }
   val appLevelTransactions: Seq[SetTransaction] = actions.collect { case a: SetTransaction => a }
   val protocol: Option[Protocol] = actions.collectFirst { case a: Protocol => a }
@@ -122,6 +130,8 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   // Whether this is a row tracking backfill transaction or not.
   val isRowTrackingBackfillTxn =
     commitInfo.exists(_.operation == ROW_TRACKING_BACKFILL_OPERATION_NAME)
+  val isRowTrackingUnBackfillTxn =
+    commitInfo.exists(_.operation == ROW_TRACKING_UNBACKFILL_OPERATION_NAME)
   val removedFiles: Seq[RemoveFile] = actions.collect { case a: RemoveFile => a }
   val addedFiles: Seq[AddFile] = actions.collect { case a: AddFile => a }
   // This is used in resolveRowTrackingBackfillConflicts.
@@ -149,21 +159,44 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
     .exists(_.toBoolean)
 }
 
+object WinningCommitSummary {
+
+  /**
+   * Read a commit file and create the [[WinningCommitSummary]].
+   */
+  def createFromFileStatus(
+      deltaLog: DeltaLog,
+      fileStatus: FileStatus): WinningCommitSummary = {
+    val startTimeNs = System.nanoTime()
+
+    val actions = deltaLog.store.read(
+      fileStatus,
+      deltaLog.newDeltaHadoopConf()
+    ).map(Action.fromJson)
+
+    val readTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+
+    new WinningCommitSummary(
+      actions = actions,
+      fileStatus = fileStatus,
+      readTimeMs = readTimeMs
+    )
+  }
+}
+
 private[delta] class ConflictChecker(
     spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
-    winningCommitFileStatus: FileStatus,
+    winningCommitSummary: WinningCommitSummary,
     isolationLevel: IsolationLevel)
   extends DeltaLogging with ConflictCheckerPredicateElimination {
 
-  protected val winningCommitVersion = FileNames.deltaVersion(winningCommitFileStatus)
+  protected val winningCommitVersion = winningCommitSummary.commitVersion
   protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
 
   protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
-
-  protected lazy val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   protected def recordSkippedPhase(phase: String): Unit = timingStats += phase -> 0
 
@@ -173,16 +206,24 @@ private[delta] class ConflictChecker(
    * the transaction as if it had started while reading the `winningCommitVersion`.
    */
   def checkConflicts(): CurrentTransactionInfo = {
+    // Add time to read commit in the metrics.
+    recordTime("initialize-old-commit", winningCommitSummary.readTimeMs)
+
     // Check early the protocol and metadata compatibility that is required for subsequent
     // file-level checks.
     checkProtocolCompatibility()
-    checkNoMetadataUpdates()
+    if (spark.conf.get(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED)) {
+      attemptToResolveMetadataConflicts()
+    } else {
+      checkNoMetadataUpdates()
+    }
     checkIfDomainMetadataConflict()
 
     // Perform cheap check for transaction dependencies before we start checks files.
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
 
     resolveRowTrackingBackfillConflicts()
+    resolveRowTrackingUnBackfillConflicts()
     // Row Tracking reconciliation. We perform this before the file checks to ensure that
     // no files have duplicate row IDs and avoid interacting with files that don't comply with
     // the protocol.
@@ -200,20 +241,6 @@ private[delta] class ConflictChecker(
 
     logMetrics()
     currentTransactionInfo
-  }
-
-  /**
-   * Initializes [[WinningCommitSummary]] for the already committed
-   * transaction (winning transaction).
-   */
-  protected def createWinningCommitSummary(): WinningCommitSummary = {
-    recordTime("initialize-old-commit") {
-      val winningCommitActions = deltaLog.store.read(
-        winningCommitFileStatus,
-        deltaLog.newDeltaHadoopConf()
-      ).map(Action.fromJson)
-      new WinningCommitSummary(winningCommitActions, winningCommitVersion)
-    }
   }
 
   /**
@@ -252,16 +279,26 @@ private[delta] class ConflictChecker(
     val newProtocol = currentTransactionInfo.protocol
     val readProtocol = currentTransactionInfo.readSnapshot.protocol
     if (TableFeature.isProtocolRemovingFeatures(newProtocol, readProtocol)) {
-      val winningSnapshot = deltaLog.getSnapshotAt(
-        winningCommitSummary.commitVersion,
-        catalogTableOpt = currentTransactionInfo.catalogTable)
-      val isDowngradeCommitValid = TableFeature.validateFeatureRemovalAtSnapshot(
-        newProtocol = newProtocol,
-        oldProtocol = readProtocol,
-        snapshot = winningSnapshot)
-      if (!isDowngradeCommitValid) {
-        throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
-          winningCommitSummary.commitInfo)
+      // Feature specific conflict resolution logic.
+      if (TableFeature.isFeatureDropped(newProtocol, readProtocol, RowTrackingFeature)) {
+        currentTransactionInfo = resolveRowTrackingUnBackfillConflicts(
+          currentTransactionInfo, winningCommitSummary)
+      } else {
+        val winningSnapshot = deltaLog.getSnapshotAt(
+          winningCommitSummary.commitVersion,
+          catalogTableOpt = currentTransactionInfo.catalogTable)
+        val isDowngradeCommitValid = TableFeature.validateFeatureRemovalAtSnapshot(
+          newProtocol = newProtocol,
+          oldProtocol = readProtocol,
+          table = DeltaTableV2(
+            spark = spark,
+            path = deltaLog.dataPath,
+            catalogTable = currentTransactionInfo.catalogTable),
+          snapshot = winningSnapshot)
+        if (!isDowngradeCommitValid) {
+          throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
+            winningCommitSummary.commitInfo)
+        }
       }
       // When the current transaction is removing a feature and CheckpointProtectionTableFeature
       // is enabled, the current transaction will set the requireCheckpointProtectionBeforeVersion
@@ -269,7 +306,7 @@ private[delta] class ConflictChecker(
       // So we need to update it after resolving conflicts with winning transactions.
       if (newProtocol.isFeatureSupported(CheckpointProtectionTableFeature) &&
           TableFeature.isProtocolRemovingFeatureWithHistoryProtection(newProtocol, readProtocol)) {
-        val newVersion = winningCommitSummary.commitVersion + 1L
+        val newVersion = winningCommitVersion + 1L
         val newMetadata = CheckpointProtectionTableFeature.metadataWithCheckpointProtection(
           currentTransactionInfo.metadata, newVersion)
         val newActions = currentTransactionInfo.actions.collect {
@@ -381,6 +418,80 @@ private[delta] class ConflictChecker(
   }
 
   /**
+   * Row tracking unbackfill is an operation that removes row tracking metadata from the table.
+   * This is achieved by recommiting existing add files without base row ID and default
+   * row commit version. The operation is invoked as part of the cleanup process when dropping
+   * the row tracking feature from the table.
+   *
+   * In general, Delta writers should never generate baseRowIds while
+   * `delta.rowTrackingSuspended` is enabled. However, the delta protocol does not enforce
+   * the config and as a result third party writers may not respect it. The unbackfill conflict
+   * resolver unbackfills the addFiles of the winning commits to compensate for this.
+   */
+  private def resolveRowTrackingUnBackfillConflicts(): Unit = {
+    // If row tracking is not supported, there can be no unbackfill commit.
+    if (!RowTracking.isSupported(currentTransactionInfo.protocol)) {
+      assert(!currentTransactionInfo.isRowTrackingUnBackfillTxn)
+      assert(!winningCommitSummary.isRowTrackingUnBackfillTxn)
+      return
+    }
+
+    if (!currentTransactionInfo.isRowTrackingUnBackfillTxn) {
+      return
+    }
+    // Third party writers might not use the same operation name for backfill.
+    // In that case we will proceed to conflict resolution.
+    if (winningCommitSummary.isRowTrackingBackfillTxn) {
+      throw DeltaErrors.rowTrackingBackfillRunningConcurrentlyWithUnbackfill()
+    }
+
+    val timerPhaseName = "checked-row-tracking-unbackfill"
+    recordTime(timerPhaseName) {
+      currentTransactionInfo = resolveRowTrackingUnBackfillConflicts(
+        currentTransactionInfo,
+        winningCommitSummary)
+    }
+  }
+
+  /**
+   * Resolve conflicts by cleaning up addFiles of winning commits. Furthermore, make sure
+   * sure that removed files are not resurrected.
+   */
+  private def resolveRowTrackingUnBackfillConflicts(
+      currentTransactionInfo: CurrentTransactionInfo,
+      winningCommitSummary: WinningCommitSummary): CurrentTransactionInfo = {
+
+    // Unbackfill new AddFiles. This has the advantage that will cleanup commits
+    // from third party writers that do not respect `delta.rowTrackingSuspended`.
+    val (pathsToRemoveFromUnBackfill, filesToAddToUnBackfill) =
+      winningCommitSummary.actions.collect {
+        case a: AddFile =>
+          val fileToAdd = if (a.baseRowId.nonEmpty || a.defaultRowCommitVersion.nonEmpty) {
+            Some(a.copy(dataChange = false, baseRowId = None, defaultRowCommitVersion = None))
+          } else {
+            None
+          }
+          (a.path, fileToAdd)
+        case r: RemoveFile => (r.path, None)
+      }.unzip
+    val pathsToRemoveFromUnBackfillSet = pathsToRemoveFromUnBackfill.toSet
+    val filesToAddToUnBackfillSet = filesToAddToUnBackfill.flatten.toSet
+
+    val newActions = currentTransactionInfo.actions.filterNot {
+      case a: AddFile => pathsToRemoveFromUnBackfillSet.contains(a.path)
+      case _ => false
+    } ++ filesToAddToUnBackfillSet
+
+    // We can remove pruned files from the read list. However, we should not add
+    // the new AddFiles because that would cause a conflict, albeit, we already
+    // resolved it.
+    val newReadFiles = currentTransactionInfo.readFiles.filterNot(
+      a => pathsToRemoveFromUnBackfillSet.contains(a.path))
+
+    currentTransactionInfo.copy(actions = newActions, readFiles = newReadFiles)
+  }
+
+  /**
    * If the winning commit only does row tracking enablement (i.e. set the table property to
    * true and assigns materialized row tracking column names), we can safely allow the metadata
    * update not to fail the current txn if we copy over the table property, materialized column
@@ -456,6 +567,299 @@ private[delta] class ConflictChecker(
       }
       throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
     }
+  }
+
+  /**
+   * Attempts to resolve metadata conflicts between the current and winning transactions.
+   * Currently, we only support the resolution of configuration changes. This is achieved with
+   * the use of an allow-list that defines which configuration changes are allowed.
+   *
+   * We primarily focus on feature enablement. Features should be considered on a case-by-case
+   * basis whether they are eligible for white listing. The main consideration is whether
+   * transactions that produce the output before the feature enablement are safe to commit
+   * with the feature enabled. For some features the answer might be simply yes while some other
+   * features might require reconciliation logic at conflict resolution. Features that require
+   * data rewrite for reconciliation are not good candidates for white listing.
+   */
+  protected def attemptToResolveMetadataConflicts(): Unit = {
+    def throwMetadataChangedException(): Unit =
+      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+
+    // If winning commit does not contain metadata update, no conflict.
+    if (winningCommitSummary.metadataUpdates.isEmpty) return
+
+    // Cannot resolve when both transactions have metadata updates.
+    if (currentTransactionInfo.metadataChanged) {
+      if (winningCommitSummary.identityOnlyMetadataUpdate) {
+        IdentityColumn.logTransactionAbort(deltaLog)
+      }
+      throwMetadataChangedException()
+    }
+
+    // Add all special cases here.
+    if (winningCommitSummary.identityOnlyMetadataUpdate) {
+      return
+    }
+
+    val currentMetadata = currentTransactionInfo.metadata
+    val winningCommitMetadata = winningCommitSummary.metadataUpdates.head
+    val propertyNamesDiff = currentMetadata.diffFieldNames(winningCommitMetadata)
+
+    // We only support the resolution of configuration changes at the moment and metadata
+    // only schema changes.
+    if (!propertyNamesDiff.subsetOf(Set("configuration", "schemaString"))) {
+      throwMetadataChangedException()
+    }
+
+    // Clear configuration changes.
+    var configurationChanges = ConfigurationChanges(areValid = false)
+    if (propertyNamesDiff.contains("configuration")) {
+      configurationChanges = checkConfigurationChangesForConflicts(
+        currentMetadata, winningCommitMetadata)
+      if (!configurationChanges.areValid) {
+        throwMetadataChangedException()
+      }
+    }
+
+    // Clear schema changes.
+    if (propertyNamesDiff.contains("schemaString")) {
+      if (!checkSchemaChangesForConflicts(currentMetadata, winningCommitMetadata)) {
+        throwMetadataChangedException()
+      }
+    }
+
+    // Metadata changes are accepted. Consolidate them.
+    val rowTrackingEnabled = configurationChanges
+      .addedAndChanged
+      .getOrElse(DeltaConfigs.ROW_TRACKING_ENABLED.key, "false")
+      .toBoolean
+    if (rowTrackingEnabled) {
+      currentTransactionInfo = currentTransactionInfo.copy(
+        commitInfo = currentTransactionInfo
+          .commitInfo
+          .map(RowTracking.addRowTrackingNotPreservedTag))
+    }
+
+    currentTransactionInfo = currentTransactionInfo.copy(metadata = winningCommitMetadata)
+  }
+
+  /**
+   * Return type of [[checkConfigurationChangesForConflicts]]. It indicates whether the
+   * configuration changes are valid and provides the details of the changes.
+   */
+  private[delta] case class ConfigurationChanges(
+      areValid: Boolean,
+      removed: Set[String] = Set.empty,
+      added: Map[String, String] = Map.empty,
+      changed: Map[String, String] = Map.empty) {
+    def addedAndChanged : Map[String, String] = added ++ changed
+  }
+
+  /** Allow list for [[checkConfigurationChangesForConflicts]]. */
+  private lazy val metadataConfigurationChangeAllowList: Set[String] = {
+    val rowTrackingAllowList =
+        Set(
+          MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+          MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
+          DeltaConfigs.ROW_TRACKING_ENABLED.key)
+
+    // We can suppress column mapping enablement conflict error since we do not need any
+    // data rewrite to reconcile the txns. No metadata is pushed to the parquet
+    // footers. The new schema with all the necessary column metadata is copied over
+    // to the current transaction.
+    val columnMappingAllowList =
+        Set(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key,
+          DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
+
+    rowTrackingAllowList ++ columnMappingAllowList
+  }
+
+  /**
+   * Validates configuration changes between the current metadata and the winning metadata.
+   * Returns a [[ConfigurationChanges]] object that indicates whether the changes are valid.
+   */
+  protected[delta] def checkConfigurationChangesForConflicts(
+      currentMetadata: Metadata,
+      winningMetadata: Metadata,
+      allowList: Set[String] = metadataConfigurationChangeAllowList): ConfigurationChanges = {
+
+    val currentConf = currentMetadata.configuration
+    val winningConf = winningMetadata.configuration
+    val currentConfKeys = currentConf.keySet
+    val winningConfKeys = winningConf.keySet
+
+    val removedKeys = currentConfKeys -- winningConfKeys
+    val addedKeys = winningConfKeys -- currentConfKeys
+    val changedKeys = currentConfKeys.intersect(winningConfKeys).filter { key =>
+      currentConf(key) != winningConf(key)
+    }
+    val addedAndChangedKeys = addedKeys ++ changedKeys
+
+    def configurationChanges(areValid: Boolean): ConfigurationChanges = {
+      ConfigurationChanges(
+        areValid = areValid,
+        removed = removedKeys,
+        added = addedKeys.map(key => key -> winningConf(key)).toMap,
+        changed = changedKeys.map(key => key -> winningConf(key)).toMap)
+    }
+
+    def INVALID_CONFIGURATION_CHANGES = configurationChanges(areValid = false)
+    def VALID_CONFIGURATION_CHANGES = configurationChanges(areValid = true)
+
+    // Unsetting a configuration is not supported at the moment.
+    if (removedKeys.nonEmpty) {
+      return INVALID_CONFIGURATION_CHANGES
+    }
+
+    // Every added or changed configuration must be in the allow list.
+    if (!addedAndChangedKeys.subsetOf(allowList)) {
+      return INVALID_CONFIGURATION_CHANGES
+    }
+
+    // Schema: Key, value, isNew.
+    val allChanges =
+      addedKeys.map(key => (key, winningConf(key), true)) ++
+      changedKeys.map(key => (key, winningConf(key), false))
+
+    val validChanges = allChanges.map { case (key, value, isNew) =>
+      key match {
+        // Row tracking related configurations.
+        case DeltaConfigs.ROW_TRACKING_ENABLED.key =>
+          isRowTrackingConfigChangeConflictFree(value.toBoolean)
+        case MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP =>
+          areRowTrackingPropertyChangesConflictFree(winningMetadata)
+        case MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP =>
+          areRowTrackingPropertyChangesConflictFree(winningMetadata)
+        // Column mapping related configurations.
+        case DeltaConfigs.COLUMN_MAPPING_MODE.key =>
+          areColumnMappingChangesConflictFree(currentMetadata, winningMetadata)
+        case _ => true
+      }
+    }
+
+    if (validChanges.contains(false)) {
+      return INVALID_CONFIGURATION_CHANGES
+    }
+
+    VALID_CONFIGURATION_CHANGES
+  }
+
+  protected def isRowTrackingConfigChangeConflictFree(value: Boolean): Boolean = {
+    if (!currentTransactionInfo.protocol.isFeatureSupported(RowTrackingFeature)) {
+      return false
+    }
+    // Currently, we only allow enabling row tracking.
+    value
+  }
+
+  protected def areRowTrackingPropertyChangesConflictFree(winningMetadata: Metadata): Boolean = {
+    winningMetadata
+      .configuration
+      .getOrElse(DeltaConfigs.ROW_TRACKING_ENABLED.key, "false")
+      .toBoolean
+  }
+
+  protected def areColumnMappingChangesConflictFree(
+      currentMetadata: Metadata,
+      winningMetadata: Metadata): Boolean = {
+    // Enabling column mapping name mode is the only transition we allow.
+    // Enabling ID mapping on an existing table is generally not allowed.
+    // This should be already blocked by column mapping at an earlier stage.
+    // We add an extra check here for safety.
+    val columnMappingEnabled =
+      currentMetadata.columnMappingMode == NoMapping &&
+      winningMetadata.columnMappingMode == NameMapping
+    if (!columnMappingEnabled) {
+      return false
+    }
+
+    currentTransactionInfo.protocol.isFeatureSupported(ColumnMappingTableFeature)
+  }
+
+  /** Allows key comparison between two sql.types.Metadata objects. */
+  class DeltaFieldMetadataComparator(metadata: FieldMetadata) extends MetadataBuilder {
+    withMetadata(metadata)
+
+    /** Returns a set of added keys by `other`. */
+    def addedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
+      other.getMap.keySet -- getMap.keySet
+    }
+
+    /** Returns a set of removed keys by `other`. */
+    def removedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
+      getMap.keySet -- other.getMap.keySet
+    }
+
+    /** Returns a set of changed keys by `other`. */
+    def changedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
+      getMap.keySet.intersect(other.getMap.keySet).filterNot { key =>
+        val ourValue = getMap(key)
+        val otherValue = other.getMap(key)
+        (ourValue, otherValue) match {
+          case (v0: Array[Long], v1: Array[Long]) => java.util.Arrays.equals(v0, v1)
+          case (v0: Array[Double], v1: Array[Double]) => java.util.Arrays.equals(v0, v1)
+          case (v0: Array[Boolean], v1: Array[Boolean]) => java.util.Arrays.equals(v0, v1)
+          case (v0: Array[AnyRef], v1: Array[AnyRef]) => java.util.Arrays.equals(v0, v1)
+          case (v0, v1) => v0 == v1
+        }
+      }
+    }
+
+    /** Returns a set of keys that were either added, removed or changed by `other`. */
+    def keysWithAnyChanges(other: DeltaFieldMetadataComparator): Set[String] = {
+      removedKeys(other)
+        .union(addedKeys(other))
+        .union(changedKeys(other))
+    }
+  }
+
+  /** Verifies whether any changes between currentMetadata and winningMetadata are valid. */
+  protected def checkSchemaChangesForConflicts(
+      currentMetadata: Metadata,
+      winningMetadata: Metadata): Boolean = {
+
+    val currentSchema = currentMetadata.schema
+    val winningSchema = winningMetadata.schema
+
+    if (currentSchema.fields.length != winningSchema.fields.length) {
+      return false
+    }
+
+    // Currently we only support column mapping metadata changes. If column mapping is not
+    // enabled fail (assumes the method was called because schema changes were detected).
+    val columnMappingEnabled =
+      currentMetadata.columnMappingMode == NoMapping &&
+      winningMetadata.columnMappingMode == NameMapping
+    if (!columnMappingEnabled) {
+      return false
+    }
+
+    val allowedMetadataFields = DeltaColumnMapping.COLUMN_MAPPING_METADATA_KEYS
+
+    currentSchema.fields.zipWithIndex.foreach { case (currentField, index) =>
+      val winningField = winningSchema.fields(index)
+      // Currently we only allow metadata changes.
+      if (currentField.name != winningField.name ||
+          currentField.dataType != winningField.dataType ||
+          currentField.nullable != winningField.nullable) {
+        return false
+      }
+
+      if (currentField.metadata != winningField.metadata) {
+        val currentFieldMetadataComparator = new DeltaFieldMetadataComparator(currentField.metadata)
+        val winningFieldMetadataComparator = new DeltaFieldMetadataComparator(winningField.metadata)
+        val keysWithAnyChanges = currentFieldMetadataComparator
+          .keysWithAnyChanges(winningFieldMetadataComparator)
+
+        // We allow all operations on white listed metadata fields.
+        if (!keysWithAnyChanges.subsetOf(allowedMetadataFields)) {
+          return false
+        }
+      }
+    }
+
+    true
   }
 
   /**
@@ -548,12 +952,19 @@ private[delta] class ConflictChecker(
     import org.apache.spark.sql.delta.implicits._
     val filesMatchingPartitionPredicates = canonicalPredicates.iterator
       .flatMap { readPredicate =>
-        DeltaLog.filterFileList(
+        val matchingFileOpt = DeltaLog.filterFileList(
           partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
           files = filesDf,
           partitionFilters = readPredicate.partitionPredicates,
           shouldRewritePartitionFilters = readPredicate.shouldRewriteFilter
         ).as[AddFile].head(1).headOption
+        matchingFileOpt.foreach { f =>
+          logInfo(log"Partition predicate is matching a file changed by the winning transaction: " +
+            log"predicate=${MDC(DeltaLogKeys.DATA_FILTER,
+              readPredicate.partitionPredicates.toVector)}, " +
+            log"matchingFile=${MDC(DeltaLogKeys.PATH, f.path)}")
+        }
+        matchingFileOpt
       }.take(1).toArray
 
     filesMatchingPartitionPredicates.headOption
@@ -567,10 +978,18 @@ private[delta] class ConflictChecker(
    * row IDs and default row commit versions, since backfill is only done after table feature
    * support is added. Removing duplicate AddFiles is handled in
    * [[resolveRowTrackingBackfillConflicts]].
+   *
+   * RowTrackingUnBackfill behaves in a similar way. It does not do any data change. When it is
+   * the winning commit, the current transaction does not need to read its AddFiles. However, when
+   * unbackfill it is the current transaction, it pulls the addFiles added by the winning
+   * transaction and unbackfills them. Again, this is a metadata only change. AddFile deduplication
+   * is handled in [[resolveRowTrackingUnBackfillConflicts]].
    */
   protected def skipCheckedAppendsIfExistsRowTrackingBackfillTransaction(): Boolean = {
     if (winningCommitSummary.isRowTrackingBackfillTxn ||
-        currentTransactionInfo.isRowTrackingBackfillTxn) {
+        winningCommitSummary.isRowTrackingUnBackfillTxn ||
+        currentTransactionInfo.isRowTrackingBackfillTxn ||
+        currentTransactionInfo.isRowTrackingUnBackfillTxn) {
       recordSkippedPhase("checked-appends")
       return true
     }
@@ -776,7 +1195,10 @@ private[delta] class ConflictChecker(
    */
   private def reassignOverlappingRowIds(): Unit = {
     // The current transaction should only assign Row Ids if they are supported.
-    if (!RowId.isSupported(currentTransactionInfo.protocol)) return
+    val currentProtocol = currentTransactionInfo.protocol
+    val currentMetadata = currentTransactionInfo.metadata
+    if (!RowId.isSupported(currentProtocol)) return
+    if (RowTracking.isSuspended(spark, currentMetadata)) return
 
     val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark
 
@@ -818,11 +1240,8 @@ private[delta] class ConflictChecker(
    *     to handle the row tracking feature being enabled by the winning transaction.
    */
   private def reassignRowCommitVersions(): Unit = {
-    if (!RowTracking.isSupported(currentTransactionInfo.protocol) &&
-      // Type widening relies on default row commit versions to be set.
-      !TypeWidening.isSupported(currentTransactionInfo.protocol)) {
-      return
-    }
+    if (!RowId.isSupported(currentTransactionInfo.protocol)) return
+    if (RowTracking.isSuspended(spark, currentTransactionInfo.metadata)) return
 
     val newActions = currentTransactionInfo.actions.map {
       case a: AddFile if a.defaultRowCommitVersion.contains(winningCommitVersion) =>
@@ -853,7 +1272,7 @@ private[delta] class ConflictChecker(
               currentTransactionInfo.metadata, currentTransactionInfo.readSnapshot)) {
         // Since the current transaction enabled inCommitTimestamps, we should use the file
         // timestamp from the winning transaction as its commit timestamp.
-        winningCommitFileStatus.getModificationTime
+        winningCommitSummary.commitFileTimestamp
     } else {
       // Get the inCommitTimestamp from the winning transaction.
       CommitInfo.getRequiredInCommitTimestamp(
@@ -905,6 +1324,10 @@ private[delta] class ConflictChecker(
     val timeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
     timingStats += phase -> timeTakenMs
     ret
+  }
+
+  protected def recordTime(phase: String, timeTakenMs: Long) = {
+    timingStats += phase -> timeTakenMs
   }
 
   protected def logMetrics(): Unit = {

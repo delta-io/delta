@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.unsupportedStatsDataType;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
 
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
@@ -32,9 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Collections;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * Encapsulates statistics for a data file in a Delta Lake table and provides methods to serialize
@@ -43,7 +42,7 @@ import java.util.Objects;
  * truncation, prior to constructing this class.
  */
 public class DataFileStatistics {
-  private static final DateTimeFormatter TIMESTAMP_FORMATTER =
+  public static final DateTimeFormatter TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
   public static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
 
@@ -51,13 +50,12 @@ public class DataFileStatistics {
   private final Map<Column, Literal> minValues;
   private final Map<Column, Literal> maxValues;
   private final Map<Column, Long> nullCount;
+  private final Optional<Boolean> tightBounds;
 
   /**
    * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, and nullCount
-   * are all required fields. This class is primarily used to serialize stats to JSON with type
-   * checking when constructing file actions and NOT used during data skipping. As such the column
-   * names in minValues, maxValues and nullCount should be that of the physical data schema that's
-   * reflected in the parquet files and NOT logical schema.
+   * are required fields. The tightBounds field is optional - pass Optional.empty() if not
+   * specified, Optional.of(true) or Optional.of(false) for explicit values.
    *
    * @param numRecords Number of records in the data file.
    * @param minValues Map of column to minimum value of it in the data file. If the data file has
@@ -65,12 +63,15 @@ public class DataFileStatistics {
    * @param maxValues Map of column to maximum value of it in the data file. If the data file has
    *     all nulls for the column, the value will be null or not present in the map.
    * @param nullCount Map of column to number of nulls in the data file.
+   * @param tightBounds Optional boolean indicating if bounds are tight (accurate). Pass
+   *     Optional.empty() if not specified.
    */
   public DataFileStatistics(
       long numRecords,
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
-      Map<Column, Long> nullCount) {
+      Map<Column, Long> nullCount,
+      Optional<Boolean> tightBounds) {
     Objects.requireNonNull(minValues, "minValues must not be null to serialize stats.");
     Objects.requireNonNull(maxValues, "maxValues must not be null to serialize stats.");
     Objects.requireNonNull(nullCount, "nullCount must not be null to serialize stats.");
@@ -79,6 +80,85 @@ public class DataFileStatistics {
     this.minValues = Collections.unmodifiableMap(minValues);
     this.maxValues = Collections.unmodifiableMap(maxValues);
     this.nullCount = Collections.unmodifiableMap(nullCount);
+    this.tightBounds = tightBounds;
+  }
+
+  /**
+   * Utility method to extract only the numRecords field from a statistics JSON string.
+   *
+   * @param json Data statistics JSON string to deserialize.
+   * @return An {@link Optional} containing the numRecords value if present.
+   * @throws KernelException if JSON parsing fails
+   */
+  public static Optional<Long> getNumRecords(String json) {
+    // Delegate to the full deserialization method with null schema to only parse numRecords
+    Optional<DataFileStatistics> stats = deserializeFromJson(json, null);
+    return stats.map(DataFileStatistics::getNumRecords);
+  }
+
+  /**
+   * Utility method to deserialize statistics from a JSON string with full type information. This
+   * overloaded version uses the provided schema to correctly parse min/max values and null counts
+   * with their appropriate data types.
+   *
+   * @param json Data statistics JSON string to deserialize.
+   * @param physicalSchema The physical schema providing type information for columns. Must match
+   *     the schema used during serialization.
+   * @return An {@link Optional} containing the deserialized {@link DataFileStatistics} if present.
+   * @throws KernelException if JSON parsing fails or if values don't match expected types
+   */
+  public static Optional<DataFileStatistics> deserializeFromJson(
+      String json, StructType physicalSchema) {
+    JsonNode root;
+    try {
+      root = JsonUtils.mapper().readTree(json);
+    } catch (IOException e) {
+      throw new KernelException(String.format("Failed to parse JSON string: %s", json), e);
+    }
+
+    // Parse numRecords
+    JsonNode numRecordsNode = root.get(StatsSchemaHelper.NUM_RECORDS);
+    if (numRecordsNode == null || !numRecordsNode.isNumber()) {
+      return Optional.empty();
+    }
+    long numRecords = numRecordsNode.asLong();
+    // Check if schema is null or empty
+    if (physicalSchema == null || physicalSchema.fields().isEmpty()) {
+      // Return statistics with only numRecords
+      return Optional.of(
+          new DataFileStatistics(
+              numRecords, new HashMap<>(), new HashMap<>(), new HashMap<>(), Optional.empty()));
+    }
+    // Parse minValues
+    Map<Column, Literal> minValues = new HashMap<>();
+    JsonNode minNode = root.get(StatsSchemaHelper.MIN);
+    if (minNode != null && minNode.isObject()) {
+      parseMinMaxValues(minNode, minValues, new Column(new String[0]), physicalSchema);
+    }
+
+    // Parse maxValues
+    Map<Column, Literal> maxValues = new HashMap<>();
+    JsonNode maxNode = root.get(StatsSchemaHelper.MAX);
+    if (maxNode != null && maxNode.isObject()) {
+      parseMinMaxValues(maxNode, maxValues, new Column(new String[0]), physicalSchema);
+    }
+
+    // Parse nullCount
+    Map<Column, Long> nullCount = new HashMap<>();
+    JsonNode nullCountNode = root.get(StatsSchemaHelper.NULL_COUNT);
+    if (nullCountNode != null && nullCountNode.isObject()) {
+      parseNullCounts(nullCountNode, nullCount, new Column(new String[0]), physicalSchema);
+    }
+
+    // Parse tightBounds
+    Optional<Boolean> tightBounds = Optional.empty();
+    JsonNode tightBoundsNode = root.get(StatsSchemaHelper.TIGHT_BOUNDS);
+    if (tightBoundsNode != null && tightBoundsNode.isBoolean()) {
+      tightBounds = Optional.of(tightBoundsNode.asBoolean());
+    }
+
+    return Optional.of(
+        new DataFileStatistics(numRecords, minValues, maxValues, nullCount, tightBounds));
   }
 
   /**
@@ -118,6 +198,28 @@ public class DataFileStatistics {
    */
   public Map<Column, Long> getNullCount() {
     return nullCount;
+  }
+
+  /**
+   * Get the tight bounds information for the data file. Tight bounds indicate whether the values
+   * are guaranteed to be accurate bounds for the data.
+   *
+   * @return The tight bounds boolean value.
+   */
+  public Optional<Boolean> getTightBounds() {
+    return tightBounds;
+  }
+
+  /**
+   * Returns a new DataFileStatistics instance with tightBounds set to false. This is useful when
+   * the statistics bounds are no longer guaranteed to be tight, such as after applying deletion
+   * vectors.
+   *
+   * @return A new DataFileStatistics with tightBounds set to false
+   */
+  public DataFileStatistics withoutTightBounds() {
+    return new DataFileStatistics(
+        this.numRecords, this.minValues, this.maxValues, this.nullCount, Optional.of(false));
   }
 
   /**
@@ -186,6 +288,10 @@ public class DataFileStatistics {
                 new Column(new String[0]),
                 (g, v) -> g.writeNumber(v));
             gen.writeEndObject();
+
+            if (tightBounds.isPresent()) {
+              gen.writeBooleanField(StatsSchemaHelper.TIGHT_BOUNDS, tightBounds.get());
+            }
           }
 
           gen.writeEndObject();
@@ -204,7 +310,8 @@ public class DataFileStatistics {
     return numRecords == that.numRecords
         && Objects.equals(minValues, that.minValues)
         && Objects.equals(maxValues, that.maxValues)
-        && Objects.equals(nullCount, that.nullCount);
+        && Objects.equals(nullCount, that.nullCount)
+        && Objects.equals(tightBounds, that.tightBounds);
   }
 
   @Override
@@ -213,14 +320,20 @@ public class DataFileStatistics {
     result = 31 * result + Objects.hash(minValues.keySet());
     result = 31 * result + Objects.hash(maxValues.keySet());
     result = 31 * result + Objects.hash(nullCount.keySet());
+    result = 31 * result + Objects.hash(tightBounds);
     return result;
   }
 
   @Override
   public String toString() {
     return String.format(
-        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s, nullCount=%s)",
-        numRecords, minValues, maxValues, nullCount);
+        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s,"
+            + "nullCount=%s, tightBounds=%s)",
+        numRecords,
+        minValues,
+        maxValues,
+        nullCount,
+        tightBounds.map(Object::toString).orElse("empty"));
   }
 
   /////////////////////////////////////////////////////////////////////////////////
@@ -264,9 +377,12 @@ public class DataFileStatistics {
    * @throws KernelException if the data types don't match
    */
   private void validateLiteralType(StructField field, Literal literal) {
-    if (literal.getDataType() == null || !literal.getDataType().equals(field.getDataType())) {
+    // Variant stats in JSON are Z85 encoded strings, all other stats should match the field type
+    DataType expectedLiteralType =
+        field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
+    if (literal.getDataType() == null || !literal.getDataType().equals(expectedLiteralType)) {
       throw DeltaErrors.statsTypeMismatch(
-          field.getName(), field.getDataType(), literal.getDataType());
+          field.getName(), expectedLiteralType, literal.getDataType());
     }
   }
 
@@ -322,6 +438,133 @@ public class DataFileStatistics {
       generator.writeString(truncated.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
     } else {
       throw unsupportedStatsDataType(type);
+    }
+  }
+  /**
+   * Helper method to recursively parse nested JSON values back into Column->Literal maps for
+   * min/max values using the schema for type information. This is the inverse of the
+   * writeJsonValues method in DataFileStatistics.serializeAsJson.
+   *
+   * <p>Example JSON structure being parsed:
+   *
+   * <pre>
+   * {
+   *   "simpleColumn": 42,
+   *   "nestedColumn": {
+   *     "field1": "value1",
+   *     "field2": {
+   *       "subfield": 10.5
+   *     }
+   *   }
+   * }
+   * </pre>
+   *
+   * <p>This would create Column entries:
+   *
+   * <ul>
+   *   <li>Column(["simpleColumn"]) → Literal.ofInt(42)
+   *   <li>Column(["nestedColumn", "field1"]) → Literal.ofString("value1")
+   *   <li>Column(["nestedColumn", "field2", "subfield"]) → Literal.ofDouble(10.5)
+   * </ul>
+   *
+   * @param node The JSON node to parse
+   * @param resultMap The map to populate with Column->Literal mappings
+   * @param currentColumn The current column path being built
+   * @param schema The schema for the current level
+   */
+  private static void parseMinMaxValues(
+      JsonNode node, Map<Column, Literal> resultMap, Column currentColumn, StructType schema) {
+    if (node == null || !node.isObject() || schema == null) {
+      return;
+    }
+
+    for (StructField field : schema.fields()) {
+      String fieldName = field.getName();
+      JsonNode valueNode = node.get(fieldName);
+
+      if (valueNode == null) {
+        // Field not present in JSON, skip
+        continue;
+      }
+
+      Column newColumn = currentColumn.appendNestedField(fieldName);
+      DataType fieldType = field.getDataType();
+
+      if (fieldType instanceof StructType) {
+        // This is a nested structure, recurse deeper
+        if (valueNode.isObject()) {
+          parseMinMaxValues(valueNode, resultMap, newColumn, (StructType) fieldType);
+        }
+      } else {
+        // This is a leaf value
+        Literal literal = JsonUtils.parseJsonValueToLiteral(valueNode, fieldType);
+        if (literal != null) {
+          resultMap.put(newColumn, literal);
+        }
+      }
+    }
+  }
+
+  /**
+   * Helper method to recursively parse nested JSON null count values back into Column->Long maps
+   * using the schema for type information.
+   *
+   * <p>Example JSON structure being parsed:
+   *
+   * <pre>
+   * {
+   *   "simpleColumn": 5,
+   *   "nestedColumn": {
+   *     "field1": 0,
+   *     "field2": {
+   *       "subfield": 10
+   *     }
+   *   }
+   * }
+   * </pre>
+   *
+   * <p>This would create Column entries:
+   *
+   * <ul>
+   *   <li>Column(["simpleColumn"]) → 5L
+   *   <li>Column(["nestedColumn", "field1"]) → 0L
+   *   <li>Column(["nestedColumn", "field2", "subfield"]) → 10L
+   * </ul>
+   *
+   * @param node The JSON node to parse
+   * @param resultMap The map to populate with Column->Long mappings
+   * @param currentColumn The current column path being built
+   * @param schema The schema for the current level
+   */
+  private static void parseNullCounts(
+      JsonNode node, Map<Column, Long> resultMap, Column currentColumn, StructType schema) {
+    if (node == null || !node.isObject() || schema == null) {
+      return;
+    }
+
+    for (StructField field : schema.fields()) {
+      String fieldName = field.getName();
+      JsonNode valueNode = node.get(fieldName);
+
+      if (valueNode == null) {
+        // Field not present in JSON, skip
+        continue;
+      }
+
+      Column newColumn = currentColumn.appendNestedField(fieldName);
+      DataType fieldType = field.getDataType();
+
+      if (fieldType instanceof StructType) {
+        // This is a nested structure, recurse deeper
+        if (valueNode.isObject()) {
+          parseNullCounts(valueNode, resultMap, newColumn, (StructType) fieldType);
+        }
+      } else {
+        // This is a leaf value - parse as long for null count
+        if (valueNode.isNumber()) {
+          resultMap.put(newColumn, valueNode.asLong());
+        }
+      }
     }
   }
 }

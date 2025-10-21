@@ -700,23 +700,40 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   }
 
   /**
-   * This method is used to verify, whether the currently attempted commit already
-   * exists as a backfilled commit. This is possible in the following scenario:
+   * This method provides idempotency under network failures by verifying whether the currently
+   * attempted commit already exists as a backfilled commit. This prevents duplicate data from
+   * being written when UC returns a retryable conflict for a commit that was actually successful
+   * but the client didn't receive the success response.
    *
+   * Failure sequence requiring this check:
    * 1. Client attempts to make commit v.
-   * 2. UC persists the commit in its database but then the connection to the client breaks.
-   * 3. The client receives a transient error.
+   * 2. UC persists the commit in its database but the connection to the client breaks.
+   * 3. The client receives a transient error (retryable=true, conflict=false).
    * 4. Before retrying, a concurrent client commits v + 1 and backfills v.
-   * 5. Another subsequent commit registers the backfill of v with UC, leading to UC.
-   *    deleting the commit for v from its database.
-   * 6. Now this client retries commit v.
-   * 7. UC does not store v anymore and so cannot determine whether v has already been made
-   *    or not and so returns a retryable conflict.
+   * 5. Another subsequent commit registers the backfill of v with UC, leading UC to
+   *    delete the commit for v from its database.
+   * 6. Now this client retries commit v (without conflict resolution since conflict=false
+   *    in step 3).
+   * 7. UC rejects the commit because v <= latest_table_version and returns a retryable
+   *    conflict (retryable=true, conflict=true).
    *
-   * Now commit v exists as a backfilled commit but Delta would try to rebase v and recommit,
-   * which could lead to duplicate data being written. To avoid this scenario, we need to
-   * verify, that a commit does not already exist as a backfilled commit after the corresponding
-   * commit attempt failed with an IOException and the subsequent retry resulted in a conflict.
+   * Without this check, Delta's default response to retryable=true, conflict=true would be to
+   * rebase the commit on top of the latest table version and retry, effectively trying to
+   * commit the contents of v as v+2. This would result in duplicate data being written.
+   *
+   * This method prevents that by checking if the backfilled commit (v.json) has the same
+   * content as our retry attempt (v.<uuid>.json). If yes, we know our original commit
+   * succeeded and can safely ignore the conflict and exit early without rebasing.
+   *
+   * Below is a concrete example of the failure and retry sequence:
+   * - Attempt 1: Try to commit v. UC responds with retryable=true, conflict=false under
+   *              network failure.
+   * - Attempt 2: Try to commit v without conflict resolution since conflict=false in attempt-1.
+   *              UC responds with retryable=true, conflict=true in the above scenario.
+   *              (i.e. v is backfilled and latest version is v+1).
+   * - Fix: Compare v.<uuid>.json and v.json and *early exit* here.
+   * - Attempt 3: [Without fix] Rebase, conflict-resolution + Try to commit v+2
+   *              => double-commit for contents of v => bug.
    */
   protected boolean hasSameContent(
       LogStore logStore,

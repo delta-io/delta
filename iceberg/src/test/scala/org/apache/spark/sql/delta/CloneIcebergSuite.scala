@@ -947,42 +947,44 @@ class CloneNonSparkIcebergByPathSuite extends QueryTest
       }
     }
   }
+
+  test("block data path not under table path") {
+    withTable(table, cloneTable) {
+      val schema = new Schema(
+        Seq[NestedField](
+          NestedField.required(1, "id", Types.IntegerType.get),
+          NestedField.required(2, "name", Types.StringType.get)
+        ).asJava
+      )
+      val rows = Seq(
+        Map(
+          "id" -> 1,
+          "name" -> "alice"
+        )
+      )
+      val table = NonSparkIcebergTestUtils.createIcebergTable(spark, tablePath, schema, rows)
+
+      // Create a new data file not under the table path
+      withTempDir { dir =>
+        val dataPath = dir.toPath.resolve("out_of_table.parquet").toAbsolutePath.toString
+        NonSparkIcebergTestUtils.writeIntoIcebergTable(
+          table,
+          Seq(Map("id" -> 2, "name" -> "bob")),
+          2,
+          Some(dataPath)
+        )
+        val e = intercept[org.apache.spark.SparkException] {
+          runCreateOrReplace(mode, sourceIdentifier)
+        }
+        assert(e.getMessage.contains("assertion failed: Fail to relativize path"))
+      }
+    }
+  }
 }
 
 class CloneIcebergByNameSuite extends CloneIcebergSuiteBase
 {
   override def sourceIdentifier: String = table
-
-  test("missing iceberg library should throw a sensical error") {
-    val validIcebergSparkTableClassPath = ConvertUtils.icebergSparkTableClassPath
-    val validIcebergLibTableClassPath = ConvertUtils.icebergLibTableClassPath
-
-    Seq(
-      () => {
-        ConvertUtils.icebergSparkTableClassPath = validIcebergSparkTableClassPath + "2"
-      },
-      () => {
-        ConvertUtils.icebergLibTableClassPath = validIcebergLibTableClassPath + "2"
-      }
-    ).foreach { makeInvalid =>
-      try {
-        makeInvalid()
-        withTable(table, cloneTable) {
-          spark.sql(
-            s"""CREATE TABLE $table (`1 id` bigint, 2data string)
-               |USING iceberg PARTITIONED BY (2data)""".stripMargin)
-          spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b'), (3, 'c')")
-          val e = intercept[DeltaIllegalStateException] {
-            runCreateOrReplace("SHALLOW", sourceIdentifier)
-          }
-          assert(e.getErrorClass == "DELTA_MISSING_ICEBERG_CLASS")
-        }
-      } finally {
-        ConvertUtils.icebergSparkTableClassPath = validIcebergSparkTableClassPath
-        ConvertUtils.icebergLibTableClassPath = validIcebergLibTableClassPath
-      }
-    }
-  }
 }
 
 trait DisablingConvertIcebergStats extends CloneIcebergSuiteBase {

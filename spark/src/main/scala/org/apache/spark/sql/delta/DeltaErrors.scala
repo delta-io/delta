@@ -668,6 +668,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def cloneWithRowTrackingWithoutStats(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CLONE_WITH_ROW_TRACKING_WITHOUT_STATS",
+      messageParameters = Array.empty
+    )
+  }
+
   def incorrectArrayAccess(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS",
@@ -933,7 +940,7 @@ trait DeltaErrorsBase
     )
   }
 
-  def logFileNotFoundException(
+  def truncatedTransactionLogException(
       path: Path,
       version: Long,
       metadata: Metadata): Throwable = {
@@ -948,6 +955,19 @@ trait DeltaErrorsBase
         logRetention.toString,
         DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key,
         checkpointRetention.toString)
+    )
+  }
+
+  def logFileNotFoundException(
+      path: Path,
+      version: Option[Long],
+      checkpointVersion: Long): Throwable = {
+    new DeltaFileNotFoundException(
+      errorClass = "DELTA_LOG_FILE_NOT_FOUND",
+      messageParameters = Array(
+        version.map(_.toString).getOrElse("LATEST"),
+        checkpointVersion.toString,
+        path.toString)
     )
   }
 
@@ -1566,6 +1586,14 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS",
       messageParameters = Array.empty
+    )
+  }
+
+  def timeTravelBeyondDeletedFileRetentionDurationException(
+    deletedFileRetentionDurationHours: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_BEYOND_DELETED_FILE_RETENTION_DURATION",
+      messageParameters = Array(deletedFileRetentionDurationHours)
     )
   }
 
@@ -2729,6 +2757,19 @@ trait DeltaErrorsBase
         rowTrackingDefaultPropertyKey))
   }
 
+  def rowTrackingBackfillRunningConcurrentlyWithUnbackfill(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_BACKFILL_RUNNING_CONCURRENTLY_WITH_UNBACKFILL")
+  }
+
+  def rowTrackingIllegalPropertyCombination(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION",
+      messageParameters = Array(
+        DeltaConfigs.ROW_TRACKING_ENABLED.key,
+        DeltaConfigs.ROW_TRACKING_SUSPENDED.key))
+  }
+
   /** This is a method only used for testing Py4J exception handling. */
   def throwDeltaIllegalArgumentException(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
@@ -3473,6 +3514,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatUnsupportedFieldException(
+      version: Int, field: StructField, schema: StructType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(version.toString, version.toString,
+        s"${field.dataType.typeName}:${field.name}", schema.treeString)
+    )
+  }
+
   def icebergCompatUnsupportedPartitionDataTypeException(
       version: Int, dataType: DataType, schema: StructType): Throwable = {
     new DeltaUnsupportedOperationException(
@@ -3761,6 +3811,13 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(
       errorClass = "DELTA_COMMAND_INVARIANT_VIOLATION",
       messageParameters = Array(operation, id.toString)
+    )
+  }
+
+  def catalogManagedTablePathBasedAccessNotAllowed(path: Path): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED",
+      messageParameters = Array(path.toString)
     )
   }
 }

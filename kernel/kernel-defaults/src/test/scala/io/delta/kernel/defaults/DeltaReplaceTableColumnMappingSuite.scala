@@ -18,11 +18,84 @@ package io.delta.kernel.defaults
 import scala.collection.immutable.Seq
 import scala.reflect.ClassTag
 
+import io.delta.kernel.defaults.utils.{WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode
 import io.delta.kernel.types.{ArrayType, DataType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
+
+class DeltaReplaceTableColumnMappingNameModeTransactionBuilderV1Suite
+    extends DeltaReplaceTableColumnMappingNameModeSuite with WriteUtils
+
+class DeltaReplaceTableColumnMappingNameModeTransactionBuilderV2Suite
+    extends DeltaReplaceTableColumnMappingNameModeSuite with WriteUtilsWithV2Builders
+
+class DeltaReplaceTableColumnMappingIdModeTransactionBuilderV1Suite
+    extends DeltaReplaceTableColumnMappingIdModeSuite with WriteUtils
+
+class DeltaReplaceTableColumnMappingIdModeTransactionBuilderV2Suite
+    extends DeltaReplaceTableColumnMappingIdModeSuite with WriteUtilsWithV2Builders
+
+abstract class DeltaReplaceTableColumnMappingNameModeSuite
+    extends DeltaReplaceTableColumnMappingSuiteBase {
+
+  override def tblPropertiesCmEnabled: Map[String, String] =
+    Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
+}
+
+abstract class DeltaReplaceTableColumnMappingIdModeSuite
+    extends DeltaReplaceTableColumnMappingSuiteBase {
+
+  override def tblPropertiesCmEnabled: Map[String, String] =
+    Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
+
+  // We only need to run the below tests once since they check combos of id and name mode, put them
+  // in this suite for this reason
+  ColumnMapping.ColumnMappingMode.values().foreach { initialCmMode =>
+    ColumnMapping.ColumnMappingMode.values().foreach { replaceCmMode =>
+      if (initialCmMode != replaceCmMode) {
+        test(s"Cannot change CM mode from $initialCmMode to $replaceCmMode") {
+          withTempDirAndEngine { (tablePath, engine) =>
+            createInitialTable(
+              engine,
+              tablePath,
+              tableProperties = cmModeTblProperties(initialCmMode),
+              includeData = false)
+            assert(intercept[UnsupportedOperationException] {
+              commitReplaceTable(
+                engine,
+                tablePath,
+                tableProperties = cmModeTblProperties(replaceCmMode))
+            }.getMessage.contains(
+              s"Changing column mapping mode from $initialCmMode to $replaceCmMode is not " +
+                s"currently supported in Kernel during REPLACE TABLE"))
+          }
+        }
+      } else if (initialCmMode != ColumnMappingMode.NONE) {
+        test(s"Replace with entirely new schema for cmMode=$initialCmMode assigns CM info") {
+          withTempDirAndEngine { (tablePath, engine) =>
+            createInitialTable(
+              engine,
+              tablePath,
+              schema = new StructType().add("col1", StringType.STRING),
+              tableProperties = cmModeTblProperties(initialCmMode),
+              includeData = false)
+            commitReplaceTable(
+              engine,
+              tablePath,
+              cmTestSchema(),
+              tableProperties = cmModeTblProperties(replaceCmMode))
+            verifyCMTestSchemaHasValidColumnMappingInfo(
+              getMetadata(engine, tablePath),
+              enableIcebergCompatV2 = false,
+              initialFieldId = 1)
+          }
+        }
+      }
+    }
+  }
+}
 
 trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
     with ColumnMappingSuiteBase {
@@ -528,62 +601,4 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
         tablePath)) == 200)
     }
   }
-}
-
-class DeltaReplaceTableColumnMappingIdModeSuite extends DeltaReplaceTableColumnMappingSuiteBase {
-
-  override def tblPropertiesCmEnabled: Map[String, String] =
-    Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
-
-  // We only need to run the below tests once since they check combos of id and name mode, put them
-  // in this suite for this reason
-  ColumnMapping.ColumnMappingMode.values().foreach { initialCmMode =>
-    ColumnMapping.ColumnMappingMode.values().foreach { replaceCmMode =>
-      if (initialCmMode != replaceCmMode) {
-        test(s"Cannot change CM mode from $initialCmMode to $replaceCmMode") {
-          withTempDirAndEngine { (tablePath, engine) =>
-            createInitialTable(
-              engine,
-              tablePath,
-              tableProperties = cmModeTblProperties(initialCmMode),
-              includeData = false)
-            assert(intercept[UnsupportedOperationException] {
-              commitReplaceTable(
-                engine,
-                tablePath,
-                tableProperties = cmModeTblProperties(replaceCmMode))
-            }.getMessage.contains(
-              s"Changing column mapping mode from $initialCmMode to $replaceCmMode is not " +
-                s"currently supported in Kernel during REPLACE TABLE"))
-          }
-        }
-      } else if (initialCmMode != ColumnMappingMode.NONE) {
-        test(s"Replace with entirely new schema for cmMode=$initialCmMode assigns CM info") {
-          withTempDirAndEngine { (tablePath, engine) =>
-            createInitialTable(
-              engine,
-              tablePath,
-              schema = new StructType().add("col1", StringType.STRING),
-              tableProperties = cmModeTblProperties(initialCmMode),
-              includeData = false)
-            commitReplaceTable(
-              engine,
-              tablePath,
-              cmTestSchema(),
-              tableProperties = cmModeTblProperties(replaceCmMode))
-            verifyCMTestSchemaHasValidColumnMappingInfo(
-              getMetadata(engine, tablePath),
-              enableIcebergCompatV2 = false,
-              initialFieldId = 1)
-          }
-        }
-      }
-    }
-  }
-}
-
-class DeltaReplaceTableColumnMappingNameModeSuite extends DeltaReplaceTableColumnMappingSuiteBase {
-
-  override def tblPropertiesCmEnabled: Map[String, String] =
-    Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
 }

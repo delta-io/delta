@@ -77,31 +77,18 @@ trait ConvertUtilsBase extends DeltaLogging {
   def getIcebergTable(
       spark: SparkSession,
       targetDir: String,
-      sparkTable: Option[Table],
-      deltaSnapshot: Option[Snapshot],
+      deltaSnapshotOpt: Option[Snapshot],
       collectStats: Boolean = true): ConvertTargetTable = {
     try {
       val convertIcebergStats = collectStats &&
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS)
       val clazz = Utils.classForName(icebergSparkTableClassPath)
-      if (sparkTable.isDefined) {
-        val constFromTable = clazz.getConstructor(
-          classOf[SparkSession],
-          Utils.classForName(icebergLibTableClassPath),
-          classOf[Option[Snapshot]],
-          java.lang.Boolean.TYPE
-        )
-        val method = sparkTable.get.getClass.getMethod("table")
-        constFromTable.newInstance(spark, method.invoke(sparkTable.get), deltaSnapshot,
-          java.lang.Boolean.valueOf(convertIcebergStats))
-      } else {
-        val baseDir = getQualifiedPath(spark, new Path(targetDir)).toString
-        val constFromPath = clazz.getConstructor(
-          classOf[SparkSession], classOf[String], classOf[Option[Snapshot]],
-          java.lang.Boolean.TYPE)
-        constFromPath.newInstance(spark, baseDir, deltaSnapshot,
-          java.lang.Boolean.valueOf(convertIcebergStats))
-      }
+      val baseDir = getQualifiedPath(spark, new Path(targetDir)).toString
+      val constFromPath = clazz.getConstructor(
+        classOf[SparkSession], classOf[String], classOf[Option[Snapshot]],
+        java.lang.Boolean.TYPE)
+      constFromPath.newInstance(spark, baseDir, deltaSnapshotOpt,
+        java.lang.Boolean.valueOf(convertIcebergStats))
     } catch {
       case e: ClassNotFoundException =>
         logError(log"Failed to find Iceberg class", e)
@@ -111,6 +98,27 @@ trait ConvertUtilsBase extends DeltaLogging {
         // The better error is within the cause
         throw ExceptionUtils.getRootCause(e)
     }
+  }
+
+  /**
+   * Get Iceberg metadata location from spark catalog resolved Iceberg table,
+   * which means it is a SparkTable
+   * Needs to use reflection because shaded Iceberg classes are not accessible here
+   * It is equivalent to call
+   *  table.asInstanceOf[SparkTable].table().operations().current().metadataFileLocation()
+   * @param table the iceberg table resolved spark catalog
+   * @return metadata location corresponding to table's latest snapshot
+   */
+  def getIcebergMetadataLocationFromSparkTable(table: Table): String = {
+    val tableMethod = table.getClass.getMethod("table")
+    val icebergTable = tableMethod.invoke(table)
+    val operationsMethod = icebergTable.getClass.getMethod("operations")
+    val operations = operationsMethod.invoke(icebergTable)
+    val currentMethod = operations.getClass.getMethod("current")
+    val currentMetadata = currentMethod.invoke(operations)
+    val metadataFileLocationMethod =
+      currentMetadata.getClass.getMethod("metadataFileLocation")
+    metadataFileLocationMethod.invoke(currentMetadata).asInstanceOf[String]
   }
 
   /**
@@ -221,11 +229,18 @@ trait ConvertUtilsBase extends DeltaLogging {
         s"Fail to relativize path $path against base path $basePath.")
       relativePath.toUri.toString
     } else {
-      path.toUri.toString
+      fs.makeQualified(path).toUri.toString
     }
 
-    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true,
-      stats = targetFile.stats.orNull)
+
+    AddFile(
+      pathStrForAddFile,
+      partition,
+      file.length,
+      file.modificationTime,
+      dataChange = true,
+      stats = targetFile.stats.orNull
+    )
   }
 
   /**

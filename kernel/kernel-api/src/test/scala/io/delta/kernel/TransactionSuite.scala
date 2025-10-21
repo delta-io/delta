@@ -35,7 +35,7 @@ import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
-import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructType, TimestampType}
+import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructType, TimestampType, VariantType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -230,6 +230,40 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         "Writing into column mapping enabled table is not supported yet."))
     }
   }
+
+  test("transformLogicalData: Writing to tables with variant is blocked") {
+    val txnState = testTxnState(new StructType().add("variant", VariantType.VARIANT))
+    val engine = mockEngine()
+
+    val ex = intercept[UnsupportedOperationException] {
+      transformLogicalData(
+        engine,
+        txnState,
+        testData(includePartitionCols = false),
+        Map.empty[String, Literal].asJava /* partition values */ )
+        .forEachRemaining(_ => ()) // consume the iterator
+    }
+    assert(ex.getMessage.contains(
+      "Transforming logical data with variant data is currently unsupported"))
+  }
+
+  test("transformLogicalData: Writing to tables with nested variant is blocked") {
+    val txnState = testTxnState(new StructType().add(
+      "nested",
+      new StructType().add("nested_variant", VariantType.VARIANT)))
+    val engine = mockEngine()
+
+    val ex = intercept[UnsupportedOperationException] {
+      transformLogicalData(
+        engine,
+        txnState,
+        testData(includePartitionCols = false),
+        Map.empty[String, Literal].asJava /* partition values */ )
+        .forEachRemaining(_ => ()) // consume the iterator
+    }
+    assert(ex.getMessage.contains(
+      "Transforming logical data with variant data is currently unsupported"))
+  }
 }
 
 object TransactionSuite extends VectorTestUtils with MockEngineUtils {
@@ -242,7 +276,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testBatch(includePartitionCols: Boolean): ColumnarBatch = {
     val testColumnVectors = Seq(
       stringVector(Seq("Alice", "Bob", "Charlie", "David", "Eve")), // name
-      longVector(20L, 30L, 40L, 50L, 60L), // id
+      longVector(Seq(20L, 30L, 40L, 50L, 60L)), // id
       stringVector(Seq("Campbell", "Roanoke", "Dallas", "Monte Sereno", "Minneapolis")) // city
     ) ++ {
       if (includePartitionCols) {
@@ -321,7 +355,8 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
         numRows,
         Map.empty[Column, Literal].asJava, // minValues - empty value as this is just for tests.
         Map.empty[Column, Literal].asJava, // maxValues - empty value as this is just for tests.
-        Map.empty[Column, JLong].asJava // nullCount - empty value as this is just for tests.
+        Map.empty[Column, JLong].asJava, // nullCount - empty value as this is just for tests.
+        Optional.empty() // tightBounds is unspecified
       )
     })
   }

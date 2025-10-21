@@ -178,4 +178,30 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
         ))}),
     includeInserts = insertsWithoutImplicitCastSupport
   )
+
+  for { (inserts: Set[Insert], expectedAnswer) <- Seq(
+    insertsAppend ->
+      TestData("a int, s struct <x int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": null }""")),
+    insertsOverwrite ->
+      TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": null }"""))
+    )
+  } {
+    testInserts(s"null struct with different field order")(
+      initialData = TestData(
+        "a int, s struct <x: int, y int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, s struct <y int, x: int>", Seq("""{ "a": 1, "s": null }""")),
+      expectedResult = ExpectedResult.Success(expectedAnswer),
+      includeInserts = inserts,
+      confs = Seq(
+        // Implicit casts in streaming writes would cause the `null` struct to be incorrectly
+        // expanded. This conf allows skipping adding casts since there are no actual data type
+        // mismatch.
+        DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY.key -> "true"
+      )
+    )
+  }
 }

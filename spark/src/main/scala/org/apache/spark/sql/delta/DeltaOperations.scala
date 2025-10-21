@@ -115,12 +115,13 @@ object DeltaOperations {
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
+  val OP_WRITE = "WRITE"
   case class Write(
       mode: SaveMode,
       partitionBy: Option[Seq[String]] = None,
       predicate: Option[String] = None,
       override val userMetadata: Option[String] = None
-  ) extends Operation("WRITE") {
+  ) extends Operation(OP_WRITE) {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()
     ) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
@@ -218,8 +219,9 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded while deleting certain partitions. */
+  val OP_DELETE = "DELETE"
   case class Delete(predicate: Seq[Expression])
-      extends OperationWithPredicates("DELETE", predicate) {
+      extends OperationWithPredicates(OP_DELETE, predicate) {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.DELETE
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
@@ -370,8 +372,9 @@ object DeltaOperations {
   }
 
   /** Recorded when an update operation is committed to the table. */
+  val OP_UPDATE = "UPDATE"
   case class Update(predicate: Option[Expression])
-      extends OperationWithPredicates("UPDATE", predicate.toSeq) {
+      extends OperationWithPredicates(OP_UPDATE, predicate.toSeq) {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
     override def changesData: Boolean = true
@@ -475,9 +478,10 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when dropping a table feature. */
+  val OP_DROP_FEATURE = "DROP FEATURE"
   case class DropTableFeature(
       featureName: String,
-      truncateHistory: Boolean) extends Operation("DROP FEATURE") {
+      truncateHistory: Boolean) extends Operation(OP_DROP_FEATURE) {
     override val parameters: Map[String, Any] = Map(
       "featureName" -> featureName,
       "truncateHistory" -> truncateHistory)
@@ -487,7 +491,7 @@ object DeltaOperations {
     // separate transactions, and this check is performed separately.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
-    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
   }
 
   /**
@@ -725,6 +729,7 @@ object DeltaOperations {
 
   /** operation name for ROW TRACKING BACKFILL command */
   val ROW_TRACKING_BACKFILL_OPERATION_NAME = "ROW TRACKING BACKFILL"
+  val ROW_TRACKING_UNBACKFILL_OPERATION_NAME = "ROW TRACKING UNBACKFILL"
 
   /** parameter key to indicate whether it's an Auto Compaction */
   val AUTO_COMPACTION_PARAMETER_KEY = "auto"
@@ -876,6 +881,24 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
   }
 
+  /**
+   * Recorded when we unbackfill a Delta table's existing row tracking data from AddFiles.
+   * This operation is used when dropping the row tracking feature.
+   */
+  case class RowTrackingUnBackfill(
+      batchId: Int = 0) extends Operation(ROW_TRACKING_UNBACKFILL_OPERATION_NAME) {
+    override val parameters: Map[String, Any] = Map(
+      "batchId" -> JsonUtils.toJson(batchId)
+    )
+
+    // RowTrackingUnBackfill operation commits AddFiles with files, DVs and stats copied over.
+    // It can happen that tight bound stats were recomputed before by ComputeStats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    // RowTrackingUnBackfill only updates metadata of existing files.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
+  }
+
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
       "name" -> UnresolvedAttribute(colPath :+ field.name).name,
@@ -883,6 +906,22 @@ object DeltaOperations {
       "nullable" -> field.nullable,
       "metadata" -> JsonUtils.mapper.readValue[Map[String, Any]](field.metadata.json)
     )
+  }
+
+  /**
+   * Recorded when cleaning up domain metadata. This process takes place when dropping
+   * the domainMetadata feature.
+   */
+  case class DomainMetadataCleanup(domainMetadataRemovedCount: Int)
+      extends Operation("DOMAIN METADATA CLEANUP") {
+    override val parameters: Map[String, Any] = Map(
+      "domainMetadataRemovedCount" -> domainMetadataRemovedCount)
+
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    // Only removes domain metadata.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /**

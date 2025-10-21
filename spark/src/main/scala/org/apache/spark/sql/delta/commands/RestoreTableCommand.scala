@@ -118,7 +118,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
         val latestSnapshot = txn.snapshot
         val snapshotToRestore = deltaLog.getSnapshotAt(
           versionToRestore,
-          catalogTableOpt = txn.catalogTable)
+          catalogTableOpt = txn.catalogTable, enforceTimeTravelWithinDeletedFileRetention = true)
         val latestSnapshotFiles = latestSnapshot.allFiles
         val snapshotToRestoreFiles = snapshotToRestore.allFiles
 

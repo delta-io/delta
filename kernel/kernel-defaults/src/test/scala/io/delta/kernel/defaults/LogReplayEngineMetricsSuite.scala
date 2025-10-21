@@ -19,12 +19,18 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.nio.file.Files
 
-import io.delta.kernel.Table
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.functions.col
+import org.scalatest.BeforeAndAfterAll
+
+class LegacyLogReplayEngineMetricsSuite extends AbstractLogReplayEngineMetricsSuite
+    with TestUtilsWithLegacyKernelAPIs
+
+class LogReplayEngineMetricsSuite extends AbstractLogReplayEngineMetricsSuite
+    with TestUtilsWithTableManagerAPIs
 
 /**
  * Suite to test the engine metrics while replaying logs for getting the table protocol and
@@ -34,7 +40,8 @@ import org.apache.spark.sql.functions.col
  * The goal is to test the behavior of calls to `readJsonFiles` and `readParquetFiles` that
  * Kernel makes. This calls determine the performance.
  */
-class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
+trait AbstractLogReplayEngineMetricsSuite extends LogReplayBaseSuite with BeforeAndAfterAll {
+  self: AbstractTestUtils =>
 
   // Disable writing checksums for this test suite
   // This test suite checks the files read when loading the P&M, however, with the crc optimization
@@ -42,7 +49,18 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
   // We want to test the P&M loading when CRC are not available in the tests.
   // Tests for tables with available CRC are included using resource test tables (and thus are
   // unaffected by changing our confs for writes).
-  spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
+  }
+
+  override def afterAll(): Unit = {
+    try {
+      spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, true)
+    } finally {
+      super.afterAll()
+    }
+  }
 
   /////////////////////////
   // Test Helper Methods //
@@ -50,13 +68,14 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
 
   def loadScanFilesCheckMetrics(
       engine: MetricsEngine,
-      table: Table,
+      tablePath: String,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
       expParquetReadSetSizes: Seq[Long],
       expLastCheckpointReadCalls: Option[Int] = None): Unit = {
     engine.resetMetrics()
-    val scan = table.getLatestSnapshot(engine).getScanBuilder().build()
+    val scan = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      .getScanBuilder().build()
     // get all scan files and iterate through them to trigger the metrics collection
     val scanFiles = scan.getScanFiles(engine)
     while (scanFiles.hasNext) scanFiles.next()
@@ -83,9 +102,8 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
     withTempDirAndMetricsEngine { (path, engine) =>
       for (_ <- 0 to 9) { appendCommit(path) }
 
-      val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table,
+        path,
         engine,
         expJsonVersionsRead = 9L to 0L by -1L,
         expParquetVersionsRead = Nil)
@@ -96,9 +114,8 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
     withTempDirAndMetricsEngine { (path, engine) =>
       for (_ <- 0 to 14) { appendCommit(path) }
 
-      val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table,
+        path,
         engine,
         expJsonVersionsRead = 14L to 11L by -1L,
         expParquetVersionsRead = Seq(10),
@@ -121,114 +138,10 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
 
       for (_ <- 14 to 16) { appendCommit(path) }
 
-      val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table,
+        path,
         engine,
         expJsonVersionsRead = 16L to 13L by -1L,
-        expParquetVersionsRead = Nil)
-    }
-  }
-
-  test("hint with no new commits, should read no files") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      for (_ <- 0 to 14) {
-        appendCommit(path)
-      }
-
-      val table = Table.forPath(engine, path)
-
-      table.getLatestSnapshot(engine).getSchema()
-
-      // A hint is now saved at v14
-      loadPandMCheckMetrics(
-        table,
-        engine,
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Nil)
-    }
-  }
-
-  test("hint with no P or M updates") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      for (_ <- 0 to 14) { appendCommit(path) }
-
-      val table = Table.forPath(engine, path)
-
-      table.getLatestSnapshot(engine).getSchema()
-
-      // A hint is now saved at v14
-
-      // Case: only one version change
-      appendCommit(path) // v15
-      loadPandMCheckMetrics(
-        table,
-        engine,
-        expJsonVersionsRead = Seq(15),
-        expParquetVersionsRead = Nil)
-
-      // A hint is now saved at v15
-
-      // Case: several version changes
-      for (_ <- 16 to 19) { appendCommit(path) }
-      loadPandMCheckMetrics(
-        table,
-        engine,
-        expJsonVersionsRead = 19L to 16L by -1L,
-        expParquetVersionsRead = Nil)
-
-      // A hint is now saved at v19
-
-      // Case: [delta-io/delta#2262] [Fix me!] Read the entire checkpoint at v20, even if v20.json
-      // and v19 hint are available
-      appendCommit(path) // v20
-      loadPandMCheckMetrics(
-        table,
-        engine,
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Seq(20))
-    }
-  }
-
-  test("hint with a P or M update") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      for (_ <- 0 to 3) { appendCommit(path) }
-
-      val table = Table.forPath(engine, path)
-
-      table.getLatestSnapshot(engine).getSchema()
-
-      // A hint is now saved at v3
-
-      // v4 changes the metadata (schema)
-      spark.range(10)
-        .withColumn("col1", col("id"))
-        .write
-        .format("delta")
-        .option("mergeSchema", "true")
-        .mode("append")
-        .save(path)
-
-      loadPandMCheckMetrics(
-        table,
-        engine,
-        expJsonVersionsRead = Seq(4),
-        expParquetVersionsRead = Nil)
-      // a hint is now saved at v4
-
-      // v5 changes the protocol (which also updates the metadata)
-      spark.sql(s"""
-          |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
-          |  'delta.minReaderVersion' = '2',
-          |  'delta.minWriterVersion' = '5',
-          |  'delta.columnMapping.mode' = 'name'
-          |)
-          |""".stripMargin)
-
-      loadPandMCheckMetrics(
-        table,
-        engine,
-        expJsonVersionsRead = Seq(5),
         expParquetVersionsRead = Nil)
     }
   }
@@ -240,7 +153,7 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
       // there should be one checkpoint file at version 10
       loadScanFilesCheckMetrics(
         engine,
-        Table.forPath(engine, path),
+        path,
         expJsonVersionsRead = 14L to 11L by -1L,
         expParquetVersionsRead = Seq(10),
         // we read the checkpoint twice: once for the P &M and once for the scan files
@@ -255,7 +168,7 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
       // expect the Parquet read set to contain one request with size of 15
       loadScanFilesCheckMetrics(
         engine,
-        Table.forPath(engine, path),
+        path,
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Seq(14),
         // we read the checkpoint twice: once for the P &M and once for the scan files
@@ -266,7 +179,7 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
   Seq(true, false).foreach { deleteLastCheckpointMetadataFile =>
     test("ensure `_last_checkpoint` is tried to read only once when " +
       s"""${if (deleteLastCheckpointMetadataFile) "not exists" else "valid file exists"}""") {
-      withTempDirAndMetricsEngine { (path, tc) =>
+      withTempDirAndMetricsEngine { (path, engine) =>
         for (_ <- 0 to 14) { appendCommit(path) }
 
         if (deleteLastCheckpointMetadataFile) {
@@ -275,8 +188,8 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
 
         // there should be one checkpoint file at version 10
         loadScanFilesCheckMetrics(
-          tc,
-          Table.forPath(tc, path),
+          engine,
+          path,
           expJsonVersionsRead = 14L to 11L by -1L,
           expParquetVersionsRead = Seq(10),
           // we read the checkpoint twice: once for the P &M and once for the scan files

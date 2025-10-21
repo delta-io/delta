@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.typewidening
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.col
@@ -85,6 +86,7 @@ trait TypeWideningCompatibilityTests {
           start,
           end,
           spark,
+          catalogTableOpt = None,
           readSchemaSnapshot = Some(readSchemaSnapshot)
         )
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
@@ -152,6 +154,46 @@ trait TypeWideningCompatibilityTests {
         .add("v", StringType))
     checkAnswer(readDeltaTable(tempPath),
       Seq(Row(1, "abc", "def"), Row(2, "ghi", "jkl"), Row(3, "longer string 1", "longer string 2")))
+  }
+
+  test("type widening with row tracking") {
+    // Start with row tracking disabled.
+    sql(s"CREATE TABLE $tableSQLIdentifier (a TINYINT) USING DELTA " +
+        s"TBLPROPERTIES('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'false')")
+
+    append(Seq(1).toDF("a").select($"a".cast(ByteType)))
+
+    sql(s"ALTER TABLE $tableSQLIdentifier SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true')")
+
+    def readWithRowTracking(): DataFrame =
+      readDeltaTable(tempPath).select(
+        "a",
+        "_metadata.row_id",
+        "_metadata.base_row_id",
+        "_metadata.row_commit_version",
+        "_metadata.default_row_commit_version"
+      )
+
+    // [base_]row_id starting at 0, [default_]row_commit_version set to 3 when
+    // Row Tracking got enabled.
+    checkAnswer(readWithRowTracking(), Seq(Row(1, 0, 0, 3, 3)))
+
+    sql(s"UPDATE $tableSQLIdentifier SET a = 2 WHERE a = 1")
+    // Existing row moved to new file: base_row_id = 1. Version updated to 5
+    // (4 is internal row tracking backfill).
+    checkAnswer(readWithRowTracking(), Seq(Row(2, 0, 1, 5, 5)))
+
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a TYPE INT")
+    // No changes when enabling Type Widening.
+    checkAnswer(readWithRowTracking(), Seq(Row(2, 0, 1, 5, 5)))
+
+    append(Seq(Int.MaxValue).toDF("a"))
+    // Adding new row in a new file [base_]row_id set to 2, [default_]row_commit_version set to 7.
+    checkAnswer(readWithRowTracking(), Seq(
+      Row(2, 0, 1, 5, 5),
+      Row(Int.MaxValue, 2, 2, 7, 7)
+    ))
   }
 }
 

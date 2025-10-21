@@ -262,10 +262,8 @@ object UniversalFormat extends DeltaLogging {
   val ICEBERG_TABLE_TYPE_KEY = "table_type"
 
   /**
-   * Update CatalogTable to mark it readable by other table readers (iceberg for now).
-   * This method ensures 'table_type' = 'ICEBERG' when uniform is enabled,
-   * and ensure table_type is not 'ICEBERG' when uniform is not enabled
-   * If the key has other values than 'ICEBERG', this method will not touch it for compatibility
+   * HiveTableOperations ensures table_type is 'ICEBERG' when uniform is enabled
+   * This enforceSupportInCatalog ensure table_type is not 'ICEBERG' when uniform is not enabled
    *
    * @param table    catalogTable before change
    * @param metadata snapshot metadata
@@ -278,9 +276,6 @@ object UniversalFormat extends DeltaLogging {
     }
 
     (icebergEnabled(metadata), icebergInCatalog) match {
-      case (true, false) =>
-        Some(table.copy(properties = table.properties
-          + (ICEBERG_TABLE_TYPE_KEY -> ICEBERG_FORMAT)))
       case (false, true) =>
         Some(table.copy(properties =
           table.properties - ICEBERG_TABLE_TYPE_KEY))
@@ -338,6 +333,12 @@ object IcebergConstants {
   val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
   val ICEBERG_PROVIDER = "iceberg"
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+
+  // Reserved field ID for the `_row_id` column
+  // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids
+  val ICEBERG_ROW_TRACKING_ROW_ID_FIELD_ID = 2147483540L
+  // Reserved field ID for the `_last_updated_sequence_number` column
+  val ICEBERG_ROW_TRACKING_LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID = 2147483539L
 }
 
 object HudiConstants {

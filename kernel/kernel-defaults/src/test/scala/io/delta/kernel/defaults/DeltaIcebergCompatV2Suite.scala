@@ -21,16 +21,21 @@ import scala.reflect.ClassTag
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.{WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.util.{ColumnMapping, VectorUtils}
 import io.delta.kernel.types.{DataType, DateType, FieldMetadata, StructField, StructType, TimestampNTZType, TypeChange}
 
-/** This suite tests reading or writing into Delta table that have `icebergCompatV2` enabled. */
-class DeltaIcebergCompatV2Suite extends DeltaIcebergCompatBaseSuite {
+class DeltaIcebergCompatV2TransactionBuilderV1Suite extends DeltaIcebergCompatV2SuiteBase
+    with WriteUtils {}
 
-  import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase._
+class DeltaIcebergCompatV2TransactionBuilderV2Suite extends DeltaIcebergCompatV2SuiteBase
+    with WriteUtilsWithV2Builders {}
+
+/** This suite tests reading or writing into Delta table that have `icebergCompatV2` enabled. */
+trait DeltaIcebergCompatV2SuiteBase extends DeltaIcebergCompatBaseSuite {
 
   override def icebergCompatVersion: String = "icebergCompatV2"
 
@@ -40,10 +45,9 @@ class DeltaIcebergCompatV2Suite extends DeltaIcebergCompatBaseSuite {
     TableFeatures.ICEBERG_COMPAT_V2_W_FEATURE,
     TableFeatures.COLUMN_MAPPING_RW_FEATURE)
 
-  override def supportedDataColumnTypes: Seq[DataType] =
-    (Seq.empty ++ SIMPLE_TYPES ++ COMPLEX_TYPES)
+  override def supportedDataColumnTypes: Seq[DataType] = ALL_TYPES.toList
 
-  override def supportedPartitionColumnTypes: Seq[DataType] = Seq.empty ++ SIMPLE_TYPES
+  override def supportedPartitionColumnTypes: Seq[DataType] = PRIMITIVE_TYPES.toList
 
   ignore("can't enable icebergCompatV2 on a table with icebergCompatv1 enabled") {
     // We can't test this as Kernel throws error when enabling icebergCompatV1

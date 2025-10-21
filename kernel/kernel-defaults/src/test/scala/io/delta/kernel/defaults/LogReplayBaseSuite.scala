@@ -25,8 +25,9 @@ import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
 import io.delta.kernel.defaults.engine.fileio.FileIO
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.AbstractTestUtils
 import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
+import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer
 import io.delta.kernel.internal.fs.Path
@@ -46,7 +47,7 @@ import org.scalatest.funsuite.AnyFunSuite
  * This trait provides common infrastructure for testing how Delta log files are read
  * during table operations, with utilities for metrics collection and verification.
  */
-trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
+trait LogReplayBaseSuite extends AnyFunSuite { self: AbstractTestUtils =>
 
   protected def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
     val hadoopFileIO = new HadoopFileIO(new Configuration() {
@@ -65,7 +66,7 @@ trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
   }
 
   protected def loadPandMCheckMetrics(
-      table: Table,
+      tablePath: String,
       engine: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
@@ -75,8 +76,8 @@ trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
     engine.resetMetrics()
 
     version match {
-      case -1 => table.getLatestSnapshot(engine).getSchema()
-      case ver => table.getSnapshotAsOfVersion(engine, ver).getSchema()
+      case -1 => getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      case ver => getTableManagerAdapter.getSnapshotAtVersion(engine, tablePath, version)
     }
 
     assertMetrics(
@@ -135,11 +136,11 @@ trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
 
   /**
    * Creates a temporary directory with a test engine and builds a table with CRC files.
-   * Returns the created table and engine for testing.
+   * Returns the created table path and engine for testing.
    *
    * @param f code to run with the table and engine
    */
-  protected def withTableWithCrc(f: (Table, String, MetricsEngine) => Any): Unit = {
+  protected def withTableWithCrc(f: (String, MetricsEngine) => Any): Unit = {
     withTempDirAndMetricsEngine { (path, engine) =>
       // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
@@ -149,9 +150,21 @@ trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
         for (_ <- 0 to 10) { appendCommit(path) }
         assert(checkpointFileExistsForTable(path, 10))
       }
+      f(path, engine)
+    }
+  }
+
+  /**
+   * Creates a temporary directory with a test engine and builds a table with CRC files.
+   * Returns the created table and engine for testing.
+   *
+   * @param f code to run with the table and engine
+   */
+  protected def withTableWithCrc(f: (Table, String, MetricsEngine) => Any): Unit = {
+    withTableWithCrc((path, engine) => {
       val table = Table.forPath(engine, path)
       f(table, path, engine)
-    }
+    })
   }
 }
 
@@ -258,7 +271,7 @@ class MetricsParquetHandler(fileIO: FileIO)
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+      predicate: Optional[Predicate]): CloseableIterator[FileReadResult] = {
     val fileReadSet = fileIter.toSeq
     checkpointReadRequestSizes += fileReadSet.size
     super.readParquetFiles(

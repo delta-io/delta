@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.catalyst.plans.logical
 
-import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.constraints.{AddConstraint => AddDeltaConstraint, DropConstraint => DropDeltaConstraint} // Aliased to avoid conflicts with Spark's AddConstraint/DropConstraint
 
 import org.apache.spark.sql.connector.catalog.TableChange
 
@@ -25,7 +25,7 @@ import org.apache.spark.sql.connector.catalog.TableChange
  */
 case class AlterTableAddConstraint(
     table: LogicalPlan, constraintName: String, expr: String) extends AlterTableCommand {
-  override def changes: Seq[TableChange] = Seq(AddConstraint(constraintName, expr))
+  override def changes: Seq[TableChange] = Seq(AddDeltaConstraint(constraintName, expr))
 
   protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(table = newChild)
 }
@@ -35,7 +35,7 @@ case class AlterTableAddConstraint(
  */
 case class AlterTableDropConstraint(
     table: LogicalPlan, constraintName: String, ifExists: Boolean) extends AlterTableCommand {
-  override def changes: Seq[TableChange] = Seq(DropConstraint(constraintName, ifExists))
+  override def changes: Seq[TableChange] = Seq(DropDeltaConstraint(constraintName, ifExists))
 
   protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan = copy(table = newChild)
 }

@@ -18,11 +18,42 @@ package io.delta.kernel.test
 
 import java.util.{Collections, Optional}
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
-import io.delta.kernel.internal.actions.{Format, Metadata}
-import io.delta.kernel.types.StructType
+import io.delta.kernel.internal.actions.{CommitInfo, Format, Metadata, Protocol}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
+import io.delta.kernel.types.{IntegerType, StructType}
 
 trait ActionUtils extends VectorTestUtils {
+  val protocolWithCatalogManagedSupport: Protocol =
+    new Protocol(
+      TableFeatures.TABLE_FEATURES_MIN_READER_VERSION,
+      TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION,
+      Set(
+        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()).asJava,
+      Set(
+        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName(),
+        TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()).asJava)
+
+  val basicPartitionedMetadata = testMetadata(
+    schema = new StructType()
+      .add("part1", IntegerType.INTEGER).add("col1", IntegerType.INTEGER),
+    partitionCols = Seq("part1"))
+
+  def testCommitInfo(ictEnabled: Boolean = true): CommitInfo = {
+    new CommitInfo(
+      if (ictEnabled) Optional.of(1L) else Optional.empty(), // ICT
+      1L, // timestamp
+      "engineInfo",
+      "operation",
+      Collections.emptyMap(), // operationParameters
+      false, // isBlindAppend
+      "txnId",
+      Collections.emptyMap() // operationMetrics
+    )
+  }
+
   def testMetadata(
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty,

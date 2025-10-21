@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.Utils.try_element_at
 
 import org.apache.spark.sql.{DataFrameWriter, QueryTest, Row}
@@ -168,6 +169,43 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
         executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
           s"('delta.universalFormat.enabledFormats' = 'iceberg')")
 
+        assertUniFormIcebergProtocolAndProperties(id)
+      }
+    }
+  }
+
+  test("enable UniForm on existing table without IcebergCompat") {
+    allReaderWriterVersions.foreach { case (r, w) =>
+      withTempTableAndDir { case (id, loc) =>
+        executeSql(s"""
+          |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+          |  'delta.minReaderVersion' = $r,
+          |  'delta.minWriterVersion' = $w
+          |)""".stripMargin)
+
+        executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
+          s"('delta.universalFormat.enabledFormats' = 'iceberg'," +
+          s" 'delta.columnMapping.mode' = 'name', " +
+          s" 'delta.enableIcebergCompatV$compatVersion' = true) ")
+
+        assertUniFormIcebergProtocolAndProperties(id)
+      }
+    }
+  }
+
+  test("enable UniForm on existing table with ColumnMapping") {
+    allReaderWriterVersions.foreach { case (r, w) =>
+      withTempTableAndDir { case (id, loc) =>
+        executeSql(s"""
+          |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+          |  'delta.minReaderVersion' = $r,
+          |  'delta.minWriterVersion' = $w,
+          |  'delta.columnMapping.mode' = 'name'
+          |)""".stripMargin)
+
+        executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
+          s"('delta.universalFormat.enabledFormats' = 'iceberg'," +
+          s" 'delta.enableIcebergCompatV$compatVersion' = true) ")
         assertUniFormIcebergProtocolAndProperties(id)
       }
     }

@@ -70,6 +70,12 @@ object TypeWidening {
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
     TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType)
 
+  def isTypeChangeSupported(
+     fromType: AtomicType, toType: AtomicType, uniformIcebergCompatibleOnly: Boolean): Boolean =
+    TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType) &&
+      (!uniformIcebergCompatibleOnly ||
+        isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType))
+
   /**
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.

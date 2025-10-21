@@ -19,6 +19,7 @@ import scala.jdk.CollectionConverters.seqAsJavaListConverter
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
@@ -29,14 +30,14 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.CommitInfo
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Test suite for io.delta.kernel.internal.checksum.ChecksumUtils
  */
-class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuite {
+class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseSuite {
 
   private def initialTestTable(tablePath: String, engine: Engine): Unit = {
     createEmptyTable(engine, tablePath, testSchema, clock = new ManualClock(0))
@@ -44,9 +45,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       engine,
       tablePath,
       isNewTable = false,
-      testSchema,
-      partCols = Seq.empty,
-      Seq(Map.empty[String, Literal] -> dataBatches1))
+      data = Seq(Map.empty[String, Literal] -> dataBatches1))
   }
 
   test("Create checksum for different version") {
@@ -155,22 +154,21 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
-        .commitManually(
-          List(
-            CommitInfo(
-              time = 12345,
-              operation = "MANUAL UPDATE",
-              inCommitTimestamp = Some(12345),
-              operationParameters = Map.empty,
-              commandContext = Map.empty,
-              readVersion = Some(11),
-              isolationLevel = None,
-              isBlindAppend = None,
-              operationMetrics = None,
-              userMetadata = None,
-              tags = None,
-              txnId = None),
-            deltaLog.getSnapshotAt(11).allFiles.head().copy(dataChange = false).wrap.unwrap): _*)
+        .commitManuallyWithValidation(
+          CommitInfo(
+            time = 12345,
+            operation = "MANUAL UPDATE",
+            inCommitTimestamp = Some(12345),
+            operationParameters = Map.empty,
+            commandContext = Map.empty,
+            readVersion = Some(11),
+            isolationLevel = None,
+            isBlindAppend = None,
+            operationMetrics = None,
+            userMetadata = None,
+            tags = None,
+            txnId = None),
+          deltaLog.getSnapshotAt(11).allFiles.head().copy(dataChange = false).wrap.unwrap)
       deleteChecksumFileForTableUsingHadoopFs(
         table.getPath(engine).stripPrefix("file:"),
         Seq(11, 12))
@@ -194,22 +192,21 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
-        .commitManually(
-          List(
-            CommitInfo(
-              time = 12345,
-              operation = "REPLACE TABLE",
-              inCommitTimestamp = Some(12345),
-              operationParameters = Map.empty,
-              commandContext = Map.empty,
-              readVersion = Some(11),
-              isolationLevel = None,
-              isBlindAppend = None,
-              operationMetrics = None,
-              userMetadata = None,
-              tags = None,
-              txnId = None),
-            deltaLog.getSnapshotAt(11).allFiles.head().remove.copy(size = None).wrap.unwrap): _*)
+        .commitManuallyWithValidation(
+          CommitInfo(
+            time = 12345,
+            operation = "REPLACE TABLE",
+            inCommitTimestamp = Some(12345),
+            operationParameters = Map.empty,
+            commandContext = Map.empty,
+            readVersion = Some(11),
+            isolationLevel = None,
+            isBlindAppend = None,
+            operationMetrics = None,
+            userMetadata = None,
+            tags = None,
+            txnId = None),
+          deltaLog.getSnapshotAt(11).allFiles.head().remove.copy(size = None).wrap.unwrap)
       // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(
         table.getPath(engine).stripPrefix("file:"),
@@ -256,16 +253,14 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         table.getPath(engine).stripPrefix("file:"),
         Seq(11))
       table.checksum(engine, 11)
-      Table.forPath(engine, path).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test")
-        .withDomainMetadataSupported()
-        .withClusteringColumns(engine, Seq(new Column("a")).asJava)
-        .withSchema(
-          engine,
-          new StructType().add(
-            "a",
-            StringType.STRING)).build(engine)
-        .commit(engine, emptyIterable[Row])
+      getReplaceTxn(
+        engine,
+        path,
+        new StructType().add(
+          "a",
+          StringType.STRING),
+        clusteringColsOpt = Some(Seq(new Column("a"))),
+        withDomainMetadataSupported = true).commit(engine, emptyIterable[Row])
       engine.resetMetrics()
       table.checksum(engine, 12)
       assertMetrics(
@@ -284,22 +279,21 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
-        .commitManually(
-          List(
-            deltaLog.getSnapshotAt(11).allFiles.head().remove.wrap.unwrap,
-            CommitInfo(
-              time = 12345,
-              operation = "REPLACE TABLE",
-              inCommitTimestamp = Some(12345),
-              operationParameters = Map.empty,
-              commandContext = Map.empty,
-              readVersion = Some(11),
-              isolationLevel = None,
-              isBlindAppend = None,
-              operationMetrics = None,
-              userMetadata = None,
-              tags = None,
-              txnId = None).wrap.unwrap): _*)
+        .commitManuallyWithValidation(
+          deltaLog.getSnapshotAt(11).allFiles.head().remove.wrap.unwrap,
+          CommitInfo(
+            time = 12345,
+            operation = "REPLACE TABLE",
+            inCommitTimestamp = Some(12345),
+            operationParameters = Map.empty,
+            commandContext = Map.empty,
+            readVersion = Some(11),
+            isolationLevel = None,
+            isBlindAppend = None,
+            operationMetrics = None,
+            userMetadata = None,
+            tags = None,
+            txnId = None).wrap.unwrap)
       // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(
         table.getPath(engine).stripPrefix("file:"),
@@ -322,9 +316,8 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
-        .commitManually(
-          List(
-            deltaLog.getSnapshotAt(11).allFiles.head().remove.wrap.unwrap): _*)
+        .commitManuallyWithValidation(
+          deltaLog.getSnapshotAt(11).allFiles.head().remove.wrap.unwrap)
       // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(
         table.getPath(engine).stripPrefix("file:"),

@@ -34,7 +34,8 @@ object CheckpointHook extends PostCommitHook {
       txn.committedVersion,
       lastCheckpointHint = None,
       lastCheckpointProvider = Some(cp),
-      catalogTableOpt = txn.catalogTable)
+      catalogTableOpt = txn.catalogTable,
+      enforceTimeTravelWithinDeletedFileRetention = false)
     txn.deltaLog.checkpoint(snapshotToCheckpoint, txn.catalogTable)
   }
 }

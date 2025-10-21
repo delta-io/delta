@@ -17,7 +17,6 @@ package io.delta.kernel.internal.actions;
 
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.util.StatsUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
@@ -90,8 +89,36 @@ public class RemoveFile extends RowBackedAction {
             index -> row.isNullAt(index) ? Optional.empty() : Optional.of(row.getString(index)));
   }
 
-  public Optional<DataFileStatistics> getStats() {
-    return getStatsJson().flatMap(StatsUtils::deserializeFromJson);
+  public Optional<Long> getNumRecords() {
+    return getFieldIndexOpt("stats")
+        .flatMap(
+            index ->
+                row.isNullAt(index)
+                    ? Optional.empty()
+                    : DataFileStatistics.getNumRecords(row.getString(index)));
+  }
+
+  /**
+   * Returns the file statistics parsed from the stats JSON string using the provided schema. This
+   * method deserializes the statistics JSON with full type information, ensuring that min/max
+   * values and null counts are correctly typed according to the physical schema.
+   *
+   * @param physicalSchema the physical schema of the table, used to correctly parse and type the
+   *     statistics values (min/max values and null counts)
+   * @return an {@link Optional} containing the deserialized {@link DataFileStatistics} if the stats
+   *     field is present and non-null, or {@link Optional#empty()} otherwise
+   * @throws io.delta.kernel.exceptions.KernelException if the stats JSON is malformed or if values
+   *     don't match the expected types from the schema
+   * @see DataFileStatistics#deserializeFromJson(String, StructType) for details on the
+   *     deserialization process
+   */
+  public Optional<DataFileStatistics> getStats(StructType physicalSchema) {
+    return getFieldIndexOpt("stats")
+        .flatMap(
+            index ->
+                row.isNullAt(index)
+                    ? Optional.empty()
+                    : DataFileStatistics.deserializeFromJson(row.getString(index), physicalSchema));
   }
 
   public Optional<MapValue> getTags() {
@@ -126,7 +153,7 @@ public class RemoveFile extends RowBackedAction {
     sb.append(", extendedFileMetadata=").append(getExtendedFileMetadata());
     sb.append(", partitionValues=").append(getPartitionValues().map(VectorUtils::toJavaMap));
     sb.append(", size=").append(getSize());
-    sb.append(", stats=").append(getStats().map(d -> d.serializeAsJson(null)).orElse(""));
+    sb.append(", stats=").append(getStats(null).map(d -> d.serializeAsJson(null)).orElse(""));
     sb.append(", tags=").append(getTags().map(VectorUtils::toJavaMap));
     sb.append(", deletionVector=").append(getDeletionVector());
     sb.append(", baseRowId=").append(getBaseRowId());

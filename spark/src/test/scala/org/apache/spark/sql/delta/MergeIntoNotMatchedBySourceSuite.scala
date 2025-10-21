@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
 
-trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
+trait MergeIntoNotMatchedBySourceWithCDCMixin extends MergeIntoSuiteBaseMixin {
   import testImplicits._
 
   /**
@@ -49,10 +49,8 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
             withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
               executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
             }
-            val deltaPath = if (targetName.startsWith("delta.`")) {
-              targetName.stripPrefix("delta.`").stripSuffix("`")
-            } else targetName
-            checkAnswer(readDeltaTable(deltaPath), result.map { case (k, v) => Row(k, v) })
+            checkAnswer(readDeltaTableByIdentifier(targetName),
+              result.map { case (k, v) => Row(k, v) })
           }
           if (cdcEnabled) {
             checkAnswer(getCDCForLatestOperation(deltaLog, DeltaOperations.OP_MERGE), cdc.toDF())
@@ -61,90 +59,9 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       }
     }
   }
+}
 
-  // Test analysis errors with NOT MATCHED BY SOURCE clauses.
-  testMergeAnalysisException(
-    "error on multiple not matched by source update clauses without condition")(
-    mergeOn = "s.key = t.key",
-    updateNotMatched(condition = "t.key == 3", set = "value = 2 * value"),
-    updateNotMatched(set = "value = 3 * value"),
-    updateNotMatched(set = "value = 4 * value"))(
-    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  testMergeAnalysisException(
-    "error on multiple not matched by source update/delete clauses without condition")(
-    mergeOn = "s.key = t.key",
-    updateNotMatched(condition = "t.key == 3", set = "value = 2 * value"),
-    deleteNotMatched(),
-    updateNotMatched(set = "value = 4 * value"))(
-    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  testMergeAnalysisException(
-    "error on non-empty condition following empty condition in not matched by source " +
-      "update clauses")(
-    mergeOn = "s.key = t.key",
-    updateNotMatched(set = "value = 2 * value"),
-    updateNotMatched(condition = "t.key < 3", set = "value = value"))(
-    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  testMergeAnalysisException(
-    "error on non-empty condition following empty condition in not matched by source " +
-      "delete clauses")(
-    mergeOn = "s.key = t.key",
-    deleteNotMatched(),
-    deleteNotMatched(condition = "t.key < 3"))(
-    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  testMergeAnalysisException("update not matched condition - unknown reference")(
-    mergeOn = "s.key = t.key",
-    updateNotMatched(condition = "unknownAttrib > 1", set = "tgtValue = tgtValue + 1"))(
-    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
-    expectedMessageParameters = Map(
-      "sqlExpr" -> "unknownAttrib",
-      "clause" -> "UPDATE condition",
-      "cols" -> "t.key, t.tgtValue"))
-
-  testMergeAnalysisException("update not matched condition - aggregation function")(
-    mergeOn = "s.key = t.key",
-    updateNotMatched(condition = "max(0) > 0", set = "tgtValue = tgtValue + 1"))(
-    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
-    expectedMessageParameters = Map(
-      "operation" -> "UPDATE condition of MERGE operation",
-      "predicate" -> "(condition = (max(0) > 0))"))
-
-  testMergeAnalysisException("update not matched condition - subquery")(
-    mergeOn = "s.key = t.key",
-    updateNotMatched(condition = "tgtValue in (select value from t)", set = "tgtValue = 1"))(
-    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
-    expectedMessageParameters = Map("relationName" -> "`t`"))
-
-  testMergeAnalysisException("delete not matched condition - unknown reference")(
-    mergeOn = "s.key = t.key",
-    deleteNotMatched(condition = "unknownAttrib > 1"))(
-    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
-    expectedMessageParameters = Map(
-      "sqlExpr" -> "unknownAttrib",
-      "clause" -> "DELETE condition",
-      "cols" -> "t.key, t.tgtValue"))
-
-  testMergeAnalysisException("delete not matched condition - aggregation function")(
-    mergeOn = "s.key = t.key",
-    deleteNotMatched(condition = "max(0) > 0"))(
-    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
-    expectedMessageParameters = Map(
-      "operation" -> "DELETE condition of MERGE operation",
-      "predicate" -> "(condition = (max(0) > 0))"))
-
-  testMergeAnalysisException("delete not matched condition - subquery")(
-    mergeOn = "s.key = t.key",
-    deleteNotMatched(condition = "tgtValue in (select tgtValue from t)"))(
-    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
-    expectedMessageParameters = Map("relationName" -> "`t`"))
-
+trait MergeIntoNotMatchedBySourceCDCPart1Tests extends MergeIntoNotMatchedBySourceWithCDCMixin {
   // Test correctness with NOT MATCHED BY SOURCE clauses.
   testExtendedMergeWithCDC("all 3 types of match clauses without conditions")(
     source = (0, 0) :: (1, 1) :: (5, 5) :: Nil,
@@ -302,7 +219,9 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (1, 10, "update_preimage"),
       (1, 11, "update_postimage"),
       (5, 50, "delete")))
+}
 
+trait MergeIntoNotMatchedBySourceCDCPart2Tests extends MergeIntoNotMatchedBySourceWithCDCMixin {
   testExtendedMergeWithCDC("not matched by source update + delete clauses")(
     source = (0, 0) :: (1, 1) :: (5, 5) :: Nil,
     target = (1, 10) :: (2, 20) :: (7, 70) :: Nil,
@@ -502,30 +421,123 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       (7, 3) // Not matched by source, no change
     ),
     cdc = Seq.empty)
+}
 
-  test(s"special character in path - not matched by source delete") {
-    val source = s"$tempDir/sou rce^"
-    val target = s"$tempDir/tar get="
-    spark.range(0, 10, 2).write.format("delta").save(source)
-    spark.range(10).write.format("delta").save(target)
-    executeMerge(
-      tgt = s"delta.`$target` t",
-      src = s"delta.`$source` s",
-      cond = "t.id = s.id",
-      clauses = deleteNotMatched())
-    checkAnswer(readDeltaTable(target), Seq(0, 2, 4, 6, 8).toDF("id"))
+trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
+  import testImplicits._
+
+  // Test analysis errors with NOT MATCHED BY SOURCE clauses.
+  testMergeAnalysisException(
+    "error on multiple not matched by source update clauses without condition")(
+    mergeOn = "s.key = t.key",
+    updateNotMatched(condition = "t.key == 3", set = "value = 2 * value"),
+    updateNotMatched(set = "value = 3 * value"),
+    updateNotMatched(set = "value = 4 * value"))(
+    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+
+  testMergeAnalysisException(
+    "error on multiple not matched by source update/delete clauses without condition")(
+    mergeOn = "s.key = t.key",
+    updateNotMatched(condition = "t.key == 3", set = "value = 2 * value"),
+    deleteNotMatched(),
+    updateNotMatched(set = "value = 4 * value"))(
+    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+
+  testMergeAnalysisException(
+    "error on non-empty condition following empty condition in not matched by source " +
+      "update clauses")(
+    mergeOn = "s.key = t.key",
+    updateNotMatched(set = "value = 2 * value"),
+    updateNotMatched(condition = "t.key < 3", set = "value = value"))(
+    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+
+  testMergeAnalysisException(
+    "error on non-empty condition following empty condition in not matched by source " +
+      "delete clauses")(
+    mergeOn = "s.key = t.key",
+    deleteNotMatched(),
+    deleteNotMatched(condition = "t.key < 3"))(
+    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+
+  testMergeAnalysisException("update not matched condition - unknown reference")(
+    mergeOn = "s.key = t.key",
+    updateNotMatched(condition = "unknownAttrib > 1", set = "tgtValue = tgtValue + 1"))(
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "unknownAttrib",
+      "clause" -> "UPDATE condition",
+      "cols" -> "t.key, t.tgtValue"))
+
+  testMergeAnalysisException("update not matched condition - aggregation function")(
+    mergeOn = "s.key = t.key",
+    updateNotMatched(condition = "max(0) > 0", set = "tgtValue = tgtValue + 1"))(
+    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+    expectedMessageParameters = Map(
+      "operation" -> "UPDATE condition of MERGE operation",
+      "predicate" -> "(condition = (max(0) > 0))"))
+
+  testMergeAnalysisException("update not matched condition - subquery")(
+    mergeOn = "s.key = t.key",
+    updateNotMatched(condition = "tgtValue in (select value from t)", set = "tgtValue = 1"))(
+    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
+    expectedMessageParameters = Map("relationName" -> "`t`"))
+
+  testMergeAnalysisException("delete not matched condition - unknown reference")(
+    mergeOn = "s.key = t.key",
+    deleteNotMatched(condition = "unknownAttrib > 1"))(
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "unknownAttrib",
+      "clause" -> "DELETE condition",
+      "cols" -> "t.key, t.tgtValue"))
+
+  testMergeAnalysisException("delete not matched condition - aggregation function")(
+    mergeOn = "s.key = t.key",
+    deleteNotMatched(condition = "max(0) > 0"))(
+    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+    expectedMessageParameters = Map(
+      "operation" -> "DELETE condition of MERGE operation",
+      "predicate" -> "(condition = (max(0) > 0))"))
+
+  testMergeAnalysisException("delete not matched condition - subquery")(
+    mergeOn = "s.key = t.key",
+    deleteNotMatched(condition = "tgtValue in (select tgtValue from t)"))(
+    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
+    expectedMessageParameters = Map("relationName" -> "`t`"))
+
+  test("special character in path - not matched by source delete", NameBasedAccessIncompatible) {
+    withTempDir { tempDir =>
+      val source = s"$tempDir/sou rce^"
+      val target = s"$tempDir/tar get="
+      spark.range(0, 10, 2).write.format("delta").save(source)
+      spark.range(10).write.format("delta").save(target)
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "t.id = s.id",
+        clauses = deleteNotMatched())
+      checkAnswer(readDeltaTableByIdentifier(s"delta.`$target`"), Seq(0, 2, 4, 6, 8).toDF("id"))
+    }
   }
 
-  test(s"special character in path - not matched by source update") {
-    val source = s"$tempDir/sou rce@"
-    val target = s"$tempDir/tar get#"
-    spark.range(0, 10, 2).write.format("delta").save(source)
-    spark.range(10).write.format("delta").save(target)
-    executeMerge(
-      tgt = s"delta.`$target` t",
-      src = s"delta.`$source` s",
-      cond = "t.id = s.id",
-      clauses = updateNotMatched(set = "id = t.id * 10"))
-    checkAnswer(readDeltaTable(target), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+  test("special character in path - not matched by source update", NameBasedAccessIncompatible) {
+    withTempDir { tempDir =>
+      val source = s"$tempDir/sou rce@"
+      val target = s"$tempDir/tar get#"
+      spark.range(0, 10, 2).write.format("delta").save(source)
+      spark.range(10).write.format("delta").save(target)
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "t.id = s.id",
+        clauses = updateNotMatched(set = "id = t.id * 10"))
+      checkAnswer(
+        readDeltaTableByIdentifier(s"delta.`$target`"),
+        Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+    }
   }
 }

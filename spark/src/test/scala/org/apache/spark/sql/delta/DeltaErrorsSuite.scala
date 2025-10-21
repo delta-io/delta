@@ -149,7 +149,7 @@ trait DeltaErrorsSuiteBase
     val lastResponse = (1 to MAX_URL_ACCESS_RETRIES).map { attempt =>
       if (attempt > 1) Thread.sleep(1000)
       val response = try {
-        Process("curl -I " + url).!!
+        Process("curl -I -L " + url).!!
       } catch {
         case e: RuntimeException =>
           val sw = new StringWriter
@@ -676,6 +676,16 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_FILE_NOT_FOUND", "42K03", Map(
         "path" -> "somePath"
+      ))
+    }
+    {
+      val e = intercept[DeltaFileNotFoundException] {
+        throw DeltaErrors.logFileNotFoundException(new Path("file://table"), None, 10)
+      }
+      checkError(e, "DELTA_LOG_FILE_NOT_FOUND", "42K03", Map(
+        "version" -> "LATEST",
+        "checkpointVersion" -> "10",
+        "logPath" -> "file://table"
       ))
     }
     {
@@ -1741,6 +1751,14 @@ trait DeltaErrorsSuiteBase
         "rowTrackingColumn" -> "Row Commit Version",
         "tableName" -> "table_name"
       ))
+    }
+    {
+      val path = new Path("a/b")
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.catalogManagedTablePathBasedAccessNotAllowed(path)
+      }
+      checkError(e, "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED", "KD00G",
+        Map("path" -> path.toString))
     }
   }
 

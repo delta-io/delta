@@ -254,7 +254,9 @@ trait Checkpoints extends DeltaLogging {
   protected def store: LogStore
 
   /** Used to clean up stale log files. */
-  protected def doLogCleanup(snapshotToCleanup: Snapshot): Unit
+  protected def doLogCleanup(
+    snapshotToCleanup: Snapshot,
+    catalogTableOpt: Option[CatalogTable]): Unit
 
   /** Returns the checkpoint interval for this log. Not transactional. */
   def checkpointInterval(metadata: Metadata): Int =
@@ -330,11 +332,11 @@ trait Checkpoints extends DeltaLogging {
 
   def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot,
-      catalogTableOpt: Option[CatalogTable] = None): Unit = {
+      catalogTableOpt: Option[CatalogTable]): Unit = {
     val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, catalogTableOpt)
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
-    doLogCleanup(snapshotToCheckpoint)
+    doLogCleanup(snapshotToCheckpoint, catalogTableOpt)
   }
 
   protected[delta] def writeLastCheckpointFile(
@@ -544,6 +546,13 @@ trait Checkpoints extends DeltaLogging {
     logInfo(log"No checkpoint found for Delta table before version " +
       log"${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     None
+  }
+
+  /** Returns whether a checkpoint exists at `version`. */
+  def checkpointExistsAtVersion(version: Long): Boolean = {
+    val upperBoundVersion = Some(CheckpointInstance(version = version + 1))
+    val lastVerifiedCheckpoint = findLastCompleteCheckpointBefore(upperBoundVersion)
+    lastVerifiedCheckpoint.exists(_.version == version)
   }
 
   /** Returns the last complete checkpoint in the delta log directory (if any) */

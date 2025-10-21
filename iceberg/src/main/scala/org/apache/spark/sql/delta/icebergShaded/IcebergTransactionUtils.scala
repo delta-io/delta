@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern
 import org.apache.spark.sql.delta.util.TimestampFormatter
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
+import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, MetadataUpdate, PartitionSpec, Schema => IcebergSchema}
 import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
@@ -72,23 +72,8 @@ object IcebergTransactionUtils
     // Recall that FileActions can have either relative paths or absolute paths (i.e. from shallow-
     // cloned files).
     // Iceberg spec requires path be fully qualified path, suitable for constructing a Hadoop Path
-    if (f.pathAsUri.isAbsolute) f.path else new Path(tablePath, f.toPath.toString).toString
-  }
-
-  /** Returns the (deletions, additions) iceberg table property changes. */
-  def detectPropertiesChange(
-      newProperties: Map[String, String],
-      prevProperties: Map[String, String]): (Set[String], Map[String, String]) = {
-    val newPropertiesIcebergOnly = DeltaToIcebergConvert.TableProperties(newProperties)
-    val prevPropertiesOptIcebergOnly =
-      DeltaToIcebergConvert.TableProperties(prevProperties)
-
-    if (prevPropertiesOptIcebergOnly == newPropertiesIcebergOnly) return (Set.empty, Map.empty)
-
-    (
-      prevPropertiesOptIcebergOnly.keySet.diff(newPropertiesIcebergOnly.keySet),
-      newPropertiesIcebergOnly
-    )
+    if (f.pathAsUri.isAbsolute) new Path(f.pathAsUri).toString
+    else new Path(tablePath, f.toPath.toString).toString
   }
 
   /** Returns the mapping of logicalPartitionColName -> physicalPartitionColName */
@@ -245,10 +230,13 @@ object IcebergTransactionUtils
    * @param conf: Hadoop Configuration
    * @return
    */
-  def createHiveCatalog(conf : Configuration) : HiveCatalog = {
+  def createHiveCatalog(
+      conf: Configuration,
+      metadataUpdates: java.util.ArrayList[MetadataUpdate]
+        = new java.util.ArrayList[MetadataUpdate]()) : HiveCatalog = {
     val catalog = new HiveCatalog()
     catalog.setConf(conf)
-    catalog.initialize("spark_catalog", Map.empty[String, String].asJava)
+    catalog.initialize("spark_catalog", Map.empty[String, String].asJava, metadataUpdates)
     catalog
   }
 

@@ -31,12 +31,14 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.fs.Path
@@ -239,7 +241,7 @@ class DeltaAnalysis(session: SparkSession)
           //   )
           //   - Do not filter CatalogOwned table feature out if target table is enabling
           //     CatalogOwned.
-          Some(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol = p))
+          Some(p.removeFeature(targetFeature = CatalogOwnedTableFeature))
         case _ =>
           protocol
       }
@@ -343,24 +345,26 @@ class DeltaAnalysis(session: SparkSession)
           resolveCloneCommand(
             cloneStatement.target,
             CloneIcebergSource(
-              table.tableIdentifier, sparkTable = None, deltaSnapshot = None, session),
+              metadataLocation = table.tableIdentifier.table,
+              tableNameOpt = None,
+              tablePoliciesOpt = None,
+              deltaSnapshotOpt = None,
+              session),
             cloneStatement)
 
         case DataSourceV2Relation(table, _, _, _, _)
             if table.getClass.getName.endsWith("org.apache.iceberg.spark.source.SparkTable") =>
-          val tableIdent = Try {
-            CatalystSqlParser.parseTableIdentifier(table.name())
-          } match {
-            case Success(ident) => ident
-            case Failure(_: ParseException) =>
-              // Fallback to 2-level identifier to make compatible with older Apache spark,
-              // this ident will NOT be used to look up the Iceberg tables later.
-              CatalystSqlParser.parseMultipartIdentifier(table.name()).tail.asTableIdentifier
-            case Failure(e) => throw e
-          }
+          val metadataLocation = ConvertUtils.getIcebergMetadataLocationFromSparkTable(table)
           resolveCloneCommand(
             cloneStatement.target,
-            CloneIcebergSource(tableIdent, Some(table), deltaSnapshot = None, session),
+            CloneIcebergSource(
+              metadataLocation,
+              tableNameOpt = Some(table.name()),
+              tablePoliciesOpt =
+                None,
+              deltaSnapshotOpt = None,
+              session
+            ),
             cloneStatement)
 
         case u: UnresolvedRelation =>
@@ -1010,7 +1014,8 @@ class DeltaAnalysis(session: SparkSession)
 
     if (typeWideningEnabled && schemaEvolutionEnabled) {
       TypeWideningMode.TypeEvolution(
-        uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(snapshot.metadata))
+        uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(snapshot.metadata),
+        allowAutomaticWidening = AllowAutomaticWideningMode.fromConf(conf))
     } else {
       TypeWideningMode.NoTypeWidening
     }

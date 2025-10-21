@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import static java.lang.String.format;
 
+import io.delta.kernel.commit.CommitFailedException;
 import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
@@ -28,6 +29,7 @@ import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -100,12 +102,12 @@ public final class DeltaErrors {
   }
 
   public static KernelException noCommitFilesFoundForVersionRange(
-      String tablePath, long startVersion, long endVersion) {
+      String tablePath, long startVersion, Optional<Long> endVersionOpt) {
     String message =
         String.format(
             "%s: Requested table changes between [%s, %s] but no log files found in the requested"
                 + " version range.",
-            tablePath, startVersion, endVersion);
+            tablePath, startVersion, endVersionOpt);
     return new KernelException(message);
   }
 
@@ -350,6 +352,7 @@ public final class DeltaErrors {
     return new KernelException(
         String.format("Disabling %s on an existing table is not allowed.", key));
   }
+
   // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
@@ -365,6 +368,15 @@ public final class DeltaErrors {
             "Cannot enable clustering on a partitioned table '%s'. "
                 + "Existing partition columns: '%s', Clustering columns: '%s'.",
             tablePath, partitionColNames, clusteringCols));
+  }
+
+  public static RuntimeException nonRetryableCommitException(
+      int attempt, long commitAsVersion, CommitFailedException cause) {
+    throw new RuntimeException(
+        String.format(
+            "Commit attempt %d for version %d failed with a non-retryable exception.",
+            attempt, commitAsVersion),
+        cause);
   }
 
   public static KernelException concurrentTransaction(
@@ -431,8 +443,24 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
+  public static KernelException rowTrackingRequiredForRowIdHighWatermark(
+      String tablePath, String rowIdHighWatermark) {
+    return new KernelException(
+        String.format(
+            "Cannot assign a row id high water mark (`%s`) to a table `%s` that does not support "
+                + "`rowTracking` table feature. Please enable the `rowTracking` table feature.",
+            rowIdHighWatermark, tablePath));
+  }
+
   public static KernelException cannotToggleRowTrackingOnExistingTable() {
     return new KernelException("Row tracking support cannot be changed once the table is created.");
+  }
+
+  public static KernelException missingRowTrackingColumnRequested(String columnName) {
+    return new KernelException(
+        String.format(
+            "Row tracking is not enabled, but row tracking column '%s' was requested.",
+            columnName));
   }
 
   public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
@@ -440,6 +468,51 @@ public final class DeltaErrors {
         String.format(
             "Cannot modify append-only table. Table `%s` has configuration %s=true.",
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
+  }
+
+  public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
+    return new KernelException(
+        String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
+  }
+
+  public static InvalidTableException tableWithIctMissingCommitInfo(String dataPath, long version) {
+    return new InvalidTableException(
+        dataPath,
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "the CommitInfo action in every commit. However, the CommitInfo action is "
+                + "missing from commit version %d.",
+            version));
+  }
+
+  public static InvalidTableException tableWithIctMissingIct(String dataPath, long version) {
+    return new InvalidTableException(
+        dataPath,
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "inCommitTimestamp in the CommitInfo action. However, this field has not been "
+                + "set in commit version %d.",
+            version));
+  }
+
+  public static KernelException metadataMissingRequiredCatalogTableProperty(
+      String committerClassName,
+      Map<String, String> missingOrViolatingProperties,
+      Map<String, String> requiredCatalogTableProperties) {
+    final String details =
+        missingOrViolatingProperties.entrySet().stream()
+            .map(
+                entry ->
+                    String.format(
+                        "%s (current: '%s', required: '%s')",
+                        entry.getKey(),
+                        entry.getValue(),
+                        requiredCatalogTableProperties.get(entry.getKey())))
+            .collect(Collectors.joining(", "));
+    return new KernelException(
+        String.format(
+            "[%s] Metadata is missing or has incorrect values for required catalog properties: %s.",
+            committerClassName, details));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

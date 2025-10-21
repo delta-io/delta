@@ -265,16 +265,13 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     }
 
     expectTableNotFoundException { () =>
-      tableManager.getResolvedTableAdapterAtLatest(defaultEngine, invalidPath)
+      tableManager.getSnapshotAtLatest(defaultEngine, invalidPath)
     }
     expectTableNotFoundException { () =>
-      tableManager.getResolvedTableAdapterAtVersion(defaultEngine, invalidPath, 1)
+      tableManager.getSnapshotAtVersion(defaultEngine, invalidPath, 1)
     }
-
-    if (tableManager.supportsTimestampResolution) {
-      expectTableNotFoundException { () =>
-        tableManager.getResolvedTableAdapterAtTimestamp(defaultEngine, invalidPath, 1)
-      }
+    expectTableNotFoundException { () =>
+      tableManager.getSnapshotAtTimestamp(defaultEngine, invalidPath, 1)
     }
   }
 
@@ -319,7 +316,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     val path = "file:" + goldenTablePath("data-reader-partition-values")
 
     // for now we don't support timestamp type partition columns so remove from read columns
-    val readCols = getTableManagerAdapter.getResolvedTableAdapterAtLatest(defaultEngine, path)
+    val readCols = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, path)
       .getSchema()
       .withoutField("as_timestamp")
       .fields()
@@ -462,6 +459,137 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
         path = path,
         expectedAnswer = expectedAnswer,
         readCols = Seq("ByteType", "decimal", "nested_struct", "array_of_prims", "map_of_prims"))
+    }
+  }
+
+  test("read subfield of array of struct") {
+    withTempDir { path =>
+      withTempTable { tbl =>
+        spark.sql(s"""CREATE TABLE $tbl (
+          id int,
+          array_of_struct array<struct<x: int, y: int>>
+        ) USING delta LOCATION '$path' """)
+        spark.sql(s"""INSERT INTO $tbl VALUES
+        (1, array(struct(2 as x, 3 as y))),
+        (6, array(struct(7 as x, 8 as y))),
+        (11, array(struct(null as x, 8 as y))),
+        (12, array()),
+        (13, null)""")
+
+        // Test reading with pruned schema - only x field from struct
+        val prunedSchema = new io.delta.kernel.types.StructType()
+          .add(
+            "array_of_struct",
+            new io.delta.kernel.types.ArrayType(
+              new io.delta.kernel.types.StructType()
+                .add("x", io.delta.kernel.types.IntegerType.INTEGER),
+              true))
+
+        val result = readSnapshot(
+          latestSnapshot(path.toString),
+          readSchema = prunedSchema)
+
+        val expectedAnswer = Seq(
+          TestRow(Seq(TestRow(2))),
+          TestRow(Seq(TestRow(7))),
+          TestRow(Seq(TestRow(null: Any))),
+          TestRow(Seq()),
+          TestRow(null: Any))
+        checkAnswer(result, expectedAnswer)
+      }
+    }
+  }
+
+  test("read subfield of array of array of struct") {
+    withTempDir { path =>
+      withTempTable { tbl =>
+        spark.sql(s"""CREATE TABLE $tbl (
+          id int,
+          array_of_array_of_struct array<array<struct<x: int, y: int>>>
+        ) USING delta LOCATION '$path' """)
+        spark.sql(s"""INSERT INTO $tbl VALUES
+        (1, array(array(struct(4 as x, 5 as y)))),
+        (6, array(array(struct(9 as x, 10 as y)))),
+        (11, array(array(struct(null as x, 10 as y)))),
+        (12, array(array())),
+        (13, array(null))""")
+
+        val prunedSchema = new io.delta.kernel.types.StructType()
+          .add(
+            "array_of_array_of_struct",
+            new io.delta.kernel.types.ArrayType(
+              new io.delta.kernel.types.ArrayType(
+                new io.delta.kernel.types.StructType()
+                  .add("x", io.delta.kernel.types.IntegerType.INTEGER),
+                true),
+              true))
+
+        val result = readSnapshot(
+          latestSnapshot(path.toString),
+          readSchema = prunedSchema)
+
+        val expectedAnswer = Seq(
+          TestRow(Seq(Seq(TestRow(4)))),
+          TestRow(Seq(Seq(TestRow(9)))),
+          TestRow(Seq(Seq(TestRow(null: Any)))),
+          TestRow(Seq(Seq())),
+          TestRow(Seq(null)))
+        checkAnswer(result, expectedAnswer)
+      }
+    }
+  }
+
+  test("read array of array of int") {
+    withTempDir { path =>
+      withTempTable { tbl =>
+        spark.sql(s"""CREATE TABLE $tbl (
+          id int,
+          array_of_array_of_int array<array<int>>
+        ) USING delta LOCATION '$path' """)
+        spark.sql(s"""INSERT INTO $tbl VALUES
+        (1, array(array(100, 101))),
+        (6, array(array(102, 103))),
+        (11, array(array(null, 104))),
+        (12, array(array())),
+        (13, array(null))""")
+
+        checkTable(
+          path = path.toString,
+          expectedAnswer = Seq(
+            TestRow(Seq(Seq(100, 101))),
+            TestRow(Seq(Seq(102, 103))),
+            TestRow(Seq(Seq(null, 104))),
+            TestRow(Seq(Seq())),
+            TestRow(Seq(null))),
+          readCols = Seq("array_of_array_of_int"))
+      }
+    }
+  }
+
+  test("read array of int") {
+    withTempDir { path =>
+      withTempTable { tbl =>
+        spark.sql(s"""CREATE TABLE $tbl (
+          id int,
+          array_of_int array<int>
+        ) USING delta LOCATION '$path' """)
+        spark.sql(s"""INSERT INTO $tbl VALUES
+        (1, array(200, 201)),
+        (6, array(202, 203)),
+        (11, array(null, 204)),
+        (12, array()),
+        (13, null)""")
+
+        checkTable(
+          path = path.toString,
+          expectedAnswer = Seq(
+            TestRow(Seq(200, 201)),
+            TestRow(Seq(202, 203)),
+            TestRow(Seq(null, 204)),
+            TestRow(Seq()),
+            TestRow(null: Any)),
+          readCols = Seq("array_of_int"))
+      }
     }
   }
 
@@ -764,7 +892,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
         expectedVersion = Some(10))
       // Cannot read a version that does not exist
       val e = intercept[RuntimeException] {
-        getTableManagerAdapter.getResolvedTableAdapterAtVersion(defaultEngine, path, 11)
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, path, 11)
       }
       assert(e.getMessage.contains(
         "Cannot load table version 11 as it does not exist. The latest available version is 10"))
@@ -799,7 +927,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
 
       // Cannot read a version that has been truncated
       val e = intercept[RuntimeException] {
-        getTableManagerAdapter.getResolvedTableAdapterAtVersion(defaultEngine, tablePath, 9)
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 9)
       }
       assert(e.getMessage.contains("Cannot load table version 9"))
       // Can read version 10
@@ -868,8 +996,6 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("getSnapshotAtTimestamp: basic end-to-end read") {
-    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
-
     withTempDir { tempDir =>
       val start = 1540415658000L
       val minuteInMilliseconds = 60000L
@@ -926,36 +1052,30 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("getSnapshotAtTimestamp: empty _delta_log folder") {
-    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
-
     withTempDir { dir =>
       new File(dir, "_delta_log").mkdirs()
       intercept[TableNotFoundException] {
         getTableManagerAdapter
-          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
+          .getSnapshotAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }
 
   test("getSnapshotAtTimestamp: empty folder no _delta_log dir") {
-    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
-
     withTempDir { dir =>
       intercept[TableNotFoundException] {
         getTableManagerAdapter
-          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
+          .getSnapshotAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }
 
   test("getSnapshotAtTimestamp: non-empty folder not a delta table") {
-    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
-
     withTempDir { dir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(dir.getCanonicalPath)
       intercept[TableNotFoundException] {
         getTableManagerAdapter
-          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
+          .getSnapshotAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }

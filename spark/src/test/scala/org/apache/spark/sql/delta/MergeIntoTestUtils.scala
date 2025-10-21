@@ -28,7 +28,7 @@ import org.apache.spark.sql.test.SharedSparkSession
  * either [[MergeIntoSQLTestUtils]] or [[MergeIntoScalaTestUtils]] to run merge tests using the SQL
  * or Scala API resp.
  */
-trait MergeIntoTestUtils extends DeltaDMLByPathTestUtils with MergeHelpers {
+trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
   self: SharedSparkSession =>
 
   protected def executeMerge(
@@ -59,18 +59,38 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
   self: SharedSparkSession =>
 
   protected def basicMergeStmt(
+      cte: Option[String] = None,
       target: String,
       source: String,
       condition: String,
       update: String,
       insert: String): String = {
+    basicMergeStmt(
+      cte = cte,
+      target = target,
+      source = source,
+      condition = condition,
+      withSchemaEvolution = false,
+      super.update(set = update),
+      super.insert(values = insert))
+  }
+
+  protected def basicMergeStmt(
+      cte: Option[String],
+      target: String,
+      source: String,
+      condition: String,
+      withSchemaEvolution: Boolean,
+      clauses: MergeClause*): String = {
+    val clausesStr = clauses.map(_.sql).mkString("\n")
+    val schemaEvolutionStr = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION" else ""
     s"""
-       |MERGE INTO $target
-       |USING $source
-       |ON $condition
-       |WHEN MATCHED THEN UPDATE SET $update
-       |WHEN NOT MATCHED THEN INSERT $insert
-      """.stripMargin
+     |${cte.getOrElse("")}
+     |MERGE $schemaEvolutionStr INTO $target
+     |USING $source
+     |ON $condition
+     |$clausesStr
+     """.stripMargin
   }
 
   override protected def executeMerge(
@@ -79,15 +99,14 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
       condition: String,
       update: String,
       insert: String): Unit =
-    sql(basicMergeStmt(target, source, condition, update, insert))
+    spark.sql(basicMergeStmt(cte = None, target, source, condition, update, insert))
 
   override protected def executeMerge(
       tgt: String,
       src: String,
       cond: String,
       clauses: MergeClause*): Unit = {
-    val clausesStr = clauses.map(_.sql).mkString("\n")
-    sql(s"MERGE INTO $tgt USING $src ON $cond\n" + clausesStr)
+    spark.sql(basicMergeStmt(cte = None, tgt, src, cond, withSchemaEvolution = false, clauses: _*))
   }
 
   override protected def executeMergeWithSchemaEvolution(

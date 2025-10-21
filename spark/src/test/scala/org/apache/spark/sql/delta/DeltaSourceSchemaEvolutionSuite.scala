@@ -223,6 +223,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   )(implicit log: DeltaLog): DeltaSourceMetadataTrackingLog =
     DeltaSourceMetadataTrackingLog.create(
       spark, getDefaultSchemaLocation.toString, log.update(),
+      catalogTableOpt = None,
       parameters = sourceTrackingId.map(DeltaOptions.STREAMING_SOURCE_TRACKING_ID -> _).toMap,
       initMetadataLogEagerly = initializeEagerly)
 
@@ -536,9 +537,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val schemaLocation = getDefaultSchemaLocation.toString
       val snapshot = log.update()
       val schemaLog1 = DeltaSourceMetadataTrackingLog.create(
-        spark, schemaLocation, snapshot, parameters = Map.empty)
+        spark, schemaLocation, snapshot, catalogTableOpt = None, parameters = Map.empty)
       val schemaLog2 = DeltaSourceMetadataTrackingLog.create(
-        spark, schemaLocation, snapshot, Map.empty)
+        spark, schemaLocation, snapshot, catalogTableOpt = None, Map.empty)
       val newSchema =
         PersistedMetadata("1", 1,
           makeMetadata(new StructType(), partitionSchema = new StructType()),
@@ -1610,9 +1611,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
     // Both schema log initialized
     def schemaLog1: DeltaSourceMetadataTrackingLog = DeltaSourceMetadataTrackingLog.create(
-      spark, schemaLog1Location, log.update(), parameters = Map.empty)
+      spark, schemaLog1Location, log.update(), catalogTableOpt = None, parameters = Map.empty)
     def schemaLog2: DeltaSourceMetadataTrackingLog = DeltaSourceMetadataTrackingLog.create(
-      spark, schemaLog2Location, log.update(), parameters = Map.empty)
+      spark, schemaLog2Location, log.update(), catalogTableOpt = None, parameters = Map.empty)
 
     // The schema log initializes @ v5 with schema <a, b>
     testStream(df)(
@@ -1799,7 +1800,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     // Manually construct a Delta source since it's hard to test multiple (2+) latestOffset() calls
     // with the current streaming engine without incurring the schema evolution failure.
     def getSource: DeltaSource = DeltaSource(
-      spark, log,
+      spark,
+      log,
+      catalogTableOpt = None,
       new DeltaOptions(Map("startingVersion" -> "0"), spark.sessionState.conf),
       log.update(),
       metadataPath = "",

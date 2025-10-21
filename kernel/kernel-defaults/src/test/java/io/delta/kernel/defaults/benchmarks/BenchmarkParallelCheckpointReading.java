@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.engine.ParquetHandler;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
@@ -177,17 +178,17 @@ public class BenchmarkParallelCheckpointReading {
     }
 
     @Override
-    public CloseableIterator<ColumnarBatch> readParquetFiles(
+    public CloseableIterator<FileReadResult> readParquetFiles(
         CloseableIterator<FileStatus> fileIter,
         StructType physicalSchema,
         Optional<Predicate> predicate)
         throws IOException {
-      return new CloseableIterator<ColumnarBatch>() {
+      return new CloseableIterator<FileReadResult>() {
         // Executor service will be closed as part of the returned `CloseableIterator`'s
         // close method.
         private final ExecutorService executorService = newFixedThreadPool(numberOfParallelThreads);
-        private Iterator<Future<List<ColumnarBatch>>> futuresIter;
-        private Iterator<ColumnarBatch> currentBatchIter;
+        private Iterator<Future<List<FileReadResult>>> futuresIter;
+        private Iterator<FileReadResult> currentBatchIter;
 
         @Override
         public void close() throws IOException {
@@ -213,7 +214,7 @@ public class BenchmarkParallelCheckpointReading {
         }
 
         @Override
-        public ColumnarBatch next() {
+        public FileReadResult next() {
           return currentBatchIter.next();
         }
 
@@ -221,7 +222,7 @@ public class BenchmarkParallelCheckpointReading {
           if (futuresIter != null) {
             return;
           }
-          List<Future<List<ColumnarBatch>>> futures = new ArrayList<>();
+          List<Future<List<FileReadResult>>> futures = new ArrayList<>();
           while (fileIter.hasNext()) {
             futures.add(
                 executorService.submit(() -> parquetFileReader(fileIter.next(), physicalSchema)));
@@ -231,13 +232,13 @@ public class BenchmarkParallelCheckpointReading {
       };
     }
 
-    List<ColumnarBatch> parquetFileReader(FileStatus fileStatus, StructType readSchema) {
+    List<FileReadResult> parquetFileReader(FileStatus fileStatus, StructType readSchema) {
       ParquetFileReader reader = new ParquetFileReader(fileIO);
       try (CloseableIterator<ColumnarBatch> batchIter =
           reader.read(fileStatus, readSchema, Optional.empty())) {
-        List<ColumnarBatch> batches = new ArrayList<>();
+        List<FileReadResult> batches = new ArrayList<>();
         while (batchIter.hasNext()) {
-          batches.add(batchIter.next());
+          batches.add(new FileReadResult(batchIter.next(), fileStatus.getPath()));
         }
         return batches;
       } catch (IOException e) {

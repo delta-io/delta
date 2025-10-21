@@ -292,8 +292,27 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
     val sourceMetadata = cloneSource.metadata
     val targetMetadata = targetLog.metadata
 
+    /**
+     * Filter out row tracking properties from the configuration map.
+     * These properties are not expected to be the same in source and target metadata.
+     *
+     * @param conf The configuration map to filter.
+     * @return Filtered configuration map without row tracking properties.
+     */
+    def filterOutRowTrackingProps(conf: Map[String, String]): Map[String, String] = {
+      conf.filterNot { case (k, _) =>
+        k == MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP ||
+          k == MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP
+      }
+    }
+
+    val sourceConfigsWithoutRowTrackingProps =
+      filterOutRowTrackingProps(conf = sourceMetadata.configuration)
+    val targetConfigsWithoutRowTrackingProps =
+      filterOutRowTrackingProps(conf = targetMetadata.configuration)
+
     assert(sourceMetadata.schema === targetMetadata.schema &&
-      sourceMetadata.configuration === targetMetadata.configuration &&
+      sourceConfigsWithoutRowTrackingProps === targetConfigsWithoutRowTrackingProps &&
       sourceMetadata.dataSchema === targetMetadata.dataSchema &&
       sourceMetadata.partitionColumns === targetMetadata.partitionColumns &&
       sourceMetadata.format === sourceMetadata.format)

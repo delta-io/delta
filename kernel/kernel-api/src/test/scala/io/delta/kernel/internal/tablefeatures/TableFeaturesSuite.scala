@@ -196,11 +196,12 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   })
 
-  Seq("domainMetadata", "vacuumProtocolCheck", "clustering").foreach { feature =>
-    test(s"doesn't support auto enable by metadata: $feature") {
-      val tableFeature = TableFeatures.getTableFeature(feature)
-      assert(!tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
-    }
+  Seq("domainMetadata", "vacuumProtocolCheck", "clustering", "catalogOwned-preview").foreach {
+    feature =>
+      test(s"doesn't support auto enable by metadata: $feature") {
+        val tableFeature = TableFeatures.getTableFeature(feature)
+        assert(!tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
+      }
   }
 
   Seq(
@@ -251,6 +252,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     // are writable because the metadata has not been set the info that
     // these features are enabled
     val expected = Seq(
+      "catalogOwned-preview",
       "columnMapping",
       "v2Checkpoint",
       "deletionVectors",
@@ -271,7 +273,10 @@ class TableFeaturesSuite extends AnyFunSuite {
       "typeWidening",
       "icebergWriterCompatV1",
       "icebergWriterCompatV3",
-      "clustering")
+      "clustering",
+      "variantType-preview",
+      "variantType",
+      "variantShredding-preview")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -311,6 +316,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   // Reads: Supported table features represented as readerFeatures in the protocol
   Seq(
+    "catalogOwned-preview",
     "variantType",
     "variantType-preview",
     "variantShredding-preview",
@@ -363,6 +369,12 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   // Writes
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with catalogOwned-preview",
+    new Protocol(3, 7, singleton("catalogOwned-preview"), singleton("catalogOwned-preview")),
+    testMetadata())
+
   checkWriteUnsupported(
     "validateKernelCanWriteToTable: protocol 8", // beyond the table feature writer version
     new Protocol(3, 8))
@@ -551,17 +563,17 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   Seq("variantType", "variantType-preview", "variantShredding-preview").foreach { feature =>
-    checkWriteUnsupported(
+    checkWriteSupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata doesn't contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
       testMetadata())
 
-    checkWriteUnsupported(
+    checkWriteSupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
-      testMetadata(includeInvariant = true))
+      testMetadata(includeVariantTypeCol = true))
   }
 
   checkWriteSupported(

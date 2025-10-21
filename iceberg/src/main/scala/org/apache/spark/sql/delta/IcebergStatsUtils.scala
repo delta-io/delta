@@ -110,7 +110,8 @@ object IcebergStatsUtils extends DeltaLogging {
       icebergSchema: Schema,
       dataFile: DataFile,
       statsAllowTypes: Set[TypeID],
-      shouldSkipForFile: DataFile => Boolean): Option[String] = {
+      shouldSkipForFile: DataFile => Boolean
+  ): Option[String] = {
     if (shouldSkipForFile(dataFile)) {
       return None
     }
@@ -200,7 +201,8 @@ object IcebergStatsUtils extends DeltaLogging {
       maxMap: Option[Map[JInt, ByteBuffer]],
       minMap: Option[Map[JInt, ByteBuffer]],
       nullCountMap: Option[Map[JInt, JLong]],
-      statsAllowTypes: Set[TypeID]): String = {
+      statsAllowTypes: Set[TypeID]
+  ): String = {
 
     def deserialize(ftype: IcebergType, value: Any): Any = {
       (ftype, value) match {

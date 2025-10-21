@@ -33,6 +33,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 // scalastyle:on import.ordering.noEmptyLine
@@ -175,6 +176,11 @@ class DeltaSourceMetadataTrackingLog private(
     trackingLog.getCurrentTrackedSchema
 
   /**
+   * Get the current tracked seq num by this schema log or -1 if no schema has been tracked yet.
+   */
+  def getCurrentTrackedSeqNum: Long = trackingLog.getCurrentTrackedSeqNum
+
+  /**
    * Get the logically-previous tracked seq num by this schema log.
    * Considering the prev pointer from the latest entry if defined.
    */
@@ -242,6 +248,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       sparkSession: SparkSession,
       rootMetadataLocation: String,
       sourceSnapshot: SnapshotDescriptor,
+      catalogTableOpt: Option[CatalogTable],
       parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false,
@@ -288,6 +295,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       getMergedConsecutiveMetadataChanges(
         sparkSession,
         sourceSnapshot.deltaLog,
+        catalogTableOpt,
         log.getCurrentTrackedMetadata.get
       ).foreach { mergedSchema =>
         log.writeNewMetadata(mergedSchema, replaceCurrent = true)
@@ -317,12 +325,14 @@ object DeltaSourceMetadataTrackingLog extends Logging {
   private def getMergedConsecutiveMetadataChanges(
       spark: SparkSession,
       deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
       currentMetadata: PersistedMetadata): Option[PersistedMetadata] = {
     val currentMetadataVersion = currentMetadata.deltaCommitVersion
     // We start from the currentSchemaVersion so that we can stop early in case the current
     // version still has file actions that potentially needs to be processed.
     val untilMetadataChange =
-      deltaLog.getChangeLogFiles(currentMetadataVersion).map { case (version, fileStatus) =>
+      deltaLog.getChangeLogFiles(
+          currentMetadataVersion, catalogTableOpt).map { case (version, fileStatus) =>
         var metadataAction: Option[Metadata] = None
         var protocolAction: Option[Protocol] = None
         var hasFileAction = false

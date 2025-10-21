@@ -17,7 +17,8 @@ package io.delta.kernel.defaults.utils
 
 import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
-import java.nio.file.Files
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
 import java.util.{Optional, TimeZone, UUID}
 
 import scala.collection.JavaConverters._
@@ -25,10 +26,10 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.data._
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
-import io.delta.kernel.defaults.test.{AbstractResolvedTableAdapter, AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
+import io.delta.kernel.defaults.test.{AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
@@ -37,22 +38,23 @@ import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.stats.FileSizeHistogram
+import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.internal.util.FileNames.checksumFile
-import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
+import org.apache.spark.sql.delta.{sources, OptimisticTransaction}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.{types => sparktypes}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{types => sparktypes, SparkSession}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
@@ -70,14 +72,27 @@ trait TestUtilsWithTableManagerAPIs extends AbstractTestUtils {
   override def getTableManagerAdapter: AbstractTableManagerAdapter = new TableManagerAdapter()
 }
 
-trait AbstractTestUtils extends Assertions with SQLHelper {
+object TestUtilsWithTableManagerAPIs extends TestUtilsWithTableManagerAPIs
 
-  import io.delta.kernel.defaults.test.ResolvedTableAdapterImplicits._
+trait AbstractTestUtils
+    extends Assertions
+    with SQLHelper
+    with TestCommitterUtils
+    with TestFixtures {
 
   def getTableManagerAdapter: AbstractTableManagerAdapter
 
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
+
+  // Used in child suites to override defaultEngine
+  lazy val defaultEngineBatchSize2 = DefaultEngine.create(new Configuration() {
+    {
+      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+      set("delta.kernel.default.parquet.reader.batch-size", "2");
+      set("delta.kernel.default.json.reader.batch-size", "2");
+    }
+  })
 
   lazy val spark = SparkSession
     .builder()
@@ -157,6 +172,36 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     def toScala: Option[T] = if (optional.isPresent) Some(optional.get()) else None
   }
 
+  /**
+   * Provides test-only apis to internal Delta Spark APIs.
+   */
+  implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
+
+    /**
+     * Test only method to commit arbitrary actions to delta table.
+     */
+    def commitManuallyWithValidation(actions: Action*): Unit = {
+      txn.commit(actions.toSeq, ManualUpdate)
+    }
+
+    /**
+     * Test only method to unsafe commit - writes actions directly to transaction log.
+     * Note: This bypasses Delta Spark transaction logic.
+     *
+     * @param tablePath The path to the Delta table
+     * @param version The commit version number
+     * @param actions Sequence of Action objects to write
+     */
+    def commitUnsafe(tablePath: String, version: Long, actions: Action*): Unit = {
+      val logPath = new org.apache.hadoop.fs.Path(tablePath, "_delta_log")
+      val commitFile = org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile(logPath, version)
+      val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
+      Files.write(Paths.get(commitFile.toString), commitContent)
+      // Generate crc file for this commit version.
+      Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
+    }
+  }
+
   implicit object ResourceLoader {
     lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
@@ -183,20 +228,16 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     testFunc(tablePath)
   }
 
-  def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
-    Table.forPath(engine, path)
-      .getLatestSnapshot(engine)
+  def latestSnapshot(path: String, engine: Engine = defaultEngine): SnapshotImpl = {
+    getTableManagerAdapter.getSnapshotAtLatest(engine, path)
   }
 
   def tableSchema(path: String): StructType = {
-    Table.forPath(defaultEngine, path)
-      .getLatestSnapshot(defaultEngine)
-      .getSchema()
+    latestSnapshot(path).getSchema()
   }
 
   def hasTableProperty(tablePath: String, propertyKey: String, expValue: String): Boolean = {
-    val table = Table.forPath(defaultEngine, tablePath)
-    val schema = table.getLatestSnapshot(defaultEngine).getSchema()
+    val schema = tableSchema(tablePath)
     schema.fields().asScala.exists { field =>
       field.getMetadata.getString(propertyKey) == expValue
     }
@@ -229,24 +270,10 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       filter: Predicate = null,
       expectedRemainingFilter: Predicate = null,
       engine: Engine = defaultEngine): Seq[Row] = {
-    readResolvedTableAdapter(
-      snapshot.toTestAdapter,
-      readSchema,
-      filter,
-      expectedRemainingFilter,
-      engine)
-  }
-
-  def readResolvedTableAdapter(
-      resolvedTableAdapter: AbstractResolvedTableAdapter,
-      readSchema: StructType = null,
-      filter: Predicate = null,
-      expectedRemainingFilter: Predicate = null,
-      engine: Engine = defaultEngine): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
 
-    var scanBuilder = resolvedTableAdapter.getScanBuilder()
+    var scanBuilder = snapshot.getScanBuilder()
 
     if (readSchema != null) {
       scanBuilder = scanBuilder.withReadSchema(readSchema)
@@ -267,14 +294,14 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     val scanState = scan.getScanState(engine);
     val fileIter = scan.getScanFiles(engine)
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(scanState)
     fileIter.forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows().forEach { scanFileRow =>
         val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
         val physicalDataIter = engine.getParquetHandler().readParquetFiles(
           singletonCloseableIterator(fileStatus),
           physicalDataReadSchema,
-          Optional.empty())
+          Optional.empty()).map(_.getData)
         var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
         try {
           dataBatches = Scan.transformPhysicalData(
@@ -314,14 +341,13 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       engine: Engine,
       tablePath: String,
       readSchema: StructType): Seq[FilteredColumnarBatch] = {
-    val scan = Table.forPath(engine, tablePath)
-      .getLatestSnapshot(engine)
+    val scan = latestSnapshot(tablePath, engine)
       .getScanBuilder()
       .withReadSchema(readSchema)
       .build()
     val scanState = scan.getScanState(engine)
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(scanState)
     var result: Seq[FilteredColumnarBatch] = Nil
     scan.getScanFiles(engine).forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows.forEach { scanFile =>
@@ -332,7 +358,8 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
           Optional.empty())
         var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
         try {
-          dataBatches = Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter)
+          dataBatches =
+            Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter.map(_.getData))
           dataBatches.forEach { dataBatch => result = result :+ dataBatch }
         } finally {
           Utils.closeCloseables(dataBatches)
@@ -358,28 +385,6 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     }
   }
 
-  /** All simple data type used in parameterized tests where type is one of the test dimensions. */
-  val SIMPLE_TYPES = Seq(
-    BooleanType.BOOLEAN,
-    ByteType.BYTE,
-    ShortType.SHORT,
-    IntegerType.INTEGER,
-    LongType.LONG,
-    FloatType.FLOAT,
-    DoubleType.DOUBLE,
-    DateType.DATE,
-    TimestampType.TIMESTAMP,
-    TimestampNTZType.TIMESTAMP_NTZ,
-    StringType.STRING,
-    BinaryType.BINARY,
-    new DecimalType(10, 5))
-
-  /** All types. Used in parameterized tests where type is one of the test dimensions. */
-  val ALL_TYPES = SIMPLE_TYPES ++ Seq(
-    new ArrayType(BooleanType.BOOLEAN, true),
-    new MapType(IntegerType.INTEGER, LongType.LONG, true),
-    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
-
   /**
    * Compares the rows in the tables latest snapshot with the expected answer and fails if they
    * do not match. The comparison is order independent. If expectedSchema is provided, checks
@@ -388,17 +393,22 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
    * @param path fully qualified path of the table to check
    * @param expectedAnswer expected rows
    * @param readCols subset of columns to read; if null then all columns will be read
+   * @param metadataCols set of metadata columns to read; if null then no metadata columns will
+   *                     be read
    * @param engine engine to use to read the table
-   * @param expectedSchema expected schema to check for; if null then no check is performed
+   * @param expectedSchema expected schema to check for (ignoring metadata columns);
+   *                       if null then no check is performed
    * @param filter Filter to select a subset of rows form the table
    * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
    *                                by Kernel.
    * @param expectedVersion expected version of the latest snapshot for the table
    */
+  // scalastyle:off argcount
   def checkTable(
       path: String,
       expectedAnswer: Seq[TestRow],
       readCols: Seq[String] = null,
+      metadataCols: Seq[StructField] = null,
       engine: Engine = defaultEngine,
       expectedSchema: StructType = null,
       filter: Predicate = null,
@@ -408,32 +418,36 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       expectedVersion: Option[Long] = None): Unit = {
     assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
-    val resolvedTableAdapter = if (version.isDefined) {
-      getTableManagerAdapter.getResolvedTableAdapterAtVersion(engine, path, version.get)
+    val snapshot = if (version.isDefined) {
+      getTableManagerAdapter.getSnapshotAtVersion(engine, path, version.get)
     } else if (timestamp.isDefined) {
-      getTableManagerAdapter.getResolvedTableAdapterAtTimestamp(engine, path, timestamp.get)
+      getTableManagerAdapter.getSnapshotAtTimestamp(engine, path, timestamp.get)
     } else {
-      getTableManagerAdapter.getResolvedTableAdapterAtLatest(engine, path)
+      getTableManagerAdapter.getSnapshotAtLatest(engine, path)
     }
 
-    val readSchema = if (readCols == null) {
-      null
-    } else {
-      val schema = resolvedTableAdapter.getSchema()
-      new StructType(readCols.map(schema.get(_)).asJava)
-    }
+    val readSchema =
+      if (readCols == null && metadataCols == null) null
+      else {
+        val schema = snapshot.getSchema()
+        val readFields = Option(readCols).map(_.map(schema.get)).getOrElse(schema.fields().asScala)
+        val metadataFields = Option(metadataCols).getOrElse(Seq())
+        new StructType((readFields ++ metadataFields).asJava)
+      }
 
     if (expectedSchema != null) {
+      // We ignore metadata columns in this check because metadata columns are not part of the
+      // public table schema.
       assert(
-        expectedSchema == resolvedTableAdapter.getSchema(),
+        expectedSchema == snapshot.getSchema(),
         s"""
            |Expected schema does not match actual schema:
            |Expected schema: $expectedSchema
-           |Actual schema: ${resolvedTableAdapter.getSchema()}
+           |Actual schema: ${snapshot.getSchema()}
            |""".stripMargin)
     }
 
-    val actualVersion = resolvedTableAdapter.getVersion()
+    val actualVersion = snapshot.getVersion()
 
     expectedVersion.foreach { version =>
       assert(
@@ -442,14 +456,15 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     }
 
     val result =
-      readResolvedTableAdapter(
-        resolvedTableAdapter,
+      readSnapshot(
+        snapshot,
         readSchema,
         filter,
         expectedRemainingFilter,
         engine)
     checkAnswer(result, expectedAnswer)
   }
+  // scalastyle:on argcount
 
   def checkAnswer(result: => Seq[Row], expectedAnswer: Seq[TestRow]): Unit = {
     checkAnswer(result.map(TestRow(_)), expectedAnswer)
@@ -549,14 +564,30 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
   }
 
   /**
-   * Drops table `tableName` after calling `f`.
+   * Creates a temporary directory with Delta log structure (_delta_log, _staged_commits,
+   * _sidecars), passes (tablePath, logPath) to `f`, and deletes the directory after `f` returns.
    */
-  protected def withTable(tableNames: String*)(f: => Unit): Unit = {
-    try f
+  protected def withTempDirAndAllDeltaSubDirs(f: (String, String) => Unit): Unit = {
+    val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
+    val deltaLogDir = new File(tempDir, "_delta_log")
+    deltaLogDir.mkdirs()
+    new File(deltaLogDir, FileNames.STAGED_COMMIT_DIRECTORY).mkdirs()
+    new File(deltaLogDir, FileNames.SIDECAR_DIRECTORY).mkdirs()
+    try f(tempDir.getAbsolutePath, deltaLogDir.getAbsolutePath)
     finally {
-      tableNames.foreach { name =>
-        spark.sql(s"DROP TABLE IF EXISTS $name")
-      }
+      FileUtils.deleteDirectory(tempDir)
+    }
+  }
+
+  /**
+   * Create a unique table name and drops it after completing `f`
+   */
+  protected def withTempTable[T](f: String => T): T = {
+    val tableName = s"temp_table_${UUID.randomUUID().toString.replace("-", "_")}"
+    try {
+      f(tableName)
+    } finally {
+      spark.sql(s"DROP TABLE IF EXISTS $tableName")
     }
   }
 
@@ -700,6 +731,18 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     }
   }
 
+  /**
+   * Utility method to replicate the behavior of individual values when they are converted from
+   * Row to TestRow.
+   */
+  def testColumnNullableValue(dataType: DataType, rowId: Int): Any = {
+    if (testIsNullValue(dataType, rowId)) {
+      null
+    } else {
+      testColumnValue(dataType, rowId)
+    }
+  }
+
   def testSingleValueVector(dataType: DataType, size: Int, value: Any): ColumnVector = {
     new ColumnVector {
       override def getDataType: DataType = dataType
@@ -814,8 +857,8 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       engine: Engine,
       tablePath: String,
       version: Long): Unit = {
-    val logPath = new KernelPath(s"$tablePath/_delta_log");
-    val crcInfo = ChecksumReader.getCRCInfo(
+    val logPath = new Path(s"$tablePath/_delta_log");
+    val crcInfo = ChecksumReader.tryReadChecksumFile(
       engine,
       FileStatus.of(checksumFile(
         logPath,
@@ -839,10 +882,14 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
   }
 
   def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-      .forEach(hook => hook.threadSafeInvoke(engine))
+    val crcSimpleHook = result
+      .getPostCommitHooks
+      .asScala
+      .find(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .getOrElse(throw new IllegalStateException("CRC simple hook not found"))
+
+    crcSimpleHook.threadSafeInvoke(engine)
+
     result
   }
 
@@ -861,7 +908,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       snapshot: Snapshot,
       expectEmptyTable: Boolean = false): Unit = {
     val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
-    val crcInfoOpt = ChecksumReader.getCRCInfo(
+    val crcInfoOpt = ChecksumReader.tryReadChecksumFile(
       defaultEngine,
       FileStatus.of(checksumFile(
         logPath,
@@ -914,5 +961,12 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
 
   protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
     new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
+  }
+
+  protected def optionToJava[T](option: Option[T]): Optional[T] = {
+    option match {
+      case Some(value) => Optional.of(value)
+      case None => Optional.empty()
+    }
   }
 }

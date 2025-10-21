@@ -40,14 +40,16 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
   }
 
   private def testSnapshotReport(snapshotReport: SnapshotReport): Unit = {
-    val timestampToVersionResolutionDuration = optionToString(
-      snapshotReport.getSnapshotMetrics().getTimestampToVersionResolutionDurationNs())
+    val computeTimestampToVersionTotalDuration = optionToString(
+      snapshotReport.getSnapshotMetrics().getComputeTimestampToVersionTotalDurationNs())
+    val loadSnapshotTotalDuration =
+      snapshotReport.getSnapshotMetrics().getLoadSnapshotTotalDurationNs()
     val loadProtocolAndMetadataDuration =
-      snapshotReport.getSnapshotMetrics().getLoadInitialDeltaActionsDurationNs()
+      snapshotReport.getSnapshotMetrics().getLoadProtocolMetadataTotalDurationNs()
     val buildLogSegmentDuration =
-      snapshotReport.getSnapshotMetrics().getTimeToBuildLogSegmentForVersionNs()
-    val durationToGetCrcInfo =
-      snapshotReport.getSnapshotMetrics().getDurationToGetCrcInfoNs()
+      snapshotReport.getSnapshotMetrics().getLoadLogSegmentTotalDurationNs()
+    val loadCrcTotalDuration =
+      snapshotReport.getSnapshotMetrics().getLoadCrcTotalDurationNs()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
     val expectedJson =
       s"""
@@ -59,23 +61,25 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"checkpointVersion":${optionToString(snapshotReport.getCheckpointVersion())},
          |"providedTimestamp":${optionToString(snapshotReport.getProvidedTimestamp())},
          |"snapshotMetrics":{
-         |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
-         |"loadInitialDeltaActionsDurationNs":${loadProtocolAndMetadataDuration},
-         |"timeToBuildLogSegmentForVersionNs":${buildLogSegmentDuration},
-         |"durationToGetCrcInfoNs":${durationToGetCrcInfo}
+         |"computeTimestampToVersionTotalDurationNs":${computeTimestampToVersionTotalDuration},
+         |"loadSnapshotTotalDurationNs":${loadSnapshotTotalDuration},
+         |"loadProtocolMetadataTotalDurationNs":${loadProtocolAndMetadataDuration},
+         |"loadLogSegmentTotalDurationNs":${buildLogSegmentDuration},
+         |"loadCrcTotalDurationNs":${loadCrcTotalDuration}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport))
+    assert(expectedJson == snapshotReport.toJson())
   }
 
   test("SnapshotReport serializer") {
     val snapshotContext1 = SnapshotQueryContext.forTimestampSnapshot("/table/path", 0)
-    snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionTimer.record(10)
-    snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
-    snapshotContext1.getSnapshotMetrics.timeToBuildLogSegmentForVersionTimer.record(500)
-    snapshotContext1.getSnapshotMetrics.durationToGetCrcInfoTimer.record(250)
-    snapshotContext1.setVersion(25)
+    snapshotContext1.getSnapshotMetrics.computeTimestampToVersionTotalDurationTimer.record(10)
+    snapshotContext1.getSnapshotMetrics.loadSnapshotTotalTimer.record(2000)
+    snapshotContext1.getSnapshotMetrics.loadProtocolMetadataTotalDurationTimer.record(1000)
+    snapshotContext1.getSnapshotMetrics.loadLogSegmentTotalDurationTimer.record(500)
+    snapshotContext1.getSnapshotMetrics.loadCrcTotalDurationTimer.record(250)
+    snapshotContext1.setResolvedVersion(25)
     snapshotContext1.setCheckpointVersion(Optional.of(20))
     val exception = new RuntimeException("something something failed")
 
@@ -94,14 +98,15 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"checkpointVersion":20,
         |"providedTimestamp":0,
         |"snapshotMetrics":{
-        |"timestampToVersionResolutionDurationNs":10,
-        |"loadInitialDeltaActionsDurationNs":1000,
-        |"timeToBuildLogSegmentForVersionNs":500,
-        |"durationToGetCrcInfoNs":250
+        |"computeTimestampToVersionTotalDurationNs":10,
+        |"loadSnapshotTotalDurationNs":2000,
+        |"loadProtocolMetadataTotalDurationNs":1000,
+        |"loadLogSegmentTotalDurationNs":500,
+        |"loadCrcTotalDurationNs":250
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport1))
+    assert(expectedJson == snapshotReport1.toJson())
 
     // Check with test function
     testSnapshotReport(snapshotReport1)
@@ -147,7 +152,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport))
+    assert(expectedJson == transactionReport.toJson())
   }
 
   test("TransactionReport serializer") {
@@ -172,7 +177,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(Collections.singletonList(
         new Column(Array[String]("test-clustering-col1", "nested")))),
       transactionMetrics1,
-      snapshotReport1,
+      Optional.of(snapshotReport1),
       Optional.of(exception))
 
     // Manually check expected JSON
@@ -199,7 +204,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport1))
+    assert(expectedJson == transactionReport1.toJson())
     // Check with test function
     testTransactionReport(transactionReport1)
 
@@ -215,7 +220,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(Collections.singletonList(new Column("test-clustering-col1"))),
       // empty/un-incremented transaction metrics
       TransactionMetrics.withExistingTableFileSizeHistogram(Optional.empty()),
-      snapshotReport2,
+      Optional.of(snapshotReport2),
       Optional.empty() /* exception */
     )
     testTransactionReport(transactionReport2)
@@ -252,7 +257,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport))
+    assert(expectedJson == scanReport.toJson())
   }
 
   test("ScanReport serializer") {
@@ -314,7 +319,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport1))
+    assert(expectedJson == scanReport1.toJson())
 
     // Check with test function
     testScanReport(scanReport1)

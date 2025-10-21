@@ -28,43 +28,50 @@ import java.util.Optional;
  */
 public class SnapshotMetrics {
 
-  public final Timer timestampToVersionResolutionTimer = new Timer();
+  public final Timer loadSnapshotTotalTimer = new Timer();
 
-  public final Timer loadInitialDeltaActionsTimer = new Timer();
+  public final Timer computeTimestampToVersionTotalDurationTimer = new Timer();
 
-  public final Timer timeToBuildLogSegmentForVersionTimer = new Timer();
+  public final Timer loadProtocolMetadataTotalDurationTimer = new Timer();
 
-  public final Timer durationToGetCrcInfoTimer = new Timer();
+  public final Timer loadLogSegmentTotalDurationTimer = new Timer();
+
+  public final Timer loadCrcTotalDurationTimer = new Timer();
 
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
-
-      final Optional<Long> timestampToVersionResolutionDurationResult =
-          timestampToVersionResolutionTimer.totalDurationIfRecorded();
-      final long loadInitialDeltaActionsDurationResult =
-          loadInitialDeltaActionsTimer.totalDurationNs();
-      final long timeToBuildLogSegmentForVersionDurationResult =
-          timeToBuildLogSegmentForVersionTimer.totalDurationNs();
-      final long durationToGetCrcInfoDurationResult = durationToGetCrcInfoTimer.totalDurationNs();
+      final Optional<Long> computeTimestampToVersionTotalDurationResult =
+          computeTimestampToVersionTotalDurationTimer.totalDurationIfRecorded();
+      final long loadSnapshotTotalDurationResult = loadSnapshotTotalTimer.totalDurationNs();
+      final long loadProtocolMetadataTotalDurationResult =
+          loadProtocolMetadataTotalDurationTimer.totalDurationNs();
+      final long loadLogSegmentTotalDurationResult =
+          loadLogSegmentTotalDurationTimer.totalDurationNs();
+      final long loadCrcTotalDurationResult = loadCrcTotalDurationTimer.totalDurationNs();
 
       @Override
-      public Optional<Long> getTimestampToVersionResolutionDurationNs() {
-        return timestampToVersionResolutionDurationResult;
+      public Optional<Long> getComputeTimestampToVersionTotalDurationNs() {
+        return computeTimestampToVersionTotalDurationResult;
       }
 
       @Override
-      public long getLoadInitialDeltaActionsDurationNs() {
-        return loadInitialDeltaActionsDurationResult;
+      public long getLoadSnapshotTotalDurationNs() {
+        return loadSnapshotTotalDurationResult;
       }
 
       @Override
-      public long getTimeToBuildLogSegmentForVersionNs() {
-        return timeToBuildLogSegmentForVersionDurationResult;
+      public long getLoadProtocolMetadataTotalDurationNs() {
+        return loadProtocolMetadataTotalDurationResult;
       }
 
       @Override
-      public long getDurationToGetCrcInfoNs() {
-        return durationToGetCrcInfoDurationResult;
+      public long getLoadLogSegmentTotalDurationNs() {
+        return loadLogSegmentTotalDurationResult;
+      }
+
+      @Override
+      public long getLoadCrcTotalDurationNs() {
+        return loadCrcTotalDurationResult;
       }
     };
   }
@@ -72,13 +79,16 @@ public class SnapshotMetrics {
   @Override
   public String toString() {
     return String.format(
-        "SnapshotMetrics(timestampToVersionResolutionTimer=%s, "
-            + "loadInitialDeltaActionsTimer=%s, "
+        "SnapshotMetrics("
+            + "computeTimestampToVersionTotalDurationTimer=%s, "
+            + "loadSnapshotTotalTimer=%s,"
+            + "loadProtocolMetadataTotalDurationTimer=%s, "
             + "timeToBuildLogSegmentForVersionTimer=%s, "
-            + "durationToGetCrcInfoTimer=%s)",
-        timestampToVersionResolutionTimer,
-        loadInitialDeltaActionsTimer,
-        timeToBuildLogSegmentForVersionTimer,
-        durationToGetCrcInfoTimer);
+            + "loadCrcTotalDurationNsTimer=%s)",
+        computeTimestampToVersionTotalDurationTimer,
+        loadSnapshotTotalTimer,
+        loadProtocolMetadataTotalDurationTimer,
+        loadLogSegmentTotalDurationTimer,
+        loadCrcTotalDurationTimer);
   }
 }

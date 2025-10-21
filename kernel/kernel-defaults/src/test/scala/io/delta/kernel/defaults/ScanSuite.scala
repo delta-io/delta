@@ -30,8 +30,10 @@ import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, Defau
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils, WriteUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
+import io.delta.kernel.engine.FileReadResult
+import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
@@ -51,7 +53,7 @@ import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField 
 import org.scalatest.funsuite.AnyFunSuite
 
 class ScanSuite extends AnyFunSuite with TestUtils
-    with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
+    with ExpressionTestUtils with SQLHelper with WriteUtils {
 
   import io.delta.kernel.defaults.ScanSuite._
 
@@ -1481,7 +1483,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("decimalCol", new DecimalType(10, 2)))
 
       val tableProps = Map(TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.getKey -> "10")
-      val txn = createTxn(engine, tablePath, isNewTable = true, schema, List.empty, tableProps)
+      val txn = getCreateTxn(engine, tablePath, schema, List.empty, tableProps)
       txn.commit(engine, emptyIterable())
 
       // Build some rows with corner-case values
@@ -1586,6 +1588,153 @@ class ScanSuite extends AnyFunSuite with TestUtils
     }
   }
 
+  test("partition pruning - predicates with SPARK.UTF8_BINARY on partition column") {
+    Seq(true, false).foreach { createCheckpoint =>
+      withTempDir { tempDir =>
+        Seq(("a", "b"), ("c", "d"), ("e", "f")).toDF("p", "d")
+          .write
+          .format("delta")
+          .partitionBy("p")
+          .save(tempDir.getCanonicalPath)
+
+        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+        val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+
+        if (createCheckpoint) {
+          // Create a checkpoint for the table
+          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+        }
+
+        val filterToFileNumber = Map(
+          new Predicate(
+            "<",
+            col("p"),
+            ofString("a"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+          new Predicate(
+            "=",
+            ofString("d"),
+            col("p"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+          new Predicate(
+            "=",
+            col("p"),
+            ofString("a"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+          new Predicate(
+            ">=",
+            col("p"),
+            ofString("a"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+          new Predicate(
+            ">",
+            col("p"),
+            ofString("e"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+          new And(
+            new Predicate(
+              ">=",
+              col("p"),
+              ofString("b"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              "<=",
+              col("p"),
+              ofString("e"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+          new Or(
+            new Predicate(
+              "=",
+              col("p"),
+              ofString("x"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              ">",
+              col("p"),
+              ofString("d"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+          new And(
+            new Predicate(
+              ">=",
+              col("p"),
+              ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              "<=",
+              col("p"),
+              ofString("z"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
+          new Predicate(
+            "STARTS_WITH",
+            col("p"),
+            ofString("a"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+          new In(
+            col("p"),
+            java.util.Arrays.asList(ofString("a"), ofString("x")),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+          new In(
+            col("p"),
+            java.util.Arrays.asList(ofString("x"), ofString("y")),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 0)
+        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
+      }
+    }
+  }
+
+  test("partition pruning - predicates with non default collation on partition column") {
+    Seq(true, false).foreach { createCheckpoint =>
+      withTempDir { tempDir =>
+        Seq(("a", "b"), ("c", "d"), ("e", "f")).toDF("p", "d")
+          .write
+          .format("delta")
+          .partitionBy("p")
+          .save(tempDir.getCanonicalPath)
+
+        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+
+        if (createCheckpoint) {
+          // Create a checkpoint for the table
+          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+        }
+
+        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+        val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+
+        // Non-default collations are not supported by the default engine for predicate evaluation.
+        // Assert that attempting to evaluate such predicates during partition pruning throws.
+        val failingPredicates = Seq(
+          new Predicate("<", col("p"), ofString("a"), utf8Lcase),
+          new Predicate("=", ofString("d"), col("p"), unicode),
+          new And(
+            new Predicate(">=", col("p"), ofString("b"), utf8Lcase),
+            new Predicate("<=", col("p"), ofString("e"), unicode)),
+          new Or(
+            new Predicate("<", col("p"), ofString("b"), utf8Lcase),
+            new Predicate(">", col("p"), ofString("a"), CollationIdentifier.SPARK_UTF8_BINARY)),
+          new Predicate("STARTS_WITH", col("p"), ofString("a"), utf8Lcase),
+          new In(
+            col("p"),
+            java.util.Arrays.asList(ofString("a"), ofString("c")),
+            utf8Lcase),
+          new Or(
+            new In(col("p"), java.util.Arrays.asList(ofString("x"), ofString("y")), unicode),
+            new Predicate("=", col("p"), ofString("z"))))
+
+        failingPredicates.foreach { predicate =>
+          val ex = intercept[KernelEngineException] {
+            collectScanFileRows(snapshot.getScanBuilder().withFilter(predicate).build())
+          }
+          assert(ex.getMessage.contains("Unsupported collation"))
+          assert(ex.getMessage.contains(CollationIdentifier.SPARK_UTF8_BINARY.toString))
+          assert(ex.getCause.isInstanceOf[UnsupportedOperationException])
+        }
+      }
+    }
+  }
+
   Seq(
     "spark-variant-checkpoint",
     "spark-variant-stable-feature-checkpoint",
@@ -1659,7 +1808,7 @@ object ScanSuite {
           override def readParquetFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
-              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+              predicate: Optional[Predicate]): CloseableIterator[FileReadResult] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
             super.readParquetFiles(fileIter, physicalSchema, predicate)
           }

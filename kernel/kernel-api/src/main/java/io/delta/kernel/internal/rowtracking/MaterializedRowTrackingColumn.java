@@ -15,13 +15,20 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.exceptions.InvalidTableException;
+import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.internal.util.SchemaUtils;
+import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -30,12 +37,12 @@ import java.util.stream.Stream;
 public final class MaterializedRowTrackingColumn {
 
   /** Static instance for the materialized row ID column. */
-  public static final MaterializedRowTrackingColumn ROW_ID =
+  public static final MaterializedRowTrackingColumn MATERIALIZED_ROW_ID =
       new MaterializedRowTrackingColumn(
           TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME, "_row-id-col-");
 
   /** Static instance for the materialized row commit version column. */
-  public static final MaterializedRowTrackingColumn ROW_COMMIT_VERSION =
+  public static final MaterializedRowTrackingColumn MATERIALIZED_ROW_COMMIT_VERSION =
       new MaterializedRowTrackingColumn(
           TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME, "_row-commit-version-col-");
 
@@ -71,7 +78,7 @@ public final class MaterializedRowTrackingColumn {
     Set<String> physicalColNames =
         schema.fields().stream().map(ColumnMapping::getPhysicalName).collect(Collectors.toSet());
 
-    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+    Stream.of(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION)
         .map(column -> metadata.getConfiguration().get(column.getMaterializedColumnNameProperty()))
         .filter(Objects::nonNull)
         .forEach(
@@ -96,7 +103,7 @@ public final class MaterializedRowTrackingColumn {
     }
 
     // Check that both materialized column name configs are present when row tracking is enabled
-    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+    Stream.of(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION)
         .forEach(
             column -> {
               if (!metadata
@@ -127,7 +134,7 @@ public final class MaterializedRowTrackingColumn {
 
     Map<String, String> configsToAdd = new HashMap<>();
 
-    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+    Stream.of(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION)
         .filter(
             column ->
                 !metadata
@@ -143,6 +150,191 @@ public final class MaterializedRowTrackingColumn {
     return configsToAdd.isEmpty()
         ? Optional.empty()
         : Optional.of(metadata.withMergedConfiguration(configsToAdd));
+  }
+
+  /**
+   * Converts a logical row tracking field to its physical counterpart(s).
+   *
+   * <p>Since computing the row ID requires the row index, requesting a row tracking column can
+   * require adding two columns to the physical schema.
+   *
+   * <p>Note that we must not mark the physical columns as metadata columns because as far as the
+   * parquet reader is concerned, these columns are not metadata columns.
+   *
+   * @param logicalField The logical field to convert.
+   * @param logicalSchema The logical schema containing the field.
+   * @param metadata The current metadata of the table.
+   * @return A list of {@link StructField}s representing the physical columns corresponding to the
+   *     logical field.
+   */
+  public static List<StructField> convertToPhysicalColumn(
+      StructField logicalField, StructType logicalSchema, Metadata metadata) {
+    if (!TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
+      throw DeltaErrors.missingRowTrackingColumnRequested(logicalField.getName());
+    }
+
+    if (logicalField.getMetadataColumnSpec() == MetadataColumnSpec.ROW_ID) {
+      List<StructField> physicalFields = new ArrayList<>(2);
+      physicalFields.add(
+          new StructField(
+              MATERIALIZED_ROW_ID.getPhysicalColumnName(metadata.getConfiguration()),
+              LongType.LONG,
+              true /* nullable */));
+      if (!logicalSchema.contains(MetadataColumnSpec.ROW_INDEX)) {
+        physicalFields.add(SchemaUtils.asInternalColumn(StructField.DEFAULT_ROW_INDEX_COLUMN));
+      }
+      return physicalFields;
+    } else if (logicalField.getMetadataColumnSpec() == MetadataColumnSpec.ROW_COMMIT_VERSION) {
+      return Collections.singletonList(
+          new StructField(
+              MATERIALIZED_ROW_COMMIT_VERSION.getPhysicalColumnName(metadata.getConfiguration()),
+              LongType.LONG,
+              true /* nullable */));
+    }
+
+    throw new IllegalArgumentException(
+        String.format(
+            "Logical field `%s` is not a recognized materialized row tracking column.",
+            logicalField.getName()));
+  }
+
+  /**
+   * Computes row IDs and row commit versions based on their materialized values if present in the
+   * data returned by the Parquet reader, using the base row ID and default row commit version from
+   * the AddFile otherwise.
+   *
+   * @param dataBatch a batch of physical data read from the table.
+   * @param scanFile the {@link Row} representing the scan file metadata.
+   * @param logicalSchema the logical schema of the query.
+   * @param configuration the configuration map containing table metadata.
+   * @param engine the {@link Engine} to use for expression evaluation.
+   * @return a new {@link ColumnarBatch} with logical row tracking columns
+   */
+  public static ColumnarBatch transformPhysicalData(
+      ColumnarBatch dataBatch,
+      Row scanFile,
+      StructType logicalSchema,
+      Map<String, String> configuration,
+      Engine engine) {
+    StructType physicalSchema = dataBatch.getSchema();
+    ExpressionHandler exprHandler = engine.getExpressionHandler();
+
+    // NOTE: We assume that each column is requested at most once in the read schema. This is
+    // consistent with other parts of the codebase.
+    String rowIdColumnName = MATERIALIZED_ROW_ID.getPhysicalColumnName(configuration);
+    int rowIdOrdinal = physicalSchema.indexOf(rowIdColumnName);
+    if (rowIdOrdinal != -1) {
+      dataBatch =
+          transformPhysicalRowId(
+              dataBatch,
+              scanFile,
+              rowIdColumnName,
+              exprHandler,
+              logicalSchema.at(logicalSchema.indexOf(MetadataColumnSpec.ROW_ID)),
+              physicalSchema,
+              rowIdOrdinal);
+    }
+
+    String rowCommitVersionColumnName =
+        MATERIALIZED_ROW_COMMIT_VERSION.getPhysicalColumnName(configuration);
+    int commitVersionOrdinal = physicalSchema.indexOf(rowCommitVersionColumnName);
+    if (commitVersionOrdinal != -1) {
+      dataBatch =
+          transformPhysicalCommitVersion(
+              dataBatch,
+              scanFile,
+              rowCommitVersionColumnName,
+              exprHandler,
+              logicalSchema.at(logicalSchema.indexOf(MetadataColumnSpec.ROW_COMMIT_VERSION)),
+              physicalSchema,
+              commitVersionOrdinal);
+    }
+
+    return dataBatch;
+  }
+
+  /** Row IDs are computed as <code>COALESCE(materializedRowId, baseRowId + rowIndex)</code>. */
+  private static ColumnarBatch transformPhysicalRowId(
+      ColumnarBatch dataBatch,
+      Row scanFile,
+      String rowIdColumnName,
+      ExpressionHandler exprHandler,
+      StructField logicalRowIdColumn,
+      StructType physicalSchema,
+      int rowIdOrdinal) {
+    long baseRowId =
+        InternalScanFileUtils.getBaseRowId(scanFile)
+            .orElseThrow(
+                () ->
+                    DeltaErrors.rowTrackingMetadataMissingInFile(
+                        "baseRowId", InternalScanFileUtils.getFilePath(scanFile)));
+    String rowIndexMetadataColName =
+        dataBatch
+            .getSchema()
+            .at(dataBatch.getSchema().indexOf(MetadataColumnSpec.ROW_INDEX))
+            .getName();
+    Expression rowIdExpr =
+        new ScalarExpression(
+            "COALESCE",
+            Arrays.asList(
+                new Column(rowIdColumnName),
+                new ScalarExpression(
+                    "ADD",
+                    Arrays.asList(
+                        new Column(rowIndexMetadataColName), Literal.ofLong(baseRowId)))));
+    ColumnVector rowIdVector =
+        exprHandler.getEvaluator(physicalSchema, rowIdExpr, LongType.LONG).eval(dataBatch);
+
+    // Remove the materialized row ID column and replace it with the coalesced vector
+    dataBatch =
+        dataBatch
+            .withDeletedColumnAt(rowIdOrdinal)
+            .withNewColumn(rowIdOrdinal, logicalRowIdColumn, rowIdVector);
+    return dataBatch;
+  }
+
+  /**
+   * Row commit versions are computed as <code>COALESCE(materializedRowCommitVersion,
+   * defaultRowCommitVersion)</code>.
+   */
+  private static ColumnarBatch transformPhysicalCommitVersion(
+      ColumnarBatch dataBatch,
+      Row scanFile,
+      String commitVersionColumnName,
+      ExpressionHandler exprHandler,
+      StructField logicalCommitVersionColumn,
+      StructType physicalSchema,
+      int commitVersionOrdinal) {
+    long defaultRowCommitVersion =
+        InternalScanFileUtils.getDefaultRowCommitVersion(scanFile)
+            .orElseThrow(
+                () ->
+                    DeltaErrors.rowTrackingMetadataMissingInFile(
+                        "defaultRowCommitVersion", InternalScanFileUtils.getFilePath(scanFile)));
+    Expression commitVersionExpr =
+        new ScalarExpression(
+            "COALESCE",
+            Arrays.asList(
+                new Column(commitVersionColumnName), Literal.ofLong(defaultRowCommitVersion)));
+    ColumnVector commitVersionVector =
+        exprHandler.getEvaluator(physicalSchema, commitVersionExpr, LongType.LONG).eval(dataBatch);
+
+    // Remove the materialized row commit version column and replace it with the coalesced vector
+    dataBatch =
+        dataBatch
+            .withDeletedColumnAt(commitVersionOrdinal)
+            .withNewColumn(commitVersionOrdinal, logicalCommitVersionColumn, commitVersionVector);
+    return dataBatch;
+  }
+
+  private String getPhysicalColumnName(Map<String, String> configuration) {
+    return Optional.ofNullable(configuration.get(getMaterializedColumnNameProperty()))
+        .orElseThrow(
+            () ->
+                new IllegalArgumentException(
+                    String.format(
+                        "Materialized column name `%s` is missing in the metadata config: %s",
+                        getMaterializedColumnNameProperty(), configuration)));
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */

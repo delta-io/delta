@@ -1,0 +1,17 @@
+# Below are scala codes used to create the `kernel-pagination-single-checkpoint` table.
+
+// First, create 10 commits
+for (i <- 0 until 10) {
+    val mode = if (i == 0) "overwrite" else "append"
+    spark.range(i * 10, (i + 1) * 10, 1, 2)
+         .write.format("delta").mode(mode).save(tablePath)
+}
+// Force checkpoint creation
+val deltaLog = DeltaLog.forTable(spark, tablePath)
+deltaLog.checkpoint()
+
+// Add a few more commits after checkpoint to create additional JSON files
+for (i <- 10 until 13) {
+    spark.range(i * 10, (i + 1) * 10, 1, 2)
+         .write.format("delta").mode("append").save(tablePath)
+}
