@@ -20,7 +20,7 @@ import java.math.BigDecimal
 import java.sql.Date
 import java.time.Instant
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
@@ -322,6 +322,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       .fields()
       .asScala
       .map(_.getName)
+      .toSeq
 
     val expectedAnswer = Seq(0, 1).map { i =>
       TestRow(
