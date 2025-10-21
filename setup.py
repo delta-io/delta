@@ -64,7 +64,7 @@ setup(
         'delta': ['py.typed'],
     },
     install_requires=[
-        'pyspark>=3.5.0',  # Using 3.5+ until Spark 4.0 is released
+        'pyspark>=4.0.0',
         'importlib_metadata>=1.0.0',
     ],
     python_requires='>=3.9',
