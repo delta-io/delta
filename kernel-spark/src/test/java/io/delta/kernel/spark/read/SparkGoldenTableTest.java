@@ -28,6 +28,8 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -638,38 +640,42 @@ public class SparkGoldenTableTest extends SparkDsv2TestBase {
 
   private void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
     List<Row> actualRows = actual.collectAsList();
-    assertEquals(actualRows.size(), expectedRows.size());
-
-    Set<String> expectedSet = new HashSet<>();
-    for (Row row : expectedRows) {
-      expectedSet.add(normalizeRowString(row.toString()));
-    }
-
-    Set<String> actualSet = new HashSet<>();
-    for (Row row : actualRows) {
-      actualSet.add(normalizeRowString(row.toString()));
-    }
-
-    assertEquals(expectedSet, actualSet);
+    assertDatasetEquals(actualRows, expectedRows);
   }
 
   private void assertDatasetEquals(List<Row> actualRows, List<Row> expectedRows) {
-    assertEquals(actualRows.size(), expectedRows.size());
+    assertEquals(expectedRows.size(), actualRows.size());
 
-    Set<String> expectedSet = new HashSet<>();
+    List<String> expectedStrings = new ArrayList<>();
     for (Row row : expectedRows) {
-      expectedSet.add(normalizeRowString(row.toString()));
+      expectedStrings.add(rowToComparableString(row));
     }
+    Collections.sort(expectedStrings);
 
-    Set<String> actualSet = new HashSet<>();
+    List<String> actualStrings = new ArrayList<>();
     for (Row row : actualRows) {
-      actualSet.add(normalizeRowString(row.toString()));
+      actualStrings.add(rowToComparableString(row));
     }
+    Collections.sort(actualStrings);
 
-    assertEquals(expectedSet, actualSet);
+    assertEquals(expectedStrings, actualStrings);
   }
 
-  private String normalizeRowString(String rowString) {
-    return rowString.replace("WrappedArray", "List");
+  private String rowToComparableString(Row row) {
+    return toComparableString(row);
+  }
+
+  private String toComparableString(Object value) {
+    if (value == null) return "null";
+    if (value instanceof byte[]) return "bytes:" + Arrays.toString((byte[]) value);
+    if (value instanceof Row) {
+      Row r = (Row) value;
+      return "["
+          + IntStream.range(0, r.length())
+              .mapToObj(i -> toComparableString(r.get(i)))
+              .collect(Collectors.joining(","))
+          + "]";
+    }
+    return value.toString().replace("WrappedArray", "List");
   }
 }
