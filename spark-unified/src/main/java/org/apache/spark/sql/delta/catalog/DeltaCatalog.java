@@ -14,24 +14,14 @@
  * limitations under the License.
  */
 
-package io.delta.sql
-
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.rules.Rule
+package org.apache.spark.sql.delta.catalog;
 
 /**
- * Delta Spark Session Extension that can register both V1 and V2 implementations.
- * This class sits in delta-spark (combined) module and can access:
+ * Delta Catalog implementation that can delegate to both V1 and V2 implementations.
+ * This class sits in delta-spark (unified) module and can access:
  * - V1: org.apache.spark.sql.delta.* (full version with DeltaLog)
  * - V2: io.delta.kernel.spark.*
  */
-class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
-
-  /**
-   * NoOpRule for binary compatibility with Delta 3.3.0
-   * This class must remain here to satisfy MiMa checks
-   */
-  class NoOpRule extends Rule[LogicalPlan] {
-    override def apply(plan: LogicalPlan): LogicalPlan = plan
-  }
+public class DeltaCatalog extends AbstractDeltaCatalog {
 }
+

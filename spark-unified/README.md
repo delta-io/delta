@@ -1,19 +1,19 @@
-# Delta Spark Combined Module
+# Delta Spark Unified Module
 
-This module contains the final, published `delta-spark` JAR that combines both:
+This module contains the final, published `delta-spark` JAR that unifies both:
 - **V1 (DSv1)**: The traditional Delta Lake connector with full `DeltaLog` support
 - **V2 (DSv2)**: The new Kernel-backed connector for improved performance
 
 ## Architecture
 
-The combined module provides unified entry points:
+The unified module provides single entry points for both V1 and V2:
 - `DeltaCatalog`: Extends `AbstractDeltaCatalog` from the `spark` module
 - `DeltaSparkSessionExtension`: Extends `AbstractDeltaSparkSessionExtension` from the `spark` module
 
 ## Module Structure
 
 ```
-spark-combined/          (This module - final published artifact)
+spark-unified/           (This module - final published artifact)
   ├── src/main/java/
   │   └── org.apache.spark.sql.delta.catalog.DeltaCatalog.java
   └── src/main/scala/
