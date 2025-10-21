@@ -71,8 +71,6 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 class LegacyDeltaCatalog extends AbstractDeltaCatalog
 
 // Abstract base class that contains the core Delta Catalog logic.
-// This is extended by both LegacyDeltaCatalog (V1-only) and DeltaCatalog (unified V1+V2)
-// in the spark-unified module.
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier

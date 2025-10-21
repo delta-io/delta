@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta
 import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, UUID}
+
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
@@ -37,6 +38,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sql.AbstractDeltaSparkSessionExtension
 import org.apache.hadoop.fs.{ChecksumException, Path}
+
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
