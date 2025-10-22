@@ -191,7 +191,7 @@ public final class StructType extends DataType {
     }
     StructType structType = (StructType) dataType;
     return this.length() == structType.length()
-        && this.fieldNames == structType.fieldNames
+        && fieldNames.equals(structType.fieldNames)
         && IntStream.range(0, this.length())
             .mapToObj(i -> this.at(i).equivalentIgnoreCollations(structType.at(i)))
             .allMatch(result -> result);
