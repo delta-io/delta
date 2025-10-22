@@ -10,6 +10,7 @@ jobs:
         scala: [2.13.13]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      USE_SPARK_MASTER: 1
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4
@@ -37,7 +38,7 @@ jobs:
           # the above directories when we use the key for the first time. After that, each run will
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
-          key: delta-sbt-cache-spark3.2-scala${{ matrix.scala }}
+          key: delta-sbt-cache-spark4.0-scala${{ matrix.scala }}
       - name: Install Job dependencies
         run: |
           sudo apt-get update
