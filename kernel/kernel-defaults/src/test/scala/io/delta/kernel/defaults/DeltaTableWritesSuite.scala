@@ -477,6 +477,87 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  test("insert into table twice - complex types with collated strings in nested/array/map") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val unicode = new StringType("ICU.UNICODE")
+      val unicodeWithVersion = new StringType("ICU.UNICODE.74")
+
+      val commonNested = new StructType()
+        .add("s1", utf8Lcase)
+        .add("n", INTEGER)
+
+      val nestedWithVersion = commonNested.add("s2", unicodeWithVersion)
+      val nestedWithoutVersion = commonNested.add("s2", unicode)
+
+      val schemaWithVersion = new StructType()
+        .add("nested", nestedWithVersion)
+        .add("arr", new ArrayType(utf8Lcase, true))
+        .add("map", new MapType(utf8Lcase, unicode, true))
+      val schemaWithoutVersion = new StructType()
+        .add("nested", nestedWithoutVersion)
+        .add("arr", new ArrayType(utf8Lcase, true))
+        .add("map", new MapType(utf8Lcase, unicode, true))
+
+      val batchSize = 4
+
+      def buildBatch(seed: String): FilteredColumnarBatch = {
+        val nestedVectors = Array[ColumnVector](
+          testColumnVector(batchSize, utf8Lcase),
+          testColumnVector(batchSize, INTEGER),
+          testColumnVector(batchSize, unicode))
+        val nestedVector = new DefaultStructVector(
+          batchSize,
+          nestedWithVersion,
+          Optional.empty(),
+          nestedVectors)
+
+        val arrValues: Seq[Seq[AnyRef]] = (0 until batchSize).map { i =>
+          Seq(s"${seed}t$i", s"${seed}x$i").map(_.asInstanceOf[AnyRef])
+        }
+        val arrVector = buildArrayVector(arrValues, utf8Lcase, containsNull = true)
+
+        val mapType = new MapType(utf8Lcase, unicode, true)
+        val mapValues: Seq[Map[AnyRef, AnyRef]] = (0 until batchSize).map { i =>
+          Map[AnyRef, AnyRef](s"${seed}k$i" -> s"${seed}v$i")
+        }
+        val mapVector = buildMapVector(mapValues, mapType)
+
+        val vectors = Array[ColumnVector](nestedVector, arrVector, mapVector)
+        val batch = new DefaultColumnarBatch(batchSize, schemaWithVersion, vectors)
+        new FilteredColumnarBatch(batch, Optional.empty())
+      }
+
+      val fcb1 = buildBatch("a-")
+      val fcb2 = buildBatch("b-")
+
+      val commitResult0 = appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schemaWithVersion,
+        data = Seq(Map.empty[String, Literal] -> Seq(fcb1)))
+
+      verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 0)
+
+      val commitResult1 = appendData(
+        engine,
+        tblPath,
+        data = Seq(Map.empty[String, Literal] -> Seq(fcb2)))
+
+      verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+
+      val expectedRows = Seq(fcb1, fcb2).flatMap(_.toTestRows)
+      verifyWrittenContent(tblPath, schemaWithVersion, expectedRows)
+
+      val metadata = getMetadata(engine, tblPath)
+      val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString())
+      assert(parsed === schemaWithoutVersion)
+    }
+  }
+
   test("insert into table - nested struct with collated string field") {
     withTempDirAndEngine { (tblPath, engine) =>
       val utf8Binary = new StringType(CollationIdentifier.SPARK_UTF8_BINARY)
@@ -595,7 +676,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val commit = appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
       verifyCommitResult(commit, expVersion = 1, expIsReadyForCheckpoint = false)
 
-      // Read stats
+      // Read stats JSON
       val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
       val scan = snapshot.getScanBuilder().build()
       val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
@@ -621,6 +702,130 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
       assert(minValues.get("c3").asText() == "A")
       assert(maxValues.get("c3").asText() == "b")
+    }
+  }
+
+  test("stats: collect min/max for collated nested struct fields") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val nested = new StructType()
+        .add("s1", utf8Lcase)
+        .add("i1", INTEGER)
+      val schema = new StructType()
+        .add("nested", nested)
+
+      val txn = getCreateTxn(engine, tblPath, schema)
+      commitTransaction(txn, engine, emptyIterable())
+
+      val batchSize = 4
+      val s1Values = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
+      val i1Values = Array[java.lang.Integer](3, -1, 10, 5)
+      val s1 = DefaultGenericVector.fromArray(utf8Lcase, s1Values)
+      val i1 = DefaultGenericVector.fromArray(INTEGER, i1Values.asInstanceOf[Array[AnyRef]])
+      val nestedVector = new DefaultStructVector(
+        batchSize,
+        nested,
+        Optional.empty(),
+        Array[ColumnVector](s1, i1))
+      val batch = new DefaultColumnarBatch(
+        batchSize,
+        schema,
+        Array[ColumnVector](nestedVector))
+      val fcb = new FilteredColumnarBatch(batch, Optional.empty())
+
+      val commit = appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
+      verifyCommitResult(commit, expVersion = 1, expIsReadyForCheckpoint = false)
+
+      // Read stats JSON
+      val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder().build()
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+        .flatMap(_.getRows.toSeq)
+      val statsJson = scanFiles.headOption.flatMap { row =>
+        val add = row.getStruct(row.getSchema.indexOf("add"))
+        val idx = add.getSchema.indexOf("stats")
+        if (idx >= 0 && !add.isNullAt(idx)) Some(add.getString(idx)) else None
+      }.getOrElse(fail("Stats JSON not found"))
+
+      val mapper = JsonUtils.mapper()
+      val statsNode = mapper.readTree(statsJson)
+      val minValues = statsNode.get("minValues")
+      val maxValues = statsNode.get("maxValues")
+
+      val minNested = minValues.get("nested")
+      val maxNested = maxValues.get("nested")
+
+      // For s1: [b, A, B, a] -> min "A", max "b"
+      assert(minNested.get("s1").asText() == "A")
+      assert(maxNested.get("s1").asText() == "b")
+
+      // For i1: [3, -1, 10, 5] -> min -1, max 10
+      assert(minNested.get("i1").asInt() == -1)
+      assert(maxNested.get("i1").asInt() == 10)
+    }
+  }
+
+  test("stats: arrays and maps produce no stats; collated string field stats present") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val unicode = new StringType("ICU.UNICODE")
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val schema = new StructType()
+        .add("name", unicode)
+        .add("arr", new ArrayType(utf8Lcase, true))
+        .add("map", new MapType(unicode, INTEGER, true))
+
+      val txn = getCreateTxn(engine, tblPath, schema)
+      commitTransaction(txn, engine, emptyIterable())
+
+      val batchSize = 4
+      val nameValues = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
+      val nameVec = DefaultGenericVector.fromArray(unicode, nameValues)
+
+      val arrValues: Seq[Seq[AnyRef]] = (0 until batchSize).map { i =>
+        Seq(s"x$i").map(_.asInstanceOf[AnyRef])
+      }
+      val arrVec = buildArrayVector(arrValues, utf8Lcase, containsNull = true)
+
+      val mapType = new MapType(unicode, INTEGER, true)
+      val mapValues: Seq[Map[AnyRef, AnyRef]] = (0 until batchSize).map { i =>
+        Map[AnyRef, AnyRef](s"k$i" -> java.lang.Integer.valueOf(i))
+      }
+      val mapVec = buildMapVector(mapValues, mapType)
+
+      val batch = new DefaultColumnarBatch(
+        batchSize,
+        schema,
+        Array[ColumnVector](nameVec, arrVec, mapVec))
+      val fcb = new FilteredColumnarBatch(batch, Optional.empty())
+
+      val commit = appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
+      verifyCommitResult(commit, expVersion = 1, expIsReadyForCheckpoint = false)
+
+      // Read stats JSON
+      val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder().build()
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+        .flatMap(_.getRows.toSeq)
+      val statsJson = scanFiles.headOption.flatMap { row =>
+        val add = row.getStruct(row.getSchema.indexOf("add"))
+        val idx = add.getSchema.indexOf("stats")
+        if (idx >= 0 && !add.isNullAt(idx)) Some(add.getString(idx)) else None
+      }.getOrElse(fail("Stats JSON not found"))
+
+      val mapper = JsonUtils.mapper()
+      val statsNode = mapper.readTree(statsJson)
+      val minValues = statsNode.get("minValues")
+      val maxValues = statsNode.get("maxValues")
+
+      // String column stats are present
+      assert(minValues.get("name").asText() == "A")
+      assert(maxValues.get("name").asText() == "b")
+
+      // Array/Map columns should not have stats
+      assert(!minValues.has("arr"))
+      assert(!maxValues.has("arr"))
+      assert(!minValues.has("map"))
+      assert(!maxValues.has("map"))
     }
   }
 
