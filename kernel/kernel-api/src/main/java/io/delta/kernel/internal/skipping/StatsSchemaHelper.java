@@ -278,8 +278,8 @@ public class StatsSchemaHelper {
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
-   * fields (i.e. don't include fields with isSkippingEligibleDataType=false).
-   * Collation-aware statistics are not included.
+   * fields (i.e. don't include fields with isSkippingEligibleDataType=false). Collation-aware
+   * statistics are not included.
    */
   private static StructType getMinMaxStatsSchema(StructType dataSchema) {
     return getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ false);
@@ -316,7 +316,8 @@ public class StatsSchemaHelper {
   private static StructType getCollatedStatsSchema(
       StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
     StructType statsWithCollation = new StructType();
-    StructType minMaxSchemaForCollationAwareFields = getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ true);
+    StructType minMaxSchemaForCollationAwareFields =
+        getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ true);
     if (minMaxSchemaForCollationAwareFields.length() > 0) {
       for (CollationIdentifier collationIdentifier : collationIdentifiers) {
         statsWithCollation =
