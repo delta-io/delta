@@ -106,7 +106,7 @@ public class StatsSchemaHelper {
       StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
     StructType statsSchema = new StructType().add(NUM_RECORDS, LongType.LONG, true);
 
-    StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema, false);
+    StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
     if (minMaxStatsSchema.length() > 0) {
       statsSchema = statsSchema.add(MIN, minMaxStatsSchema, true).add(MAX, minMaxStatsSchema, true);
     }
@@ -267,6 +267,16 @@ public class StatsSchemaHelper {
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
+   * fields (i.e. don't include fields with isSkippingEligibleDataType=false).
+   * Collation-aware statistics are not included.
+   */
+  private static StructType getMinMaxStatsSchema(StructType dataSchema) {
+    return getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ false);
+  }
+
+  /**
+   * Given a data schema returns the expected schema for a min or max statistics column. This means
+   * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
    * fields (i.e. don't include fields with isSkippingEligibleDataType=false). In case when
    * isCollatedSkipping is true, only `StringType` fields are eligible.
    */
@@ -294,15 +304,15 @@ public class StatsSchemaHelper {
   private static StructType getCollatedStatsSchema(
       StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
     StructType statsWithCollation = new StructType();
-    StructType collatedMinMaxStatsSchema = getMinMaxStatsSchema(dataSchema, true);
-    for (CollationIdentifier collationIdentifier : collationIdentifiers) {
-      if (collatedMinMaxStatsSchema.length() > 0) {
+    StructType minMaxSchemaForCollationAwareFields = getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ true);
+    if (minMaxSchemaForCollationAwareFields.length() > 0) {
+      for (CollationIdentifier collationIdentifier : collationIdentifiers) {
         statsWithCollation =
             statsWithCollation.add(
                 collationIdentifier.toString(),
                 new StructType()
-                    .add(MIN, collatedMinMaxStatsSchema, true)
-                    .add(MAX, collatedMinMaxStatsSchema, true),
+                    .add(MIN, minMaxSchemaForCollationAwareFields, true)
+                    .add(MAX, minMaxSchemaForCollationAwareFields, true),
                 true);
       }
     }

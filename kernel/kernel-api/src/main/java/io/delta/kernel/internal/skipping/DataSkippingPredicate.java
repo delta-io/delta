@@ -80,15 +80,13 @@ public class DataSkippingPredicate extends Predicate {
     Set<CollationIdentifier> referencedCollations = new HashSet<>();
 
     if (this.getCollationIdentifier().isPresent()) {
-      referencedCollations = Collections.singleton(this.getCollationIdentifier().get());
+      referencedCollations.add(this.getCollationIdentifier().get());
     }
 
     for (Expression child : children) {
       if (child instanceof Predicate) {
         if (child instanceof DataSkippingPredicate) {
-          referencedCollations =
-              immutableUnion(
-                  referencedCollations, ((DataSkippingPredicate) child).getReferencedCollations());
+          referencedCollations.addAll(((DataSkippingPredicate) child).getReferencedCollations());
         } else {
           throw new IllegalStateException(
               String.format(
@@ -98,7 +96,7 @@ public class DataSkippingPredicate extends Predicate {
         }
       }
     }
-    return referencedCollations;
+    return Collections.unmodifiableSet(referencedCollations);
   }
 
   /** @return an unmodifiable set containing all elements from both sets. */
