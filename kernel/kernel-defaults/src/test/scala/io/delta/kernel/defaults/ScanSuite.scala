@@ -19,6 +19,7 @@ import java.math.{BigDecimal => JBigDecimal}
 import java.sql.Date
 import java.time.{Instant, OffsetDateTime}
 import java.time.temporal.ChronoUnit
+import java.util
 import java.util.Optional
 
 import scala.collection.JavaConverters._
@@ -51,8 +52,6 @@ import org.apache.spark.sql.{Row => SparkRow}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.util
 
 class ScanSuite extends AnyFunSuite with TestUtils
     with ExpressionTestUtils with SQLHelper with WriteUtils {
