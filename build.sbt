@@ -54,7 +54,7 @@ val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
-val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
+val SPARK_MASTER_VERSION = "4.0.0"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 kernelSpark / sparkVersion := getSparkVersion()
@@ -104,7 +104,7 @@ def getSparkVersion(): String = {
   )
 
   // e.g. build/sbt -DsparkVersion=master, build/sbt -DsparkVersion=4.0.0-SNAPSHOT
-  val input = sys.props.getOrElse("sparkVersion", LATEST_RELEASED_SPARK_VERSION)
+  val input = sys.props.getOrElse("sparkVersion", SPARK_MASTER_VERSION)
   input match {
     case LATEST_RELEASED_SPARK_VERSION | "latest" | `latestReleasedSparkVersionShort` =>
       LATEST_RELEASED_SPARK_VERSION
