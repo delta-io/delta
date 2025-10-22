@@ -238,7 +238,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
 
     val testCases = Seq(
       (
-        Set(nestedCol("min.nested.s2"), nestedCol("max.i1")),
+        Set(nestedCol(s"$MIN.nested.s2"), nestedCol(s"$MAX.i1")),
         new StructType()
           .add(
             MIN,
@@ -273,7 +273,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
                       new StructType().add("s2", StringType.STRING)))))),
       (
         Set(
-          nestedCol("min.i2"),
+          nestedCol(s"$MIN.i2"),
           collatedStatsCol(utf8Lcase, MAX, "nested.s2"),
           collatedStatsCol(utf8Lcase, MIN, "nested.s2")),
         new StructType()
