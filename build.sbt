@@ -54,7 +54,7 @@ val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
-val SPARK_MASTER_VERSION = "4.0.0"
+val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 kernelSpark / sparkVersion := getSparkVersion()
@@ -65,7 +65,7 @@ sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
-val hadoopVersion = "3.4.0"
+val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -104,7 +104,7 @@ def getSparkVersion(): String = {
   )
 
   // e.g. build/sbt -DsparkVersion=master, build/sbt -DsparkVersion=4.0.0-SNAPSHOT
-  val input = sys.props.getOrElse("sparkVersion", SPARK_MASTER_VERSION)
+  val input = sys.props.getOrElse("sparkVersion", LATEST_RELEASED_SPARK_VERSION)
   input match {
     case LATEST_RELEASED_SPARK_VERSION | "latest" | `latestReleasedSparkVersionShort` =>
       LATEST_RELEASED_SPARK_VERSION
@@ -567,7 +567,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.3.2",
+      "io.delta" %% "delta-sharing-client" % "1.2.4",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
