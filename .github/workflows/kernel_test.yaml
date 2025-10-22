@@ -45,7 +45,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: "zulu"
-          java-version: "11"
+          java-version: "17"
       - name: Cache SBT and dependencies
         id: cache-sbt
         uses: actions/cache@v4
@@ -80,7 +80,7 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "11"
+          java-version: "17"
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local
