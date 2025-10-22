@@ -80,6 +80,7 @@ public class StatsSchemaHelper {
    * |-- a: struct (nullable = true)
    * |  |-- b: struct (nullable = true)
    * |  |  |-- c: long (nullable = true)
+   * |  |  |-- d: string (nullable = true)
    * </pre>
    *
    * <p>Collected Statistics:
@@ -91,14 +92,27 @@ public class StatsSchemaHelper {
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
    * |  |-- maxValues: struct (nullable = false)
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
    * |  |-- nullCount: struct (nullable = false)
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
+   * |  |-- statsWithCollation: struct (nullable = true)
+   * |  |  |-- collationName: struct (nullable = true)
+   * |  |  |  |-- min: struct (nullable = false)
+   * |  |  |  |  |-- a: struct (nullable = false)
+   * |  |  |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |  |  |-- d: string (nullable = true)
+   * |  |  |  |-- max: struct (nullable = false)
+   * |  |  |  |  |-- a: struct (nullable = false)
+   * |  |  |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |  |  |-- d: string (nullable = true)
    * |  |-- tightBounds: boolean (nullable = true)
    * </pre>
    */
