@@ -20,7 +20,9 @@ import java.sql.Date
 import java.time.{Instant, OffsetDateTime}
 import java.time.temporal.ChronoUnit
 import java.util.Optional
+
 import scala.collection.JavaConverters._
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
@@ -41,7 +43,9 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
+
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.{Row => SparkRow}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
