@@ -267,8 +267,8 @@ public class StatsSchemaHelper {
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
-   * fields (i.e. don't include fields with isSkippingEligibleDataType=false). In case when isCollatedSkipping
-   * is true, only `StringType` fields are eligible.
+   * fields (i.e. don't include fields with isSkippingEligibleDataType=false). In case when
+   * isCollatedSkipping is true, only `StringType` fields are eligible.
    */
   private static StructType getMinMaxStatsSchema(StructType dataSchema) {
     List<StructField> fields = new ArrayList<>();
