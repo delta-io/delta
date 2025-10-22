@@ -28,12 +28,6 @@ public class DataSkippingPredicate extends Predicate {
   private final Set<Column> referencedCols;
 
   /**
-   * Set of {@link CollationIdentifier}s referenced by this predicate or any of its child
-   * expressions
-   */
-  private final Set<CollationIdentifier> collationIdentifiers;
-
-  /**
    * @param name the predicate name
    * @param children list of expressions that are input to this predicate.
    * @param referencedCols set of columns referenced by this predicate or any of its child
@@ -42,7 +36,6 @@ public class DataSkippingPredicate extends Predicate {
   DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
-    this.collationIdentifiers = Collections.unmodifiableSet(new HashSet<>());
   }
 
   /**
@@ -59,7 +52,6 @@ public class DataSkippingPredicate extends Predicate {
       Set<Column> referencedCols) {
     super(name, children, collationIdentifier);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
-    this.collationIdentifiers = Collections.singleton(collationIdentifier);
   }
 
   /**
@@ -73,8 +65,6 @@ public class DataSkippingPredicate extends Predicate {
   DataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
     super(name, Arrays.asList(left, right));
     this.referencedCols = immutableUnion(left.referencedCols, right.referencedCols);
-    this.collationIdentifiers =
-        immutableUnion(left.collationIdentifiers, right.collationIdentifiers);
   }
 
   /** @return set of columns referenced by this predicate or any of its child expressions */
@@ -87,7 +77,26 @@ public class DataSkippingPredicate extends Predicate {
    *     expressions
    */
   public Set<CollationIdentifier> getReferencedCollations() {
-    return collationIdentifiers;
+    Set<CollationIdentifier> referencedCollations = new HashSet<>();
+
+    if (this.getCollationIdentifier().isPresent()) {
+      referencedCollations.add(this.getCollationIdentifier().get());
+    }
+
+    for (Expression child : children) {
+      if (child instanceof Predicate) {
+        if (child instanceof DataSkippingPredicate) {
+          referencedCollations.addAll(((DataSkippingPredicate) child).getReferencedCollations());
+        } else {
+          throw new IllegalStateException(
+              String.format(
+                  "Expected child Predicate of DataSkippingPredicate to also be a"
+                      + " DataSkippingPredicate, but found %s",
+                  child.getClass().getName()));
+        }
+      }
+    }
+    return referencedCollations;
   }
 
   /** @return an unmodifiable set containing all elements from both sets. */
