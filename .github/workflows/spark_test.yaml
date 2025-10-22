@@ -57,9 +57,9 @@ jobs:
           export PATH="~/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           eval "$(pyenv virtualenv-init -)"
-          pyenv install 3.8.18
-          pyenv global system 3.8.18
-          pipenv --python 3.8 install
+          pyenv install 3.9.18
+          pyenv global system 3.9.18
+          pipenv --python 3.9 install
           # Update the pip version to 24.0. By default `pyenv.run` installs the latest pip version
           # available. From version 24.1, `pip` doesn't allow installing python packages
           # with version string containing `-`. In Delta-Spark case, the pypi package generated has
