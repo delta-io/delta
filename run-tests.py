@@ -90,7 +90,11 @@ def run_python_tests(root_dir):
     print("##### Running Python tests #####")
     python_test_script = path.join(root_dir, path.join("python", "run-tests.py"))
     print("Calling script %s", python_test_script)
-    run_cmd(["python3", python_test_script], env={'DELTA_TESTING': '1'}, stream_output=True)
+    # Pass through USE_SPARK_MASTER if it's set in the environment
+    env = {'DELTA_TESTING': '1'}
+    if os.getenv('USE_SPARK_MASTER'):
+        env['USE_SPARK_MASTER'] = os.getenv('USE_SPARK_MASTER')
+    run_cmd(["python3", python_test_script], env=env, stream_output=True)
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
