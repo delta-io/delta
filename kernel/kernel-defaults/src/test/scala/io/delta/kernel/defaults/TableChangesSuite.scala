@@ -288,7 +288,6 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         .withEndBoundary(CommitBoundary.atVersion(2))
         .build(defaultEngine)
 
-      // Use actionSet that excludes COMMITINFO (as it's not data-related)
       val actionSet = Set(
         DeltaAction.ADD,
         DeltaAction.REMOVE,
@@ -361,7 +360,6 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         .withEndBoundary(CommitBoundary.atVersion(2))
         .build(defaultEngine)
 
-      // Use actionSet that excludes COMMITINFO (as it's not data-related)
       val actionSet = Set(
         DeltaAction.ADD,
         DeltaAction.REMOVE,
@@ -472,7 +470,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
 
   test("getCommitActions with empty commit file") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // Create a table with some commits
+      // Create a table with an initial commit
       appendData(
         engine,
         tablePath,
@@ -480,37 +478,44 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         testSchema,
         data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1))
 
-      appendData(
-        engine,
-        tablePath,
-        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches2))
+      // Create an empty commit file at version 1 using commitUnsafe with no actions
+      import org.apache.spark.sql.delta.DeltaLog
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val txn = deltaLog.startTransaction()
+      txn.commitUnsafe(tablePath, 1)
 
-      // Now manually create an empty commit file (this is a bit artificial but tests the edge case)
-      // We'll test by requesting only CDC actions from a table without CDC
       val commitRange = TableManager.loadCommitRange(tablePath)
         .withStartBoundary(CommitBoundary.atVersion(0))
         .withEndBoundary(CommitBoundary.atVersion(1))
         .build(defaultEngine)
 
-      // Request only CDC actions (which don't exist in this table)
-      val actionSet = Set(DeltaAction.CDC)
+      val actionSet = Set(
+        DeltaAction.ADD,
+        DeltaAction.REMOVE,
+        DeltaAction.METADATA,
+        DeltaAction.PROTOCOL,
+        DeltaAction.CDC)
+
       val commitsIter = commitRange.getCommitActions(
         engine,
         getTableManagerAdapter.getSnapshotAtVersion(engine, tablePath, 0),
         actionSet.asJava)
 
       val commits = commitsIter.toSeq
-      assert(commits.size == 2) // Still 2 commits
+      assert(commits.size == 2) // Version 0 and version 1
 
-      // Each commit should return empty actions (no CDC actions)
-      commits.foreach { commit =>
-        val actions = commit.getActions.toSeq
-        // Should be empty or contain only empty batches
-        val totalRows = actions.map(_.getSize).sum
-        assert(totalRows == 0, s"Expected 0 rows but got $totalRows")
-      }
+      // Version 0 should have actions (normal commit)
+      val v0Actions = commits(0).getActions.toSeq
+      assert(v0Actions.nonEmpty)
 
-      commitsIter.close()
+      // Version 1 (empty commit) should return empty actions
+      val v1Actions = commits(1).getActions.toSeq
+      val totalRows = v1Actions.map(_.getSize).sum
+      assert(totalRows == 0, s"Empty commit file should have no actions, but got $totalRows rows")
+
+      // Can call getActions multiple times on empty commit
+      val v1ActionsTwice = commits(1).getActions.toSeq
+      assert(v1ActionsTwice.map(_.getSize).sum == 0)
     }
   }
 }
