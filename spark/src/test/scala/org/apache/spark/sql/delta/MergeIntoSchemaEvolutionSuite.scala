@@ -984,7 +984,7 @@ trait MergeIntoSchemaEvolutionBaseTests extends MergeIntoSchemaEvolutionMixin {
     expectErrorWithoutEvolutionContains = "No such struct field `b` in `a`")
 }
 
-trait MergeIntoSchemaEvolutionStoreAssignmentPolicyTests extends MergeIntoSchemaEvolutionMixin {
+trait MergeIntoSchemaEvoStoreAssignmentPolicyTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils with SharedSparkSession =>
   import testImplicits._
 

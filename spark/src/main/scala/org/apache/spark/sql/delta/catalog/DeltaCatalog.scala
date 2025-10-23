@@ -195,7 +195,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
     val writer = sourceQuery.map { df =>
       WriteIntoDelta(
-        DeltaLog.forTable(spark, new Path(loc)),
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt, new Path(loc)),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
         withDb.partitionColumnNames,
