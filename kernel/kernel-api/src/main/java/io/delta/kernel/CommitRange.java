@@ -121,6 +121,6 @@ public interface CommitRange {
    * @throws KernelException if the version range contains a version with reader protocol that is
    *     unsupported by Kernel
    */
-  CloseableIterator<CommitActions> getCommits(
+  CloseableIterator<CommitActions> getCommitActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet);
 }

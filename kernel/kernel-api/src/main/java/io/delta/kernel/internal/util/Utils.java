@@ -175,6 +175,76 @@ public class Utils {
     return new FilteredBatchToRowIter(sourceBatches);
   }
 
+  /**
+   * Flattens a nested {@link CloseableIterator} structure into a single flat iterator.
+   *
+   * <p>This method takes an iterator of iterators (nested structure) and flattens it into a single
+   * iterator that yields all elements from all inner iterators in sequence.
+   *
+   * <p>This is similar to {@link java.util.stream.Stream#flatMap(java.util.function.Function)}, but
+   * properly manages resource cleanup by closing both the outer iterator and all inner iterators.
+   *
+   * <p>Example usage: Given an iterator of commits, where each commit is an iterator of batches,
+   * flatMap produces a single iterator over all batches from all commits.
+   *
+   * <p>This method ensures that:
+   *
+   * <ul>
+   *   <li>Each inner iterator is closed when it is exhausted
+   *   <li>The outer iterator is closed when the flatMap iterator is closed
+   *   <li>The current inner iterator is closed when the flatMap iterator is closed
+   *   <li>Empty inner iterators are handled correctly
+   * </ul>
+   *
+   * @param nestedIterator An iterator of iterators to flatten
+   * @param <T> The type of elements in the inner iterators
+   * @return A new {@link CloseableIterator} that flattens all nested iterators
+   */
+  public static <T> CloseableIterator<T> flatMap(
+      CloseableIterator<CloseableIterator<T>> nestedIterator) {
+    return new CloseableIterator<T>() {
+      private CloseableIterator<T> currentInnerIterator = null;
+
+      @Override
+      public boolean hasNext() {
+        while (true) {
+          // If we have a current inner iterator and it has elements, return true
+          if (currentInnerIterator != null && currentInnerIterator.hasNext()) {
+            return true;
+          }
+
+          // Current inner iterator is exhausted, close it
+          if (currentInnerIterator != null) {
+            closeCloseables(currentInnerIterator);
+            currentInnerIterator = null;
+          }
+
+          // Try to get the next inner iterator from the outer iterator
+          if (!nestedIterator.hasNext()) {
+            return false;
+          }
+
+          // Get the next inner iterator
+          currentInnerIterator = nestedIterator.next();
+        }
+      }
+
+      @Override
+      public T next() {
+        if (!hasNext()) {
+          throw new java.util.NoSuchElementException();
+        }
+        return currentInnerIterator.next();
+      }
+
+      @Override
+      public void close() throws IOException {
+        // Close both the current inner iterator and the outer iterator
+        closeCloseables(currentInnerIterator, nestedIterator);
+      }
+    };
+  }
+
   public static String resolvePath(Engine engine, String path) {
     try {
       return wrapEngineExceptionThrowsIO(

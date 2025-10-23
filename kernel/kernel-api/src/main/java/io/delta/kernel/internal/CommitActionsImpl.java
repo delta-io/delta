@@ -55,8 +55,25 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
   private final boolean shouldDropProtocolColumn;
   private final boolean shouldDropCommitInfoColumn;
 
-  private CloseableIterator<ColumnarBatch> firstReadIterator;
-  private boolean firstCallDone = false;
+  /**
+   * Cached iterator from the initial read, built lazily on first call to getActions(). Ownership is
+   * transferred to the caller on the first getActions() call.
+   */
+  private CloseableIterator<ColumnarBatch> cachedIterator;
+
+  /**
+   * Tracks whether the cached iterator has been transferred to a caller. When true, the cached
+   * iterator should not be used or closed by this object.
+   */
+  private boolean cachedIteratorTransferred = false;
+
+  /**
+   * Stored wrapper and iterator for lazy batch processing. These are captured during construction
+   * and used to build cachedIterator on first call to getActions().
+   */
+  private ActionWrapper firstWrapper;
+
+  private CloseableIterator<ActionWrapper> remainingWrappers;
 
   /**
    * Creates a CommitActions from a commit file.
@@ -82,43 +99,27 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
     this.shouldDropProtocolColumn = shouldDropProtocolColumn;
     this.shouldDropCommitInfoColumn = shouldDropCommitInfoColumn;
 
-    // Read file once to extract version and timestamp
+    // Read file once to extract version and timestamp, but defer batch processing
     CloseableIterator<ActionWrapper> wrappers =
         new ActionsIterator(
             engine, Collections.singletonList(commitFile), readSchema, Optional.empty());
-    ;
     if (!wrappers.hasNext()) {
       // Empty commit file - use fallback
       this.version = FileNames.deltaVersion(new Path(commitFile.getPath()));
       this.timestamp = commitFile.getModificationTime();
-      this.firstReadIterator = toCloseableIterator(Collections.emptyIterator());
+      this.firstWrapper = null;
+      this.remainingWrappers = null;
     } else {
-      ActionWrapper firstWrapper = wrappers.next();
+      // Store firstWrapper for lazy processing, extract version/timestamp
+      this.firstWrapper = wrappers.next();
       this.version = firstWrapper.getVersion();
       this.timestamp =
           firstWrapper
               .getTimestamp()
               .orElseThrow(
                   () -> new RuntimeException("timestamp should always exist for Delta File"));
-
-      // Process first batch and cache the iterator
-      ColumnarBatch firstBatch =
-          TableChangesUtils.processAndDropColumns(
-              firstWrapper.getColumnarBatch(),
-              tablePath,
-              shouldDropProtocolColumn,
-              shouldDropCommitInfoColumn);
-
-      this.firstReadIterator =
-          toCloseableIterator(Collections.singletonList(firstBatch).iterator())
-              .combine(
-                  wrappers.map(
-                      wrapper ->
-                          TableChangesUtils.processAndDropColumns(
-                              wrapper.getColumnarBatch(),
-                              tablePath,
-                              shouldDropProtocolColumn,
-                              shouldDropCommitInfoColumn)));
+      // Store remaining wrappers for lazy processing
+      this.remainingWrappers = wrappers;
     }
   }
 
@@ -134,12 +135,41 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
 
   @Override
   public synchronized CloseableIterator<ColumnarBatch> getActions() {
-    if (!firstCallDone) {
-      firstCallDone = true;
-      // First call: return cached iterator and clear internal reference
-      // Caller is now responsible for closing this iterator
-      CloseableIterator<ColumnarBatch> result = firstReadIterator;
-      firstReadIterator = null; // Clear reference - caller owns it now
+    if (!cachedIteratorTransferred) {
+      cachedIteratorTransferred = true;
+
+      // Build the iterator lazily on first call
+      if (firstWrapper == null) {
+        // Empty commit file case
+        cachedIterator = toCloseableIterator(Collections.emptyIterator());
+      } else {
+        // Process first batch and combine with remaining wrappers
+        ColumnarBatch firstBatch =
+            TableChangesUtils.validateProtocolAndDropInternalColumns(
+                firstWrapper.getColumnarBatch(),
+                tablePath,
+                shouldDropProtocolColumn,
+                shouldDropCommitInfoColumn);
+
+        cachedIterator =
+            toCloseableIterator(Collections.singletonList(firstBatch).iterator())
+                .combine(
+                    remainingWrappers.map(
+                        wrapper ->
+                            TableChangesUtils.validateProtocolAndDropInternalColumns(
+                                wrapper.getColumnarBatch(),
+                                tablePath,
+                                shouldDropProtocolColumn,
+                                shouldDropCommitInfoColumn)));
+
+        // Clear references as they're no longer needed
+        firstWrapper = null;
+        remainingWrappers = null;
+      }
+
+      // Transfer ownership to caller
+      CloseableIterator<ColumnarBatch> result = cachedIterator;
+      cachedIterator = null;
       return result;
     } else {
       // Subsequent calls: re-read from file for memory efficiency
@@ -147,7 +177,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
               engine, Collections.singletonList(commitFile), readSchema, Optional.empty())
           .map(
               wrapper ->
-                  TableChangesUtils.processAndDropColumns(
+                  TableChangesUtils.validateProtocolAndDropInternalColumns(
                       wrapper.getColumnarBatch(),
                       tablePath,
                       shouldDropProtocolColumn,
@@ -167,9 +197,14 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
    */
   @Override
   public synchronized void close() {
-    if (firstReadIterator != null) {
-      Utils.closeCloseablesSilently(firstReadIterator);
-      firstReadIterator = null;
+    if (cachedIterator != null) {
+      Utils.closeCloseablesSilently(cachedIterator);
+      cachedIterator = null;
     }
+    if (remainingWrappers != null) {
+      Utils.closeCloseablesSilently(remainingWrappers);
+      remainingWrappers = null;
+    }
+    firstWrapper = null;
   }
 }

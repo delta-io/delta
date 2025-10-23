@@ -76,4 +76,121 @@ class CloseableIteratorSuite extends AnyFunSuite {
     assert(toList(result) === List(1, 3))
   }
 
+  test("Utils::flatMap -- flattens nested iterators") {
+    // Create an iterator of iterators
+    val nestedIter = toCloseableIter(Seq(
+      toCloseableIter(Seq(1, 2)),
+      toCloseableIter(Seq(3, 4, 5)),
+      toCloseableIter(Seq(6))))
+
+    val result = Utils.flatMap(nestedIter)
+    assert(toList(result) === List(1, 2, 3, 4, 5, 6))
+  }
+
+  test("Utils::flatMap -- handles empty inner iterators") {
+    val nestedIter = toCloseableIter(Seq(
+      toCloseableIter(Seq(1, 2)),
+      toCloseableIter(Seq[Int]()), // empty
+      toCloseableIter(Seq(3, 4)),
+      toCloseableIter(Seq[Int]()), // empty
+      toCloseableIter(Seq(5))))
+
+    val result = Utils.flatMap(nestedIter)
+    assert(toList(result) === List(1, 2, 3, 4, 5))
+  }
+
+  test("Utils::flatMap -- handles empty outer iterator") {
+    val nestedIter = toCloseableIter(Seq[CloseableIterator[Int]]())
+
+    val result = Utils.flatMap(nestedIter)
+    assert(toList(result) === List())
+  }
+
+  test("Utils::flatMap -- properly closes inner iterators") {
+    var innerClosedCount = 0
+    var outerClosed = false
+
+    class TrackingCloseableIterator(elems: Seq[Int]) extends CloseableIterator[Int] {
+      private val iter = elems.iterator
+      private var closed = false
+
+      override def hasNext(): Boolean = !closed && iter.hasNext
+      override def next(): Int = iter.next()
+      override def close(): Unit = {
+        if (!closed) {
+          innerClosedCount += 1
+          closed = true
+        }
+      }
+    }
+
+    val nestedIter = new CloseableIterator[CloseableIterator[Int]] {
+      private val iter = Seq(
+        new TrackingCloseableIterator(Seq(1, 2)),
+        new TrackingCloseableIterator(Seq(3, 4))).iterator
+      override def hasNext(): Boolean = iter.hasNext
+      override def next(): CloseableIterator[Int] = iter.next()
+      override def close(): Unit = {
+        outerClosed = true
+      }
+    }
+
+    val result = Utils.flatMap(nestedIter)
+
+    // Consume the iterator
+    toList(result)
+
+    // All inner iterators should have been closed (2 inner iterators)
+    assert(innerClosedCount === 2)
+    // Outer iterator should also be closed
+    assert(outerClosed === true)
+  }
+
+  test("Utils::flatMap -- closes iterators even when not fully consumed") {
+    var innerClosedCount = 0
+    var outerClosed = false
+
+    class TrackingCloseableIterator(elems: Seq[Int]) extends CloseableIterator[Int] {
+      private val iter = elems.iterator
+      private var closed = false
+
+      override def hasNext(): Boolean = !closed && iter.hasNext
+      override def next(): Int = iter.next()
+      override def close(): Unit = {
+        if (!closed) {
+          innerClosedCount += 1
+          closed = true
+        }
+      }
+    }
+
+    val nestedIter = new CloseableIterator[CloseableIterator[Int]] {
+      private val iter = Seq(
+        new TrackingCloseableIterator(Seq(1, 2)),
+        new TrackingCloseableIterator(Seq(3, 4)),
+        new TrackingCloseableIterator(Seq(5, 6))).iterator
+      override def hasNext(): Boolean = iter.hasNext
+      override def next(): CloseableIterator[Int] = iter.next()
+      override def close(): Unit = {
+        outerClosed = true
+      }
+    }
+
+    val result = Utils.flatMap(nestedIter)
+
+    // Only consume first 3 elements (from first 2 inner iterators)
+    assert(result.hasNext() === true)
+    assert(result.next() === 1)
+    assert(result.next() === 2)
+    assert(result.next() === 3)
+
+    // Explicitly close without consuming all
+    result.close()
+
+    // Should have closed the current inner iterator and the outer iterator
+    // Note: Only iterators that were created should be closed
+    assert(innerClosedCount >= 1) // At least the current one
+    assert(outerClosed === true)
+  }
+
 }

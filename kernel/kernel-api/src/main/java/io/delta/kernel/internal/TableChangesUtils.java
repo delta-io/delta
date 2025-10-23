@@ -35,6 +35,12 @@ import io.delta.kernel.utils.CloseableIterator;
 /** Utility class for table changes operations. */
 public class TableChangesUtils {
 
+  /** Column name for the version metadata column added to getActions results. */
+  public static final String VERSION_COLUMN_NAME = "version";
+
+  /** Column name for the timestamp metadata column added to getActions results. */
+  public static final String TIMESTAMP_COLUMN_NAME = "timestamp";
+
   private TableChangesUtils() {}
 
   /**
@@ -46,13 +52,15 @@ public class TableChangesUtils {
    * @param shouldDropCommitInfoColumn whether to drop the commitInfo column
    * @return the processed batch
    */
-  public static ColumnarBatch processAndDropColumns(
+  public static ColumnarBatch validateProtocolAndDropInternalColumns(
       ColumnarBatch batch,
       String tablePath,
       boolean shouldDropProtocolColumn,
       boolean shouldDropCommitInfoColumn) {
 
-    // Validate protocol
+    // Validate protocol if present in the batch.
+    // The protocol column may not be present if the caller filtered it out from the readSchema,
+    // or if the commit file contains no protocol actions.
     int protocolIdx = batch.getSchema().indexOf("protocol");
     if (protocolIdx >= 0) {
       ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
@@ -119,14 +127,19 @@ public class TableChangesUtils {
             "Evaluating the commit timestamp expression");
 
     return batch
-        .withNewColumn(0, new StructField("version", LongType.LONG, false), commitVersionVector)
         .withNewColumn(
-            1, new StructField("timestamp", LongType.LONG, false), commitTimestampVector);
+            0, new StructField(VERSION_COLUMN_NAME, LongType.LONG, false), commitVersionVector)
+        .withNewColumn(
+            1, new StructField(TIMESTAMP_COLUMN_NAME, LongType.LONG, false), commitTimestampVector);
   }
 
   /**
    * Flattens an iterator of CommitActions into an iterator of ColumnarBatch, adding version and
    * timestamp columns to each batch.
+   *
+   * <p>This method uses {@link Utils#flatMap(CloseableIterator)} to flatten the nested structure of
+   * commits and their actions. Each commit's actions are transformed to add version and timestamp
+   * columns before being flattened into a single iterator.
    *
    * @param engine the engine for expression evaluation
    * @param commits the iterator of CommitActions to flatten
@@ -134,59 +147,42 @@ public class TableChangesUtils {
    */
   public static CloseableIterator<ColumnarBatch> flattenCommitsAndAddMetadata(
       Engine engine, CloseableIterator<CommitActions> commits) {
-    return new CloseableIterator<ColumnarBatch>() {
-      private CommitActions currentCommit = null;
-      private CloseableIterator<ColumnarBatch> currentBatches = null;
+    // First, transform commits into an iterator of iterators
+    CloseableIterator<CloseableIterator<ColumnarBatch>> nestedIterator =
+        commits.map(
+            commit -> {
+              long version = commit.getVersion();
+              long timestamp = commit.getTimestamp();
+              CloseableIterator<ColumnarBatch> actions = commit.getActions();
 
-      @Override
-      public boolean hasNext() {
-        while (true) {
-          if (currentBatches != null && currentBatches.hasNext()) {
-            return true;
-          }
+              // Map each batch to add version and timestamp columns
+              CloseableIterator<ColumnarBatch> result =
+                  actions.map(
+                      batch -> addVersionAndTimestampColumns(engine, batch, version, timestamp));
 
-          if (currentBatches != null) {
-            Utils.closeCloseables(currentBatches);
-            currentBatches = null;
-          }
+              // Close the CommitActions if it's AutoCloseable when the inner iterator is closed
+              if (commit instanceof AutoCloseable) {
+                return new CloseableIterator<ColumnarBatch>() {
+                  @Override
+                  public boolean hasNext() {
+                    return result.hasNext();
+                  }
 
-          // Close previous CommitActions if it exists and is AutoCloseable
-          if (currentCommit != null && currentCommit instanceof AutoCloseable) {
-            Utils.closeCloseables((AutoCloseable) currentCommit);
-          }
+                  @Override
+                  public ColumnarBatch next() {
+                    return result.next();
+                  }
 
-          if (!commits.hasNext()) {
-            return false;
-          }
+                  @Override
+                  public void close() throws java.io.IOException {
+                    Utils.closeCloseables(result, (AutoCloseable) commit);
+                  }
+                };
+              }
+              return result;
+            });
 
-          currentCommit = commits.next();
-          currentBatches = currentCommit.getActions();
-        }
-      }
-
-      @Override
-      public ColumnarBatch next() {
-        if (!hasNext()) {
-          throw new java.util.NoSuchElementException();
-        }
-
-        ColumnarBatch batch = currentBatches.next();
-        long version = currentCommit.getVersion();
-        long timestamp = currentCommit.getTimestamp();
-
-        // Add version and timestamp as first two columns
-        return addVersionAndTimestampColumns(engine, batch, version, timestamp);
-      }
-
-      @Override
-      public void close() {
-        // Close current batches, current commit, and commits iterator
-        if (currentCommit != null && currentCommit instanceof AutoCloseable) {
-          Utils.closeCloseables(currentBatches, (AutoCloseable) currentCommit, commits);
-        } else {
-          Utils.closeCloseables(currentBatches, commits);
-        }
-      }
-    };
+    // Then flatten the nested iterator structure
+    return Utils.flatMap(nestedIterator);
   }
 }

@@ -266,7 +266,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
     }
   }
 
-  test("getCommits returns CommitActions with correct version and timestamp") {
+  test("getCommitActions returns CommitActions with correct version and timestamp") {
     withTempDir { dir =>
       val tablePath = dir.getCanonicalPath
 
@@ -297,7 +297,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         DeltaAction.PROTOCOL,
         DeltaAction.CDC)
 
-      val commitsIter = commitRange.getCommits(
+      val commitsIter = commitRange.getCommitActions(
         defaultEngine,
         getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
         actionSet.asJava)
@@ -326,7 +326,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
     }
   }
 
-  test("getCommits with ICT returns timestamp from inCommitTimestamp") {
+  test("getCommitActions with ICT returns timestamp from inCommitTimestamp") {
     withTempDirAndEngine { (tablePath, engine) =>
       val startTime = 5000L
       val clock = new ManualClock(startTime)
@@ -370,7 +370,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         DeltaAction.PROTOCOL,
         DeltaAction.CDC)
 
-      val commitsIter = commitRange.getCommits(
+      val commitsIter = commitRange.getCommitActions(
         engine,
         getTableManagerAdapter.getSnapshotAtVersion(engine, tablePath, 0),
         actionSet.asJava)
@@ -394,6 +394,123 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
       val sparkChanges = DeltaLog.forTable(spark, tablePath)
         .getChanges(0)
       compareCommitActions(commits, pruneSparkActionsByActionSet(sparkChanges, actionSet))
+      commitsIter.close()
+    }
+  }
+
+  test("getCommitActions can be called multiple times and returns same results") {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+
+      // Create some commits
+      (0 to 2).foreach { i =>
+        spark.range(10).write.format("delta").mode("append").save(tablePath)
+      }
+
+      val commitRange = TableManager.loadCommitRange(tablePath)
+        .withStartBoundary(CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(2))
+        .build(defaultEngine)
+
+      val actionSet = Set(
+        DeltaAction.ADD,
+        DeltaAction.REMOVE,
+        DeltaAction.METADATA,
+        DeltaAction.PROTOCOL,
+        DeltaAction.CDC)
+
+      // Call getCommitActions multiple times
+      val commits1 = commitRange.getCommitActions(
+        defaultEngine,
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
+        actionSet.asJava).toSeq
+
+      val commits2 = commitRange.getCommitActions(
+        defaultEngine,
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
+        actionSet.asJava).toSeq
+
+      val commits3 = commitRange.getCommitActions(
+        defaultEngine,
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
+        actionSet.asJava).toSeq
+
+      // Verify all calls return the same number of commits
+      assert(commits1.size == 3)
+      assert(commits2.size == 3)
+      assert(commits3.size == 3)
+
+      // Verify each call returns the same actions by comparing with Spark
+      val sparkChanges = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+        .filter(_._1 <= 2)
+      compareCommitActions(commits1, pruneSparkActionsByActionSet(sparkChanges, actionSet))
+      
+      // For commits2 and commits3, we need fresh Spark iterators
+      val sparkChanges2 = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+        .filter(_._1 <= 2)
+      compareCommitActions(commits2, pruneSparkActionsByActionSet(sparkChanges2, actionSet))
+      
+      val sparkChanges3 = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+        .filter(_._1 <= 2)
+      compareCommitActions(commits3, pruneSparkActionsByActionSet(sparkChanges3, actionSet))
+
+      // Also verify that calling getActions on each CommitActions multiple times works
+      commits1.foreach { commit =>
+        val actions1 = commit.getActions.toSeq
+        val actions2 = commit.getActions.toSeq
+        assert(actions1.size == actions2.size)
+        // Verify the schemas are the same
+        actions1.zip(actions2).foreach { case (batch1, batch2) =>
+          assert(batch1.getSchema.equals(batch2.getSchema))
+          assert(batch1.getSize == batch2.getSize)
+        }
+      }
+    }
+  }
+
+  test("getCommitActions with empty commit file") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a table with some commits
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1))
+      
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches2))
+
+      // Now manually create an empty commit file (this is a bit artificial but tests the edge case)
+      // We'll test by requesting only CDC actions from a table without CDC
+      val commitRange = TableManager.loadCommitRange(tablePath)
+        .withStartBoundary(CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(1))
+        .build(defaultEngine)
+
+      // Request only CDC actions (which don't exist in this table)
+      val actionSet = Set(DeltaAction.CDC)
+      val commitsIter = commitRange.getCommitActions(
+        engine,
+        getTableManagerAdapter.getSnapshotAtVersion(engine, tablePath, 0),
+        actionSet.asJava)
+
+      val commits = commitsIter.toSeq
+      assert(commits.size == 2) // Still 2 commits
+
+      // Each commit should return empty actions (no CDC actions)
+      commits.foreach { commit =>
+        val actions = commit.getActions.toSeq
+        // Should be empty or contain only empty batches
+        val totalRows = actions.map(_.getSize).sum
+        assert(totalRows == 0, s"Expected 0 rows but got $totalRows")
+      }
+
       commitsIter.close()
     }
   }
