@@ -243,7 +243,6 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
           .add(
             MIN,
             new StructType()
-              .add("i1", INTEGER)
               .add("nested", new StructType().add("s2", StringType.STRING)))
           .add(
             MAX,
