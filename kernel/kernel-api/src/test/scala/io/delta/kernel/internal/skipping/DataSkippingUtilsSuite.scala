@@ -57,7 +57,8 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
       collation: CollationIdentifier,
       statName: String,
       fieldName: String): Column = {
-    val columnPath = s"$STATS_WITH_COLLATION.$collation.$statName.$fieldName".split('.')
+    val columnPath =
+      Array(STATS_WITH_COLLATION, collation.toString, statName) ++ fieldName.split('.')
     new Column(columnPath)
   }
 
