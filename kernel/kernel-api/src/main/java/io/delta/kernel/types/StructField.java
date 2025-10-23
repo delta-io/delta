@@ -223,10 +223,19 @@ public class StructField {
     if (other == null) {
       return false;
     }
+    // Compare metadata while ignoring collation metadata differences
+    FieldMetadata metadataWithoutCollations =
+        new FieldMetadata.Builder().fromMetadata(metadata).remove(COLLATIONS_METADATA_KEY).build();
+    FieldMetadata otherMetadataWithoutCollations =
+        new FieldMetadata.Builder()
+            .fromMetadata(other.metadata)
+            .remove(COLLATIONS_METADATA_KEY)
+            .build();
+
     return nullable == other.nullable
         && name.equals(other.name)
         && dataType.equivalentIgnoreCollations(other.dataType)
-        && metadata.equals(other.metadata)
+        && metadataWithoutCollations.equals(otherMetadataWithoutCollations)
         && Objects.equals(typeChanges, other.typeChanges);
   }
 
