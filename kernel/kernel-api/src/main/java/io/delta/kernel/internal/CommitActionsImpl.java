@@ -26,12 +26,12 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionWrapper;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Collections;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Implementation of {@link CommitActions}.
@@ -40,11 +40,11 @@ import java.util.Optional;
  * The first call reuses initially-read data to avoid double I/O, while subsequent calls re-read the
  * commit file for memory efficiency.
  *
- * <p>This class implements {@link AutoCloseable} to allow callers to explicitly release cached
- * resources. If {@link #close()} is not called, resources will be released when the object is
- * garbage collected or when {@link #getActions()} is called for the first time.
+ * <p>Resources are automatically managed: calling {@link #getActions()} transfers resource
+ * ownership to the returned iterator. If {@link #getActions()} is never called, resources are
+ * released when the object is garbage collected.
  */
-public class CommitActionsImpl implements CommitActions, AutoCloseable {
+public class CommitActionsImpl implements CommitActions {
 
   private final long version;
   private final long timestamp;
@@ -56,24 +56,10 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
   private final boolean shouldDropCommitInfoColumn;
 
   /**
-   * Cached iterator from the initial read, built lazily on first call to getActions(). Ownership is
-   * transferred to the caller on the first getActions() call.
+   * Supplier for building the iterator. Initially returns an optimized iterator using cached data,
+   * then updates itself to return file-rereading iterators on subsequent calls.
    */
-  private CloseableIterator<ColumnarBatch> cachedIterator;
-
-  /**
-   * Tracks whether the cached iterator has been transferred to a caller. When true, the cached
-   * iterator should not be used or closed by this object.
-   */
-  private boolean cachedIteratorTransferred = false;
-
-  /**
-   * Stored wrapper and iterator for lazy batch processing. These are captured during construction
-   * and used to build cachedIterator on first call to getActions().
-   */
-  private ActionWrapper firstWrapper;
-
-  private CloseableIterator<ActionWrapper> remainingWrappers;
+  private Supplier<CloseableIterator<ColumnarBatch>> iteratorSupplier;
 
   /**
    * Creates a CommitActions from a commit file.
@@ -99,7 +85,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
     this.shouldDropProtocolColumn = shouldDropProtocolColumn;
     this.shouldDropCommitInfoColumn = shouldDropCommitInfoColumn;
 
-    // Read file once to extract version and timestamp, but defer batch processing
+    // Read file once to extract version and timestamp, create supplier for lazy batch processing
     CloseableIterator<ActionWrapper> wrappers =
         new ActionsIterator(
             engine, Collections.singletonList(commitFile), readSchema, Optional.empty());
@@ -107,19 +93,29 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
       // Empty commit file - use fallback
       this.version = FileNames.deltaVersion(new Path(commitFile.getPath()));
       this.timestamp = commitFile.getModificationTime();
-      this.firstWrapper = null;
-      this.remainingWrappers = null;
+      this.iteratorSupplier = () -> toCloseableIterator(Collections.emptyIterator());
     } else {
-      // Store firstWrapper for lazy processing, extract version/timestamp
-      this.firstWrapper = wrappers.next();
+      // Extract first wrapper for version/timestamp, create supplier for lazy processing
+      ActionWrapper firstWrapper = wrappers.next();
       this.version = firstWrapper.getVersion();
       this.timestamp =
           firstWrapper
               .getTimestamp()
               .orElseThrow(
                   () -> new RuntimeException("timestamp should always exist for Delta File"));
-      // Store remaining wrappers for lazy processing
-      this.remainingWrappers = wrappers;
+
+      // Create supplier that will build the iterator on demand
+      this.iteratorSupplier =
+          () ->
+              toCloseableIterator(Collections.singletonList(firstWrapper).iterator())
+                  .combine(wrappers)
+                  .map(
+                      wrapper ->
+                          TableChangesUtils.validateProtocolAndDropInternalColumns(
+                              wrapper.getColumnarBatch(),
+                              tablePath,
+                              shouldDropProtocolColumn,
+                              shouldDropCommitInfoColumn));
     }
   }
 
@@ -135,76 +131,20 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
 
   @Override
   public synchronized CloseableIterator<ColumnarBatch> getActions() {
-    if (!cachedIteratorTransferred) {
-      cachedIteratorTransferred = true;
-
-      // Build the iterator lazily on first call
-      if (firstWrapper == null) {
-        // Empty commit file case
-        cachedIterator = toCloseableIterator(Collections.emptyIterator());
-      } else {
-        // Process first batch and combine with remaining wrappers
-        ColumnarBatch firstBatch =
-            TableChangesUtils.validateProtocolAndDropInternalColumns(
-                firstWrapper.getColumnarBatch(),
-                tablePath,
-                shouldDropProtocolColumn,
-                shouldDropCommitInfoColumn);
-
-        cachedIterator =
-            toCloseableIterator(Collections.singletonList(firstBatch).iterator())
-                .combine(
-                    remainingWrappers.map(
-                        wrapper ->
-                            TableChangesUtils.validateProtocolAndDropInternalColumns(
-                                wrapper.getColumnarBatch(),
-                                tablePath,
-                                shouldDropProtocolColumn,
-                                shouldDropCommitInfoColumn)));
-
-        // Clear references as they're no longer needed
-        firstWrapper = null;
-        remainingWrappers = null;
-      }
-
-      // Transfer ownership to caller
-      CloseableIterator<ColumnarBatch> result = cachedIterator;
-      cachedIterator = null;
-      return result;
-    } else {
-      // Subsequent calls: re-read from file for memory efficiency
-      return new ActionsIterator(
-              engine, Collections.singletonList(commitFile), readSchema, Optional.empty())
-          .map(
-              wrapper ->
-                  TableChangesUtils.validateProtocolAndDropInternalColumns(
-                      wrapper.getColumnarBatch(),
-                      tablePath,
-                      shouldDropProtocolColumn,
-                      shouldDropCommitInfoColumn));
-    }
-  }
-
-  /**
-   * Closes this CommitActions and releases any cached resources.
-   *
-   * <p>This method is safe to call multiple times. If {@link #getActions()} has already been
-   * called, this method does nothing as the cached iterator ownership has been transferred to the
-   * caller.
-   *
-   * <p>Calling {@link #close()} is optional. If not called, resources will be released when {@link
-   * #getActions()} is called for the first time, or when the object is garbage collected.
-   */
-  @Override
-  public synchronized void close() {
-    if (cachedIterator != null) {
-      Utils.closeCloseablesSilently(cachedIterator);
-      cachedIterator = null;
-    }
-    if (remainingWrappers != null) {
-      Utils.closeCloseablesSilently(remainingWrappers);
-      remainingWrappers = null;
-    }
-    firstWrapper = null;
+    // Call current supplier to get iterator
+    CloseableIterator<ColumnarBatch> result = iteratorSupplier.get();
+    // Update supplier to reread from file on subsequent calls, releasing captured references
+    iteratorSupplier =
+        () ->
+            new ActionsIterator(
+                    engine, Collections.singletonList(commitFile), readSchema, Optional.empty())
+                .map(
+                    wrapper ->
+                        TableChangesUtils.validateProtocolAndDropInternalColumns(
+                            wrapper.getColumnarBatch(),
+                            tablePath,
+                            shouldDropProtocolColumn,
+                            shouldDropCommitInfoColumn));
+    return result;
   }
 }

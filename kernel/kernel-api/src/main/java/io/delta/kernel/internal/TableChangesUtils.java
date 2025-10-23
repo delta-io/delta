@@ -136,18 +136,12 @@ public class TableChangesUtils {
   /**
    * Flattens an iterator of CommitActions into an iterator of ColumnarBatch, adding version and
    * timestamp columns to each batch.
-   *
-   * <p>This method uses {@link Utils#flatMap(CloseableIterator)} to flatten the nested structure of
-   * commits and their actions. Each commit's actions are transformed to add version and timestamp
-   * columns before being flattened into a single iterator.
-   *
    * @param engine the engine for expression evaluation
    * @param commits the iterator of CommitActions to flatten
    * @return an iterator of ColumnarBatch with version and timestamp columns added
    */
   public static CloseableIterator<ColumnarBatch> flattenCommitsAndAddMetadata(
       Engine engine, CloseableIterator<CommitActions> commits) {
-    // First, transform commits into an iterator of iterators
     CloseableIterator<CloseableIterator<ColumnarBatch>> nestedIterator =
         commits.map(
             commit -> {
@@ -156,33 +150,10 @@ public class TableChangesUtils {
               CloseableIterator<ColumnarBatch> actions = commit.getActions();
 
               // Map each batch to add version and timestamp columns
-              CloseableIterator<ColumnarBatch> result =
-                  actions.map(
-                      batch -> addVersionAndTimestampColumns(engine, batch, version, timestamp));
-
-              // Close the CommitActions if it's AutoCloseable when the inner iterator is closed
-              if (commit instanceof AutoCloseable) {
-                return new CloseableIterator<ColumnarBatch>() {
-                  @Override
-                  public boolean hasNext() {
-                    return result.hasNext();
-                  }
-
-                  @Override
-                  public ColumnarBatch next() {
-                    return result.next();
-                  }
-
-                  @Override
-                  public void close() throws java.io.IOException {
-                    Utils.closeCloseables(result, (AutoCloseable) commit);
-                  }
-                };
-              }
-              return result;
+              return actions.map(
+                  batch -> addVersionAndTimestampColumns(engine, batch, version, timestamp));
             });
 
-    // Then flatten the nested iterator structure
     return Utils.flatMap(nestedIterator);
   }
 }

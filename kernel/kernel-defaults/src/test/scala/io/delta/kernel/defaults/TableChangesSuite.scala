@@ -445,13 +445,13 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         .getChanges(0)
         .filter(_._1 <= 2)
       compareCommitActions(commits1, pruneSparkActionsByActionSet(sparkChanges, actionSet))
-      
+
       // For commits2 and commits3, we need fresh Spark iterators
       val sparkChanges2 = DeltaLog.forTable(spark, tablePath)
         .getChanges(0)
         .filter(_._1 <= 2)
       compareCommitActions(commits2, pruneSparkActionsByActionSet(sparkChanges2, actionSet))
-      
+
       val sparkChanges3 = DeltaLog.forTable(spark, tablePath)
         .getChanges(0)
         .filter(_._1 <= 2)
@@ -480,7 +480,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         isNewTable = true,
         testSchema,
         data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1))
-      
+
       appendData(
         engine,
         tablePath,
