@@ -140,7 +140,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 timestamp,
-                deltaLog.initialCatalogTable() /* catalogTableOpt */,
+                Option.empty() /* catalogTable */,
                 false /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -172,7 +172,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 futureTimestamp,
-                deltaLog.initialCatalogTable() /* catalogTableOpt */,
+                Option.empty() /* catalogTable */,
                 true /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -204,7 +204,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 futureTimestamp,
-                deltaLog.initialCatalogTable() /* catalogTableOpt */,
+                Option.empty() /* catalogTable */,
                 true /* canReturnLastCommit */,
                 false /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -236,7 +236,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 earlyTimestamp,
-                deltaLog.initialCatalogTable() /* catalogTableOpt */,
+                Option.empty() /* catalogTable */,
                 false /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 true /* canReturnEarliestCommit */);
@@ -268,7 +268,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 earlyTimestamp,
-                deltaLog.initialCatalogTable() /* catalogTableOpt */,
+                Option.empty() /* catalogTable */,
                 false /* canReturnLastCommit */,
                 false /* mustBeRecreatable */,
                 true /* canReturnEarliestCommit */);
@@ -353,19 +353,12 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
               deltaLog
                   .history()
                   .checkVersionExists(
-                      versionToCheck,
-                      deltaLog.initialCatalogTable() /* catalogTableOpt */,
-                      mustBeRecreatable,
-                      allowOutOfRange));
+                      versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange));
     } else {
       streamingHelper.checkVersionExists(versionToCheck, mustBeRecreatable, allowOutOfRange);
       deltaLog
           .history()
-          .checkVersionExists(
-              versionToCheck,
-              deltaLog.initialCatalogTable() /* catalogTableOpt */,
-              mustBeRecreatable,
-              allowOutOfRange);
+          .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);
     }
   }
 }
