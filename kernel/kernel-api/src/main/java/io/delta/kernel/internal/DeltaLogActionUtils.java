@@ -276,39 +276,10 @@ public class DeltaLogActionUtils {
       String tablePath,
       List<FileStatus> commitFiles,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Create a new action set which is a super set of the requested actions.
-    // The extra actions are needed either for checks or to extract
-    // extra information. We will strip out the extra actions before
-    // returning the result.
-    Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
-    copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // commitInfo is needed to extract the inCommitTimestamp of delta files, this is used in
-    // ActionsIterator to resolve the timestamp when available
-    copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
-    // Determine whether the additional actions were in the original set.
-    boolean shouldDropProtocolColumn =
-        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    boolean shouldDropCommitInfoColumn =
-        !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
-
-    StructType readSchema =
-        new StructType(
-            copySet.stream()
-                .map(action -> new StructField(action.colName, action.schema, true))
-                .collect(Collectors.toList()));
-    logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
 
     // For each commit file, create a CommitActions
     return toCloseableIterator(commitFiles.iterator())
-        .map(
-            commitFile ->
-                new CommitActionsImpl(
-                    engine,
-                    commitFile,
-                    readSchema,
-                    tablePath,
-                    shouldDropProtocolColumn,
-                    shouldDropCommitInfoColumn));
+        .map(commitFile -> new CommitActionsImpl(engine, commitFile, tablePath, actionSet));
   }
 
   //////////////////////
