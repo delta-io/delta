@@ -101,9 +101,7 @@ trait ConvertIcebergToDeltaUtils extends SharedSparkSession {
   }
 
   override protected def createSparkSession: TestSparkSession = {
-    SparkSession.getActiveSession.foreach(_.stop())
-    SparkSession.clearActiveSession()
-    SparkSession.clearDefaultSession()
+    SparkSession.cleanupAnyExistingSession()
     val session = new IcebergCompatibleDeltaTestSparkSession(sparkConf)
     session.conf.set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
     session
