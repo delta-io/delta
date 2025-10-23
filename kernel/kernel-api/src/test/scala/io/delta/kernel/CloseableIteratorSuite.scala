@@ -186,7 +186,43 @@ class CloseableIteratorSuite extends AnyFunSuite {
     // Explicitly close without consuming all
     result.close()
     // First two are closed.
-    assert(innerClosedCount == 2)
+    assert(innerClosedCount === 2)
+    assert(outerClosed === true)
+  }
+
+  test("flatMap -- handles exception during iteration and cleans up") {
+    var innerClosedCount = 0
+    var outerClosed = false
+
+    val nestedIter = new CloseableIterator[CloseableIterator[Int]] {
+      private var count = 0
+      override def hasNext(): Boolean = count < 3
+      override def next(): CloseableIterator[Int] = {
+        count += 1
+        if (count == 2) {
+          throw new RuntimeException("Test exception during next()")
+        }
+        new TrackingCloseableIterator(Seq(1, 2), () => innerClosedCount += 1)
+      }
+      override def close(): Unit = {
+        outerClosed = true
+      }
+    }
+
+    val result = Utils.flatMap(nestedIter)
+
+    // Consume first inner iterator completely
+    assert(result.hasNext === true)
+    assert(result.next() === 1)
+    assert(result.next() === 2)
+
+    // This should trigger the exception when trying to get the next inner iterator
+    val exception = intercept[RuntimeException] {
+      result.hasNext
+    }
+    assert(exception.getMessage === "Test exception during next()")
+
+    // Verify that the outer iterator was closed due to exception
     assert(outerClosed === true)
   }
 }

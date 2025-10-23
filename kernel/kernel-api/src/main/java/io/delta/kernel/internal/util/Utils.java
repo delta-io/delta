@@ -179,7 +179,7 @@ public class Utils {
   /**
    * Flattens a nested {@link CloseableIterator} structure into a single flat iterator. This method
    * takes an iterator of iterators (nested structure) and flattens it into a single iterator that
-   * yields all elements from all inner iterators in sequence..
+   * yields all elements from all inner iterators in sequence.
    *
    * @param nestedIterator An iterator of iterators to flatten
    * @param <T> The type of elements in the inner iterators
@@ -206,7 +206,13 @@ public class Utils {
             return false;
           }
 
-          currentInnerIterator = nestedIterator.next();
+          try {
+            currentInnerIterator = nestedIterator.next();
+          } catch (Exception e) {
+            // Ensure cleanup on exception
+            closeCloseables(nestedIterator);
+            throw e;
+          }
         }
       }
 
@@ -221,7 +227,7 @@ public class Utils {
       @Override
       public void close() throws IOException {
         // Close both the current inner iterator and the outer iterator
-        // closeCloseables works will null closable.
+        // closeCloseables works with null closeable.
         closeCloseables(currentInnerIterator, nestedIterator);
       }
     };
