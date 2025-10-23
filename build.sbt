@@ -1338,7 +1338,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, kernelSpark, contribs, storage, storageS3DynamoDB, sharing, hudi, iceberg)
+  .aggregate(spark, kernelSpark, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
