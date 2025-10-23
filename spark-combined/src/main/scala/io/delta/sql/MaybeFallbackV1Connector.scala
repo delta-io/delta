@@ -38,10 +38,6 @@ class MaybeFallbackV1Connector(session: SparkSession)
   extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
-    // scalastyle:off println
-    println(s"[MaybeFallbackV1] plan: ${plan.getClass.getSimpleName}, node: ${plan.nodeName}")
-    // scalastyle:on println
-
     def replaceKernelWithFallback(node: LogicalPlan): LogicalPlan = {
       node.resolveOperatorsDown {
         case Batch(fallback) => fallback
@@ -52,9 +48,6 @@ class MaybeFallbackV1Connector(session: SparkSession)
       // Handle MERGE INTO (Spark generic MergeIntoTable)
       case m @ MergeIntoTable(targetTable, sourceTable, mergeCondition,
         matchedActions, notMatchedActions, notMatchedBySourceActions) =>
-        // scalastyle:off println
-        println("[MaybeFallbackV1] MergeIntoTable -> replacing target and source")
-        // scalastyle:on println
         val newTarget = replaceKernelWithFallback(targetTable)
         val newSource = replaceKernelWithFallback(sourceTable)
         m.copy(targetTable = newTarget, sourceTable = newSource)
@@ -62,9 +55,6 @@ class MaybeFallbackV1Connector(session: SparkSession)
       // Handle MERGE INTO (DeltaMergeInto)
       case m @ DeltaMergeInto(target, source, condition, matched, notMatched, notMatchedBySource,
         withSchemaEvolution, finalSchema) =>
-        // scalastyle:off println
-        println("[MaybeFallbackV1] DeltaMergeInto -> replacing target and source")
-        // scalastyle:on println
         val newTarget = replaceKernelWithFallback(target)
         val newSource = replaceKernelWithFallback(source)
         m.copy(target = newTarget, source = newSource)
@@ -86,30 +76,18 @@ class MaybeFallbackV1Connector(session: SparkSession)
 
       // Handle V2 OverwriteByExpression (DataFrameWriterV2.overwrite)
       case o @ OverwriteByExpression(Batch(fallback), _, _, _, _, _, _) =>
-        // scalastyle:off println
-        println("[MaybeFallbackV1] OverwriteByExpression -> falling back")
-        // scalastyle:on println
         o.copy(table = fallback)
 
       // Handle batch reads
       case Batch(fallback) if !isReadOnly(plan) =>
-        // scalastyle:off println
-        println("[MaybeFallbackV1] Batch write -> falling back")
-        // scalastyle:on println
         fallback
 
       // Handle streaming
       case Streaming(fallback) if !isReadOnly(plan) =>
-        // scalastyle:off println
-        println("[MaybeFallbackV1] Streaming write -> falling back")
-        // scalastyle:on println
         fallback
 
       // Print unhandled COMMAND nodes
       case other if other.containsPattern(COMMAND) =>
-        // scalastyle:off println
-        println(s"[MaybeFallbackV1] UNHANDLED COMMAND: ${other.getClass.getSimpleName}")
-        // scalastyle:on println
         other
     }
   }
@@ -121,9 +99,6 @@ class MaybeFallbackV1Connector(session: SparkSession)
   object Batch {
     def unapply(dsv2: DataSourceV2Relation): Option[DataSourceV2Relation] = dsv2.table match {
       case d: SparkTable =>
-        // scalastyle:off println
-        println(s"[MaybeFallbackV1] Batch extractor: SparkTable -> DeltaTableV2")
-        // scalastyle:on println
         val v1CatalogTable = d.getV1CatalogTable()
         if (v1CatalogTable.isPresent()) {
           val catalogTable = v1CatalogTable.get()
