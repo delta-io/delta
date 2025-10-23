@@ -181,11 +181,15 @@ public class Utils {
    * takes an iterator of iterators (nested structure) and flattens it into a single iterator that
    * yields all elements from all inner iterators in sequence.
    *
+   * <p><b>Important:</b> Callers must call {@link CloseableIterator#close()} on the returned
+   * iterator even if it is not fully consumed, to ensure all inner iterators are properly closed
+   * and resources are released.
+   *
    * @param nestedIterator An iterator of iterators to flatten
    * @param <T> The type of elements in the inner iterators
    * @return A new {@link CloseableIterator} that flattens all nested iterators
    */
-  public static <T> CloseableIterator<T> flatMap(
+  public static <T> CloseableIterator<T> flatten(
       CloseableIterator<CloseableIterator<T>> nestedIterator) {
     return new CloseableIterator<>() {
       private CloseableIterator<T> currentInnerIterator = null;
@@ -225,7 +229,7 @@ public class Utils {
       }
 
       @Override
-      public void close() throws IOException {
+      public void close() {
         // Close both the current inner iterator and the outer iterator
         // closeCloseables works with null closeable.
         closeCloseables(currentInnerIterator, nestedIterator);

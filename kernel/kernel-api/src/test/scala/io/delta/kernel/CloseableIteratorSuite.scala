@@ -99,7 +99,7 @@ class CloseableIteratorSuite extends AnyFunSuite {
     assert(toList(result) === List(1, 3))
   }
 
-  test("flatMap -- flattens nested iterators") {
+  test("flatten -- flattens nested iterators") {
     // Create an iterator of iterators
     val nestedIter = toCloseableIter(
       Seq(
@@ -107,11 +107,11 @@ class CloseableIteratorSuite extends AnyFunSuite {
         toCloseableIter(Seq(3, 4, 5)),
         toCloseableIter(Seq(6))))
 
-    val result = Utils.flatMap(nestedIter)
+    val result = Utils.flatten(nestedIter)
     assert(toList(result) === List(1, 2, 3, 4, 5, 6))
   }
 
-  test("flatMap -- handles empty inner iterators") {
+  test("flatten -- handles empty inner iterators") {
     val nestedIter = toCloseableIter(
       Seq(
         toCloseableIter(Seq(1, 2)),
@@ -120,20 +120,20 @@ class CloseableIteratorSuite extends AnyFunSuite {
         toCloseableIter(Seq[Int]()),
         toCloseableIter(Seq(5))))
 
-    val result = Utils.flatMap(nestedIter)
+    val result = Utils.flatten(nestedIter)
 
     assert(toList(result) === List(1, 2, 3, 4, 5))
   }
 
-  test("flatMap -- handles empty outer iterator") {
+  test("flatten -- handles empty outer iterator") {
     val nestedIter = toCloseableIter(Seq[CloseableIterator[Int]]())
 
-    val result = Utils.flatMap(nestedIter)
+    val result = Utils.flatten(nestedIter)
 
     assert(toList(result) === List())
   }
 
-  test("flatMap -- properly closes inner iterators") {
+  test("flatten -- properly closes inner iterators") {
     var innerClosedCount = 0
     var outerClosed = false
     val nestedIter = new CloseableIterator[CloseableIterator[Int]] {
@@ -148,7 +148,7 @@ class CloseableIteratorSuite extends AnyFunSuite {
       }
     }
 
-    val result = Utils.flatMap(nestedIter)
+    val result = Utils.flatten(nestedIter)
 
     // Consume the iterator fully
     toList(result)
@@ -159,7 +159,7 @@ class CloseableIteratorSuite extends AnyFunSuite {
     assert(outerClosed === true)
   }
 
-  test("flatMap -- closes iterators even when not fully consumed") {
+  test("flatten -- closes iterators even when not fully consumed") {
     var innerClosedCount = 0
     var outerClosed = false
 
@@ -175,7 +175,7 @@ class CloseableIteratorSuite extends AnyFunSuite {
       }
     }
 
-    val result = Utils.flatMap(nestedIter)
+    val result = Utils.flatten(nestedIter)
 
     // Only consume first 3 elements (from first 2 inner iterators)
     assert(result.hasNext === true)
@@ -190,7 +190,7 @@ class CloseableIteratorSuite extends AnyFunSuite {
     assert(outerClosed === true)
   }
 
-  test("flatMap -- handles exception during iteration and cleans up") {
+  test("flatten -- handles exception during iteration and cleans up") {
     var innerClosedCount = 0
     var outerClosed = false
 
@@ -209,7 +209,7 @@ class CloseableIteratorSuite extends AnyFunSuite {
       }
     }
 
-    val result = Utils.flatMap(nestedIter)
+    val result = Utils.flatten(nestedIter)
 
     // Consume first inner iterator completely
     assert(result.hasNext === true)
