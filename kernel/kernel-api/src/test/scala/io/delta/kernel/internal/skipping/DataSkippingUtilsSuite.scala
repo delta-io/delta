@@ -57,7 +57,8 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
       collation: CollationIdentifier,
       statName: String,
       fieldName: String): Column = {
-    new Column(Array(STATS_WITH_COLLATION, collation.toString, statName) ++ fieldName.split("\\."))
+    val columnPath = s"$STATS_WITH_COLLATION.$collation.$statName.$fieldName".split('.')
+    new Column(columnPath)
   }
 
   /* For struct type checks for equality based on field names & data type only */
