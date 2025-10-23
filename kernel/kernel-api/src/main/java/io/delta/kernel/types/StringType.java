@@ -52,6 +52,12 @@ public class StringType extends BasePrimitiveType {
     return collationIdentifier;
   }
 
+  /**
+   * Are the data types same? The collations could be different.
+   *
+   * @param dataType
+   * @return
+   */
   @Override
   public boolean equivalentIgnoreCollations(DataType dataType) {
     return dataType instanceof StringType;
