@@ -260,31 +260,15 @@ public class DeltaLogActionUtils {
   }
 
   /**
-   * Returns CommitActions objects for each commit file provided. Each CommitActions object
-   * represents actions from a single commit and provides access to the commit version, timestamp,
-   * and action batches.
+   * Returns CommitActions for each commit file. CommitActions are ordered by increasing version.
    *
-   * <p>This function performs the following operations:
+   * <p>This function automatically:
    *
    * <ul>
-   *   <li>Performs protocol validation: always reads the protocol action and validates it is
-   *       compatible with Kernel
-   *   <li>Extracts commit timestamp: uses inCommitTimestamp if available, otherwise uses file
+   *   <li>Performs protocol validation by reading and validating the protocol action
+   *   <li>Extracts commit timestamp using inCommitTimestamp if available, otherwise file
    *       modification time
-   *   <li>Filters actions: if protocol or commitInfo were not requested in actionSet, they are
-   *       removed from the action batches returned by {@link CommitActions#getActions()}
-   * </ul>
-   *
-   * <p>For the returned CommitActions iterator:
-   *
-   * <ul>
-   *   <li>CommitActions are ordered by increasing commit version
-   *   <li>Each CommitActions provides {@link CommitActions#getVersion()} and {@link
-   *       CommitActions#getTimestamp()}
-   *   <li>Each {@link CommitActions#getActions()} returns batches containing only actions from that
-   *       commit
-   *   <li>The action batches contain only the actions requested in actionSet (protocol and
-   *       commitInfo are excluded if not requested)
+   *   <li>Filters out protocol and commitInfo actions if not requested in actionSet
    * </ul>
    */
   public static CloseableIterator<CommitActions> getActionsFromCommitFilesWithProtocolValidation(
