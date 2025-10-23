@@ -17,7 +17,8 @@ package io.delta.kernel.defaults.utils
 
 import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
-import java.nio.file.Files
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
 import java.util.{Optional, TimeZone, UUID}
 
 import scala.collection.JavaConverters._
@@ -46,6 +47,9 @@ import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
+import org.apache.spark.sql.delta.{sources, OptimisticTransaction}
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.hadoop.conf.Configuration
@@ -166,6 +170,36 @@ trait AbstractTestUtils
 
   implicit class JavaOptionalOps[T](optional: Optional[T]) {
     def toScala: Option[T] = if (optional.isPresent) Some(optional.get()) else None
+  }
+
+  /**
+   * Provides test-only apis to internal Delta Spark APIs.
+   */
+  implicit class OptimisticTxnTestHelper(txn: OptimisticTransaction) {
+
+    /**
+     * Test only method to commit arbitrary actions to delta table.
+     */
+    def commitManuallyWithValidation(actions: Action*): Unit = {
+      txn.commit(actions.toSeq, ManualUpdate)
+    }
+
+    /**
+     * Test only method to unsafe commit - writes actions directly to transaction log.
+     * Note: This bypasses Delta Spark transaction logic.
+     *
+     * @param tablePath The path to the Delta table
+     * @param version The commit version number
+     * @param actions Sequence of Action objects to write
+     */
+    def commitUnsafe(tablePath: String, version: Long, actions: Action*): Unit = {
+      val logPath = new org.apache.hadoop.fs.Path(tablePath, "_delta_log")
+      val commitFile = org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile(logPath, version)
+      val commitContent = actions.map(_.json + "\n").mkString.getBytes(UTF_8)
+      Files.write(Paths.get(commitFile.toString), commitContent)
+      // Generate crc file for this commit version.
+      Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, version)
+    }
   }
 
   implicit object ResourceLoader {
@@ -848,10 +882,14 @@ trait AbstractTestUtils
   }
 
   def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-      .forEach(hook => hook.threadSafeInvoke(engine))
+    val crcSimpleHook = result
+      .getPostCommitHooks
+      .asScala
+      .find(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .getOrElse(throw new IllegalStateException("CRC simple hook not found"))
+
+    crcSimpleHook.threadSafeInvoke(engine)
+
     result
   }
 

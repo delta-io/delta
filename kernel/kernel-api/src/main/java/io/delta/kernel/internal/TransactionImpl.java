@@ -569,7 +569,10 @@ public class TransactionImpl implements Transaction {
               committerProperties,
               readSnapshotOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
               shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
-              shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());
+              shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty(),
+              readSnapshotOpt
+                  .map(x -> x.getLogSegment().getMaxPublishedDeltaVersion())
+                  .orElse(Optional.of(-1L)));
 
       DirectoryCreationUtils.createAllDeltaDirectoriesAsNeeded(
           engine, logPath, commitAsVersion, commitMetadata.getReadProtocolOpt(), protocol);

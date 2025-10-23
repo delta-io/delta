@@ -38,7 +38,6 @@ import io.delta.kernel.types.{DataType, LongType, StructField}
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile, SetTransaction => SparkSetTransaction}
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.{Path => HadoopPath}
 import org.apache.spark.sql.functions.col
@@ -576,7 +575,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
 
         val add1 = SparkAddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
         val txn1 = log.startTransaction()
-        txn1.commitManually(metadata :: add1 :: Nil: _*)
+        txn1.commitManuallyWithValidation(metadata, add1)
 
         val addCDC2 = SparkAddCDCFile(
           "fake/path/2",
@@ -585,12 +584,12 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
           Map("tag_foo" -> "tag_bar"))
         val remove2 = SparkRemoveFile("fake/path/1", Some(100), dataChange = true)
         val txn2 = log.startTransaction()
-        txn2.commitManually(addCDC2 :: remove2 :: Nil: _*)
+        txn2.commitManuallyWithValidation(addCDC2, remove2)
 
         val setTransaction3 = SparkSetTransaction("fakeAppId", 3L, Some(200))
         val txn3 = log.startTransaction()
         val latestTableProtocol = log.snapshot.protocol
-        txn3.commitManually(latestTableProtocol :: setTransaction3 :: Nil: _*)
+        txn3.commitManuallyWithValidation(latestTableProtocol, setTransaction3)
 
         // request subset of actions
         testGetChangesVsSpark(

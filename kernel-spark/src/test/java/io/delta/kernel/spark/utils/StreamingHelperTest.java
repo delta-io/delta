@@ -140,7 +140,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 timestamp,
-                Option.empty(),
+                Option.empty() /* catalogTable */,
                 false /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -172,7 +172,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 futureTimestamp,
-                Option.empty(),
+                Option.empty() /* catalogTable */,
                 true /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -204,7 +204,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 futureTimestamp,
-                Option.empty(),
+                Option.empty() /* catalogTable */,
                 true /* canReturnLastCommit */,
                 false /* mustBeRecreatable */,
                 false /* canReturnEarliestCommit */);
@@ -236,7 +236,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 earlyTimestamp,
-                Option.empty(),
+                Option.empty() /* catalogTable */,
                 false /* canReturnLastCommit */,
                 true /* mustBeRecreatable */,
                 true /* canReturnEarliestCommit */);
@@ -268,7 +268,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
             .history()
             .getActiveCommitAtTime(
                 earlyTimestamp,
-                Option.empty(),
+                Option.empty() /* catalogTable */,
                 false /* canReturnLastCommit */,
                 false /* mustBeRecreatable */,
                 true /* canReturnEarliestCommit */);

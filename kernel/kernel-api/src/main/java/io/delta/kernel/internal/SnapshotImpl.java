@@ -35,6 +35,8 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumUtils;
+import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.fs.Path;
@@ -45,11 +47,14 @@ import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -185,6 +190,11 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
+  public SnapshotStatistics getStatistics() {
+    return new SnapshotStatisticsImpl();
+  }
+
+  @Override
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
         dataPath, version, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
@@ -249,6 +259,40 @@ public class SnapshotImpl implements Snapshot {
         new PublishMetadata(version, logPath.toString(), catalogCommitsToPublish);
 
     ((CatalogCommitter) committer).publish(engine, publishMetadata);
+  }
+
+  @Override
+  public void writeChecksum(Engine engine, Snapshot.ChecksumWriteMode mode) throws IOException {
+    final Optional<Snapshot.ChecksumWriteMode> actualOpt = getStatistics().getChecksumWriteMode();
+
+    if (actualOpt.isEmpty()) {
+      logger.warn("Not writing checksum: checksum file already exists at version {}", version);
+      return;
+    }
+
+    final Snapshot.ChecksumWriteMode actual = actualOpt.get();
+
+    switch (mode) {
+      case SIMPLE:
+        if (actual == ChecksumWriteMode.FULL) {
+          throw new IllegalStateException(
+              "Cannot write checksum in SIMPLE mode: FULL mode required");
+        }
+
+        final CRCInfo crcInfo = logReplay.getCrcInfoAtSnapshotVersion().get();
+        logger.info("Executing checksum write in SIMPLE mode");
+        new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
+        return;
+      case FULL:
+        if (actual == ChecksumWriteMode.SIMPLE) {
+          logger.warn("Requested checksum write in FULL mode, but SIMPLE mode is available");
+        }
+        logger.info("Executing checksum write in FULL mode");
+        ChecksumUtils.computeStateAndWriteChecksum(engine, getLogSegment());
+        return;
+      default:
+        throw new IllegalStateException("Unknown checksum write mode: " + mode);
+    }
   }
 
   ///////////////////
@@ -346,6 +390,10 @@ public class SnapshotImpl implements Snapshot {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
   }
 
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
+
   private long getMaxPublishedDeltaVersionOrThrow() {
     // The maxPublishedDeltaVersion is required for publishing to ensure published deltas are
     // contiguous. The cases where it is unknown should be very rare (e.g. Kernel loaded a
@@ -358,5 +406,30 @@ public class SnapshotImpl implements Snapshot {
             () ->
                 new IllegalStateException(
                     "maxPublishedDeltaVersion is unknown. This is required for publishing."));
+  }
+
+  ///////////////////
+  // Inner Classes //
+  ///////////////////
+
+  private class SnapshotStatisticsImpl implements SnapshotStatistics {
+    @Override
+    public Optional<Snapshot.ChecksumWriteMode> getChecksumWriteMode() {
+      final boolean checksumFileExists =
+          getLogSegment()
+              .getLastSeenChecksum()
+              .map(checksumFile -> FileNames.checksumVersion(checksumFile.getPath()) == version)
+              .orElse(false);
+
+      if (checksumFileExists) {
+        return Optional.empty();
+      }
+
+      if (logReplay.getCrcInfoAtSnapshotVersion().isPresent()) {
+        return Optional.of(Snapshot.ChecksumWriteMode.SIMPLE);
+      }
+
+      return Optional.of(Snapshot.ChecksumWriteMode.FULL);
+    }
   }
 }
