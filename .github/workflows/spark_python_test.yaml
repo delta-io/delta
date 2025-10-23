@@ -62,7 +62,7 @@ jobs:
           # `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
           # the`version.sbt` file.
           pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
-          # Install PySpark without bundled Scala 2.12 JARs
+          # Install PySpark without bundled Scala 2.12 JARs - read more in the future note below
           pipenv run pip install pyspark==3.5.3 --no-deps
           pipenv run pip install py4j==0.10.9.7
           pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
@@ -81,6 +81,10 @@ jobs:
           pipenv run pip install pyarrow==8.0.0
           pipenv run pip install numpy==1.20.3
           # Download and setup Spark 3.5.3 with Scala 2.13 for compatibility with Delta Scala 2.13
+          # Future note for Spark 4.0 upgrade: PySpark 3.5.3 from pip includes Scala 2.12 JARs, but
+          # because of the upgrade to Scala 2.13, it was causing binary incompatibility errors.
+          # For now (before Spark 4.0), we install PySpark without dependencies and use Spark 3.5.3 compiled 
+          # for Scala 2.13 to ensure compatibility. Remove the four steps below for Spark 4.0 upgrade.
           curl -LO https://archive.apache.org/dist/spark/spark-3.5.3/spark-3.5.3-bin-hadoop3-scala2.13.tgz
           tar -xzf spark-3.5.3-bin-hadoop3-scala2.13.tgz
           echo "SPARK_HOME=$PWD/spark-3.5.3-bin-hadoop3-scala2.13" >> $GITHUB_ENV
