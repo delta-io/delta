@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.sources;
 
 /**
  * Interface for files that can be admitted by admission control in Delta streaming sources.
- * This abstraction allows both Scala and Java IndexedFile implementations to be used with
+ * This abstraction allows both DSv1 and DSv2 IndexedFile implementations to be used with
  * the admission control logic.
  */
 public interface AdmittableFile {
@@ -30,7 +30,7 @@ public interface AdmittableFile {
 
   /**
    * Returns the size of the file in bytes.
-   * For files without a file action or files with unknown size, returns 0.
+   * This method should only be called when hasFileAction() returns true.
    */
   long getFileSize();
 }

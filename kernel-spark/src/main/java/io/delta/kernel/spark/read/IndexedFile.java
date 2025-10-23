@@ -55,7 +55,7 @@ public class IndexedFile implements AdmittableFile {
 
   @Override
   public long getFileSize() {
-    return addFile != null ? addFile.getSize() : 0L;
+    return addFile.getSize();
   }
 
   @Override
