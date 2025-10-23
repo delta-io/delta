@@ -53,7 +53,10 @@ class CloseableIteratorSuite extends AnyFunSuite {
     private val iter = elems.iterator
     private var closed = false
 
-    override def hasNext(): Boolean = !closed && iter.hasNext
+    override def hasNext(): Boolean = {
+      assert(!closed)
+      iter.hasNext
+    }
     override def next(): Int = iter.next()
     override def close(): Unit = {
       if (!closed) {
@@ -112,12 +115,13 @@ class CloseableIteratorSuite extends AnyFunSuite {
     val nestedIter = toCloseableIter(
       Seq(
         toCloseableIter(Seq(1, 2)),
-        toCloseableIter(Seq[Int]()), // empty
+        toCloseableIter(Seq[Int]()),
         toCloseableIter(Seq(3, 4)),
-        toCloseableIter(Seq[Int]()), // empty
+        toCloseableIter(Seq[Int]()),
         toCloseableIter(Seq(5))))
 
     val result = Utils.flatMap(nestedIter)
+
     assert(toList(result) === List(1, 2, 3, 4, 5))
   }
 
@@ -125,13 +129,13 @@ class CloseableIteratorSuite extends AnyFunSuite {
     val nestedIter = toCloseableIter(Seq[CloseableIterator[Int]]())
 
     val result = Utils.flatMap(nestedIter)
+
     assert(toList(result) === List())
   }
 
   test("flatMap -- properly closes inner iterators") {
     var innerClosedCount = 0
     var outerClosed = false
-
     val nestedIter = new CloseableIterator[CloseableIterator[Int]] {
       private val iter =
         Seq(
@@ -146,7 +150,7 @@ class CloseableIteratorSuite extends AnyFunSuite {
 
     val result = Utils.flatMap(nestedIter)
 
-    // Consume the iterator
+    // Consume the iterator fully
     toList(result)
 
     // All inner iterators should have been closed (2 inner iterators)
@@ -174,17 +178,15 @@ class CloseableIteratorSuite extends AnyFunSuite {
     val result = Utils.flatMap(nestedIter)
 
     // Only consume first 3 elements (from first 2 inner iterators)
-    assert(result.hasNext() === true)
+    assert(result.hasNext === true)
     assert(result.next() === 1)
     assert(result.next() === 2)
     assert(result.next() === 3)
 
     // Explicitly close without consuming all
     result.close()
-
     // First two are closed.
     assert(innerClosedCount == 2)
     assert(outerClosed === true)
   }
-
 }

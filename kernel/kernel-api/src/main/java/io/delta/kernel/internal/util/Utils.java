@@ -191,7 +191,7 @@ public class Utils {
    */
   public static <T> CloseableIterator<T> flatMap(
       CloseableIterator<CloseableIterator<T>> nestedIterator) {
-    return new CloseableIterator<T>() {
+    return new CloseableIterator<>() {
       private CloseableIterator<T> currentInnerIterator = null;
 
       @Override
@@ -210,7 +210,6 @@ public class Utils {
             return false;
           }
 
-          // Get the next inner iterator
           currentInnerIterator = nestedIterator.next();
         }
       }
