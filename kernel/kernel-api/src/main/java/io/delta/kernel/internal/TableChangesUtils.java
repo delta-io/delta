@@ -136,6 +136,7 @@ public class TableChangesUtils {
   /**
    * Flattens an iterator of CommitActions into an iterator of ColumnarBatch, adding version and
    * timestamp columns to each batch.
+   *
    * @param engine the engine for expression evaluation
    * @param commits the iterator of CommitActions to flatten
    * @return an iterator of ColumnarBatch with version and timestamp columns added
@@ -154,6 +155,6 @@ public class TableChangesUtils {
                   batch -> addVersionAndTimestampColumns(engine, batch, version, timestamp));
             });
 
-    return Utils.flatMap(nestedIterator);
+    return Utils.flatten(nestedIterator);
   }
 }
