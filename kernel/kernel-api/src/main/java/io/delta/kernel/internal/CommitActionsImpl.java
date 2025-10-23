@@ -26,6 +26,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionWrapper;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -40,9 +41,16 @@ import java.util.function.Supplier;
  * The first call reuses initially-read data to avoid double I/O, while subsequent calls re-read the
  * commit file for memory efficiency.
  *
- * <p>Resources are automatically managed: calling {@link #getActions()} transfers resource
- * ownership to the returned iterator. If {@link #getActions()} is never called, resources are
- * released when the object is garbage collected.
+ * <p><b>Resource Management:</b>
+ *
+ * <ul>
+ *   <li>Calling {@link #getActions()} transfers resource ownership to the returned iterator.
+ *   <li>Callers MUST close the returned iterator (preferably using try-with-resources) to release
+ *       file handles and other resources.
+ *   <li>If {@link #getActions()} is never called, internal resources will be released when the
+ *       object is garbage collected (though explicit cleanup via {@link #getActions()} followed by
+ *       iterator closure is preferred).
+ * </ul>
  */
 public class CommitActionsImpl implements CommitActions {
 
@@ -90,10 +98,11 @@ public class CommitActionsImpl implements CommitActions {
         new ActionsIterator(
             engine, Collections.singletonList(commitFile), readSchema, Optional.empty());
     if (!wrappers.hasNext()) {
-      // Empty commit file - use fallback
+      // Empty commit file - use fallback and close the iterator immediately
       this.version = FileNames.deltaVersion(new Path(commitFile.getPath()));
       this.timestamp = commitFile.getModificationTime();
       this.iteratorSupplier = () -> toCloseableIterator(Collections.emptyIterator());
+      Utils.closeCloseablesSilently(wrappers);
     } else {
       // Extract first wrapper for version/timestamp, create supplier for lazy processing
       ActionWrapper firstWrapper = wrappers.next();
