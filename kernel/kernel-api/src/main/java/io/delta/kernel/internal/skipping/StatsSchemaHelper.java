@@ -49,22 +49,34 @@ public class StatsSchemaHelper {
   public static final String MAX = "maxValues";
   public static final String NULL_COUNT = "nullCount";
   public static final String TIGHT_BOUNDS = "tightBounds";
+  public static final String STATS_WITH_COLLATION = "statsWithCollation";
 
   /**
    * Returns true if the given literal is skipping-eligible. Delta tracks min/max stats for a
    * limited set of data types and only literals of those types are skipping eligible.
    */
   public static boolean isSkippingEligibleLiteral(Literal literal) {
-    return isSkippingEligibleDataType(literal.getDataType());
+    // Even if the literal's data type is not `StringType` and it is used in a collation-aware
+    // `Predicate`, it can be cast to `StringType` and used for collation-aware skipping.
+    // Therefore, we check for non-collated skipping eligibility here.
+    // For columns, we can't do this because we don't have statistics for non-`StringType` columns
+    // under collation-aware stats.
+    return isSkippingEligibleDataType(literal.getDataType(), false);
   }
 
   /** Returns true if the given data type is eligible for MIN/MAX data skipping. */
-  public static boolean isSkippingEligibleDataType(DataType dataType) {
-    return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
-        ||
-        // DecimalType is eligible but since its string includes scale + precision it needs to
-        // be matched separately
-        dataType instanceof DecimalType;
+  public static boolean isSkippingEligibleDataType(DataType dataType, boolean isCollatedSkipping) {
+    if (isCollatedSkipping) {
+      // Collation-aware min/max statistics are only applicable to `StringType`.
+      // For other types, such statistics are not computed and therefore cannot be used.
+      return dataType instanceof StringType;
+    } else {
+      return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
+          ||
+          // DecimalType is eligible but since its string includes scale + precision it needs to
+          // be matched separately
+          dataType instanceof DecimalType;
+    }
   }
 
   /**
@@ -153,15 +165,18 @@ public class StatsSchemaHelper {
    * that stores the MIN values for the provided logical column.
    *
    * @param column the logical column name.
+   * @param collationIdentifier optional collation identifier if the min column is from a
    * @return a tuple of the MIN column and an optional adjustment expression.
    */
-  public Tuple2<Column, Optional<Expression>> getMinColumn(Column column) {
+  public Tuple2<Column, Optional<Expression>> getMinColumn(
+      Column column, Optional<CollationIdentifier> collationIdentifier) {
     checkArgument(
-        isSkippingEligibleMinMaxColumn(column),
-        "%s is not a valid min column for data schema %s",
+        isSkippingEligibleMinMaxColumn(column, collationIdentifier.isPresent()),
+        "%s is not a valid min column%s for data schema %s",
         column,
+        collationIdentifier.isPresent() ? (" for collation " + collationIdentifier) : "",
         dataSchema);
-    return new Tuple2<>(getStatsColumn(column, MIN), Optional.empty());
+    return new Tuple2<>(getStatsColumn(column, MIN, collationIdentifier), Optional.empty());
   }
 
   /**
@@ -170,16 +185,19 @@ public class StatsSchemaHelper {
    * that stores the MAX values for the provided logical column.
    *
    * @param column the logical column name.
+   * @param collationIdentifier optional collation identifier if getting a collated stats column.
    * @return a tuple of the MAX column and an optional adjustment expression.
    */
-  public Tuple2<Column, Optional<Expression>> getMaxColumn(Column column) {
+  public Tuple2<Column, Optional<Expression>> getMaxColumn(
+      Column column, Optional<CollationIdentifier> collationIdentifier) {
     checkArgument(
-        isSkippingEligibleMinMaxColumn(column),
-        "%s is not a valid min column for data schema %s",
+        isSkippingEligibleMinMaxColumn(column, collationIdentifier.isPresent()),
+        "%s is not a valid min column%s for data schema %s",
         column,
+        collationIdentifier.isPresent() ? (" for collation " + collationIdentifier) : "",
         dataSchema);
     DataType dataType = logicalToDataType.get(column);
-    Column maxColumn = getStatsColumn(column, MAX);
+    Column maxColumn = getStatsColumn(column, MAX, collationIdentifier);
 
     // If this is a column of type Timestamp or TimestampNTZ
     // compensate for the truncation from microseconds to milliseconds
@@ -206,7 +224,7 @@ public class StatsSchemaHelper {
         "%s is not a valid null_count column for data schema %s",
         column,
         dataSchema);
-    return getStatsColumn(column, NULL_COUNT);
+    return getStatsColumn(column, NULL_COUNT, Optional.empty());
   }
 
   /** Returns the NUM_RECORDS column in the statistic schema */
@@ -218,9 +236,9 @@ public class StatsSchemaHelper {
    * Returns true if the given column is skipping-eligible using min/max statistics. This means the
    * column exists, is a leaf column, and is of a skipping-eligible data-type.
    */
-  public boolean isSkippingEligibleMinMaxColumn(Column column) {
+  public boolean isSkippingEligibleMinMaxColumn(Column column, boolean isCollatedSkipping) {
     return logicalToDataType.containsKey(column)
-        && isSkippingEligibleDataType(logicalToDataType.get(column));
+        && isSkippingEligibleDataType(logicalToDataType.get(column), isCollatedSkipping);
   }
 
   /**
@@ -259,7 +277,7 @@ public class StatsSchemaHelper {
   private static StructType getMinMaxStatsSchema(StructType dataSchema) {
     List<StructField> fields = new ArrayList<>();
     for (StructField field : dataSchema.fields()) {
-      if (isSkippingEligibleDataType(field.getDataType())) {
+      if (isSkippingEligibleDataType(field.getDataType(), false)) {
         fields.add(new StructField(getPhysicalName(field), field.getDataType(), true));
       } else if (field.getDataType() instanceof StructType) {
         fields.add(
@@ -301,13 +319,25 @@ public class StatsSchemaHelper {
    * Given a logical column and a stats type returns the corresponding column in the statistics
    * schema
    */
-  private Column getStatsColumn(Column column, String statType) {
+  private Column getStatsColumn(
+      Column column, String statType, Optional<CollationIdentifier> collationIdentifier) {
     checkArgument(
         logicalToPhysicalColumn.containsKey(column),
         "%s is not a valid leaf column for data schema: %s",
         column,
         dataSchema);
-    return getChildColumn(logicalToPhysicalColumn.get(column), statType);
+    Column physicalColumn = logicalToPhysicalColumn.get(column);
+    // Use binary stats if collation is not specified or if it is the default Spark collation.
+    if (collationIdentifier.isPresent()
+        && collationIdentifier.get() != CollationIdentifier.SPARK_UTF8_BINARY) {
+      // Collation-aware stats are stored under `statsWithCollation.collationName.statType`.
+      return getChildColumn(
+          physicalColumn,
+          Arrays.asList(STATS_WITH_COLLATION, collationIdentifier.get().toString(), statType));
+    } else {
+      // Binary stats are stored under `statType`.
+      return getChildColumn(physicalColumn, statType);
+    }
   }
 
   /**
@@ -342,6 +372,15 @@ public class StatsSchemaHelper {
   /** Returns the provided column as a child column nested under {@code parentName} */
   private static Column getChildColumn(Column column, String parentName) {
     return new Column(prependArray(column.getNames(), parentName));
+  }
+
+  /** Returns the provided column as a child column nested under {@code nestedPath} */
+  private static Column getChildColumn(Column column, List<String> nestedPath) {
+    for (int i = nestedPath.size() - 1; i >= 0; i--) {
+      String name = nestedPath.get(i);
+      column = getChildColumn(column, name);
+    }
+    return column;
   }
 
   /**
