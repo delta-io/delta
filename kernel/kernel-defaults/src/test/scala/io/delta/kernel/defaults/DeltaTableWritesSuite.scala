@@ -652,56 +652,62 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   }
 
   test("stats: default engine writes binary stats for collated string columns") {
-    withTempDirAndEngine { (tblPath, engine) =>
-      val utf8Binary = new StringType(CollationIdentifier.SPARK_UTF8_BINARY)
-      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
-      val unicode = new StringType("ICU.UNICODE")
+    val utf8Binary = new StringType(CollationIdentifier.SPARK_UTF8_BINARY)
+    val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+    val unicode = new StringType("ICU.UNICODE")
+    val serbian = new StringType("ICU.SR_CYRL_SRB.74")
+    Seq(
+      (utf8Binary, utf8Lcase, unicode),
+      (serbian, serbian, serbian),
+      (utf8Binary, serbian, unicode),
+      (utf8Binary, utf8Binary, utf8Binary)).foreach { case (c1DataType, c2DataType, c3DataType) =>
+      withTempDirAndEngine { (tblPath, engine) =>
+        val schema = new StructType()
+          .add("c1", utf8Binary)
+          .add("c2", utf8Lcase)
+          .add("c3", unicode)
 
-      val schema = new StructType()
-        .add("c1", utf8Binary)
-        .add("c2", utf8Lcase)
-        .add("c3", unicode)
+        val txn = getCreateTxn(engine, tblPath, schema)
+        commitTransaction(txn, engine, emptyIterable())
 
-      val txn = getCreateTxn(engine, tblPath, schema)
-      commitTransaction(txn, engine, emptyIterable())
+        val batchSize = 4
+        val values = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
+        val c1 = DefaultGenericVector.fromArray(c1DataType, values)
+        val c2 = DefaultGenericVector.fromArray(c2DataType, values)
+        val c3 = DefaultGenericVector.fromArray(c3DataType, values)
+        val batch = new DefaultColumnarBatch(batchSize, schema, Array[ColumnVector](c1, c2, c3))
+        val fcb = new FilteredColumnarBatch(batch, Optional.empty())
 
-      val batchSize = 4
-      val values = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
-      val c1 = DefaultGenericVector.fromArray(utf8Binary, values)
-      val c2 = DefaultGenericVector.fromArray(utf8Lcase, values)
-      val c3 = DefaultGenericVector.fromArray(unicode, values)
-      val batch = new DefaultColumnarBatch(batchSize, schema, Array[ColumnVector](c1, c2, c3))
-      val fcb = new FilteredColumnarBatch(batch, Optional.empty())
+        val commit = appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
+        verifyCommitResult(commit, expVersion = 1, expIsReadyForCheckpoint = false)
 
-      val commit = appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
-      verifyCommitResult(commit, expVersion = 1, expIsReadyForCheckpoint = false)
+        // Read stats JSON
+        val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+        val scan = snapshot.getScanBuilder().build()
+        val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+          .flatMap(_.getRows.toSeq)
+        val statsJson = scanFiles.headOption.flatMap { row =>
+          val add = row.getStruct(row.getSchema.indexOf("add"))
+          val idx = add.getSchema.indexOf("stats")
+          if (idx >= 0 && !add.isNullAt(idx)) Some(add.getString(idx)) else None
+        }.getOrElse(fail("Stats JSON not found"))
 
-      // Read stats JSON
-      val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
-      val scan = snapshot.getScanBuilder().build()
-      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
-        .flatMap(_.getRows.toSeq)
-      val statsJson = scanFiles.headOption.flatMap { row =>
-        val add = row.getStruct(row.getSchema.indexOf("add"))
-        val idx = add.getSchema.indexOf("stats")
-        if (idx >= 0 && !add.isNullAt(idx)) Some(add.getString(idx)) else None
-      }.getOrElse(fail("Stats JSON not found"))
+        // Default engine computes just non-collated stats; verify min/max values
+        val mapper = JsonUtils.mapper()
+        val statsNode = mapper.readTree(statsJson)
+        val minValues = statsNode.get("minValues")
+        val maxValues = statsNode.get("maxValues")
 
-      // Default engine computes just non-collated stats; verify min/max values
-      val mapper = JsonUtils.mapper()
-      val statsNode = mapper.readTree(statsJson)
-      val minValues = statsNode.get("minValues")
-      val maxValues = statsNode.get("maxValues")
+        // All columns: [b, A, B, a] -> min "A", max "b"
+        assert(minValues.get("c1").asText() == "A")
+        assert(maxValues.get("c1").asText() == "b")
 
-      // All columns: [b, A, B, a] -> min "A", max "b"
-      assert(minValues.get("c1").asText() == "A")
-      assert(maxValues.get("c1").asText() == "b")
+        assert(minValues.get("c2").asText() == "A")
+        assert(maxValues.get("c2").asText() == "b")
 
-      assert(minValues.get("c2").asText() == "A")
-      assert(maxValues.get("c2").asText() == "b")
-
-      assert(minValues.get("c3").asText() == "A")
-      assert(maxValues.get("c3").asText() == "b")
+        assert(minValues.get("c3").asText() == "A")
+        assert(maxValues.get("c3").asText() == "b")
+      }
     }
   }
 
