@@ -57,7 +57,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
       collation: CollationIdentifier,
       statName: String,
       fieldName: String): Column = {
-    new Column(Array(STATS_WITH_COLLATION, collation.toString, statName, fieldName))
+    new Column(Array(STATS_WITH_COLLATION, collation.toString, statName) ++ fieldName.split("\\."))
   }
 
   /* For struct type checks for equality based on field names & data type only */
