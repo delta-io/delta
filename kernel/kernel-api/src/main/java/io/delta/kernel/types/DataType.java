@@ -37,16 +37,6 @@ public abstract class DataType {
   }
 
   /**
-   * Are the data types same? The collations could be different.
-   *
-   * @param dataType
-   * @return
-   */
-  public boolean equivalentIgnoreCollations(DataType dataType) {
-    return equals(dataType);
-  }
-
-  /**
    * Returns true iff this data is a nested data type (it logically parameterized by other types).
    *
    * <p>For example StructType, ArrayType, MapType are nested data types.

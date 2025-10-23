@@ -627,25 +627,6 @@ trait AbstractTestUtils
   }
 
   /**
-   * Builds an ArrayType ColumnVector from a sequence of per-row element sequences.
-   */
-  def buildArrayVector(
-      valuesPerRow: Seq[Seq[AnyRef]],
-      elementType: DataType,
-      containsNull: Boolean): ColumnVector = {
-    val arrayType = new ArrayType(elementType, containsNull)
-    val arrayValues: Array[ArrayValue] = valuesPerRow.map { elems =>
-      if (elems == null) null
-      else new ArrayValue {
-        override def getSize: Int = elems.size
-        override def getElements: ColumnVector =
-          DefaultGenericVector.fromArray(elementType, elems.toArray)
-      }
-    }.toArray
-    DefaultGenericVector.fromArray(arrayType, arrayValues.asInstanceOf[Array[AnyRef]])
-  }
-
-  /**
    * Utility method to generate a [[dataType]] column vector of given size.
    * The nullability of rows is determined by the [[testIsNullValue(dataType, rowId)]].
    * The row values are determined by [[testColumnValue(dataType, rowId)]].
@@ -718,7 +699,7 @@ trait AbstractTestUtils
       case LongType.LONG => rowId % 25 == 0
       case FloatType.FLOAT => rowId % 5 == 0
       case DoubleType.DOUBLE => rowId % 10 == 0
-      case _: StringType => rowId % 2 == 0
+      case StringType.STRING => rowId % 2 == 0
       case BinaryType.BINARY => rowId % 3 == 0
       case DateType.DATE => rowId % 5 == 0
       case TimestampType.TIMESTAMP => rowId % 3 == 0
@@ -739,7 +720,7 @@ trait AbstractTestUtils
       case LongType.LONG => rowId * 287623L / 91
       case FloatType.FLOAT => rowId * 7651.2323f / 91
       case DoubleType.DOUBLE => rowId * 23423.23d / 17
-      case _: StringType => (rowId % 19).toString
+      case StringType.STRING => (rowId % 19).toString
       case BinaryType.BINARY => Array[Byte]((rowId % 21).toByte, (rowId % 7 - 1).toByte)
       case DateType.DATE => (rowId * 28234) % 2876
       case TimestampType.TIMESTAMP => (rowId * 2342342L) % 23
@@ -820,7 +801,7 @@ trait AbstractTestUtils
       case LongType.LONG => sparktypes.DataTypes.LongType
       case FloatType.FLOAT => sparktypes.DataTypes.FloatType
       case DoubleType.DOUBLE => sparktypes.DataTypes.DoubleType
-      case _: StringType => sparktypes.DataTypes.StringType
+      case StringType.STRING => sparktypes.DataTypes.StringType
       case BinaryType.BINARY => sparktypes.DataTypes.BinaryType
       case DateType.DATE => sparktypes.DataTypes.DateType
       case TimestampType.TIMESTAMP => sparktypes.DataTypes.TimestampType

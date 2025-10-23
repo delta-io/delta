@@ -53,11 +53,6 @@ public class StringType extends BasePrimitiveType {
   }
 
   @Override
-  public boolean equivalentIgnoreCollations(DataType dataType) {
-    return dataType instanceof StringType;
-  }
-
-  @Override
   public boolean equals(Object o) {
     if (!(o instanceof StringType)) {
       return false;

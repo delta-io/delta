@@ -55,26 +55,6 @@ public class ArrayType extends DataType {
         && ((ArrayType) dataType).getElementType().equivalent(getElementType());
   }
 
-  /**
-   * Are the data types same? The collations could be different.
-   *
-   * @param dataType
-   * @return
-   */
-  @Override
-  public boolean equivalentIgnoreCollations(DataType dataType) {
-    if (this == dataType) {
-      return true;
-    }
-    if (dataType == null || getClass() != dataType.getClass()) {
-      return false;
-    }
-    ArrayType arrayType = (ArrayType) dataType;
-    return (elementField == null && arrayType.elementField == null)
-        || (elementField != null
-            && elementField.equivalentIgnoreCollations(arrayType.elementField));
-  }
-
   @Override
   public boolean isNested() {
     return true;

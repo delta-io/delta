@@ -215,21 +215,6 @@ public class StructField {
         && Objects.equals(typeChanges, that.typeChanges);
   }
 
-  /** @return whether the struct fields are equal, ignoring collations */
-  public boolean equivalentIgnoreCollations(StructField other) {
-    if (this == other) {
-      return true;
-    }
-    if (other == null) {
-      return false;
-    }
-    return nullable == other.nullable
-        && name.equals(other.name)
-        && dataType.equivalentIgnoreCollations(other.dataType)
-        && metadata.equals(other.metadata)
-        && Objects.equals(typeChanges, other.typeChanges);
-  }
-
   @Override
   public int hashCode() {
     return Objects.hash(name, dataType, nullable, metadata, typeChanges);

@@ -70,27 +70,6 @@ public class MapType extends DataType {
         && ((MapType) dataType).isValueContainsNull() == isValueContainsNull();
   }
 
-  /**
-   * Are the data types same? The collations could be different.
-   *
-   * @param dataType
-   * @return
-   */
-  @Override
-  public boolean equivalentIgnoreCollations(DataType dataType) {
-    if (this == dataType) {
-      return true;
-    }
-    if (dataType == null || getClass() != dataType.getClass()) {
-      return false;
-    }
-    MapType mapType = (MapType) dataType;
-    return ((keyField == null && mapType.keyField == null)
-            || (keyField != null && keyField.equivalentIgnoreCollations(mapType.keyField)))
-        && ((valueField == null && mapType.valueField == null)
-            || (valueField != null && valueField.equivalentIgnoreCollations(mapType.valueField)));
-  }
-
   @Override
   public boolean equals(Object o) {
     if (this == o) {
