@@ -39,6 +39,14 @@ public class TableChangesUtils {
   /** Column name for the timestamp metadata column added to getActions results. */
   public static final String TIMESTAMP_COLUMN_NAME = "timestamp";
 
+  /** StructField for the version metadata column. */
+  private static final StructField VERSION_STRUCT_FIELD =
+      new StructField(VERSION_COLUMN_NAME, LongType.LONG, false);
+
+  /** StructField for the timestamp metadata column. */
+  private static final StructField TIMESTAMP_STRUCT_FIELD =
+      new StructField(TIMESTAMP_COLUMN_NAME, LongType.LONG, false);
+
   private TableChangesUtils() {}
 
   /**
@@ -82,10 +90,8 @@ public class TableChangesUtils {
             "Evaluating the commit timestamp expression");
 
     return batch
-        .withNewColumn(
-            0, new StructField(VERSION_COLUMN_NAME, LongType.LONG, false), commitVersionVector)
-        .withNewColumn(
-            1, new StructField(TIMESTAMP_COLUMN_NAME, LongType.LONG, false), commitTimestampVector);
+        .withNewColumn(0, VERSION_STRUCT_FIELD, commitVersionVector)
+        .withNewColumn(1, TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
   }
 
   /**
