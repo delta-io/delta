@@ -177,13 +177,9 @@ public class Utils {
   }
 
   /**
-   * Flattens a nested {@link CloseableIterator} structure into a single flat iterator.
-   *
-   * <p>This method takes an iterator of iterators (nested structure) and flattens it into a single
-   * iterator that yields all elements from all inner iterators in sequence.
-   *
-   * <p>Example usage: Given an iterator of commits, where each commit is an iterator of batches,
-   * flatMap produces a single iterator over all batches from all commits.
+   * Flattens a nested {@link CloseableIterator} structure into a single flat iterator. This method
+   * takes an iterator of iterators (nested structure) and flattens it into a single iterator that
+   * yields all elements from all inner iterators in sequence..
    *
    * @param nestedIterator An iterator of iterators to flatten
    * @param <T> The type of elements in the inner iterators
