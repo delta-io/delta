@@ -80,7 +80,10 @@ import org.apache.spark.sql.internal.SQLConf
  *
  * @since 0.4.0
  */
-class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
+class LegacyDeltaSparkSessionExtension extends  AbstractSparkSessionExtension
+class AbstractSparkSessionExtension extends (SparkSessionExtensions => Unit) {
+  protected def preDeltaAnalysisRule(extensions: SparkSessionExtensions): Unit = {}
+
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
@@ -91,6 +94,7 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectResolutionRule { session =>
       PreprocessTimeTravel(session)
     }
+    preDeltaAnalysisRule(extensions)
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support
       // id column mapping mode for Delta.
