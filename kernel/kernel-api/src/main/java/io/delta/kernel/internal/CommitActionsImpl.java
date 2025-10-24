@@ -66,6 +66,8 @@ public class CommitActionsImpl implements CommitActions {
   private final String tablePath;
   private final boolean shouldDropProtocolColumn;
   private final boolean shouldDropCommitInfoColumn;
+  private final long version;
+  private final long timestamp;
 
   /**
    * Peekable iterator for ActionWrappers. Supports peeking at the first element for metadata
@@ -111,6 +113,22 @@ public class CommitActionsImpl implements CommitActions {
                 .collect(Collectors.toList()));
     this.engine = engine;
     this.peekableIterator = getNewIterator();
+
+    // Extract version and timestamp from first action (or use fallback)
+    Optional<ActionWrapper> firstWrapper = peekableIterator.peek();
+    if (firstWrapper.isPresent()) {
+      this.version = firstWrapper.get().getVersion();
+      this.timestamp =
+          firstWrapper
+              .get()
+              .getTimestamp()
+              .orElseThrow(
+                  () -> new RuntimeException("timestamp should always exist for Delta File"));
+    } else {
+      // Empty commit file - from file
+      this.version = FileNames.deltaVersion(new Path(commitFile.getPath()));
+      this.timestamp = commitFile.getModificationTime();
+    }
   }
 
   private PeekableIterator<ActionWrapper> getNewIterator() {
@@ -122,18 +140,12 @@ public class CommitActionsImpl implements CommitActions {
 
   @Override
   public long getVersion() {
-    return peekableIterator
-        .peek()
-        .map(ActionWrapper::getVersion)
-        .orElseGet(() -> FileNames.deltaVersion(new Path(commitFile.getPath())));
+    return version;
   }
 
   @Override
   public long getTimestamp() {
-    return peekableIterator
-        .peek()
-        .flatMap(ActionWrapper::getTimestamp)
-        .orElseGet(commitFile::getModificationTime);
+    return timestamp;
   }
 
   @Override
