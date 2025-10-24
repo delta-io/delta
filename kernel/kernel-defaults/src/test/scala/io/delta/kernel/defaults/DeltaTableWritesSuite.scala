@@ -424,7 +424,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("insert into table - simple collated string column") {
     withTempDirAndEngine { (tblPath, engine) =>
-      val utf8Binary = new StringType(CollationIdentifier.SPARK_UTF8_BINARY)
       val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
       val unicode = new StringType("ICU.UNICODE")
       val serbianWithVersion = new StringType("ICU.SR_CYRL_SRB.75.1")
@@ -433,7 +432,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val commonSchema = new StructType()
         .add("c1", IntegerType.INTEGER)
         .add("c2", StringType.STRING)
-        .add("c3", utf8Binary)
+        .add("c3", STRING)
         .add("c4", utf8Lcase)
         .add("c5", unicode)
       val schemaWithVersion = commonSchema.add("c6", serbianWithVersion)
@@ -477,7 +476,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
-  test("insert into table twice - complex types with collated strings in nested/array/map") {
+  test("insert into table - complex types with collated strings in nested/array/map") {
     withTempDirAndEngine { (tblPath, engine) =>
       val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
       val unicode = new StringType("ICU.UNICODE")
@@ -560,14 +559,13 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("insert into table - nested struct with collated string field") {
     withTempDirAndEngine { (tblPath, engine) =>
-      val utf8Binary = new StringType(CollationIdentifier.SPARK_UTF8_BINARY)
       val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
       val unicode = new StringType("ICU.UNICODE")
       val nested = new StructType()
         .add("c21", utf8Lcase)
         .add("c22", IntegerType.INTEGER)
         .add("c23", unicode)
-        .add("c24", utf8Binary)
+        .add("c24", STRING)
       val schema = new StructType()
         .add("c1", LongType.LONG)
         .add("c2", nested)
@@ -593,14 +591,13 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("insert into table - complex types with collated strings in nested fields") {
     withTempDirAndEngine { (tblPath, engine) =>
-      val utf8Binary = new StringType(CollationIdentifier.SPARK_UTF8_BINARY)
       val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
       val unicode = new StringType("ICU.UNICODE")
 
       val nested = new StructType()
         .add("c1", unicode)
         .add("c2", IntegerType.INTEGER)
-        .add("c3", utf8Binary)
+        .add("c3", STRING)
 
       val schema = new StructType()
         .add("c1", IntegerType.INTEGER)
@@ -615,7 +612,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val nestedVectors = Array[ColumnVector](
         testColumnVector(batchSize, unicode),
         testColumnVector(batchSize, IntegerType.INTEGER),
-        testColumnVector(batchSize, utf8Binary))
+        testColumnVector(batchSize, STRING))
       val c2Vector = new DefaultStructVector(batchSize, nested, Optional.empty(), nestedVectors)
 
       val c3Values: Seq[Seq[AnyRef]] = (0 until batchSize).map { i =>
@@ -641,7 +638,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
 
       val metadata = getMetadata(engine, tblPath)
-      val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString())
+      val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString)
       assert(parsed === schema)
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
@@ -651,19 +648,96 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  test("insert into partitioned table - collated string partition columns") {
+    val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+    val unicode = new StringType("ICU.UNICODE.75.1")
+    val serbian = new StringType("ICU.SR_CYRL_SRB")
+    Seq(
+      // (p1BatchType, p2BatchType, vBatchType)
+      (utf8Lcase, unicode, serbian),
+      (serbian, serbian, utf8Lcase),
+      (utf8Lcase, serbian, unicode),
+      (unicode, serbian, STRING),
+      (STRING, serbian, STRING),
+      (STRING, STRING, STRING),
+      (utf8Lcase, STRING, utf8Lcase)
+    ).foreach { case (p1BatchType, p2BatchType, vBatchType) =>
+      withTempDirAndEngine { (tblPath, engine) =>
+        val schema = new StructType()
+          .add("id", INTEGER)
+          .add("p1", utf8Lcase) // partition column
+          .add("p2", unicode)   // partition column
+          .add("v", serbian)
+
+        val schemaWithoutVersion = new StructType()
+          .add("id", INTEGER)
+          .add("p1", utf8Lcase)
+          .add("p2", new StringType("ICU.UNICODE"))
+          .add("v", serbian)
+
+        val dataSchema = new StructType()
+          .add("id", INTEGER)
+          .add("p1", p1BatchType)
+          .add("p2", p2BatchType)
+          .add("v", vBatchType)
+
+        val partCols = Seq("p1", "p2")
+
+        val v0Part = Map("p1" -> ofString("a"), "p2" -> ofString("alpha"))
+        val v0Data = generateData(dataSchema, partCols, v0Part, batchSize = 8, numBatches = 1)
+
+        val v1Part = Map("p1" -> ofString("B"), "p2" -> ofString("beta"))
+        val v1Data = generateData(dataSchema, partCols, v1Part, batchSize = 5, numBatches = 1)
+
+        val commitResult0 = appendData(
+          engine,
+          tblPath,
+          isNewTable = true,
+          schema,
+          partCols,
+          data = Seq(v0Part -> v0Data, v1Part -> v1Data))
+
+        verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+        // Expect partition columns in the same case as in the schema
+        verifyCommitInfo(tblPath, version = 0, partitionCols = partCols)
+
+        val expectedRows0 = v0Data.flatMap(_.toTestRows) ++ v1Data.flatMap(_.toTestRows)
+        verifyWrittenContent(tblPath, schema, expectedRows0)
+
+        val v2Part = Map("p1" -> ofString("c"), "p2" -> ofString("gamma"))
+        val v2Data = generateData(dataSchema, partCols, v2Part, batchSize = 4, numBatches = 3)
+
+        val commitResult1 = appendData(
+          engine,
+          tblPath,
+          data = Seq(v2Part -> v2Data))
+
+        verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+        // For subsequent commits, partitionBy is not recorded in commit info
+        verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+
+        val expectedRows1 = expectedRows0 ++ v2Data.flatMap(_.toTestRows)
+        verifyWrittenContent(tblPath, schema, expectedRows1)
+
+        val metadata = getMetadata(engine, tblPath)
+        val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString)
+        assert(parsed === schemaWithoutVersion)
+      }
+    }
+  }
+
   test("stats: default engine writes binary stats for collated string columns") {
-    val utf8Binary = new StringType(CollationIdentifier.SPARK_UTF8_BINARY)
     val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
     val unicode = new StringType("ICU.UNICODE")
     val serbian = new StringType("ICU.SR_CYRL_SRB.74")
     Seq(
-      (utf8Binary, utf8Lcase, unicode),
+      (STRING, utf8Lcase, unicode),
       (serbian, serbian, serbian),
-      (utf8Binary, serbian, unicode),
-      (utf8Binary, utf8Binary, utf8Binary)).foreach { case (c1DataType, c2DataType, c3DataType) =>
+      (STRING, serbian, unicode),
+      (STRING, STRING, STRING)).foreach { case (c1DataType, c2DataType, c3DataType) =>
       withTempDirAndEngine { (tblPath, engine) =>
         val schema = new StructType()
-          .add("c1", utf8Binary)
+          .add("c1", STRING)
           .add("c2", utf8Lcase)
           .add("c3", unicode)
 
@@ -707,6 +781,91 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
         assert(minValues.get("c3").asText() == "A")
         assert(maxValues.get("c3").asText() == "b")
+      }
+    }
+  }
+
+  test("stats: collated non-partition column in partitioned table") {
+    val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+    val unicode = new StringType("ICU.UNICODE")
+    val serbian = new StringType("ICU.SR_CYRL_SRB.74")
+    Seq(
+      (utf8Lcase, unicode),
+      (serbian, serbian),
+      (utf8Lcase, serbian),
+      (STRING, STRING),
+      (STRING, utf8Lcase),
+      (unicode, STRING)
+    ).foreach { case (pBatchType, dBatchType) =>
+      withTempDirAndEngine { (tblPath, engine) =>
+        val schema = new StructType()
+          .add("p", utf8Lcase) // partition column
+          .add("c", serbian)   // non-partition, collated
+
+        val txn = getCreateTxn(engine, tblPath, schema, partCols = Seq("p"))
+        commitTransaction(txn, engine, emptyIterable())
+
+        // Commit 1: p = "north", c values [b, A, B, a]
+        val batchSize1 = 4
+        val cValues1 = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
+        val pValues1 = Array.fill[AnyRef](batchSize1)("north")
+        val pVec1 = DefaultGenericVector.fromArray(pBatchType, pValues1)
+        val cVec1 = DefaultGenericVector.fromArray(dBatchType, cValues1)
+        val batch1 = new DefaultColumnarBatch(batchSize1, schema, Array[ColumnVector](pVec1, cVec1))
+        val fcb1 = new FilteredColumnarBatch(batch1, Optional.empty())
+
+        val commit1 =
+          appendData(engine, tblPath, data = Seq(Map("p" -> ofString("north")) -> Seq(fcb1)))
+        verifyCommitResult(commit1, expVersion = 1, expIsReadyForCheckpoint = false)
+        verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+
+        // Commit 2: p = "south", c values [d, C]
+        val batchSize2 = 2
+        val cValues2 = Array("d", "C", "a").map(_.asInstanceOf[AnyRef])
+        val pValues2 = Array.fill[AnyRef](batchSize2)("south")
+        val pVec2 = DefaultGenericVector.fromArray(pBatchType, pValues2)
+        val cVec2 = DefaultGenericVector.fromArray(dBatchType, cValues2)
+        val batch2 = new DefaultColumnarBatch(batchSize2, schema, Array[ColumnVector](pVec2, cVec2))
+        val fcb2 = new FilteredColumnarBatch(batch2, Optional.empty())
+
+        val commit2 =
+          appendData(engine, tblPath, data = Seq(Map("p" -> ofString("south")) -> Seq(fcb2)))
+        verifyCommitResult(commit2, expVersion = 2, expIsReadyForCheckpoint = false)
+        verifyCommitInfo(tblPath, version = 2, partitionCols = null)
+
+        // Read stats JSON
+        val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+        val scan = snapshot.getScanBuilder.build()
+        val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+          .flatMap(_.getRows.toSeq)
+
+        val mapper = JsonUtils.mapper()
+        assert(scanFiles.nonEmpty)
+        scanFiles.foreach { row =>
+          val add = row.getStruct(row.getSchema.indexOf("add"))
+          val path = add.getString(add.getSchema.indexOf("path"))
+          val statsIdx = add.getSchema.indexOf("stats")
+          assert(statsIdx >= 0 && !add.isNullAt(statsIdx))
+          val statsJson = add.getString(statsIdx)
+          val statsNode = mapper.readTree(statsJson)
+          val minValues = statsNode.get("minValues")
+          val maxValues = statsNode.get("maxValues")
+
+          val minC = minValues.get("c").asText()
+          val maxC = maxValues.get("c").asText()
+
+          if (path.contains("p=north")) {
+            // For [b, A, B, a] -> min "A", max "b"
+            assert(minC == "A")
+            assert(maxC == "b")
+          } else if (path.contains("p=south")) {
+            // For [d, C] -> min "C", max "d"
+            assert(minC == "C")
+            assert(maxC == "d")
+          } else {
+            fail(s"Unexpected partition: $path")
+          }
+        }
       }
     }
   }
