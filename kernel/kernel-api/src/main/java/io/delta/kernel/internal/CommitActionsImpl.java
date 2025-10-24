@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal;
 
-import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitActions;
@@ -30,16 +29,15 @@ import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Preconditions;
-import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import io.delta.kernel.utils.PeekableIterator;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -62,8 +60,6 @@ import java.util.stream.Collectors;
  */
 public class CommitActionsImpl implements CommitActions {
 
-  private final long version;
-  private final long timestamp;
   private final Engine engine;
   private final FileStatus commitFile;
   private final StructType readSchema;
@@ -72,10 +68,10 @@ public class CommitActionsImpl implements CommitActions {
   private final boolean shouldDropCommitInfoColumn;
 
   /**
-   * Supplier for building the iterator. Initially returns an optimized iterator using cached data,
-   * then updates itself to return file-rereading iterators on subsequent calls.
+   * Peekable iterator for ActionWrappers. Supports peeking at the first element for metadata
+   * extraction. Used for the first getActions() call, then set to null.
    */
-  private Supplier<CloseableIterator<ColumnarBatch>> iteratorSupplier;
+  private PeekableIterator<ActionWrapper> peekableIterator;
 
   /**
    * Creates a CommitActions from a commit file.
@@ -90,7 +86,7 @@ public class CommitActionsImpl implements CommitActions {
       FileStatus commitFile,
       String tablePath,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    this.engine = requireNonNull(engine, "engine cannot be null");
+    requireNonNull(engine, "engine cannot be null");
     this.commitFile = requireNonNull(commitFile, "commitFile cannot be null");
     this.tablePath = requireNonNull(tablePath, "tablePath cannot be null");
 
@@ -104,9 +100,8 @@ public class CommitActionsImpl implements CommitActions {
     // ActionsIterator to resolve the timestamp when available
     copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
     // Determine whether the additional actions were in the original set.
-    boolean shouldDropProtocolColumn =
-        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    boolean shouldDropCommitInfoColumn =
+    this.shouldDropProtocolColumn = !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    this.shouldDropCommitInfoColumn =
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
 
     this.readSchema =
@@ -114,70 +109,44 @@ public class CommitActionsImpl implements CommitActions {
             copySet.stream()
                 .map(action -> new StructField(action.colName, action.schema, true))
                 .collect(Collectors.toList()));
-    this.shouldDropProtocolColumn = shouldDropProtocolColumn;
-    this.shouldDropCommitInfoColumn = shouldDropCommitInfoColumn;
+    this.engine = engine;
+    this.peekableIterator = getNewIterator();
+  }
 
-    // Read file once to extract version and timestamp, create supplier for lazy batch processing
-    CloseableIterator<ActionWrapper> wrappers =
+  private PeekableIterator<ActionWrapper> getNewIterator() {
+    CloseableIterator<ActionWrapper> actionsIter =
         new ActionsIterator(
             engine, Collections.singletonList(commitFile), readSchema, Optional.empty());
-    if (!wrappers.hasNext()) {
-      // Empty commit file - use fallback and close the iterator immediately
-      this.version = FileNames.deltaVersion(new Path(commitFile.getPath()));
-      this.timestamp = commitFile.getModificationTime();
-      this.iteratorSupplier = () -> toCloseableIterator(Collections.emptyIterator());
-      Utils.closeCloseablesSilently(wrappers);
-    } else {
-      // Extract first wrapper for version/timestamp, create supplier for lazy processing
-      ActionWrapper firstWrapper = wrappers.next();
-      this.version = firstWrapper.getVersion();
-      this.timestamp =
-          firstWrapper
-              .getTimestamp()
-              .orElseThrow(
-                  () -> new RuntimeException("timestamp should always exist for Delta File"));
-
-      // Create supplier that will build the iterator on demand
-      this.iteratorSupplier =
-          () ->
-              toCloseableIterator(Collections.singletonList(firstWrapper).iterator())
-                  .combine(wrappers)
-                  .map(
-                      wrapper ->
-                          validateProtocolAndDropInternalColumns(
-                              wrapper.getColumnarBatch(),
-                              tablePath,
-                              shouldDropProtocolColumn,
-                              shouldDropCommitInfoColumn));
-    }
+    return new PeekableIterator<>(actionsIter);
   }
 
   @Override
   public long getVersion() {
-    return version;
+    return peekableIterator
+        .peek()
+        .map(ActionWrapper::getVersion)
+        .orElseGet(() -> FileNames.deltaVersion(new Path(commitFile.getPath())));
   }
 
   @Override
   public long getTimestamp() {
-    return timestamp;
+    return peekableIterator
+        .peek()
+        .flatMap(ActionWrapper::getTimestamp)
+        .orElseGet(commitFile::getModificationTime);
   }
 
   @Override
   public synchronized CloseableIterator<ColumnarBatch> getActions() {
-    // Call current supplier to get iterator
-    CloseableIterator<ColumnarBatch> result = iteratorSupplier.get();
-    // Update supplier to reread from file on subsequent calls, releasing captured references
-    iteratorSupplier =
-        () ->
-            new ActionsIterator(
-                    engine, Collections.singletonList(commitFile), readSchema, Optional.empty())
-                .map(
-                    wrapper ->
-                        validateProtocolAndDropInternalColumns(
-                            wrapper.getColumnarBatch(),
-                            tablePath,
-                            shouldDropProtocolColumn,
-                            shouldDropCommitInfoColumn));
+    CloseableIterator<ColumnarBatch> result =
+        peekableIterator.map(
+            wrapper ->
+                validateProtocolAndDropInternalColumns(
+                    wrapper.getColumnarBatch(),
+                    tablePath,
+                    shouldDropProtocolColumn,
+                    shouldDropCommitInfoColumn));
+    peekableIterator = getNewIterator();
     return result;
   }
 
