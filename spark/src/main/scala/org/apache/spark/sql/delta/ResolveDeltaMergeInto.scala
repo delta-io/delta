@@ -77,6 +77,39 @@ object ResolveDeltaMergeInto {
     resolveOrFail(resolveExprsFn, Seq(expr), plansToResolveExpr, mergeClauseTypeStr).head
   }
 
+  /**
+   * Returns the sequence of [[DeltaMergeActions]] corresponding to
+   * [ `columnName = sourceColumnBySameName` ] for every column name in the schema. Nested
+   * columns are unfolded to create an assignment for each leaf.
+   *
+   * @param currSchema: schema to generate DeltaMergeAction for every 'leaf'
+   * @param qualifier: used to recurse to leaves; represents the qualifier of the current schema
+   * @param source: source plan to resolve expressions against
+   * @param conf: SQL configuration
+   * @return seq of DeltaMergeActions corresponding to columnName = sourceColumnName updates
+   */
+  private def getLeafActionsForSchema(
+      currSchema: StructType,
+      qualifier: Seq[String],
+      source: LogicalPlan,
+      conf: SQLConf): Seq[DeltaMergeAction] = {
+    currSchema.flatMap {
+      case StructField(name, struct: StructType, _, _) =>
+        getLeafActionsForSchema(struct, qualifier :+ name, source, conf)
+      case StructField(name, _, _, _) =>
+        val nameParts = qualifier :+ name
+        val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
+          // if we use getActions to expand target columns, this will fail on target columns not
+          // present in the source
+          throw new DeltaIllegalArgumentException(
+            errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
+            messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
+          )
+        }
+        Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
+    }
+  }
+
   def resolveReferencesAndSchema(
       merge: DeltaMergeInto,
       conf: SQLConf)(resolveExprsFn: ResolveExpressionsFn): DeltaMergeInto = {
@@ -106,32 +139,6 @@ object ResolveDeltaMergeInto {
     def resolveClause[T <: DeltaMergeIntoClause](
         clause: T,
         plansToResolveAction: Seq[LogicalPlan]): T = {
-
-      /*
-       * Returns the sequence of [[DeltaMergeActions]] corresponding to
-       * [ `columnName = sourceColumnBySameName` ] for every column name in the schema. Nested
-       * columns are unfolded to create an assignment for each leaf.
-       *
-       * @param currSchema: schema to generate DeltaMergeAction for every 'leaf'
-       * @param qualifier: used to recurse to leaves; represents the qualifier of the current schema
-       * @return seq of DeltaMergeActions corresponding to columnName = sourceColumnName updates
-       */
-      def getActions(currSchema: StructType, qualifier: Seq[String] = Nil): Seq[DeltaMergeAction] =
-        currSchema.flatMap {
-          case StructField(name, struct: StructType, _, _) =>
-            getActions(struct, qualifier :+ name)
-          case StructField(name, _, _, _) =>
-            val nameParts = qualifier :+ name
-            val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
-              // if we use getActions to expand target columns, this will fail on target columns not
-              // present in the source
-              throw new DeltaIllegalArgumentException(
-                errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
-                messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
-              )
-            }
-            Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
-        }
 
       val clauseType = clause.clauseType.toUpperCase(Locale.ROOT)
       val mergeClauseTypeStr = s"$clauseType clause"
@@ -203,7 +210,7 @@ object ResolveDeltaMergeInto {
                 // subset of the nested columns in the target. If a source struct (a, b) is writing
                 // into a target (a, b, c), the final struct after filling in the no-op actions will
                 // be (s.a, s.b, t.c).
-                getActions(source.schema, Seq.empty)
+                getLeafActionsForSchema(source.schema, Seq.empty, source, conf)
             }
 
 
