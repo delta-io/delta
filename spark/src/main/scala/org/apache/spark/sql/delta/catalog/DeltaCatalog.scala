@@ -67,8 +67,8 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
  * A Catalog extension which can properly handle the interaction between the HiveMetaStore and
  * Delta tables. It delegates all operations DataSources other than Delta to the SparkCatalog.
  */
-// Legacy entry point class for backwards compatibility. Use DeltaCatalog instead.
-class LegacyDeltaCatalog extends AbstractDeltaCatalog
+// V1 entry point class for backwards compatibility with Spark V1 APIs.
+class V1DeltaCatalog extends AbstractDeltaCatalog
 
 // Abstract base class that contains the core Delta Catalog logic.
 class AbstractDeltaCatalog extends DelegatingCatalogExtension

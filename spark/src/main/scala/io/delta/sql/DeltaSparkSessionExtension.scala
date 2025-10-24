@@ -80,8 +80,8 @@ import org.apache.spark.sql.internal.SQLConf
  *
  * @since 0.4.0
  */
-// Legacy entry point class for backwards compatibility. Use DeltaSparkSessionExtension instead.
-class LegacyDeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension
+// V1 entry point class for backwards compatibility with Spark V1 APIs.
+class V1DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension
 
 // Abstract base class that contains the core Delta Spark Session extension logic.
 class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
