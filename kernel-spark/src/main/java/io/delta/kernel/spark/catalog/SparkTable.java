@@ -159,9 +159,26 @@ public class SparkTable implements Table, SupportsRead {
       Identifier identifier, org.apache.spark.sql.catalyst.catalog.CatalogTable catalogTable) {
     this(
         identifier,
-        requireNonNull(catalogTable, "catalogTable is null").location().toString(),
+        getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
         Collections.emptyMap(),
         Optional.of(catalogTable));
+  }
+
+  /**
+   * Helper method to decode URI path handling URL-encoded characters correctly. E.g., converts
+   * "spark%25dir%25prefix" to "spark%dir%prefix"
+   *
+   * @param location the URI location
+   * @return decoded path string suitable for file system access
+   */
+  private static String getDecodedPath(java.net.URI location) {
+    try {
+      // Use new File(URI).getPath() to get properly decoded filesystem path
+      return new java.io.File(location).getPath();
+    } catch (IllegalArgumentException e) {
+      // Fallback to toString() if URI is not a file:// URI
+      return location.toString();
+    }
   }
 
   /**

@@ -217,10 +217,19 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
           final Row row = addFileRowIter.next();
           final AddFile addFile = new AddFile(row.getStruct(0));
 
+          // Build file path: decode the relative path from AddFile first (it may be URL-encoded),
+          // then combine with table path, and finally convert to URI
+          final String decodedRelativePath =
+              java.net.URLDecoder.decode(
+                  addFile.getPath(), java.nio.charset.StandardCharsets.UTF_8);
+          final String filePath =
+              java.nio.file.Paths.get(tablePath, decodedRelativePath).toString();
+          final java.net.URI fileUri = new java.io.File(filePath).toURI();
+
           final PartitionedFile partitionedFile =
               new PartitionedFile(
                   getPartitionRow(addFile.getPartitionValues()),
-                  SparkPath.fromUrlString(tablePath + addFile.getPath()),
+                  SparkPath.fromPath(new org.apache.hadoop.fs.Path(fileUri)),
                   0L,
                   addFile.getSize(),
                   locations,
