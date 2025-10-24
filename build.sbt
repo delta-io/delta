@@ -40,7 +40,6 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.18"
 val scala213 = "2.13.13"
 val all_scala_versions = Seq(scala213)
 
@@ -880,7 +879,6 @@ lazy val iceberg = (project in file("iceberg"))
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
         s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
-        s"scala-library-${scala212}.jar",
         s"scala-library-${scala213}.jar",
         s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
         "caffeine-2.9.3.jar",
