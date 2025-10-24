@@ -53,6 +53,16 @@ public class StringType extends BasePrimitiveType {
   }
 
   /**
+   * Are the data types same? The metadata, collations or column names could be different.
+   *
+   * @param dataType
+   * @return
+   */
+  public boolean equivalent(DataType dataType) {
+    return dataType instanceof StringType;
+  }
+
+  /**
    * Are the data types same? The collations could be different.
    *
    * @param dataType
