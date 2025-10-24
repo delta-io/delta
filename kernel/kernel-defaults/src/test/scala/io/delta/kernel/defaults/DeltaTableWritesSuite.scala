@@ -660,13 +660,12 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       (unicode, serbian, STRING),
       (STRING, serbian, STRING),
       (STRING, STRING, STRING),
-      (utf8Lcase, STRING, utf8Lcase)
-    ).foreach { case (p1BatchType, p2BatchType, vBatchType) =>
+      (utf8Lcase, STRING, utf8Lcase)).foreach { case (p1BatchType, p2BatchType, vBatchType) =>
       withTempDirAndEngine { (tblPath, engine) =>
         val schema = new StructType()
           .add("id", INTEGER)
           .add("p1", utf8Lcase) // partition column
-          .add("p2", unicode)   // partition column
+          .add("p2", unicode) // partition column
           .add("v", serbian)
 
         val schemaWithoutVersion = new StructType()
@@ -795,12 +794,11 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       (utf8Lcase, serbian),
       (STRING, STRING),
       (STRING, utf8Lcase),
-      (unicode, STRING)
-    ).foreach { case (pBatchType, dBatchType) =>
+      (unicode, STRING)).foreach { case (pBatchType, dBatchType) =>
       withTempDirAndEngine { (tblPath, engine) =>
         val schema = new StructType()
           .add("p", utf8Lcase) // partition column
-          .add("c", serbian)   // non-partition, collated
+          .add("c", serbian) // non-partition, collated
 
         val txn = getCreateTxn(engine, tblPath, schema, partCols = Seq("p"))
         commitTransaction(txn, engine, emptyIterable())
