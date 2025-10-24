@@ -27,7 +27,7 @@ import io.delta.kernel.annotation.Evolving;
 public abstract class DataType {
 
   /**
-   * Are the data types same? The metadata or column names could be different.
+   * Are the data types same? The metadata, collations or column names could be different.
    *
    * @param dataType
    * @return
