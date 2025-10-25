@@ -99,9 +99,7 @@ trait AbstractTestUtils
     .appName("Spark Test Writer for Delta Kernel")
     .config("spark.master", "local")
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .config(
-      "spark.sql.catalog.spark_catalog",
-      "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
     // Set this conf to empty string so that the golden tables generated
     // using with the test-prefix (i.e. there is no DELTA_TESTING set) can still work
     .config(DeltaSQLConf.TEST_DV_NAME_PREFIX.key, "")
