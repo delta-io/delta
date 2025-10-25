@@ -25,7 +25,10 @@ import scala.jdk.CollectionConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, MANUAL_UPDATE, WRITE}
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
+import io.delta.kernel.defaults.internal.data.vector.DefaultStructVector
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
@@ -35,11 +38,13 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
 import io.delta.kernel.types.ByteType.BYTE
+import io.delta.kernel.types.CollationIdentifier
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DecimalType
 import io.delta.kernel.types.DoubleType.DOUBLE
@@ -410,6 +415,580 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, schema, Seq.empty)
       }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Collation write tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  test("insert into table - simple collated string column") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val unicode = new StringType("ICU.UNICODE")
+      val serbianWithVersion = new StringType("ICU.SR_CYRL_SRB.75.1")
+      val serbianWithoutVersion = new StringType("ICU.SR_CYRL_SRB")
+
+      val commonSchema = new StructType()
+        .add("c1", IntegerType.INTEGER)
+        .add("c2", StringType.STRING)
+        .add("c3", STRING)
+        .add("c4", utf8Lcase)
+        .add("c5", unicode)
+      val schemaWithVersion = commonSchema.add("c6", serbianWithVersion)
+      val schemaWithoutVersion = commonSchema.add("c6", serbianWithoutVersion)
+
+      // First append
+      val data1 =
+        generateData(schemaWithVersion, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
+
+      val commitResult0 = appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schemaWithVersion,
+        data = Seq(Map.empty[String, Literal] -> data1))
+
+      verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 0)
+      // we use schemaWithoutVersion to verify since the version info is not stored in the
+      // schema serialization
+      verifyWrittenContent(tblPath, schemaWithoutVersion, data1.flatMap(_.toTestRows))
+
+      // Second append
+      val data2 =
+        generateData(schemaWithVersion, Seq.empty, Map.empty, batchSize = 5, numBatches = 1)
+
+      val commitResult1 = appendData(
+        engine,
+        tblPath,
+        data = Seq(Map.empty[String, Literal] -> data2))
+      verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+      verifyWrittenContent(
+        tblPath,
+        schemaWithoutVersion,
+        (data1 ++ data2).flatMap(_.toTestRows))
+
+      val metadata = getMetadata(engine, tblPath)
+      val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString())
+      assert(parsed === schemaWithoutVersion)
+    }
+  }
+
+  test("insert into table - complex types with collated strings in nested/array/map") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val unicode = new StringType("ICU.UNICODE")
+      val unicodeWithVersion = new StringType("ICU.UNICODE.74")
+
+      val commonNested = new StructType()
+        .add("s1", utf8Lcase)
+        .add("n", INTEGER)
+
+      val nestedWithVersion = commonNested.add("s2", unicodeWithVersion)
+      val nestedWithoutVersion = commonNested.add("s2", unicode)
+
+      val schemaWithVersion = new StructType()
+        .add("nested", nestedWithVersion)
+        .add("arr", new ArrayType(utf8Lcase, true))
+        .add("map", new MapType(utf8Lcase, unicode, true))
+      val schemaWithoutVersion = new StructType()
+        .add("nested", nestedWithoutVersion)
+        .add("arr", new ArrayType(utf8Lcase, true))
+        .add("map", new MapType(utf8Lcase, unicode, true))
+
+      val batchSize = 4
+
+      def buildBatch(seed: String): FilteredColumnarBatch = {
+        val nestedVectors = Array[ColumnVector](
+          testColumnVector(batchSize, utf8Lcase),
+          testColumnVector(batchSize, INTEGER),
+          testColumnVector(batchSize, unicode))
+        val nestedVector = new DefaultStructVector(
+          batchSize,
+          nestedWithVersion,
+          Optional.empty(),
+          nestedVectors)
+
+        val arrValues: Seq[Seq[AnyRef]] = (0 until batchSize).map { i =>
+          Seq(s"${seed}t$i", s"${seed}x$i").map(_.asInstanceOf[AnyRef])
+        }
+        val arrVector = buildArrayVector(arrValues, utf8Lcase, containsNull = true)
+
+        val mapType = new MapType(utf8Lcase, unicode, true)
+        val mapValues: Seq[Map[AnyRef, AnyRef]] = (0 until batchSize).map { i =>
+          Map[AnyRef, AnyRef](s"${seed}k$i" -> s"${seed}v$i")
+        }
+        val mapVector = buildMapVector(mapValues, mapType)
+
+        val vectors = Array[ColumnVector](nestedVector, arrVector, mapVector)
+        val batch = new DefaultColumnarBatch(batchSize, schemaWithVersion, vectors)
+        new FilteredColumnarBatch(batch, Optional.empty())
+      }
+
+      val fcb1 = buildBatch("a-")
+      val fcb2 = buildBatch("b-")
+
+      val commitResult0 = appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schemaWithVersion,
+        data = Seq(Map.empty[String, Literal] -> Seq(fcb1)))
+
+      verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 0)
+
+      val commitResult1 = appendData(
+        engine,
+        tblPath,
+        data = Seq(Map.empty[String, Literal] -> Seq(fcb2)))
+
+      verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+
+      val expectedRows = Seq(fcb1, fcb2).flatMap(_.toTestRows)
+      verifyWrittenContent(tblPath, schemaWithVersion, expectedRows)
+
+      val metadata = getMetadata(engine, tblPath)
+      val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString())
+      assert(parsed === schemaWithoutVersion)
+    }
+  }
+
+  test("insert into table - nested struct with collated string field") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val unicode = new StringType("ICU.UNICODE")
+      val nested = new StructType()
+        .add("c21", utf8Lcase)
+        .add("c22", IntegerType.INTEGER)
+        .add("c23", unicode)
+        .add("c24", STRING)
+      val schema = new StructType()
+        .add("c1", LongType.LONG)
+        .add("c2", nested)
+
+      val data = generateData(schema, Seq.empty, Map.empty, batchSize = 8, numBatches = 2)
+
+      val commitResult0 = appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        data = Seq(Map.empty[String, Literal] -> data))
+
+      verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 0)
+      verifyWrittenContent(tblPath, schema, data.flatMap(_.toTestRows))
+
+      val metadata = getMetadata(engine, tblPath)
+      val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString())
+      assert(parsed === schema)
+    }
+  }
+
+  test("insert into table - complex types with collated strings in nested fields") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val unicode = new StringType("ICU.UNICODE")
+
+      val nested = new StructType()
+        .add("c1", unicode)
+        .add("c2", IntegerType.INTEGER)
+        .add("c3", STRING)
+
+      val schema = new StructType()
+        .add("c1", IntegerType.INTEGER)
+        .add("c2", nested)
+        .add("c3", new ArrayType(utf8Lcase, true))
+        .add("c4", new MapType(utf8Lcase, unicode, true))
+
+      // Build vectors
+      val batchSize = 5
+      val c1Vector = testColumnVector(batchSize, IntegerType.INTEGER)
+
+      val nestedVectors = Array[ColumnVector](
+        testColumnVector(batchSize, unicode),
+        testColumnVector(batchSize, IntegerType.INTEGER),
+        testColumnVector(batchSize, STRING))
+      val c2Vector = new DefaultStructVector(batchSize, nested, Optional.empty(), nestedVectors)
+
+      val c3Values: Seq[Seq[AnyRef]] = (0 until batchSize).map { i =>
+        Seq(s"t$i", s"x$i").map(_.asInstanceOf[AnyRef])
+      }
+      val c3Vector = buildArrayVector(c3Values, utf8Lcase, containsNull = true)
+
+      val c4Type = new MapType(utf8Lcase, unicode, true)
+      val c4Values: Seq[Map[AnyRef, AnyRef]] = (0 until batchSize).map { i =>
+        Map[AnyRef, AnyRef](s"k$i" -> s"v$i")
+      }
+      val c4Vector = buildMapVector(c4Values, c4Type)
+
+      val vectors = Array[ColumnVector](c1Vector, c2Vector, c3Vector, c4Vector)
+      val batch = new DefaultColumnarBatch(batchSize, schema, vectors)
+      val fcb = new FilteredColumnarBatch(batch, Optional.empty())
+
+      val commitResult0 = appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
+
+      val metadata = getMetadata(engine, tblPath)
+      val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString)
+      assert(parsed === schema)
+
+      verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 0)
+      val expectedRows = Seq(fcb).flatMap(_.toTestRows)
+      verifyWrittenContent(tblPath, schema, expectedRows)
+    }
+  }
+
+  test("insert into partitioned table - collated string partition columns") {
+    val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+    val unicode = new StringType("ICU.UNICODE.75.1")
+    val serbian = new StringType("ICU.SR_CYRL_SRB")
+    Seq(
+      // (p1BatchType, p2BatchType, vBatchType)
+      (utf8Lcase, unicode, serbian),
+      (serbian, serbian, utf8Lcase),
+      (utf8Lcase, serbian, unicode),
+      (unicode, serbian, STRING),
+      (STRING, serbian, STRING),
+      (STRING, STRING, STRING),
+      (utf8Lcase, STRING, utf8Lcase)).foreach { case (p1BatchType, p2BatchType, vBatchType) =>
+      withTempDirAndEngine { (tblPath, engine) =>
+        val schema = new StructType()
+          .add("id", INTEGER)
+          .add("p1", utf8Lcase) // partition column
+          .add("p2", unicode) // partition column
+          .add("v", serbian)
+
+        val schemaWithoutVersion = new StructType()
+          .add("id", INTEGER)
+          .add("p1", utf8Lcase)
+          .add("p2", new StringType("ICU.UNICODE"))
+          .add("v", serbian)
+
+        val dataSchema = new StructType()
+          .add("id", INTEGER)
+          .add("p1", p1BatchType)
+          .add("p2", p2BatchType)
+          .add("v", vBatchType)
+
+        val partCols = Seq("p1", "p2")
+
+        val v0Part = Map("p1" -> ofString("a"), "p2" -> ofString("alpha"))
+        val v0Data = generateData(dataSchema, partCols, v0Part, batchSize = 8, numBatches = 1)
+
+        val v1Part = Map("p1" -> ofString("B"), "p2" -> ofString("beta"))
+        val v1Data = generateData(dataSchema, partCols, v1Part, batchSize = 5, numBatches = 1)
+
+        val commitResult0 = appendData(
+          engine,
+          tblPath,
+          isNewTable = true,
+          schema,
+          partCols,
+          data = Seq(v0Part -> v0Data, v1Part -> v1Data))
+
+        verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+        // Expect partition columns in the same case as in the schema
+        verifyCommitInfo(tblPath, version = 0, partitionCols = partCols)
+
+        val expectedRows0 = v0Data.flatMap(_.toTestRows) ++ v1Data.flatMap(_.toTestRows)
+        verifyWrittenContent(tblPath, schema, expectedRows0)
+
+        val v2Part = Map("p1" -> ofString("c"), "p2" -> ofString("gamma"))
+        val v2Data = generateData(dataSchema, partCols, v2Part, batchSize = 4, numBatches = 3)
+
+        val commitResult1 = appendData(
+          engine,
+          tblPath,
+          data = Seq(v2Part -> v2Data))
+
+        verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+        // For subsequent commits, partitionBy is not recorded in commit info
+        verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+
+        val expectedRows1 = expectedRows0 ++ v2Data.flatMap(_.toTestRows)
+        verifyWrittenContent(tblPath, schema, expectedRows1)
+
+        val metadata = getMetadata(engine, tblPath)
+        val parsed = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString)
+        assert(parsed === schemaWithoutVersion)
+      }
+    }
+  }
+
+  test("stats: default engine writes binary stats for collated string columns") {
+    val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+    val unicode = new StringType("ICU.UNICODE")
+    val serbian = new StringType("ICU.SR_CYRL_SRB.74")
+    Seq(
+      (STRING, utf8Lcase, unicode),
+      (serbian, serbian, serbian),
+      (STRING, serbian, unicode),
+      (STRING, STRING, STRING)).foreach { case (c1DataType, c2DataType, c3DataType) =>
+      withTempDirAndEngine { (tblPath, engine) =>
+        val schema = new StructType()
+          .add("c1", STRING)
+          .add("c2", utf8Lcase)
+          .add("c3", unicode)
+
+        val txn = getCreateTxn(engine, tblPath, schema)
+        commitTransaction(txn, engine, emptyIterable())
+
+        val batchSize = 4
+        val values = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
+        val c1 = DefaultGenericVector.fromArray(c1DataType, values)
+        val c2 = DefaultGenericVector.fromArray(c2DataType, values)
+        val c3 = DefaultGenericVector.fromArray(c3DataType, values)
+        val batch = new DefaultColumnarBatch(batchSize, schema, Array[ColumnVector](c1, c2, c3))
+        val fcb = new FilteredColumnarBatch(batch, Optional.empty())
+
+        val commit = appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
+        verifyCommitResult(commit, expVersion = 1, expIsReadyForCheckpoint = false)
+
+        // Read stats JSON
+        val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+        val scan = snapshot.getScanBuilder().build()
+        val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+          .flatMap(_.getRows.toSeq)
+        val statsJson = scanFiles.headOption.flatMap { row =>
+          val add = row.getStruct(row.getSchema.indexOf("add"))
+          val idx = add.getSchema.indexOf("stats")
+          if (idx >= 0 && !add.isNullAt(idx)) Some(add.getString(idx)) else None
+        }.getOrElse(fail("Stats JSON not found"))
+
+        // Default engine computes just non-collated stats; verify min/max values
+        val mapper = JsonUtils.mapper()
+        val statsNode = mapper.readTree(statsJson)
+        val minValues = statsNode.get("minValues")
+        val maxValues = statsNode.get("maxValues")
+
+        // All columns: [b, A, B, a] -> min "A", max "b"
+        assert(minValues.get("c1").asText() == "A")
+        assert(maxValues.get("c1").asText() == "b")
+
+        assert(minValues.get("c2").asText() == "A")
+        assert(maxValues.get("c2").asText() == "b")
+
+        assert(minValues.get("c3").asText() == "A")
+        assert(maxValues.get("c3").asText() == "b")
+      }
+    }
+  }
+
+  test("stats: collated non-partition column in partitioned table") {
+    val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+    val unicode = new StringType("ICU.UNICODE")
+    val serbian = new StringType("ICU.SR_CYRL_SRB.74")
+    Seq(
+      (utf8Lcase, unicode),
+      (serbian, serbian),
+      (utf8Lcase, serbian),
+      (STRING, STRING),
+      (STRING, utf8Lcase),
+      (unicode, STRING)).foreach { case (pBatchType, dBatchType) =>
+      withTempDirAndEngine { (tblPath, engine) =>
+        val schema = new StructType()
+          .add("p", utf8Lcase) // partition column
+          .add("c", serbian) // non-partition, collated
+
+        val txn = getCreateTxn(engine, tblPath, schema, partCols = Seq("p"))
+        commitTransaction(txn, engine, emptyIterable())
+
+        // Commit 1: p = "north", c values [b, A, B, a]
+        val batchSize1 = 4
+        val cValues1 = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
+        val pValues1 = Array.fill[AnyRef](batchSize1)("north")
+        val pVec1 = DefaultGenericVector.fromArray(pBatchType, pValues1)
+        val cVec1 = DefaultGenericVector.fromArray(dBatchType, cValues1)
+        val batch1 = new DefaultColumnarBatch(batchSize1, schema, Array[ColumnVector](pVec1, cVec1))
+        val fcb1 = new FilteredColumnarBatch(batch1, Optional.empty())
+
+        val commit1 =
+          appendData(engine, tblPath, data = Seq(Map("p" -> ofString("north")) -> Seq(fcb1)))
+        verifyCommitResult(commit1, expVersion = 1, expIsReadyForCheckpoint = false)
+        verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+
+        // Commit 2: p = "south", c values [d, C]
+        val batchSize2 = 2
+        val cValues2 = Array("d", "C", "a").map(_.asInstanceOf[AnyRef])
+        val pValues2 = Array.fill[AnyRef](batchSize2)("south")
+        val pVec2 = DefaultGenericVector.fromArray(pBatchType, pValues2)
+        val cVec2 = DefaultGenericVector.fromArray(dBatchType, cValues2)
+        val batch2 = new DefaultColumnarBatch(batchSize2, schema, Array[ColumnVector](pVec2, cVec2))
+        val fcb2 = new FilteredColumnarBatch(batch2, Optional.empty())
+
+        val commit2 =
+          appendData(engine, tblPath, data = Seq(Map("p" -> ofString("south")) -> Seq(fcb2)))
+        verifyCommitResult(commit2, expVersion = 2, expIsReadyForCheckpoint = false)
+        verifyCommitInfo(tblPath, version = 2, partitionCols = null)
+
+        // Read stats JSON
+        val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+        val scan = snapshot.getScanBuilder.build()
+        val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+          .flatMap(_.getRows.toSeq)
+
+        val mapper = JsonUtils.mapper()
+        assert(scanFiles.nonEmpty)
+        scanFiles.foreach { row =>
+          val add = row.getStruct(row.getSchema.indexOf("add"))
+          val path = add.getString(add.getSchema.indexOf("path"))
+          val statsIdx = add.getSchema.indexOf("stats")
+          assert(statsIdx >= 0 && !add.isNullAt(statsIdx))
+          val statsJson = add.getString(statsIdx)
+          val statsNode = mapper.readTree(statsJson)
+          val minValues = statsNode.get("minValues")
+          val maxValues = statsNode.get("maxValues")
+
+          val minC = minValues.get("c").asText()
+          val maxC = maxValues.get("c").asText()
+
+          if (path.contains("p=north")) {
+            // For [b, A, B, a] -> min "A", max "b"
+            assert(minC == "A")
+            assert(maxC == "b")
+          } else if (path.contains("p=south")) {
+            // For [d, C] -> min "C", max "d"
+            assert(minC == "C")
+            assert(maxC == "d")
+          } else {
+            fail(s"Unexpected partition: $path")
+          }
+        }
+      }
+    }
+  }
+
+  test("stats: collect min/max for collated nested struct fields") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val nested = new StructType()
+        .add("s1", utf8Lcase)
+        .add("i1", INTEGER)
+      val schema = new StructType()
+        .add("nested", nested)
+
+      val txn = getCreateTxn(engine, tblPath, schema)
+      commitTransaction(txn, engine, emptyIterable())
+
+      val batchSize = 4
+      val s1Values = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
+      val i1Values = Array[java.lang.Integer](3, -1, 10, 5)
+      val s1 = DefaultGenericVector.fromArray(utf8Lcase, s1Values)
+      val i1 = DefaultGenericVector.fromArray(INTEGER, i1Values.asInstanceOf[Array[AnyRef]])
+      val nestedVector = new DefaultStructVector(
+        batchSize,
+        nested,
+        Optional.empty(),
+        Array[ColumnVector](s1, i1))
+      val batch = new DefaultColumnarBatch(
+        batchSize,
+        schema,
+        Array[ColumnVector](nestedVector))
+      val fcb = new FilteredColumnarBatch(batch, Optional.empty())
+
+      val commit = appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
+      verifyCommitResult(commit, expVersion = 1, expIsReadyForCheckpoint = false)
+
+      // Read stats JSON
+      val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder().build()
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+        .flatMap(_.getRows.toSeq)
+      val statsJson = scanFiles.headOption.flatMap { row =>
+        val add = row.getStruct(row.getSchema.indexOf("add"))
+        val idx = add.getSchema.indexOf("stats")
+        if (idx >= 0 && !add.isNullAt(idx)) Some(add.getString(idx)) else None
+      }.getOrElse(fail("Stats JSON not found"))
+
+      val mapper = JsonUtils.mapper()
+      val statsNode = mapper.readTree(statsJson)
+      val minValues = statsNode.get("minValues")
+      val maxValues = statsNode.get("maxValues")
+
+      val minNested = minValues.get("nested")
+      val maxNested = maxValues.get("nested")
+
+      // For s1: [b, A, B, a] -> min "A", max "b"
+      assert(minNested.get("s1").asText() == "A")
+      assert(maxNested.get("s1").asText() == "b")
+
+      // For i1: [3, -1, 10, 5] -> min -1, max 10
+      assert(minNested.get("i1").asInt() == -1)
+      assert(maxNested.get("i1").asInt() == 10)
+    }
+  }
+
+  test("stats: arrays and maps produce no stats; collated string field stats present") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val unicode = new StringType("ICU.UNICODE")
+      val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+      val schema = new StructType()
+        .add("name", unicode)
+        .add("arr", new ArrayType(utf8Lcase, true))
+        .add("map", new MapType(unicode, INTEGER, true))
+
+      val txn = getCreateTxn(engine, tblPath, schema)
+      commitTransaction(txn, engine, emptyIterable())
+
+      val batchSize = 4
+      val nameValues = Array("b", "A", "B", "a").map(_.asInstanceOf[AnyRef])
+      val nameVec = DefaultGenericVector.fromArray(unicode, nameValues)
+
+      val arrValues: Seq[Seq[AnyRef]] = (0 until batchSize).map { i =>
+        Seq(s"x$i").map(_.asInstanceOf[AnyRef])
+      }
+      val arrVec = buildArrayVector(arrValues, utf8Lcase, containsNull = true)
+
+      val mapType = new MapType(unicode, INTEGER, true)
+      val mapValues: Seq[Map[AnyRef, AnyRef]] = (0 until batchSize).map { i =>
+        Map[AnyRef, AnyRef](s"k$i" -> java.lang.Integer.valueOf(i))
+      }
+      val mapVec = buildMapVector(mapValues, mapType)
+
+      val batch = new DefaultColumnarBatch(
+        batchSize,
+        schema,
+        Array[ColumnVector](nameVec, arrVec, mapVec))
+      val fcb = new FilteredColumnarBatch(batch, Optional.empty())
+
+      val commit = appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
+      verifyCommitResult(commit, expVersion = 1, expIsReadyForCheckpoint = false)
+
+      // Read stats JSON
+      val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder().build()
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true).toSeq
+        .flatMap(_.getRows.toSeq)
+      val statsJson = scanFiles.headOption.flatMap { row =>
+        val add = row.getStruct(row.getSchema.indexOf("add"))
+        val idx = add.getSchema.indexOf("stats")
+        if (idx >= 0 && !add.isNullAt(idx)) Some(add.getString(idx)) else None
+      }.getOrElse(fail("Stats JSON not found"))
+
+      val mapper = JsonUtils.mapper()
+      val statsNode = mapper.readTree(statsJson)
+      val minValues = statsNode.get("minValues")
+      val maxValues = statsNode.get("maxValues")
+
+      // String column stats are present
+      assert(minValues.get("name").asText() == "A")
+      assert(maxValues.get("name").asText() == "b")
+
+      // Array/Map columns should not have stats
+      assert(!minValues.has("arr"))
+      assert(!maxValues.has("arr"))
+      assert(!minValues.has("map"))
+      assert(!maxValues.has("map"))
     }
   }
 
