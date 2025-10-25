@@ -40,9 +40,8 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.18"
 val scala213 = "2.13.13"
-val all_scala_versions = Seq(scala212, scala213)
+val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
@@ -51,7 +50,7 @@ val all_scala_versions = Seq(scala212, scala213)
 // sbt 'set default_scala_version := 2.13.13' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala212
+Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
 val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
@@ -1060,7 +1059,6 @@ lazy val iceberg = (project in file("iceberg"))
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
         s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
-        s"scala-library-${scala212}.jar",
         s"scala-library-${scala213}.jar",
         s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
         "caffeine-2.9.3.jar",

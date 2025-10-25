@@ -712,7 +712,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
           metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")),
           metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("schemaString")),
           VectorUtils.toJavaList(
-            metadataRow.getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))).asScala,
+            metadataRow.getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))).asScala.toSeq,
           VectorUtils.toJavaMap[String, String](
             metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))).asScala.toMap))
 
