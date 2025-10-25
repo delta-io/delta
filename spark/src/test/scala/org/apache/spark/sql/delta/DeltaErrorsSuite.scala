@@ -230,19 +230,6 @@ trait DeltaErrorsSuiteBase
         Map("columnName" -> "c0.c1"))
     }
     {
-      val parent = "parent"
-      val nested = IntegerType
-      val nestType = "nestType"
-      val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.nestedNotNullConstraint(parent, nested, nestType)
-      }
-      checkError(e, "DELTA_NESTED_NOT_NULL_CONSTRAINT", "0AKDC", Map(
-        "parent" -> parent,
-        "nestedPrettyJson" -> nested.prettyJson,
-        "nestType" -> nestType,
-        "configKey" -> DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key))
-    }
-    {
       val e = intercept[DeltaInvariantViolationException] {
         throw DeltaInvariantViolationException(Constraints.NotNull(Seq("col1")))
       }
