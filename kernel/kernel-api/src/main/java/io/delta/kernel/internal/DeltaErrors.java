@@ -101,14 +101,9 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException noCommitFilesFoundForVersionRange(
+  public static CommitRangeNotFoundException noCommitFilesFoundForVersionRange(
       String tablePath, long startVersion, Optional<Long> endVersionOpt) {
-    String message =
-        String.format(
-            "%s: Requested table changes between [%s, %s] but no log files found in the requested"
-                + " version range.",
-            tablePath, startVersion, endVersionOpt);
-    return new KernelException(message);
+    return new CommitRangeNotFoundException(tablePath, startVersion, endVersionOpt);
   }
 
   public static KernelException startVersionNotFound(
@@ -146,53 +141,39 @@ public final class DeltaErrors {
   }
 
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
-  public static KernelException unsupportedReaderProtocol(
+  public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
-    String message =
-        String.format(
-            "Unsupported Delta protocol reader version: table `%s` requires reader version %s "
-                + "which is unsupported by this version of Delta Kernel.",
-            tablePath, tableReaderVersion);
-    return new KernelException(message);
+    return new UnsupportedProtocolVersionException(
+        tablePath,
+        tableReaderVersion,
+        UnsupportedProtocolVersionException.ProtocolVersionType.READER);
   }
 
-  public static KernelException unsupportedWriterProtocol(
+  public static UnsupportedProtocolVersionException unsupportedWriterProtocol(
       String tablePath, int tableWriterVersion) {
-    String message =
-        String.format(
-            "Unsupported Delta protocol writer version: table `%s` requires writer version %s "
-                + "which is unsupported by this version of Delta Kernel.",
-            tablePath, tableWriterVersion);
-    return new KernelException(message);
+    return new UnsupportedProtocolVersionException(
+        tablePath,
+        tableWriterVersion,
+        UnsupportedProtocolVersionException.ProtocolVersionType.WRITER);
   }
 
-  public static KernelException unsupportedTableFeature(String feature) {
+  public static UnsupportedTableFeatureException unsupportedTableFeature(String feature) {
     String message =
         String.format(
             "Unsupported Delta table feature: table requires feature \"%s\" "
                 + "which is unsupported by this version of Delta Kernel.",
             feature);
-    return new KernelException(message);
+    return new UnsupportedTableFeatureException(null, feature, message);
   }
 
-  public static KernelException unsupportedReaderFeatures(
+  public static UnsupportedReaderFeatureException unsupportedReaderFeatures(
       String tablePath, Set<String> readerFeatures) {
-    String message =
-        String.format(
-            "Unsupported Delta reader features: table `%s` requires reader table features [%s] "
-                + "which is unsupported by this version of Delta Kernel.",
-            tablePath, String.join(", ", readerFeatures));
-    return new KernelException(message);
+    return new UnsupportedReaderFeatureException(tablePath, readerFeatures);
   }
 
-  public static KernelException unsupportedWriterFeatures(
+  public static UnsupportedWriterFeatureException unsupportedWriterFeatures(
       String tablePath, Set<String> writerFeatures) {
-    String message =
-        String.format(
-            "Unsupported Delta writer feature: table `%s` requires writer table feature \"%s\" "
-                + "which is unsupported by this version of Delta Kernel.",
-            tablePath, writerFeatures);
-    return new KernelException(message);
+    return new UnsupportedWriterFeatureException(tablePath, writerFeatures);
   }
 
   public static KernelException columnInvariantsNotSupported() {
