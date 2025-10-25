@@ -193,8 +193,13 @@ public class TableImpl implements Table {
         DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, new Path(tablePath), startVersion, Optional.of(endVersion));
 
-    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
-        engine, tablePath, commitFiles, actionSet);
+    // Get CommitActions for each file
+    CloseableIterator<io.delta.kernel.CommitActions> commits =
+        DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+            engine, tablePath, commitFiles, actionSet);
+
+    // Flatten and add version/timestamp columns
+    return TableChangesUtils.flattenCommitsAndAddMetadata(engine, commits);
   }
 
   protected Path getDataPath() {
