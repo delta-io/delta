@@ -16,7 +16,13 @@
 
 package io.delta.kernel.defaults.benchmarks.workloadrunners;
 
+import io.delta.kernel.SnapshotBuilder;
+import io.delta.kernel.TableManager;
+import io.delta.kernel.defaults.benchmarks.CCv2Context;
+import io.delta.kernel.defaults.benchmarks.models.TableInfo;
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.engine.Engine;
+import java.util.Optional;
 import org.openjdk.jmh.infra.Blackhole;
 
 /**
@@ -35,6 +41,7 @@ import org.openjdk.jmh.infra.Blackhole;
  * <p>The {@link #setup()} method must be called before any execution method.
  */
 public abstract class WorkloadRunner {
+
   public WorkloadRunner() {}
 
   /** @return the name of this workload derived from the contents of the workload specification. */
@@ -60,6 +67,57 @@ public abstract class WorkloadRunner {
    * @throws Exception if any error occurs during execution.
    */
   public abstract void executeAsBenchmark(Blackhole blackhole) throws Exception;
+
+  /**
+   * Cleans up any state created during benchmark execution. For write workloads, this removes added
+   * files and reverts table state. For read workloads, this is typically a no-op.
+   *
+   * <p>This method is called after each benchmark invocation to ensure a clean state for the next
+   * run.
+   *
+   * @throws Exception if any error occurs during cleanup.
+   */
+  public void cleanup() throws Exception {
+    // Default implementation: no-op for read workloads
+  }
+
+  /**
+   * Creates a CCv2Context from the given TableInfo if it's a CCv2 table.
+   *
+   * <p>This method checks if the table has CCv2 configuration and creates the necessary
+   * infrastructure (InMemoryUCClient, coordinator, committer) for working with coordinated commits.
+   *
+   * @param tableInfo the table information
+   * @return Optional containing CCv2Context if this is a CCv2 table, empty otherwise
+   */
+  protected Optional<CCv2Context> createCCv2Context(TableInfo tableInfo, Engine engine) {
+    if (tableInfo.isCCv2Table()) {
+      return Optional.of(CCv2Context.createFromTableInfo(tableInfo, engine));
+    } else {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Creates a SnapshotBuilder for the given table root, optionally configuring it for CCv2 tables.
+   *
+   * <p>If ccv2Context is present, the builder is configured with the CCv2 committer and parsed log
+   * data to enable reading from and writing to coordinated commits.
+   *
+   * @param tableRoot the root path of the Delta table
+   * @param ccv2Context optional CCv2 context for coordinated commits tables
+   * @return a SnapshotBuilder configured appropriately for the table type
+   */
+  protected SnapshotBuilder getSnapshotBuilder(
+      String tableRoot, Optional<CCv2Context> ccv2Context) {
+    SnapshotBuilder builder = TableManager.loadSnapshot(tableRoot);
+    if (ccv2Context.isPresent()) {
+      CCv2Context context = ccv2Context.get();
+      builder =
+          builder.withCommitter(context.getCommitter()).withLogData(context.getParsedLogData());
+    }
+    return builder;
+  }
 
   // TODO: Add executeAsTest() method for correctness validation
   // public abstract void executeAsTest() throws Exception;

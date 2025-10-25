@@ -1,0 +1,7 @@
+{
+  "name": "basic_ccv2",
+  "description": "A basic CCv2 table with 2 backfilled commits (v0-1) and 2 staged commits (v2-3).",
+  "engine_info": "Apache-Spark/3.5.1 Delta-Lake/3.1.0",
+  "ccv2_enabled": true
+}
+

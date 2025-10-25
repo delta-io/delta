@@ -18,10 +18,12 @@ package io.delta.kernel.defaults.benchmarks.workloadrunners;
 
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.defaults.benchmarks.CCv2Context;
 import io.delta.kernel.defaults.benchmarks.models.ReadSpec;
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
+import java.util.Optional;
 import org.openjdk.jmh.infra.Blackhole;
 
 /**
@@ -56,11 +58,15 @@ public class ReadMetadataRunner extends WorkloadRunner {
   }
 
   @Override
-  public void setup() {
-    String workloadTableRoot = workloadSpec.getTableInfo().getTableRoot();
-    SnapshotBuilder builder = TableManager.loadSnapshot(workloadTableRoot);
+  public void setup() throws Exception {
+    String workloadTableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
+
+    // Create CCv2Context if this is a CCv2 table
+    Optional<CCv2Context> ccv2Context = createCCv2Context(workloadSpec.getTableInfo(), engine);
+
+    SnapshotBuilder builder = getSnapshotBuilder(workloadTableRoot, ccv2Context);
     if (workloadSpec.getVersion() != null) {
-      builder.atVersion(workloadSpec.getVersion());
+      builder = builder.atVersion(workloadSpec.getVersion());
     }
     Snapshot snapshot = builder.build(engine);
     scan = snapshot.getScanBuilder().build();
