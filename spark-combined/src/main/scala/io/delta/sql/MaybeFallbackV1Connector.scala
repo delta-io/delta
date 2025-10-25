@@ -17,18 +17,18 @@
 package io.delta.sql
 
 import io.delta.kernel.spark.catalog.SparkTable
-
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeInto
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.trees.TreePattern.COMMAND
+import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.execution.datasources.{DataSource, DataSourceUtils}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
@@ -42,9 +42,13 @@ class MaybeFallbackV1Connector(session: SparkSession)
       node.resolveOperatorsDown {
         case Batch(fallback) => fallback
         case Streaming(fallback) => fallback
+        case ResolvedTableWithSparkTable(fallback) => fallback
       }
     }
     plan.resolveOperatorsDown {
+      // Handle ResolvedTable with SparkTable (for commands like DESCRIBE HISTORY)
+      case ResolvedTableWithSparkTable(fallback) =>
+        fallback
       // Handle MERGE INTO (Spark generic MergeIntoTable)
       case m @ MergeIntoTable(targetTable, sourceTable, mergeCondition,
         matchedActions, notMatchedActions, notMatchedBySourceActions) =>
@@ -93,7 +97,8 @@ class MaybeFallbackV1Connector(session: SparkSession)
   }
 
   private def isReadOnly(plan: LogicalPlan): Boolean = {
-    !plan.containsPattern(COMMAND) && !plan.exists(_.isInstanceOf[InsertIntoStatement])
+    !plan.containsPattern(COMMAND) && !plan.exists(_.isInstanceOf[InsertIntoStatement]) &&
+      !plan.exists(_.isInstanceOf[DeltaCommand])
   }
 
   object Batch {
@@ -123,7 +128,26 @@ class MaybeFallbackV1Connector(session: SparkSession)
         Some(getStreamingRelation(catalogTable, dsv2.extraOptions))
       case _ => None
     }
+  }
 
+  object ResolvedTableWithSparkTable {
+    def unapply(resolved: ResolvedTable): Option[ResolvedTable] = resolved.table match {
+      case s: SparkTable =>
+        val v1CatalogTable = s.getV1CatalogTable()
+        if (v1CatalogTable.isPresent()) {
+          val catalogTable = v1CatalogTable.get()
+          val deltaTableV2 = DeltaTableV2(
+            session,
+            new Path(catalogTable.location),
+            catalogTable = Some(catalogTable),
+            tableIdentifier = Some(catalogTable.identifier.toString))
+          Some(resolved.copy(table = deltaTableV2))
+        } else {
+          val deltaTableV2 = DeltaTableV2(session, new Path(s.name()))
+          Some(resolved.copy(table = deltaTableV2))
+        }
+      case _ => None
+    }
   }
 
   private def getStreamingRelation(
