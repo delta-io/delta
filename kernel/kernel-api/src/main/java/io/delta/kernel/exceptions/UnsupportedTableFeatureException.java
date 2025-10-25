@@ -20,8 +20,7 @@ import java.util.Collections;
 import java.util.Set;
 
 /**
- * Base exception thrown when Kernel encounters unsupported table features. This exception provides
- * programmatic access to the unsupported features instead of requiring message string parsing.
+ * Base exception thrown when Kernel encounters unsupported table features.
  *
  * @since 4.1.0
  */
