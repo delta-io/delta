@@ -91,6 +91,7 @@ public class StatsSchemaHelper {
    * |-- a: struct (nullable = true)
    * |  |-- b: struct (nullable = true)
    * |  |  |-- c: long (nullable = true)
+   * |  |  |-- d: string (nullable = true)
    * </pre>
    *
    * <p>Collected Statistics:
@@ -102,18 +103,32 @@ public class StatsSchemaHelper {
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
    * |  |-- maxValues: struct (nullable = false)
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
    * |  |-- nullCount: struct (nullable = false)
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
+   * |  |-- statsWithCollation: struct (nullable = true)
+   * |  |  |-- collationName: struct (nullable = true)
+   * |  |  |  |-- min: struct (nullable = false)
+   * |  |  |  |  |-- a: struct (nullable = false)
+   * |  |  |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |  |  |-- d: string (nullable = true)
+   * |  |  |  |-- max: struct (nullable = false)
+   * |  |  |  |  |-- a: struct (nullable = false)
+   * |  |  |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |  |  |-- d: string (nullable = true)
    * |  |-- tightBounds: boolean (nullable = true)
    * </pre>
    */
-  public static StructType getStatsSchema(StructType dataSchema) {
+  public static StructType getStatsSchema(
+      StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
     StructType statsSchema = new StructType().add(NUM_RECORDS, LongType.LONG, true);
 
     StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
@@ -127,6 +142,11 @@ public class StatsSchemaHelper {
     }
 
     statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
+
+    StructType collatedMinMaxStatsSchema = getCollatedStatsSchema(dataSchema, collationIdentifiers);
+    if (collatedMinMaxStatsSchema.length() > 0) {
+      statsSchema = statsSchema.add(STATS_WITH_COLLATION, collatedMinMaxStatsSchema, true);
+    }
 
     return statsSchema;
   }
@@ -272,22 +292,58 @@ public class StatsSchemaHelper {
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
-   * fields (i.e. don't include fields with isSkippingEligibleDataType=false)
+   * fields (i.e. don't include fields with isSkippingEligibleDataType=false). Collation-aware
+   * statistics are not included.
    */
   private static StructType getMinMaxStatsSchema(StructType dataSchema) {
+    return getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ false);
+  }
+
+  /**
+   * Given a data schema returns the expected schema for a min or max statistics column. This means
+   * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
+   * fields (i.e. don't include fields with isSkippingEligibleDataType=false). In case when
+   * isCollatedSkipping is true, only `StringType` fields are eligible.
+   */
+  private static StructType getMinMaxStatsSchema(
+      StructType dataSchema, boolean isCollatedSkipping) {
     List<StructField> fields = new ArrayList<>();
     for (StructField field : dataSchema.fields()) {
-      if (isSkippingEligibleDataType(field.getDataType(), false)) {
+      if (isSkippingEligibleDataType(field.getDataType(), isCollatedSkipping)) {
         fields.add(new StructField(getPhysicalName(field), field.getDataType(), true));
       } else if (field.getDataType() instanceof StructType) {
         fields.add(
             new StructField(
                 getPhysicalName(field),
-                getMinMaxStatsSchema((StructType) field.getDataType()),
+                getMinMaxStatsSchema((StructType) field.getDataType(), isCollatedSkipping),
                 true));
       }
     }
     return new StructType(fields);
+  }
+
+  /**
+   * Given a data schema and a set of collation identifiers returns the expected schema for
+   * collation-aware statistics columns. This means 1) replace logical names with physical names 2)
+   * set nullable=true 3) only keep collated-stats eligible fields (`StringType` fields)
+   */
+  private static StructType getCollatedStatsSchema(
+      StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
+    StructType statsWithCollation = new StructType();
+    StructType minMaxSchemaForCollationAwareFields =
+        getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ true);
+    if (minMaxSchemaForCollationAwareFields.length() > 0) {
+      for (CollationIdentifier collationIdentifier : collationIdentifiers) {
+        statsWithCollation =
+            statsWithCollation.add(
+                collationIdentifier.toString(),
+                new StructType()
+                    .add(MIN, minMaxSchemaForCollationAwareFields, true)
+                    .add(MAX, minMaxSchemaForCollationAwareFields, true),
+                true);
+      }
+    }
+    return statsWithCollation;
   }
 
   /**
