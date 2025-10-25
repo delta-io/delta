@@ -40,14 +40,14 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala213 = "2.13.13"
+val scala213 = "2.13.16"
 val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
-// sbt 'set default_scala_version := 2.13.13' [commands]
+// sbt 'set default_scala_version := 2.13.16' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala213

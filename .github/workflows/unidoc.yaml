@@ -7,7 +7,7 @@
       strategy:
         matrix:
           # These Scala versions must match those in the build.sbt
-          scala: [2.13.13]
+          scala: [2.13.16]
       steps:
         - name: install java
           uses: actions/setup-java@v3
