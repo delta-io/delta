@@ -70,7 +70,7 @@ def prepare(root_dir, use_spark_master):
         delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
-    packages = ["spark/publishM2", "storage/publishM2"]
+    packages = ["kernelSpark/publishM2", "storage/publishM2"]
     if use_spark_master:
         sbt_command = sbt_command + ["-DsparkVersion=master"]
         packages = packages + ["connectCommon/publishM2", "connectServer/publishM2"]
