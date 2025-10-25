@@ -54,6 +54,7 @@ object TestParallelization {
     Test / testGroupingStrategy := {
       val groupsCount = (Test / forkTestJVMCount).value
       val shard = (Test / shardId).value
+      // Use regular baseDirectory for target directory (not Test/baseDirectory)
       val baseJvmDir = baseDirectory.value
       MinShardGroupDurationStrategy(groupsCount, baseJvmDir, shard, defaultForkOptions.value)
     },
@@ -81,7 +82,9 @@ object TestParallelization {
       javaHome = javaHome.value,
       outputStrategy = outputStrategy.value,
       bootJars = Vector.empty,
-      workingDirectory = Some(baseDirectory.value),
+      // Use Test/baseDirectory instead of baseDirectory to support modules where these differ
+      // (e.g. spark-combined module where Test/baseDirectory points to spark/ source directory)
+      workingDirectory = Some((Test / baseDirectory).value),
       runJVMOptions = (Test / javaOptions).value.toVector,
       connectInput = connectInput.value,
       envVars = (Test / envVars).value
