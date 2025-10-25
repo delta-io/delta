@@ -80,7 +80,11 @@ import org.apache.spark.sql.internal.SQLConf
  *
  * @since 0.4.0
  */
-class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
+// V1 entry point class for backwards compatibility with Spark V1 APIs.
+class V1DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension
+
+// Abstract base class that contains the core Delta Spark Session extension logic.
+class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
