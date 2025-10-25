@@ -20,8 +20,7 @@ import java.util.Optional;
 
 /**
  * Exception thrown when Kernel cannot find any commit files in the requested version range. This
- * can happen when the commit range is empty or when the requested versions don't exist in the
- * table.
+ * can happen when the requested versions don't exist in the table.
  *
  * @since 4.1.0
  */
