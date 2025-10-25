@@ -100,13 +100,6 @@ class IcebergFileManifest(
       return spark.emptyDataset[ConvertTargetFile]
     }
 
-    val hasMergeOnReadDeletionFiles = table.currentSnapshot().deleteManifests(table.io()).size() > 0
-    if (hasMergeOnReadDeletionFiles) {
-      throw new UnsupportedOperationException(
-        s"Cannot support convert Iceberg table with row-level deletes." +
-          s"Please trigger an Iceberg compaction and retry the command.")
-    }
-
     // Localize variables so we don't need to serialize the File Manifest class
     // Some contexts: Spark needs all variables in closure to be serializable
     // while class members carry the entire class, so they require serialization of the class
