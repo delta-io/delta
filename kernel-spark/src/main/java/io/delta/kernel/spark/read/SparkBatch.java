@@ -15,7 +15,13 @@
  */
 package io.delta.kernel.spark.read;
 
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.util.ColumnMapping;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -34,7 +40,6 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
-import org.apache.spark.sql.types.StructType;
 import scala.Function1;
 import scala.Option;
 import scala.Tuple2;
@@ -43,9 +48,9 @@ import scala.collection.JavaConverters;
 
 public class SparkBatch implements Batch {
   private final String tablePath;
-  private final StructType readDataSchema;
-  private final StructType dataSchema;
-  private final StructType partitionSchema;
+  private final org.apache.spark.sql.types.StructType readDataSchema;
+  private final org.apache.spark.sql.types.StructType dataSchema;
+  private final org.apache.spark.sql.types.StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   private final Configuration hadoopConf;
@@ -53,18 +58,20 @@ public class SparkBatch implements Batch {
   private final long totalBytes;
   private scala.collection.immutable.Map<String, String> scalaOptions;
   private final List<PartitionedFile> partitionedFiles;
+  private final SnapshotImpl snapshot;
 
   public SparkBatch(
       String tablePath,
-      StructType dataSchema,
-      StructType partitionSchema,
-      StructType readDataSchema,
+      org.apache.spark.sql.types.StructType dataSchema,
+      org.apache.spark.sql.types.StructType partitionSchema,
+      org.apache.spark.sql.types.StructType readDataSchema,
       List<PartitionedFile> partitionedFiles,
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       long totalBytes,
       scala.collection.immutable.Map<String, String> scalaOptions,
-      Configuration hadoopConf) {
+      Configuration hadoopConf,
+      SnapshotImpl snapshot) {
 
     this.tablePath = Objects.requireNonNull(tablePath, "tableName is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
@@ -82,6 +89,7 @@ public class SparkBatch implements Batch {
     this.totalBytes = totalBytes;
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
+    this.snapshot = Objects.requireNonNull(snapshot, "snapshot is null");
     this.sqlConf = SQLConf.get();
   }
 
@@ -105,18 +113,49 @@ public class SparkBatch implements Batch {
             new Tuple2<>(
                 FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
                 String.valueOf(enableVectorizedReader)));
+
+    // Use DeltaParquetFileFormat for Delta-specific features (Column Mapping, Deletion Vectors)
+    ParquetFileFormat fileFormat;
+    if (needsDeltaFeatures()) {
+      Protocol protocol = snapshot.getProtocol();
+      Metadata metadata = snapshot.getMetadata();
+      Engine kernelEngine = DefaultEngine.create(hadoopConf);
+      fileFormat = new DeltaParquetFileFormat(protocol, metadata, tablePath, kernelEngine);
+    } else {
+      fileFormat = new ParquetFileFormat();
+    }
+
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
-        new ParquetFileFormat()
-            .buildReaderWithPartitionValues(
-                SparkSession.active(),
-                dataSchema,
-                partitionSchema,
-                readDataSchema,
-                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-                optionsWithBatch,
-                hadoopConf);
+        fileFormat.buildReaderWithPartitionValues(
+            SparkSession.active(),
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
+            optionsWithBatch,
+            hadoopConf);
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
+  }
+
+  /** Check if Delta-specific features are needed (Column Mapping or Deletion Vectors). */
+  private boolean needsDeltaFeatures() {
+    Metadata metadata = snapshot.getMetadata();
+    Protocol protocol = snapshot.getProtocol();
+
+    // Check for column mapping
+    ColumnMapping.ColumnMappingMode columnMappingMode =
+        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
+    if (columnMappingMode != ColumnMapping.ColumnMappingMode.NONE) {
+      return true;
+    }
+
+    // Check for deletion vectors
+    if (protocol.getWriterFeatures().contains("deletionVectors")) {
+      return true;
+    }
+
+    return false;
   }
 
   @Override

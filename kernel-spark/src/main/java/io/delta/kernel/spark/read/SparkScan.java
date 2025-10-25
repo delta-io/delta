@@ -22,7 +22,10 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -62,6 +65,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final scala.collection.immutable.Map<String, String> scalaOptions;
   private final SQLConf sqlConf;
   private final ZoneId zoneId;
+  private final SnapshotImpl snapshot;
 
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
@@ -76,7 +80,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
-      CaseInsensitiveStringMap options) {
+      CaseInsensitiveStringMap options,
+      SnapshotImpl snapshot) {
 
     final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
     this.tablePath =
@@ -89,6 +94,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.options = Objects.requireNonNull(options, "options is null");
+    this.snapshot = Objects.requireNonNull(snapshot, "snapshot is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
@@ -121,7 +127,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataFilters,
         totalBytes,
         scalaOptions,
-        hadoopConf);
+        hadoopConf,
+        snapshot);
   }
 
   @Override
@@ -206,8 +213,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         kernelScan.getScanFiles(tableEngine);
 
     final String[] locations = new String[0];
-    final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        scala.collection.immutable.Map$.MODULE$.empty();
 
     while (scanFileBatches.hasNext()) {
       final io.delta.kernel.data.FilteredColumnarBatch batch = scanFileBatches.next();
@@ -216,6 +221,23 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         while (addFileRowIter.hasNext()) {
           final Row row = addFileRowIter.next();
           final AddFile addFile = new AddFile(row.getStruct(0));
+
+          // Extract deletion vector descriptor if present
+          scala.collection.immutable.Map<String, Object> metadata;
+          DeletionVectorDescriptor dvDescriptor =
+              InternalScanFileUtils.getDeletionVectorDescriptorFromRow(row);
+
+          if (dvDescriptor != null) {
+            // Pass DV descriptor as metadata - use Scala immutable HashMap
+            scala.collection.immutable.HashMap<String, Object> emptyHashMap =
+                new scala.collection.immutable.HashMap<>();
+            metadata =
+                (scala.collection.immutable.Map<String, Object>)
+                    emptyHashMap.$plus(
+                        new scala.Tuple2<>(DeltaParquetFileFormat.DV_DESCRIPTOR_KEY, dvDescriptor));
+          } else {
+            metadata = scala.collection.immutable.Map$.MODULE$.empty();
+          }
 
           final PartitionedFile partitionedFile =
               new PartitionedFile(
@@ -226,7 +248,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
                   locations,
                   addFile.getModificationTime(),
                   addFile.getSize(),
-                  otherConstantMetadataColumnValues);
+                  metadata);
 
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
