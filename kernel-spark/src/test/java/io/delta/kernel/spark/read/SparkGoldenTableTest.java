@@ -60,10 +60,10 @@ public class SparkGoldenTableTest extends QueryTest {
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
-            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .set("spark.sql.extensions", "io.delta.sql.LegacyDeltaSparkSessionExtension")
             .set(
                 "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+                "org.apache.spark.sql.delta.catalog.LegacyDeltaCatalog")
             .setMaster("local[*]")
             .setAppName("SparkGoldenTableTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
