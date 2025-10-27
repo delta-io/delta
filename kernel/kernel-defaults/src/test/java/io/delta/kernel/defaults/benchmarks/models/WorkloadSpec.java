@@ -84,6 +84,11 @@ public abstract class WorkloadSpec {
     return tableInfo;
   }
 
+  @JsonIgnore
+  public String getSpecDirectoryPath() {
+    return tableInfo.getTableInfoPath() + "/specs/" + caseName;
+  }
+
   /**
    * Sets the table information for this workload specification.
    *
