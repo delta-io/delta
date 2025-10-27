@@ -50,15 +50,7 @@ public class WorkloadBenchmark<T> {
     @Override
     protected Engine getEngine(String engineName) {
       if (engineName.equals("default")) {
-        return DefaultEngine.create(
-            new Configuration() {
-              {
-                // Set the batch size. This is required for writes.
-                set("delta.kernel.default.parquet.reader.batch-size", "1024");
-                set("delta.kernel.default.json.reader.batch-size", "1024");
-                set("delta.kernel.default.parquet.writer.targetMaxFileSize", "10485760"); // 1 MB
-              }
-            });
+        return DefaultEngine.create(new Configuration());
       } else {
         throw new IllegalArgumentException("Unsupported engine: " + engineName);
       }
