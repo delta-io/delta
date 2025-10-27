@@ -16,12 +16,28 @@
 
 package io.delta.kernel.defaults.benchmarks.models;
 
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.benchmarks.workloadrunners.WorkloadRunner;
 import io.delta.kernel.defaults.benchmarks.workloadrunners.WriteRunner;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.RemoveFile;
+import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Workload specification for write benchmarks. Defines test cases for writing to Delta tables with
@@ -52,6 +68,13 @@ public class WriteSpec extends WorkloadSpec {
     @JsonProperty("data_files_path")
     private String dataFilesPath;
 
+    /** Schema for reading commit files with both "add" and "remove" actions. */
+    @JsonIgnore
+    private static final StructType COMMIT_SPEC_SCHEMA =
+        new StructType()
+            .add("add", AddFile.FULL_SCHEMA, true /* nullable */)
+            .add("remove", RemoveFile.FULL_SCHEMA, true /* nullable */);
+
     /** Default constructor for Jackson. */
     public CommitSpec() {}
 
@@ -61,6 +84,65 @@ public class WriteSpec extends WorkloadSpec {
 
     public String getDataFilesPath() {
       return dataFilesPath;
+    }
+
+    /**
+     * Uses Kernel's built-in JsonHandler to read commit spec containing data files.
+     *
+     * @param engine the Engine instance to use for reading JSON files
+     * @param specPath the base path where the commit file is located
+     * @throws IOException if there's an error reading or parsing the file
+     */
+    public List<Row> parseActions(Engine engine, String specPath) throws IOException {
+      String commitFilePath = new Path(specPath, getDataFilesPath()).toString();
+
+      System.out.println("CommitSpec: Reading commit file at " + commitFilePath);
+      File file = new File(commitFilePath);
+      if (!file.exists()) {
+        throw new IOException("Commit file not found: " + commitFilePath);
+      }
+
+      // Create a FileStatus for the commit file
+      FileStatus fileStatus = FileStatus.of(commitFilePath, file.length(), file.lastModified());
+
+      // Use Kernel's JsonHandler to read the file and collect actions
+      List<Row> actions = new ArrayList<>();
+      try (CloseableIterator<FileStatus> fileIter =
+              toCloseableIterator(Collections.singletonList(fileStatus).iterator());
+          CloseableIterator<ColumnarBatch> batchIter =
+              engine
+                  .getJsonHandler()
+                  .readJsonFiles(fileIter, COMMIT_SPEC_SCHEMA, Optional.empty())) {
+
+        while (batchIter.hasNext()) {
+          ColumnarBatch batch = batchIter.next();
+
+          // Process each row in the batch
+          try (CloseableIterator<Row> rowIter = batch.getRows()) {
+            while (rowIter.hasNext()) {
+              Row singleActionRow = rowIter.next();
+
+              // Extract the actual action Row and wrap it in SingleAction format
+              // Check if this row has an "add" action
+              if (!singleActionRow.isNullAt(COMMIT_SPEC_SCHEMA.indexOf("add"))) {
+                Row addRow = singleActionRow.getStruct(COMMIT_SPEC_SCHEMA.indexOf("add"));
+                // Wrap in SingleAction format for commit
+                actions.add(SingleAction.createAddFileSingleAction(addRow));
+              }
+              // Check if this row has a "remove" action
+              else if (!singleActionRow.isNullAt(COMMIT_SPEC_SCHEMA.indexOf("remove"))) {
+                Row removeRow = singleActionRow.getStruct(COMMIT_SPEC_SCHEMA.indexOf("remove"));
+                // Wrap in SingleAction format for commit
+                actions.add(SingleAction.createRemoveFileSingleAction(removeRow));
+              } else {
+                // Throw an error if the action is not recognized (not "add" or "remove")
+                throw new IOException("Unrecognized action in commit file row: " + singleActionRow);
+              }
+            }
+          }
+        }
+      }
+      return actions;
     }
   }
 
