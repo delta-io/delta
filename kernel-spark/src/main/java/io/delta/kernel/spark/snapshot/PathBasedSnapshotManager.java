@@ -148,13 +148,6 @@ public class PathBasedSnapshotManager implements SnapshotManager {
   }
 
   @Override
-  public Metadata getMetadata() {
-    // Cast to SnapshotImpl is required because Kernel API's Snapshot interface
-    // doesn't expose getMetadata() yet
-    return ((SnapshotImpl) unsafeVolatileSnapshot()).getMetadata();
-  }
-
-  @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
     CommitRangeBuilder builder =
         TableManager.loadCommitRange(tablePath)

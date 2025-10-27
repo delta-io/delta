@@ -45,6 +45,7 @@ public class SparkTable implements Table, SupportsRead {
   private final Identifier identifier;
   private final Map<String, String> options;
   private final SnapshotManager snapshotManager;
+  private final Snapshot snapshot;
   private final Configuration hadoopConf;
 
   private final StructType schema;
@@ -77,9 +78,8 @@ public class SparkTable implements Table, SupportsRead {
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-
     // Load the initial snapshot through the manager
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    this.snapshot = snapshotManager.loadLatestSnapshot();
 
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.partColNames =
@@ -154,7 +154,7 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public Map<String, String> properties() {
-    Map<String, String> props = new HashMap<>(snapshotManager.getMetadata().getConfiguration());
+    Map<String, String> props = new HashMap<>(snapshot.getTableProperties());
     props.putAll(this.options);
     return Collections.unmodifiableMap(props);
   }
@@ -169,8 +169,6 @@ public class SparkTable implements Table, SupportsRead {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
-    // Cast to SnapshotImpl is required because SparkScanBuilder needs SnapshotImpl
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.unsafeVolatileSnapshot();
     return new SparkScanBuilder(
         name(), snapshotManager, dataSchema, partitionSchema, merged);
   }

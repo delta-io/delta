@@ -105,23 +105,6 @@ public interface SnapshotManager {
       throws VersionNotFoundException;
 
   /**
-   * Gets the metadata of the current cached snapshot.
-   *
-   * <p><b>Expected Behavior:</b>
-   *
-   * <ul>
-   *   <li>Returns the metadata from the snapshot returned by {@link #unsafeVolatileSnapshot()}
-   *   <li>This is a convenience method to avoid requiring callers to cast to SnapshotImpl
-   * </ul>
-   *
-   * <p><b>Use Case:</b> Use this method when you need table metadata without caring about the
-   * specific snapshot version.
-   *
-   * @return the metadata of the current snapshot
-   */
-  Metadata getMetadata();
-
-  /**
    * Gets a range of table changes (commits) between start and end versions.
    *
    * <p><b>Expected Behavior:</b>
