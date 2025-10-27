@@ -66,7 +66,6 @@ public class WriteRunner extends WorkloadRunner {
     this.workloadSpec = workloadSpec;
     this.engine = engine;
     this.committedVersions = new ArrayList<>();
-    this.originalVersion = -1;
   }
 
   @Override
@@ -228,11 +227,6 @@ public class WriteRunner extends WorkloadRunner {
    */
   @Override
   public void cleanup() throws Exception {
-    if (originalVersion < 0) {
-      // Setup was never called or failed
-      return;
-    }
-
     // Delete any files that weren't present initially
     Set<String> currentFiles = captureFileListing();
     for (String filePath : currentFiles) {
@@ -252,9 +246,8 @@ public class WriteRunner extends WorkloadRunner {
    */
   private Set<String> captureFileListing() throws IOException {
     // Construct path prefix for all files in `_delta_log/`. The prefix is for file with name `0`
-    // because
-    // the filesystem client lists all _sibling_ files in the directory with a path greater than
-    // `0`.
+    // because the filesystem client lists all _sibling_ files in the directory with a path greater
+    // than `0`.
     String deltaLogPathPrefix =
         new io.delta.kernel.internal.fs.Path(
                 workloadSpec.getTableInfo().getResolvedTableRoot(), "_delta_log/0")
