@@ -18,8 +18,11 @@ package io.delta.kernel.spark.table;
 import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.read.SparkScanBuilder;
+import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.spark.snapshot.SnapshotManager;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -40,10 +43,8 @@ public class SparkTable implements Table, SupportsRead {
           EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
 
   private final Identifier identifier;
-  private final String tablePath;
   private final Map<String, String> options;
-  // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
-  private final SnapshotImpl snapshot;
+  private final SnapshotManager snapshotManager;
   private final Configuration hadoopConf;
 
   private final StructType schema;
@@ -54,12 +55,12 @@ public class SparkTable implements Table, SupportsRead {
   private final Transform[] partitionTransforms;
 
   /**
-   * Creates a SparkTable backed by a Delta Kernel snapshot and initializes Spark-facing metadata
-   * (schemas, partitioning, capabilities).
+   * Creates a SparkTable backed by a Delta Kernel snapshot manager and initializes Spark-facing
+   * metadata (schemas, partitioning, capabilities).
    *
-   * <p>Side effects: - Loads the latest snapshot for the given tablePath. - Builds Hadoop
-   * configuration from options for subsequent I/O. - Derives data schema, partition schema, and
-   * full table schema from the snapshot.
+   * <p>Side effects: - Initializes a SnapshotManager for the given tablePath. - Loads the latest
+   * snapshot via the manager. - Builds Hadoop configuration from options for subsequent I/O. -
+   * Derives data schema, partition schema, and full table schema from the snapshot.
    *
    * <p>Notes: - Partition column order from the snapshot is preserved for partitioning and appended
    * after data columns in the public Spark schema, per Spark conventions. - Read-time scan options
@@ -72,14 +73,13 @@ public class SparkTable implements Table, SupportsRead {
    */
   public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
     this.identifier = requireNonNull(identifier, "identifier is null");
-    this.tablePath = requireNonNull(tablePath, "snapshot is null");
     this.options = options;
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.snapshot =
-        (SnapshotImpl)
-            io.delta.kernel.TableManager.loadSnapshot(tablePath)
-                .build(io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf));
+    this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+
+    // Load the initial snapshot through the manager
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
 
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.partColNames =
@@ -154,7 +154,7 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public Map<String, String> properties() {
-    Map<String, String> props = new HashMap<>(snapshot.getMetadata().getConfiguration());
+    Map<String, String> props = new HashMap<>(snapshotManager.getMetadata().getConfiguration());
     props.putAll(this.options);
     return Collections.unmodifiableMap(props);
   }
@@ -169,7 +169,10 @@ public class SparkTable implements Table, SupportsRead {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
-    return new SparkScanBuilder(name(), tablePath, dataSchema, partitionSchema, snapshot, merged);
+    // Cast to SnapshotImpl is required because SparkScanBuilder needs SnapshotImpl
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.unsafeVolatileSnapshot();
+    return new SparkScanBuilder(
+        name(), snapshotManager, dataSchema, partitionSchema, merged);
   }
 
   @Override

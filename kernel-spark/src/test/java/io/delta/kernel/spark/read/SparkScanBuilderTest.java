@@ -20,12 +20,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.TableManager;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.SparkDsv2TestBase;
+import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
@@ -51,7 +51,9 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         String.format(
             "CREATE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
             tableName, path));
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     StructType dataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -65,10 +67,9 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
-            path,
+            snapshotManager,
             dataSchema,
             partitionSchema,
-            (SnapshotImpl) snapshot,
             CaseInsensitiveStringMap.empty());
 
     StructType expectedSparkSchema =
@@ -93,7 +94,9 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         String.format(
             "CREATE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
             tableName, path));
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     StructType dataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -107,10 +110,9 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
-            path,
+            snapshotManager,
             dataSchema,
             partitionSchema,
-            (SnapshotImpl) snapshot,
             CaseInsensitiveStringMap.empty());
     Scan scan = builder.build();
 
@@ -669,7 +671,9 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         String.format(
             "CREATE OR REPLACE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
             tableName, path));
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     StructType dataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -682,10 +686,9 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
     return new SparkScanBuilder(
         tableName,
-        path,
+        snapshotManager,
         dataSchema,
         partitionSchema,
-        (SnapshotImpl) snapshot,
         CaseInsensitiveStringMap.empty());
   }
 

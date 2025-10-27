@@ -15,7 +15,8 @@
  */
 package io.delta.kernel.spark.read;
 
-import io.delta.kernel.*;
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
@@ -23,10 +24,18 @@ import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.spark.snapshot.SnapshotManager;
 import io.delta.kernel.spark.utils.StreamingHelper;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
@@ -43,10 +52,10 @@ public class SparkMicroBatchStream implements MicroBatchStream {
           new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE)));
 
   private final Engine engine;
-  private final String tablePath;
+  private final SnapshotManager snapshotManager;
 
-  public SparkMicroBatchStream(String tablePath, Configuration hadoopConf) {
-    this.tablePath = tablePath;
+  public SparkMicroBatchStream(SnapshotManager snapshotManager, Configuration hadoopConf) {
+    this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.engine = DefaultEngine.create(hadoopConf);
   }
 
@@ -153,21 +162,14 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Option<DeltaSourceOffset> endOffset) {
     List<IndexedFile> allIndexedFiles = new ArrayList<>();
-    // StartBoundary (inclusive)
-    CommitRangeBuilder builder =
-        TableManager.loadCommitRange(tablePath)
-            .withStartBoundary(CommitRangeBuilder.CommitBoundary.atVersion(startVersion));
-    if (endOffset.isDefined()) {
-      // EndBoundary (inclusive)
-      builder =
-          builder.withEndBoundary(
-              CommitRangeBuilder.CommitBoundary.atVersion(endOffset.get().reservoirVersion()));
-    }
-    CommitRange commitRange = builder.build(engine);
+
+    // Get commit range via snapshot manager
+    Optional<Long> endVersionOpt =
+        endOffset.isDefined() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
+    CommitRange commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
     // TODO(#5318): This is not working with ccv2 table
-    Snapshot startSnapshot =
-        TableManager.loadSnapshot(tablePath).atVersion(startVersion).build(engine);
+    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
     try (CloseableIterator<ColumnarBatch> actionsIter =
         commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
       // Each ColumnarBatch belongs to a single commit version,
@@ -263,7 +265,8 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       if (removeOpt.isPresent()) {
         RemoveFile removeFile = removeOpt.get();
         Throwable error =
-            DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFile.getPath(), tablePath);
+            DeltaErrors.deltaSourceIgnoreDeleteError(
+                version, removeFile.getPath(), snapshotManager.unsafeVolatileSnapshot().getPath());
         if (error instanceof RuntimeException) {
           throw (RuntimeException) error;
         } else {
