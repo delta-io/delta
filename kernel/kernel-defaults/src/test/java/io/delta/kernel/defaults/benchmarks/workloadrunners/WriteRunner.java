@@ -27,17 +27,13 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.actions.SingleAction;
-import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import org.openjdk.jmh.infra.Blackhole;
 
 /**
@@ -58,6 +54,7 @@ public class WriteRunner extends WorkloadRunner {
   private List<Long> committedVersions;
   private Snapshot currentSnapshot;
   private long originalVersion;
+  private Set<String> initialDeltaLogFiles;
 
   /**
    * Constructs the WriteRunner from the workload spec and engine.
@@ -78,10 +75,12 @@ public class WriteRunner extends WorkloadRunner {
 
     String tableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
 
-    // Get the current version before any commits
+    // Get the current snapshot
     SnapshotBuilder builder = TableManager.loadSnapshot(tableRoot);
     currentSnapshot = builder.build(engine);
-    originalVersion = currentSnapshot.getVersion();
+
+    // Capture initial listing of delta log files
+    initialDeltaLogFiles = captureFileListing();
 
     // Load and parse all commit files
     for (WriteSpec.CommitSpec commitSpec : workloadSpec.getCommits()) {
@@ -129,7 +128,7 @@ public class WriteRunner extends WorkloadRunner {
       // Build and commit the transaction
       Transaction txn = txnBuilder.build(engine);
 
-      // Convert actions list to CloseableIterable (required by commit API)
+      // Convert actions list to CloseableIterable
       CloseableIterator<Row> actionsIter = toCloseableIterator(actions.iterator());
       io.delta.kernel.utils.CloseableIterable<Row> dataActions =
           io.delta.kernel.utils.CloseableIterable.inMemoryIterable(actionsIter);
@@ -234,36 +233,42 @@ public class WriteRunner extends WorkloadRunner {
       return;
     }
 
-    // Delete all Delta log files with version > originalVersion
-    io.delta.kernel.internal.fs.Path deltaLogPath =
-        new io.delta.kernel.internal.fs.Path(
-            workloadSpec.getTableInfo().getResolvedTableRoot(), "_delta_log");
-
-    // Use listingPrefix to start listing from originalVersion + 1
-    // This is more efficient than listing from version 0
-    String startPath = FileNames.listingPrefix(deltaLogPath, originalVersion + 1);
-
-    try (CloseableIterator<FileStatus> filesIter =
-        engine.getFileSystemClient().listFrom(startPath)) {
-
-      while (filesIter.hasNext()) {
-        FileStatus file = filesIter.next();
-        String filePath = file.getPath();
-
-        try {
-          // Get version from any recognized Delta log file (commit, checkpoint, checksum/CRC, etc.)
-          // FileNames.getFileVersion handles: .json, .checkpoint.parquet, .crc, .compacted.json
-          long version = FileNames.getFileVersion(new io.delta.kernel.internal.fs.Path(filePath));
-          if (version > originalVersion) {
-            // Delete this file (includes CRC files automatically)
-            engine.getFileSystemClient().delete(filePath);
-          }
-        } catch (IllegalArgumentException e) {
-          // Skip unrecognized files - ensures forward compatibility
-        }
+    // Delete any files that weren't present initially
+    Set<String> currentFiles = captureFileListing();
+    for (String filePath : currentFiles) {
+      if (!initialDeltaLogFiles.contains(filePath)) {
+        engine.getFileSystemClient().delete(filePath);
       }
     }
 
     committedVersions.clear();
+  }
+
+  /**
+   * Captures a listing of all files whose paths start with the given prefix. Use a trailing slash
+   * to list files inside a directory.
+   *
+   * @return a set of all file paths starting with that prefix
+   */
+  private Set<String> captureFileListing() throws IOException {
+    // Construct path prefix for all files in `_delta_log/`. The prefix is for file with name `0`
+    // because
+    // the filesystem client lists all _sibling_ files in the directory with a path greater than
+    // `0`.
+    String deltaLogPathPrefix =
+        new io.delta.kernel.internal.fs.Path(
+                workloadSpec.getTableInfo().getResolvedTableRoot(), "_delta_log/0")
+            .toUri()
+            .getPath();
+
+    Set<String> files = new HashSet<>();
+    try (CloseableIterator<FileStatus> filesIter =
+        engine.getFileSystemClient().listFrom(deltaLogPathPrefix)) {
+      while (filesIter.hasNext()) {
+        FileStatus file = filesIter.next();
+        files.add(file.getPath());
+      }
+    }
+    return files;
   }
 }
