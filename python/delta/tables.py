@@ -1236,15 +1236,13 @@ class DeltaMergeBuilder(object):
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     @since(0.4)  # type: ignore[arg-type]
-    def execute(self) -> DataFrame:
+    def execute(self) -> None:
         """
         Execute the merge operation based on the built matched and not matched actions.
 
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
         """
-        return DataFrame(
-            self._jbuilder.execute(),
-            getattr(self._spark, "_wrapped", self._spark))  # type: ignore[attr-defined]
+        self._jbuilder.execute()
 
     def __getMatchedBuilder(
         self, condition: OptionalExpressionOrColumn = None
