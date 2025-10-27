@@ -72,7 +72,7 @@ public interface SnapshotManager {
   /**
    * Finds and returns the commit that was active at a specific timestamp.
    *
-   * @param timeStamp the timestamp to query
+   * @param timestamp the timestamp to query
    * @param canReturnLastCommit if true, returns the last commit if the timestamp is after all
    *     commits; if false, throws an exception
    * @param mustBeRecreatable if true, only considers commits that can be fully recreated from
@@ -84,7 +84,7 @@ public interface SnapshotManager {
    *     provided flags
    */
   DeltaHistoryManager.Commit getActiveCommitAtTime(
-      Timestamp timeStamp,
+      Timestamp timestamp,
       Boolean canReturnLastCommit,
       Boolean mustBeRecreatable,
       Boolean canReturnEarliestCommit);

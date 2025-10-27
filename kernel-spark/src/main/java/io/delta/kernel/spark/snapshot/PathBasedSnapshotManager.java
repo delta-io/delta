@@ -88,7 +88,7 @@ public class PathBasedSnapshotManager implements SnapshotManager {
    * <p>This method searches the Delta table's commit history to find the commit that was active at
    * the specified timestamp.
    *
-   * @param timeStamp the timestamp to query
+   * @param timestamp the timestamp to query
    * @param canReturnLastCommit if true, returns the last commit if the timestamp is after all
    *     commits
    * @param mustBeRecreatable if true, only considers commits that can be recreated (i.e., all
@@ -99,7 +99,7 @@ public class PathBasedSnapshotManager implements SnapshotManager {
    */
   @Override
   public DeltaHistoryManager.Commit getActiveCommitAtTime(
-      Timestamp timeStamp,
+      Timestamp timestamp,
       Boolean canReturnLastCommit,
       Boolean mustBeRecreatable,
       Boolean canReturnEarliestCommit) {
@@ -108,7 +108,7 @@ public class PathBasedSnapshotManager implements SnapshotManager {
         kernelEngine,
         snapshot,
         snapshot.getLogPath(),
-        timeStamp.getTime(),
+        timestamp.getTime(),
         mustBeRecreatable,
         canReturnLastCommit,
         canReturnEarliestCommit,

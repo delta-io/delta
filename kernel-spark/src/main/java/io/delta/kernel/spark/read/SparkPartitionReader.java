@@ -16,7 +16,6 @@
 package io.delta.kernel.spark.read;
 
 import java.io.IOException;
-import java.util.Objects;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.execution.datasources.FilePartition;
@@ -39,8 +38,8 @@ public class SparkPartitionReader<T> implements PartitionReader<T> {
 
   public SparkPartitionReader(
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, FilePartition partition) {
-    this.readFunc = Objects.requireNonNull(readFunc, "readFunc");
-    this.partition = Objects.requireNonNull(partition, "partition");
+    this.readFunc = java.util.Objects.requireNonNull(readFunc, "readFunc");
+    this.partition = java.util.Objects.requireNonNull(partition, "partition");
   }
 
   @Override
