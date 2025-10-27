@@ -163,11 +163,13 @@ object SuiteGeneratorConfig {
       "MergeIntoNotMatchedBySourceCDCPart1Tests",
       "MergeIntoNotMatchedBySourceCDCPart2Tests",
       "MergeIntoSchemaEvolutionCoreTests",
-      "MergeIntoSchemaEvolutionBaseTests",
+      "MergeIntoSchemaEvolutionBaseNewColumnTests",
+      "MergeIntoSchemaEvolutionBaseExistingColumnTests",
       "MergeIntoSchemaEvoStoreAssignmentPolicyTests",
       "MergeIntoSchemaEvolutionNotMatchedBySourceTests",
       "MergeIntoNestedStructInMapEvolutionTests",
-      "MergeIntoNestedStructEvolutionTests"
+      "MergeIntoNestedStructEvolutionUpdateOnlyTests",
+      "MergeIntoNestedStructEvolutionInsertTests"
     )
     val MERGE_SQL = List(
       "MergeIntoSQLTests",
