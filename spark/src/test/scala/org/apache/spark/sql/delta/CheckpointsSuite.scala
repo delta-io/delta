@@ -18,15 +18,16 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.net.URI
-import java.util.UUID
+import java.util.{Optional, UUID}
 
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration._
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorBuilder, CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -34,6 +35,9 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.TestBarrier
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, TableDescriptor}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FSDataOutputStream, Path, RawLocalFileSystem}
@@ -41,7 +45,7 @@ import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
