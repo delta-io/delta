@@ -29,8 +29,13 @@ public class SnapshotConstructionRunner extends WorkloadRunner {
   private final SnapshotConstructionSpec workloadSpec;
   private final Engine engine;
 
-  public SnapshotConstructionRunner(SnapshotConstructionSpec spec, Engine engine) {
-    this.workloadSpec = spec;
+  /**
+   * Construct a SnapshotConstructionRunner from the workload spec and engine.
+   * @param workloadSpec The snapshot_construction workload specification.
+   * @param engine The engine to use for executing the workload.
+   */
+  public SnapshotConstructionRunner(SnapshotConstructionSpec workloadSpec, Engine engine) {
+    this.workloadSpec = workloadSpec;
     this.engine = engine;
   }
 
