@@ -511,7 +511,11 @@ public abstract class DeltaSinkTableTestSuite {
                 new RowTypeColumnarRowProducer()
             );
 
-            DataStreamSource<RowData> streamSource = streamEnv.addSource(source).setParallelism(1);
+            DataStreamSource<RowData> streamSource = streamEnv.fromSource(
+                source,
+                org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(),
+                "checkpointCountingSource"
+            ).setParallelism(1);
             tableEnv.createTemporaryView(TEST_SOURCE_TABLE_NAME, streamSource);
         }
 

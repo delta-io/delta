@@ -255,9 +255,11 @@ public abstract class DeltaEndToEndTableTestSuite {
         // before shutting off. This is why we are using our CheckpointCountingSource.
         // Please note that we don't have its Table API version hence we are using combination of
         // Streaming and Table API.
-        DataStreamSource<RowData> streamSource = streamEnv.addSource(
+        DataStreamSource<RowData> streamSource = streamEnv.fromSource(
             //recordsPerCheckpoint =1, numberOfCheckpoints = 5
-            new CheckpointCountingSource(1, 5, new NestedRowColumnRowProducer())
+            new CheckpointCountingSource(1, 5, new NestedRowColumnRowProducer()),
+            org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(),
+            "checkpointCountingSource"
         ).setParallelism(1);
         Table sourceTable = tableEnv.fromDataStream(streamSource);
         tableEnv.createTemporaryView("sourceTable", sourceTable);

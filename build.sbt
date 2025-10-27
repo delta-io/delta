@@ -1292,6 +1292,15 @@ lazy val flink = (project in file("connectors/flink"))
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     Test / publishArtifact := false,
+    // Exclude .disabled-* test directories from compilation (Flink 2.0 migration)
+    // These directories contain tests that cannot be compiled until dependencies are available
+    Test / excludeFilter := {
+      val defaultExcludes = (Test / excludeFilter).value
+      defaultExcludes || new SimpleFileFilter(f =>
+        f.getPath.contains(".disabled-hive-tests-flink2") ||
+        f.getPath.contains(".disabled-failover-tests-flink2")
+      )
+    },
     pomExtra :=
       <url>https://github.com/delta-io/delta</url>
         <scm>
