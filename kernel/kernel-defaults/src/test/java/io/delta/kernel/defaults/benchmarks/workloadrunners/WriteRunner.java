@@ -218,9 +218,7 @@ public class WriteRunner extends WorkloadRunner {
     return actions;
   }
 
-  /**
-   * Cleans up the state created during benchmark execution by reverting all committed changes.
-   */
+  /** Cleans up the state created during benchmark execution by reverting all committed changes. */
   @Override
   public void cleanup() throws Exception {
     // Delete any files that weren't present initially
@@ -234,9 +232,7 @@ public class WriteRunner extends WorkloadRunner {
     committedVersions.clear();
   }
 
-  /**
-   * @return a set of all file paths in the the `_delta_log/` directory of the table.
-   */
+  /** @return a set of all file paths in the the `_delta_log/` directory of the table. */
   private Set<String> captureFileListing() throws IOException {
     // Construct path prefix for all files in `_delta_log/`. The prefix is for file with name `0`
     // because the filesystem client lists all _sibling_ files in the directory with a path greater

@@ -50,8 +50,6 @@ import java.nio.file.Paths;
  * {
  *   "name": "s3_table",
  *   "description": "Table stored in S3",
- *   "table_type": "absolute",
- *   "table_path": "s3://my-bucket/path/to/table"
  * }
  * }</pre>
  */
@@ -71,26 +69,7 @@ public class TableInfo {
   @JsonProperty("engine_info")
   public String engineInfo;
 
-  /**
-   * The type of table location: "relative" (default) or "absolute".
-   *
-   * <p>When "relative", the table is located at {table_info_directory}/delta. When "absolute", the
-   * table is located at the path specified in {@link #tablePath}.
-   */
-  @JsonProperty("table_type")
-  private String tableType;
-
-  /**
-   * The absolute path to the table when {@link #tableType} is "absolute". Can be a local path
-   * (file:///) or S3 path (s3://). Null when table_type is "relative".
-   */
-  @JsonProperty("table_path")
-  private String tablePath;
-
-  /**
-   * The resolved absolute path to the root of the table. This is computed after deserialization
-   * based on {@link #tableType} and {@link #tablePath}.
-   */
+  /** The resolved absolute path to the root of the table. */
   @JsonProperty("table_info_path")
   private String tableInfoPath;
 
@@ -105,16 +84,8 @@ public class TableInfo {
   /** Resolves the table root path based on the table type and location configuration. */
   @JsonIgnore
   public String getResolvedTableRoot() {
-    if ("absolute".equals(tableType)) {
-      if (tablePath == null || tablePath.trim().isEmpty()) {
-        throw new IllegalStateException(
-            "table_path must be specified when table_type is 'absolute'");
-      }
-      return tablePath;
-    } else {
-      // Default to "relative" if tableType is null or "relative"
-      return Paths.get(tableInfoPath, "delta").toAbsolutePath().toString();
-    }
+    // Default to "relative" if tableType is null or "relative"
+    return Paths.get(tableInfoPath, "delta").toAbsolutePath().toString();
   }
 
   public String getTableInfoPath() {
@@ -165,8 +136,6 @@ public class TableInfo {
         + description
         + "', engineInfo='"
         + engineInfo
-        + "', tableType='"
-        + tableType
         + "}";
   }
 }
