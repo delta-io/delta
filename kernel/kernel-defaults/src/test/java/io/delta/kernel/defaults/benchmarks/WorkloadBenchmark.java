@@ -86,7 +86,6 @@ public class WorkloadBenchmark<T> {
   public static void main(String[] args) throws RunnerException, IOException {
     // Get workload specs from the workloads directory
     List<WorkloadSpec> workloadSpecs = BenchmarkUtils.loadAllWorkloads(WORKLOAD_SPECS_DIR);
-    System.out.println("Loaded " + workloadSpecs.size() + " workload specs");
     if (workloadSpecs.isEmpty()) {
       throw new RunnerException(
           "No workloads found. Please add workload specs to the workloads directory.");
