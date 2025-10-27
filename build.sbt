@@ -609,7 +609,7 @@ lazy val spark = (project in file("spark-unified"))
     // Internal module artifact names to exclude from published POM
     internalModuleNames := Set("delta-spark-v1", "delta-spark-v1-shaded", "delta-spark-v2"),
 
-    // Merge classes from internal modules (v1, v2, storage) into final JAR
+    // Merge classes from internal modules (v1, v2) into final JAR
     // kernel modules are kept as separate JARs and listed as dependencies in POM
     Compile / packageBin / mappings ++= {
       val log = streams.value.log
@@ -617,13 +617,12 @@ lazy val spark = (project in file("spark-unified"))
       // Collect mappings from internal modules
       val v1Mappings = (sparkV1 / Compile / packageBin / mappings).value
       val v2Mappings = (sparkV2 / Compile / packageBin / mappings).value
-      val storageMappings = (storage / Compile / packageBin / mappings).value
 
       // Include Python files (from spark/ directory)
       val pythonMappings = listPythonFiles(baseDirectory.value.getParentFile / "python")
 
       // Combine all mappings
-      val allMappings = v1Mappings ++ v2Mappings ++ storageMappings ++ pythonMappings
+      val allMappings = v1Mappings ++ v2Mappings ++ pythonMappings
 
       // Detect duplicate class files
       val classFiles = allMappings.filter(_._2.endsWith(".class"))
