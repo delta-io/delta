@@ -74,10 +74,8 @@ public class WriteRunner extends WorkloadRunner {
     // Capture initial listing of delta log files
     initialDeltaLogFiles = captureFileListing();
 
-    System.out.println("Parsing commit files...");
     // Load and parse all commit files
     for (WriteSpec.CommitSpec commitSpec : workloadSpec.getCommits()) {
-      System.out.println("Parsing commitSpec: " + commitSpec.getDataFilesPath());
       commitActions.add(commitSpec.parseActions(engine, workloadSpec.getSpecDirectoryPath()));
     }
   }
@@ -116,8 +114,8 @@ public class WriteRunner extends WorkloadRunner {
       Transaction txn = txnBuilder.build(engine);
 
       // Convert actions list to CloseableIterable
-      CloseableIterator<Row> actionsIter = toCloseableIterator(actions.iterator());
-      CloseableIterable<Row> dataActions = CloseableIterable.inMemoryIterable(actionsIter);
+      CloseableIterable<Row> dataActions =
+          CloseableIterable.inMemoryIterable(toCloseableIterator(actions.iterator()));
 
       TransactionCommitResult result = txn.commit(engine, dataActions);
 
