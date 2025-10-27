@@ -19,7 +19,6 @@ import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import io.delta.kernel.spark.snapshot.SnapshotManager;
@@ -169,8 +168,7 @@ public class SparkTable implements Table, SupportsRead {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
-    return new SparkScanBuilder(
-        name(), snapshotManager, dataSchema, partitionSchema, merged);
+    return new SparkScanBuilder(name(), snapshotManager, dataSchema, partitionSchema, merged);
   }
 
   @Override

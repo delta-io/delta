@@ -28,14 +28,7 @@ import io.delta.kernel.spark.snapshot.SnapshotManager;
 import io.delta.kernel.spark.utils.StreamingHelper;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
@@ -162,13 +155,10 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Option<DeltaSourceOffset> endOffset) {
     List<IndexedFile> allIndexedFiles = new ArrayList<>();
-
-    // Get commit range via snapshot manager
     Optional<Long> endVersionOpt =
         endOffset.isDefined() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
     CommitRange commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
-    // TODO(#5318): This is not working with ccv2 table
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
     try (CloseableIterator<ColumnarBatch> actionsIter =
         commitRange.getActions(engine, startSnapshot, ACTION_SET)) {

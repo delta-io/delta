@@ -19,7 +19,6 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.snapshot.SnapshotManager;
 import io.delta.kernel.spark.utils.ExpressionUtils;
 import java.util.*;
@@ -60,7 +59,7 @@ public class SparkScanBuilder
       StructType dataSchema,
       StructType partitionSchema,
       CaseInsensitiveStringMap options) {
-    this.kernelScanBuilder =snapshotManager.unsafeVolatileSnapshot().getScanBuilder();
+    this.kernelScanBuilder = snapshotManager.unsafeVolatileSnapshot().getScanBuilder();
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");

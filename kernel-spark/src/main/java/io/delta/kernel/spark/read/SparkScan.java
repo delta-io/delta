@@ -113,6 +113,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public Batch toBatch() {
     ensurePlanned();
     return new SparkBatch(
+        getTablePath(),
         dataSchema,
         partitionSchema,
         readDataSchema,
@@ -155,6 +156,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         return OptionalLong.empty();
       }
     };
+  }
+
+  /**
+   * Get the table path from the scan state.
+   *
+   * @return the table path with trailing slash
+   */
+  private String getTablePath() {
+    final Engine tableEngine = DefaultEngine.create(hadoopConf);
+    final Row scanState = kernelScan.getScanState(tableEngine);
+    final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
+    return tableRoot.endsWith("/") ? tableRoot : tableRoot + "/";
   }
 
   /**
@@ -202,12 +215,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    */
   private void planScanFiles() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
-
-    // Get table path from scan state
-    final Row scanState = kernelScan.getScanState(tableEngine);
-    final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
-    final String tablePath = tableRoot.endsWith("/") ? tableRoot : tableRoot + "/";
-
+    final String tablePath = getTablePath();
     final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
 
     final String[] locations = new String[0];

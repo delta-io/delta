@@ -42,6 +42,7 @@ import scala.collection.Iterator;
 import scala.collection.JavaConverters;
 
 public class SparkBatch implements Batch {
+  private final String tablePath;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -54,6 +55,7 @@ public class SparkBatch implements Batch {
   private final List<PartitionedFile> partitionedFiles;
 
   public SparkBatch(
+      String tablePath,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -64,6 +66,7 @@ public class SparkBatch implements Batch {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf) {
 
+    this.tablePath = Objects.requireNonNull(tablePath, "tablePath is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -122,7 +125,8 @@ public class SparkBatch implements Batch {
     if (!(obj instanceof SparkBatch)) return false;
 
     SparkBatch that = (SparkBatch) obj;
-    return Objects.equals(this.readDataSchema, that.readDataSchema)
+    return Objects.equals(this.tablePath, that.tablePath)
+        && Objects.equals(this.readDataSchema, that.readDataSchema)
         && Objects.equals(this.dataSchema, that.dataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
         && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
@@ -132,7 +136,8 @@ public class SparkBatch implements Batch {
 
   @Override
   public int hashCode() {
-    int result = readDataSchema.hashCode();
+    int result = tablePath.hashCode();
+    result = 31 * result + readDataSchema.hashCode();
     result = 31 * result + dataSchema.hashCode();
     result = 31 * result + partitionSchema.hashCode();
     result = 31 * result + Arrays.hashCode(pushedToKernelFilters);

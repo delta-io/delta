@@ -23,7 +23,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import java.io.File;
@@ -685,11 +684,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
     return new SparkScanBuilder(
-        tableName,
-        snapshotManager,
-        dataSchema,
-        partitionSchema,
-        CaseInsensitiveStringMap.empty());
+        tableName, snapshotManager, dataSchema, partitionSchema, CaseInsensitiveStringMap.empty());
   }
 
   private Predicate[] getPushedKernelPredicates(SparkScanBuilder builder) throws Exception {

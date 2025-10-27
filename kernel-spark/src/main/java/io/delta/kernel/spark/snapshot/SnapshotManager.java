@@ -19,7 +19,6 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
 import java.sql.Timestamp;
 import java.util.Optional;
