@@ -130,9 +130,9 @@ public class WriteRunner extends WorkloadRunner {
               .orElseThrow(
                   () ->
                       new IllegalStateException(
-                          "Post-commit snapshot not available. This indicates a conflict occurred during "
-                              + "the benchmark, which should not happen. Ensure no other processes are writing "
-                              + "to the table: "
+                          "Post-commit snapshot not available. This indicates a conflict "
+                              + "occurred during the benchmark, which should not happen. "
+                              + "Ensure no other processes are writing to the table: "
                               + workloadSpec.getTableInfo().getResolvedTableRoot()));
     }
   }
