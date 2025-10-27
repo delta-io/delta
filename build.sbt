@@ -439,16 +439,16 @@ lazy val sparkV1 = (project in file("spark"))
     scalaStyleSettings,
     skipReleaseSettings, // Internal module - not published to Maven
     crossSparkSettings(),
-    
+
     // Export as JAR instead of classes directory. This prevents dependent projects
     // (e.g., connectServer) from seeing multiple 'classes' directories with the same
     // name in their classpath, which would cause FileAlreadyExistsException.
     exportJars := true,
-    
+
     // Tests are compiled in the final 'spark' module to avoid circular dependencies
     Test / sources := Seq.empty,
     Test / resources := Seq.empty,
-    
+
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -510,15 +510,15 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
     commonSettings,
     skipReleaseSettings, // Internal module - not published to Maven
     exportJars := true,  // Export as JAR to avoid classpath conflicts
-    
+
     // No source code - just repackage sparkV1 without DeltaLog classes
     Compile / sources := Seq.empty,
     Test / sources := Seq.empty,
-    
+
     // Repackage sparkV1 jar but exclude DeltaLog and related classes
     Compile / packageBin / mappings := {
       val v1Mappings = (sparkV1 / Compile / packageBin / mappings).value
-      
+
       // Filter out DeltaLog, Snapshot, OptimisticTransaction, and actions.scala classes
       v1Mappings.filterNot { case (file, path) =>
         path.contains("org/apache/spark/sql/delta/DeltaLog") ||
@@ -543,7 +543,7 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     javafmtCheckSettings,
     skipReleaseSettings, // Internal module - not published to Maven
     exportJars := true,  // Export as JAR to avoid classpath conflicts
-    
+
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -580,10 +580,10 @@ lazy val spark = (project in file("spark-unified"))
     scalaStyleSettings,
     sparkMimaSettings,
     releaseSettings, // Published to Maven as delta-spark.jar
-    
+
     // Set Test baseDirectory before crossSparkSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
-    
+
     // Test sources from spark/ directory (sparkV1's directory)
     // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
     Test / unmanagedSourceDirectories := {
@@ -596,12 +596,12 @@ lazy val spark = (project in file("spark-unified"))
     Test / unmanagedResourceDirectories := Seq(
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
     ),
-    
+
     crossSparkSettings(),
-    
+
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
     mimaCurrentClassfiles := (Compile / packageBin).value,
-    
+
     // Export as JAR to dependent projects (e.g., connectServer, connectClient).
     // This prevents classpath conflicts from internal module 'classes' directories.
     exportJars := true,
@@ -613,22 +613,22 @@ lazy val spark = (project in file("spark-unified"))
     // kernel modules are kept as separate JARs and listed as dependencies in POM
     Compile / packageBin / mappings ++= {
       val log = streams.value.log
-      
+
       // Collect mappings from internal modules
       val v1Mappings = (sparkV1 / Compile / packageBin / mappings).value
       val v2Mappings = (sparkV2 / Compile / packageBin / mappings).value
       val storageMappings = (storage / Compile / packageBin / mappings).value
-      
+
       // Include Python files (from spark/ directory)
       val pythonMappings = listPythonFiles(baseDirectory.value.getParentFile / "python")
-      
+
       // Combine all mappings
       val allMappings = v1Mappings ++ v2Mappings ++ storageMappings ++ pythonMappings
-      
+
       // Detect duplicate class files
       val classFiles = allMappings.filter(_._2.endsWith(".class"))
       val duplicates = classFiles.groupBy(_._2).filter(_._2.size > 1)
-      
+
       if (duplicates.nonEmpty) {
         log.error(s"Found ${duplicates.size} duplicate class(es) in packageBin mappings:")
         duplicates.foreach { case (className, entries) =>
@@ -637,10 +637,10 @@ lazy val spark = (project in file("spark-unified"))
         }
         sys.error("Duplicate classes found. This indicates overlapping code between sparkV1, sparkV2, and storage modules.")
       }
-      
+
       allMappings.distinct
     },
-    
+
     // Exclude internal modules from published POM
     pomPostProcess := { node =>
       val internalModules = internalModuleNames.value
@@ -657,7 +657,7 @@ lazy val spark = (project in file("spark-unified"))
     },
 
     pomIncludeRepository := { _ => false },
-    
+
     // Filter internal modules from project dependencies
     // This works together with pomPostProcess to ensure internal modules
     // (sparkV1, sparkV2, sparkV1Filtered) are not listed as dependencies in POM
@@ -665,14 +665,14 @@ lazy val spark = (project in file("spark-unified"))
       val internalModules = internalModuleNames.value
       projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
     },
-    
+
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
-      
+
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -794,11 +794,11 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
-    
+
     // Use unique classDirectory name to avoid conflicts in connectClient test setup
     // This allows connectClient to create symlinks without FileAlreadyExistsException
     Compile / classDirectory := target.value / "scala-2.13" / "kernel-api-classes",
-    
+
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
@@ -892,11 +892,11 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
-    
+
     // Use unique classDirectory name to avoid conflicts in connectClient test setup
     // This allows connectClient to create symlinks without FileAlreadyExistsException
     Compile / classDirectory := target.value / "scala-2.13" / "kernel-defaults-classes",
-    
+
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
@@ -911,7 +911,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
-      // Removed external delta-spark dependency - now using local sparkV1 project
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
