@@ -96,7 +96,6 @@ public class WriteSpec extends WorkloadSpec {
     public List<Row> parseActions(Engine engine, String specPath) throws IOException {
       String commitFilePath = new Path(specPath, getDataFilesPath()).toString();
 
-      System.out.println("CommitSpec: Reading commit file at " + commitFilePath);
       File file = new File(commitFilePath);
       if (!file.exists()) {
         throw new IOException("Commit file not found: " + commitFilePath);
