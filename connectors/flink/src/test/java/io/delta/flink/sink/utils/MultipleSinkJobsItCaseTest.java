@@ -107,7 +107,10 @@ public class MultipleSinkJobsItCaseTest {
 
         StreamExecutionEnvironment env = getTestStreamEnv();
 
-        env.addSource(new CheckpointCountingSource(RECORDS_PER_CHECKPOINT, NUMBER_OF_CHECKPOINTS))
+        env.fromSource(
+                new CheckpointCountingSource(RECORDS_PER_CHECKPOINT, NUMBER_OF_CHECKPOINTS),
+                org.apache.flink.api.common.eventtime.WatermarkStrategy.noWatermarks(),
+                "checkpointCountingSource")
             .setParallelism(SINK_PARALLELISM)
             .sinkTo(DeltaSinkTestUtils.createDeltaSink(deltaTablePath, false))
             .setParallelism(SINK_PARALLELISM);

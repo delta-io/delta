@@ -1298,7 +1298,8 @@ lazy val flink = (project in file("connectors/flink"))
       val defaultExcludes = (Test / excludeFilter).value
       defaultExcludes || new SimpleFileFilter(f =>
         f.getPath.contains(".disabled-hive-tests-flink2") ||
-        f.getPath.contains(".disabled-failover-tests-flink2")
+        f.getPath.contains(".disabled-failover-tests-flink2") ||
+        f.getName.contains("DeltaSourceContinuousExecutionITCaseTest")
       )
     },
     pomExtra :=

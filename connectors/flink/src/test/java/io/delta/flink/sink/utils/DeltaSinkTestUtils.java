@@ -427,7 +427,7 @@ public class DeltaSinkTestUtils {
 
     public static MiniCluster getMiniCluster() {
         final Configuration config = new Configuration();
-        config.setString(RestOptions.BIND_PORT, "18081-19000");
+        config.set(RestOptions.BIND_PORT, "18081-19000");
         config.set(TaskManagerOptions.FRAMEWORK_OFF_HEAP_MEMORY, MemorySize.parse("128mb"));
         config.set(TaskManagerOptions.TASK_OFF_HEAP_MEMORY, MemorySize.parse("128mb"));
         final MiniClusterConfiguration cfg =
