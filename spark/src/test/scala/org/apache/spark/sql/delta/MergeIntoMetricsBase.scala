@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.MergeIntoMetricsShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.test.SharedSparkSession
@@ -271,9 +271,7 @@ trait MergeIntoMetricsBase
         val sourceDfWithExtraCols = addExtraColumns(sourceDf)
 
         // Run MERGE INTO command
-        val mergeResultDf = mergeCmdFn(targetTable, sourceDfWithExtraCols)
-
-        checkMergeResultMetrics(mergeResultDf, expectedOpMetrics)
+        mergeCmdFn(targetTable, sourceDfWithExtraCols)
 
         // Query the operation metrics from the Delta log history.
         val operationMetrics: Map[String, String] = getOperationMetrics(targetTable.history(1))
@@ -312,24 +310,6 @@ trait MergeIntoMetricsBase
         checkMergeOperationCdfMetricsInvariants(operationMetrics, testConfig.cdfEnabled)
       }
     }
-  }
-
-  private def checkMergeResultMetrics(
-      mergeResultDf: DataFrame,
-      metrics: Map[String, Int]): Unit = {
-    val numRowsUpdated = metrics.get("numTargetRowsUpdated").map(_.toLong).getOrElse(0L)
-    val numRowsDeleted = metrics.get("numTargetRowsDeleted").map(_.toLong).getOrElse(0L)
-    val numRowsInserted = metrics.get("numTargetRowsInserted").map(_.toLong).getOrElse(0L)
-    val numRowsTouched =
-      numRowsUpdated +
-        numRowsDeleted +
-        numRowsInserted
-
-    assert(mergeResultDf.collect() ===
-      Array(Row(numRowsTouched,
-        numRowsUpdated,
-        numRowsDeleted,
-        numRowsInserted)))
   }
 
   /////////////////////////////
@@ -1388,7 +1368,7 @@ object MergeIntoMetricsBase extends QueryTest with SharedSparkSession {
   // helpful types //
   ///////////////////
 
-  type MergeCmd = (io.delta.tables.DeltaTable, DataFrame) => DataFrame
+  type MergeCmd = (io.delta.tables.DeltaTable, DataFrame) => Unit
 
   /////////////////////
   // helpful methods //

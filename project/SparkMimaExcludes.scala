@@ -84,12 +84,7 @@ object SparkMimaExcludes {
 
       // Changes in 1.2.0
       ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.LogStore"),
-      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator"),
-
-      // Changes in 4.0.0
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.improveUnsupportedOpError"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.improveUnsupportedOpError"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute")
+      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator")
 
       // scalastyle:on line.size.limit
   )
