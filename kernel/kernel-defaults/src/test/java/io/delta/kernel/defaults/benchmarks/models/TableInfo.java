@@ -32,24 +32,17 @@ import java.nio.file.Paths;
  *
  * <p>TableInfo instances are typically loaded from JSON files in the workload specifications
  * directory structure. Each table directory should contain a {@code table_info.json} file with the
- * table metadata and a {@code delta} subdirectory containing the actual table data.
+ * table metadata and a {@code delta} subdirectory containing the actual table data. The table root
+ * path is the absolute path to the root of the table and is provided separately in {@link
+ * WorkloadSpec#fromJsonPath(String, String, TableInfo)}.
  *
- * <p>Example JSON structure for relative table (default):
- *
- * <pre>{@code
- * {
- *   "name": "basic_table",
- *   "description": "A basic Delta table for benchmarking",
- *   "engine_info": "Apache-Spark/3.5.1 Delta-Lake/3.1.0"
- * }
- * }</pre>
- *
- * <p>Example JSON structure for absolute path table:
+ * <p>Example JSON structure:
  *
  * <pre>{@code
  * {
- *   "name": "s3_table",
- *   "description": "Table stored in S3",
+ *   "name": "large-table",
+ *   "description": "A large Delta table with multi-part checkpoints for performance testing",
+ *   "engineInfo": "Apache-Spark/3.5.1 Delta-Lake/3.1.0"
  * }
  * }</pre>
  */
@@ -99,14 +92,14 @@ public class TableInfo {
   /**
    * Creates a TableInfo instance by reading from a JSON file at the specified path.
    *
-   * <p>This method loads table metadata from a JSON file and resolves the table root path. The JSON
-   * file should contain the table name and description, while the table root path is computed based
-   * on the table_type and table_path fields.
+   * <p>This method loads table metadata from a JSON file and sets the table root path. The JSON
+   * file should contain the table name and description, while the table root path is provided
+   * separately with the absolute path.
    *
    * @param jsonPath the path to the JSON file containing the TableInfo metadata
    * @param tableInfoPath the directory containing the table_info.json file (used for relative path
    *     resolution)
-   * @return a TableInfo instance populated from the JSON file with resolved table root path
+   * @return a TableInfo instance populated from the JSON file and table root path
    * @throws RuntimeException if there is an error reading or parsing the JSON file
    */
   public static TableInfo fromJsonPath(String jsonPath, String tableInfoPath) {
@@ -123,8 +116,8 @@ public class TableInfo {
   /**
    * Returns a string representation of this TableInfo.
    *
-   * <p>The string includes the table name, description, engine info, and CCv2 status, but excludes
-   * the table root path for security reasons (as it may contain sensitive path information).
+   * <p>The string includes the table name, description, and engine info, but excludes the table
+   * root path for security reasons (as it may contain sensitive path information).
    *
    * @return a string representation of this TableInfo
    */
@@ -136,6 +129,6 @@ public class TableInfo {
         + description
         + "', engineInfo='"
         + engineInfo
-        + "}";
+        + "'}";
   }
 }
