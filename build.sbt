@@ -718,7 +718,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 lazy val kernelSpark = (project in file("kernel-spark"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
-  .dependsOn(spark % "compile->compile")
+  .dependsOn(spark % "compile->compile;test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "kernel-spark",
@@ -731,18 +731,13 @@ lazy val kernelSpark = (project in file("kernel-spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
-      // Using released delta-spark JAR instead of module dependency to break circular dependency
-      "io.delta" %% "delta-spark" % "3.3.2" % "test",
-
-      // Spark test dependencies for QueryTest and other test utilities
-      // Spark version(3.5.6) matches delta-spark's version 3.3.2
-      "org.apache.spark" %% "spark-sql" % "3.5.6" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % "3.5.6" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % "3.5.6" % "test" classifier "tests",
-
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      // Spark test classes for Scala/Java test utilities
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
