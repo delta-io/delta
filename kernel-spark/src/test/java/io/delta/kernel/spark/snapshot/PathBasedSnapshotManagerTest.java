@@ -136,9 +136,7 @@ public class PathBasedSnapshotManagerTest extends SparkDsv2TestBase {
     Snapshot snapshot3 = snapshotManager.loadSnapshotAt(3L);
     assertEquals(3L, snapshot3.getVersion());
 
-    // Verify that cached snapshot is updated to the last loaded version
-    Snapshot cachedSnapshot = snapshotManager.unsafeVolatileSnapshot();
-    assertEquals(3L, cachedSnapshot.getVersion());
+    // Note: loadSnapshotAt does not update the cached snapshot
   }
 
   private void setupTableWithDeletedVersions(String testTablePath, String testTableName) {

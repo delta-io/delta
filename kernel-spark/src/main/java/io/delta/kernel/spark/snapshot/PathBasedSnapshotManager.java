@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.spark.snapshot;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
@@ -40,23 +42,25 @@ public class PathBasedSnapshotManager implements SnapshotManager {
   private final Engine kernelEngine;
 
   public PathBasedSnapshotManager(String tablePath, Configuration hadoopConf) {
-    this.tablePath = tablePath;
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.snapshotAtomicReference = new AtomicReference<>();
-    this.kernelEngine = DefaultEngine.create(hadoopConf);
+    this.kernelEngine = DefaultEngine.create(requireNonNull(hadoopConf, "hadoopConf is null"));
   }
 
   /**
    * Returns the cached snapshot without guaranteeing its freshness.
    *
+   * <p>This method uses atomic operations to ensure thread safety when initializing the cached
+   * snapshot. If multiple threads call this method concurrently when the cache is empty, only one
+   * will load the snapshot and all others will use that loaded snapshot.
+   *
    * @return the cached snapshot, or a newly loaded snapshot if none exists
    */
   @Override
   public Snapshot unsafeVolatileSnapshot() {
-    Snapshot unsafeVolatileSnapshot = snapshotAtomicReference.get();
-    if (unsafeVolatileSnapshot == null) {
-      return loadLatestSnapshot();
-    }
-    return unsafeVolatileSnapshot;
+    return snapshotAtomicReference.updateAndGet(
+        current ->
+            current != null ? current : TableManager.loadSnapshot(tablePath).build(kernelEngine));
   }
 
   /**
