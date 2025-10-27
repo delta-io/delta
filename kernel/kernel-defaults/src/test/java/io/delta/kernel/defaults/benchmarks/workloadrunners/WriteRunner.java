@@ -220,10 +220,6 @@ public class WriteRunner extends WorkloadRunner {
 
   /**
    * Cleans up the state created during benchmark execution by reverting all committed changes.
-   *
-   * <p>This method removes the commit files for any version greater than the original version,
-   * effectively reverting all changes made during the benchmark. This ensures the table is returned
-   * to its original state for the next benchmark iteration.
    */
   @Override
   public void cleanup() throws Exception {
@@ -239,10 +235,7 @@ public class WriteRunner extends WorkloadRunner {
   }
 
   /**
-   * Captures a listing of all files whose paths start with the given prefix. Use a trailing slash
-   * to list files inside a directory.
-   *
-   * @return a set of all file paths starting with that prefix
+   * @return a set of all file paths in the the `_delta_log/` directory of the table.
    */
   private Set<String> captureFileListing() throws IOException {
     // Construct path prefix for all files in `_delta_log/`. The prefix is for file with name `0`
