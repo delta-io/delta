@@ -1880,10 +1880,10 @@ trait DeltaErrorsBase
     val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
     new DeltaAnalysisException(
       errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
-      messageParameters = Array(classOf[AbstractDeltaSparkSessionExtension].getName,
-        catalogImplConfig, classOf[AbstractDeltaCatalog].getName,
-        classOf[AbstractDeltaSparkSessionExtension].getName,
-        catalogImplConfig, classOf[AbstractDeltaCatalog].getName),
+      messageParameters = Array("io.delta.sql.DeltaSparkSessionExtension",
+        catalogImplConfig, "org.apache.spark.sql.delta.catalog.DeltaCatalog",
+        "io.delta.sql.DeltaSparkSessionExtension",
+        catalogImplConfig, "org.apache.spark.sql.delta.catalog.DeltaCatalog"),
       cause = originalException)
   }
 

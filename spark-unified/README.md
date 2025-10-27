@@ -1,8 +1,8 @@
 # Delta Spark Unified Module
 
 This module contains the final, published `delta-spark` JAR that unifies both:
-- **V1 (DSv1)**: The traditional Delta Lake connector with full `DeltaLog` support
-- **V2 (DSv2)**: The new Kernel-backed connector for improved performance
+- **V1 (hybrid DSv1 and DSv2)**: The traditional Delta Lake connector using `DeltaLog` for Delta support
+- **V2 (DSv2)**: The new Kernel-backed connector.
 
 ## Architecture
 
@@ -29,10 +29,10 @@ kernel-spark/            (sparkV2 - V2 implementation)
 
 ## How It Works
 
-1. **sparkV1** (`spark/`): Contains production code for the V1 connector including DeltaLog
+1. **sparkV1** (`spark/`): Contains production code for the V1 connector using DeltaLog
 2. **sparkV1Filtered** (`spark-v1-shaded/`): Filtered version of V1 excluding DeltaLog, Snapshot, OptimisticTransaction, and actions.scala
 3. **sparkV2** (`kernel-spark/`): Kernel-backed V2 connector that depends on sparkV1Filtered
-4. **spark** (this module): Final JAR that merges V1 + V2 + storage classes
+4. **spark** (this module): Final JAR that merges V1 + V2 classes
 
 The final JAR includes:
 - All classes from sparkV1, sparkV2, and storage
@@ -55,7 +55,7 @@ The module automatically:
 1. Merges classes from V1, V2, and storage modules
 2. Detects duplicate classes (fails build if found)
 3. Filters internal modules from POM dependencies
-4. Exports as JAR to avoid classpath conflicts
+4. Exports as JAR
 
 ## Testing
 
