@@ -33,8 +33,6 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 import org.openjdk.jmh.runner.options.TimeValue;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Generic JMH benchmark for all workload types. Automatically loads and runs benchmarks based on
@@ -47,8 +45,6 @@ import org.slf4j.LoggerFactory;
 @Measurement(iterations = 5, time = 1)
 public class WorkloadBenchmark<T> {
 
-  private static final Logger log = LoggerFactory.getLogger(WorkloadBenchmark.class);
-
   /** Default implementation of BenchmarkState that supports only the "default" engine. */
   public static class DefaultBenchmarkState extends AbstractBenchmarkState {
     @Override
@@ -57,11 +53,10 @@ public class WorkloadBenchmark<T> {
         return DefaultEngine.create(
             new Configuration() {
               {
-                // Set the batch sizes to small so that we get to test the multiple batch/file
-                // scenarios.
-                set("delta.kernel.default.parquet.reader.batch-size", "20");
-                set("delta.kernel.default.json.reader.batch-size", "20");
-                set("delta.kernel.default.parquet.writer.targetMaxFileSize", "20");
+                // Set the batch size. This is required for writes.
+                set("delta.kernel.default.parquet.reader.batch-size", "1024");
+                set("delta.kernel.default.json.reader.batch-size", "1024");
+                set("delta.kernel.default.parquet.writer.targetMaxFileSize", "10485760"); // 1 MB
               }
             });
       } else {
@@ -101,12 +96,7 @@ public class WorkloadBenchmark<T> {
     List<WorkloadSpec> filteredSpecs = new ArrayList<>();
     for (WorkloadSpec spec : workloadSpecs) {
       // TODO: In the future, we can filter specific workloads using command line args here.
-      List<WorkloadSpec> variants = spec.getWorkloadVariants();
-      for (WorkloadSpec variant : variants) {
-        if (variant.getType().equals("write")) {
-          filteredSpecs.add(variant);
-        }
-      }
+      filteredSpecs.addAll(spec.getWorkloadVariants());
     }
 
     // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
@@ -128,6 +118,6 @@ public class WorkloadBenchmark<T> {
             .addProfiler(KernelMetricsProfiler.class)
             .build();
 
-    new Runner(opt).run();
+    new Runner(opt, new WorkloadOutputFormat()).run();
   }
 }
