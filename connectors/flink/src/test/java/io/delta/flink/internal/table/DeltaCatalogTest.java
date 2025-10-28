@@ -15,6 +15,8 @@ import org.apache.commons.io.FileUtils;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.CatalogTable;
+// FLINK 2.0: DefaultCatalogTable removed, use CatalogTable.newBuilder()
+// import org.apache.flink.table.catalog.DefaultCatalogTable;
 import org.apache.flink.table.catalog.GenericInMemoryCatalog;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.catalog.ResolvedCatalogTable;
@@ -429,14 +431,15 @@ class DeltaCatalogTest {
 
     private DeltaCatalogBaseTable setUpCatalogTable(Map<String, String> options) {
 
-        CatalogTable catalogTable = CatalogTable.of(
-            Schema.newBuilder()
+        // FLINK 2.0: CatalogTable.of() was removed, use CatalogTable.newBuilder()
+        CatalogTable catalogTable = CatalogTable.newBuilder()
+            .schema(Schema.newBuilder()
                 .fromFields(TestTableData.COLUMN_NAMES, TestTableData.COLUMN_TYPES)
-                .build(),
-            "comment",
-            Collections.emptyList(), // partitionKeys
-            options // options
-        );
+                .build())
+            .comment("comment")
+            .partitionKeys(Collections.emptyList())
+            .options(options)
+            .build();
 
         return new DeltaCatalogBaseTable(
             new ObjectPath(DATABASE, "testTable"),

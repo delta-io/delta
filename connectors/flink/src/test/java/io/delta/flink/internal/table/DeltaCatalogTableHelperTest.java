@@ -6,6 +6,8 @@ import java.util.Map;
 
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.catalog.CatalogTable;
+// FLINK 2.0: DefaultCatalogTable removed, use CatalogTable.newBuilder()
+// import org.apache.flink.table.catalog.DefaultCatalogTable;
 import org.apache.flink.table.catalog.Column;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.catalog.ResolvedCatalogTable;
@@ -124,11 +126,12 @@ class DeltaCatalogTableHelperTest {
         );
 
         ResolvedCatalogTable table = new ResolvedCatalogTable(
-            CatalogTable.of(
-                Schema.newBuilder().fromResolvedSchema(schema).build(),
-                "mock context",
-                Collections.emptyList(),
-                Collections.singletonMap("table-path", "file://some/path")),
+            CatalogTable.newBuilder()
+                .schema(Schema.newBuilder().fromResolvedSchema(schema).build())
+                .comment("mock context")
+                .partitionKeys(Collections.emptyList())
+                .options(Collections.singletonMap("table-path", "file://some/path"))
+                .build(),
             schema
         );
 
@@ -156,11 +159,12 @@ class DeltaCatalogTableHelperTest {
         );
 
         ResolvedCatalogTable table = new ResolvedCatalogTable(
-            CatalogTable.of(
-                Schema.newBuilder().fromResolvedSchema(schema).build(),
-                "mock context",
-                Collections.emptyList(),
-                Collections.singletonMap("table-path", "file://some/path")),
+            CatalogTable.newBuilder()
+                .schema(Schema.newBuilder().fromResolvedSchema(schema).build())
+                .comment("mock context")
+                .partitionKeys(Collections.emptyList())
+                .options(Collections.singletonMap("table-path", "file://some/path"))
+                .build(),
             schema
         );
 
