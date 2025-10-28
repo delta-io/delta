@@ -200,10 +200,8 @@ public class DeltaWriterTest {
         final Path path = new Path(outDir.toURI());
         List<RowData> testRows = DeltaSinkTestUtils.getTestRowData(1);
 
-        // Create the processing timer service starts from 10.
-        ManuallyTriggeredProcessingTimeService processingTimeService =
-            new ManuallyTriggeredProcessingTimeService();
-        processingTimeService.advanceTo(processingTime);
+        // FLINK 2.0: ManuallyTriggeredProcessingTimeService was removed
+        // ProcessingTimeService is no longer used in DeltaWriter
 
         DeltaWriter<RowData> writer = createNewWriter(path);
         writer.initializeState(Collections.emptyList());

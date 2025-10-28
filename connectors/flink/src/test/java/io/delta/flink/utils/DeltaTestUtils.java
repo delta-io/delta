@@ -476,12 +476,13 @@ public class DeltaTestUtils {
         return new FactoryUtil.DefaultDynamicTableContext(
             ObjectIdentifier.of("default", "default", "context_1"),
             new ResolvedCatalogTable(
-                CatalogTable.of(
-                    Schema.newBuilder().fromResolvedSchema(schema).build(),
-                    "mock context",
-                    Collections.emptyList(),
-                    options
-                ),
+                // FLINK 2.0: CatalogTable.of() was removed, use CatalogTable.newBuilder()
+                CatalogTable.newBuilder()
+                    .schema(Schema.newBuilder().fromResolvedSchema(schema).build())
+                    .comment("mock context")
+                    .partitionKeys(Collections.emptyList())
+                    .options(options)
+                    .build(),
                 schema
             ),
             Collections.emptyMap(),

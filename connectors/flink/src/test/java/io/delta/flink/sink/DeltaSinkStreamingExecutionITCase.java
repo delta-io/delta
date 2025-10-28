@@ -79,7 +79,7 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
     public void setUp() throws IOException {
         try {
             deltaTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-            DeltaSinkTestUtils.initTestForNonPartitionedTable(deltaTablePath);
+            DeltaTestUtils.initTestForNonPartitionedTable(deltaTablePath);
         } catch (IOException e) {
             throw new RuntimeException("Weren't able to setup the test dependencies", e);
         }
@@ -96,7 +96,7 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
 
         if (isPartitioned) {
             deltaTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
-            DeltaSinkTestUtils.initTestForPartitionedTable(deltaTablePath);
+            DeltaTestUtils.initTestForPartitionedTable(deltaTablePath);
         }
 
         // GIVEN
@@ -113,7 +113,8 @@ public class DeltaSinkStreamingExecutionITCase extends DeltaSinkExecutionITCaseB
         // WHEN
         StreamExecutionEnvironment env = getTestStreamEnv();
 
-        Sink<RowData, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable> deltaSink =
+        // FLINK 2.0: Sink interface changed - now only has 1 type parameter (input type)
+        Sink<RowData> deltaSink =
             DeltaSinkTestUtils.createDeltaSink(deltaTablePath, isPartitioned);
 
         int numberOfCheckpoints = NUM_RECORDS / RECORDS_PER_CHECKPOINT;
