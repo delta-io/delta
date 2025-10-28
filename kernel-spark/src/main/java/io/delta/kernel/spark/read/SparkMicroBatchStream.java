@@ -125,8 +125,8 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     // represent file additions; we retain them for offset tracking, but they don't count toward
     // the maxFilesPerTrigger conf.
     if (limits.isDefined()) {
-      DeltaSource.AdmissionLimits admissionControl = limits.get();
-      changes = changes.takeWhile(admissionControl::admit);
+      DeltaSource.AdmissionLimits admissionLimits = limits.get();
+      changes = changes.takeWhile(admissionLimits::admit);
     }
 
     // TODO(#5318): Stop at schema change barriers

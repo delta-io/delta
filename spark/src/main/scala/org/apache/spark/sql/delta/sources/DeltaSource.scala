@@ -1280,26 +1280,21 @@ case class DeltaSource(
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
 
   /**
-   * Helper method for Java callers to create AdmissionLimits.
-   * Returns None if both maxFiles and maxBytes are empty/None.
-   */
-  def createAdmissionLimits(
-      maxFiles: Option[Int],
-      maxBytes: Option[Long]): Option[AdmissionLimits] = {
-    if (maxFiles.isEmpty && maxBytes.isEmpty) {
-      None
-    } else {
-      Some(new AdmissionLimits(maxFiles, maxBytes.getOrElse(Long.MaxValue)))
-    }
-  }
-
-  /**
    * Class that helps controlling how much data should be processed by a single micro-batch.
    */
   case class AdmissionLimits(
       maxFiles: Option[Int] = options.maxFilesPerTrigger,
       var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)
   ) {
+
+    var filesToTake = maxFiles.getOrElse {
+      if (options.maxBytesPerTrigger.isEmpty) {
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
+      } else {
+        Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
+      }
+    }
+
     // This variable indicates whether a commit has already been processed by a batch or not.
     var commitProcessedInBatch = false
 
@@ -1355,14 +1350,6 @@ case class DeltaSource(
     /** Returns whether admission limits has capacity to accept files or bytes */
     def hasCapacity: Boolean = {
       filesToTake > 0 && bytesToTake > 0
-    }
-
-    var filesToTake = maxFiles.getOrElse {
-      if (options.maxBytesPerTrigger.isEmpty) {
-        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
-      } else {
-        Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
-      }
     }
 
     def toReadLimit: ReadLimit = {

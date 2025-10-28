@@ -145,11 +145,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
-    scala.Option<DeltaSourceOffset> scalaEndOffset = scala.Option.empty();
+    Option<DeltaSourceOffset> scalaEndOffset = Option.empty();
     if (endVersion.isPresent()) {
       long offsetIndex = endIndex.orElse(DeltaSourceOffset.END_INDEX());
       scalaEndOffset =
-          scala.Option.apply(
+          Option.apply(
               new DeltaSourceOffset(
                   deltaLog.tableId(), endVersion.get(), offsetIndex, isInitialSnapshot));
     }
@@ -258,12 +258,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
     DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
 
-    scala.Option<Object> scalaMaxFiles =
-        maxFiles.isPresent() ? scala.Option.apply(maxFiles.get()) : scala.Option.empty();
-    scala.Option<Object> scalaMaxBytes =
-        maxBytes.isPresent() ? scala.Option.apply(maxBytes.get()) : scala.Option.empty();
     Option<DeltaSource.AdmissionLimits> dsv1Limits =
-        deltaSource.createAdmissionLimits(scalaMaxFiles, scalaMaxBytes);
+        createAdmissionLimits(deltaSource, maxFiles, maxBytes);
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
         deltaSource.getFileChangesWithRateLimit(
@@ -280,8 +276,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv2 SparkMicroBatchStream
     SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
-    scala.Option<DeltaSource.AdmissionLimits> dsv2Limits =
-        deltaSource.createAdmissionLimits(scalaMaxFiles, scalaMaxBytes);
+    Option<DeltaSource.AdmissionLimits> dsv2Limits =
+        createAdmissionLimits(deltaSource, maxFiles, maxBytes);
 
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChangesWithRateLimit(
@@ -384,7 +380,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     long fromVersion = 0L;
     long fromIndex = DeltaSourceOffset.BASE_INDEX();
     boolean isInitialSnapshot = false;
-    scala.Option<DeltaSourceOffset> endOffset = scala.Option.empty();
+    Option<DeltaSourceOffset> endOffset = Option.empty();
 
     // Test DSv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -461,7 +457,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     long fromVersion = 0L;
     long fromIndex = DeltaSourceOffset.BASE_INDEX();
     boolean isInitialSnapshot = false;
-    scala.Option<DeltaSourceOffset> endOffset = scala.Option.empty();
+    Option<DeltaSourceOffset> endOffset = Option.empty();
 
     // Test DSv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -626,6 +622,23 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
       }
       sql("INSERT INTO %s VALUES %s", tableName, values.toString());
     }
+  }
+
+  private Option<DeltaSource.AdmissionLimits> createAdmissionLimits(
+      DeltaSource deltaSource, Optional<Integer> maxFiles, Optional<Long> maxBytes) {
+    Option<Object> scalaMaxFiles =
+        maxFiles.isPresent() ? Option.apply(maxFiles.get()) : Option.empty();
+    Option<Object> scalaMaxBytes =
+        maxBytes.isPresent() ? Option.apply(maxBytes.get()) : Option.empty();
+
+    if (scalaMaxFiles.isEmpty() && scalaMaxBytes.isEmpty()) {
+      return Option.empty();
+    }
+    return Option.apply(
+        deltaSource
+        .new AdmissionLimits(
+            scalaMaxFiles,
+            scalaMaxBytes.isDefined() ? (Long) scalaMaxBytes.get() : Long.MAX_VALUE));
   }
 
   /** Helper method to create a DeltaSource instance for testing. */
