@@ -154,12 +154,12 @@ public class DeltaSinkInternal<IN>
         }
     }
 
-    // @Override // Removed: Sink interface changed in Flink 2.0
+    @Override
     public Optional<Committer<DeltaCommittable>> createCommitter() throws IOException {
         return Optional.of(sinkBuilder.createCommitter());
     }
 
-    // @Override // Removed: Sink interface changed in Flink 2.0
+    @Override
     public Optional<SimpleVersionedSerializer<DeltaCommittable>>
         getCommittableSerializer() {
         try {
