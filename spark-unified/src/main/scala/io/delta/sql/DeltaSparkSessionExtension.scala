@@ -65,10 +65,6 @@ import org.apache.spark.sql.catalyst.rules.Rule
  *        spark = SparkSession(spark.sparkContext(), spark._jsparkSession.cloneSession())
  * }}}
  *
- * This class sits in delta-spark (unified) module and can access:
- * - V1: org.apache.spark.sql.delta.* (full version with DeltaLog)
- * - V2: io.delta.kernel.spark.*
- *
  * @since 0.4.0
  */
 class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
