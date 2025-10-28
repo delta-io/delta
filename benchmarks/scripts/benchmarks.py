@@ -154,7 +154,7 @@ class DeltaBenchmarkSpec(BenchmarkSpec):
     """
     Specification of a benchmark using the Delta format.
     """
-    def __init__(self, delta_version, benchmark_main_class, main_class_args=None, scala_version="2.12", **kwargs):
+    def __init__(self, delta_version, benchmark_main_class, main_class_args=None, scala_version="2.13", **kwargs):
         delta_spark_confs = [
             "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension",
             "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"

@@ -28,7 +28,7 @@ declare -a sink_tests=(
 echo "============= Running Delta/Flink Integration Tests ============="
 
 echo "============= Clearing any existing maven downloads ============="
-rm -rf ~/.m2/repository/io/delta/delta-standalone_2.12/$STANDALONE_VERSION
+rm -rf ~/.m2/repository/io/delta/delta-standalone_2.13/$STANDALONE_VERSION
 echo "Cleared delta-standalone artifacts"
 rm -rf ~/.m2/repository/io/delta/delta-flink/$STANDALONE_VERSION
 echo "Cleared delta-flink artifacts"

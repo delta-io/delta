@@ -59,7 +59,7 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
                     "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
         import importlib_metadata
-        scala_version = "2.12"
+        scala_version = "2.13"
         delta_version = importlib_metadata.version("delta_spark")
         maven_artifacts = [f"io.delta:delta-spark_{scala_version}:{delta_version}"]
         # configure extra packages

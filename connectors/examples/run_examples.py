@@ -110,8 +110,6 @@ if __name__ == "__main__":
        In this mode, ensure that the local jar exists for all scala versions. You can generate it
        by running the following commands in the root connectors folder.
        
-       build/sbt '++2.11.12 publishM2'
-       build/sbt '++2.12.18 publishM2'
        build/sbt '++2.13.13 publishM2'
     """
 
@@ -144,10 +142,6 @@ if __name__ == "__main__":
                 ("hello-world", "helloWorld", "HelloWorld")]
 
     for dir, proj, className in examples:
-        run_maven_proj(path.join(root_dir, dir), className, args.version, args.maven_repo, "2.11")
-        run_maven_proj(path.join(root_dir, dir), className, args.version, args.maven_repo, "2.12")
         run_maven_proj(path.join(root_dir, dir), className, args.version, args.maven_repo, "2.13")
 
-        run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.11.12")
-        run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.12.18")
         run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.13.13")

@@ -27,7 +27,7 @@ jobs:
       - name: Run Scala Style tests on test sources (Scala 2.13 only)
         run: build/sbt "++ ${{ matrix.scala }}" testScalastyle
         if: startsWith(matrix.scala, '2.13.')
-      - name: Run sqlDeltaImport tests (Scala 2.12 and 2.13 only)
+      - name: Run sqlDeltaImport tests (Scala 2.13 only)
         run: build/sbt "++ ${{ matrix.scala }}" sqlDeltaImport/test
         if: ${{ !startsWith(matrix.scala, '2.11.') }}
         # These tests are not working yet
