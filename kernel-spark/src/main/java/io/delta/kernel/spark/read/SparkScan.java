@@ -66,6 +66,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final SQLConf sqlConf;
   private final ZoneId zoneId;
   private final SnapshotImpl snapshot;
+  private final Engine kernelEngine;
 
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
@@ -99,6 +100,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+    this.kernelEngine = DefaultEngine.create(hadoopConf);
   }
 
   /**
@@ -128,7 +130,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         totalBytes,
         scalaOptions,
         hadoopConf,
-        snapshot);
+        snapshot,
+        kernelEngine);
   }
 
   @Override

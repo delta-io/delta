@@ -15,13 +15,11 @@
  */
 package io.delta.kernel.spark.read;
 
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.util.ColumnMapping;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -59,6 +57,7 @@ public class SparkBatch implements Batch {
   private scala.collection.immutable.Map<String, String> scalaOptions;
   private final List<PartitionedFile> partitionedFiles;
   private final SnapshotImpl snapshot;
+  private final Engine kernelEngine;
 
   public SparkBatch(
       String tablePath,
@@ -71,7 +70,8 @@ public class SparkBatch implements Batch {
       long totalBytes,
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
-      SnapshotImpl snapshot) {
+      SnapshotImpl snapshot,
+      Engine kernelEngine) {
 
     this.tablePath = Objects.requireNonNull(tablePath, "tableName is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
@@ -90,6 +90,7 @@ public class SparkBatch implements Batch {
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
     this.snapshot = Objects.requireNonNull(snapshot, "snapshot is null");
+    this.kernelEngine = Objects.requireNonNull(kernelEngine, "kernelEngine is null");
     this.sqlConf = SQLConf.get();
   }
 
@@ -114,19 +115,11 @@ public class SparkBatch implements Batch {
                 FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
                 String.valueOf(enableVectorizedReader)));
 
-    // Use DeltaParquetFileFormat for Delta-specific features (Column Mapping, Deletion Vectors)
-    ParquetFileFormat fileFormat;
-    if (needsDeltaFeatures()) {
-      Protocol protocol = snapshot.getProtocol();
-      Metadata metadata = snapshot.getMetadata();
-      Engine kernelEngine = DefaultEngine.create(hadoopConf);
-      fileFormat = new DeltaParquetFileFormat(protocol, metadata, tablePath, kernelEngine);
-    } else {
-      fileFormat = new ParquetFileFormat();
-    }
+    Protocol protocol = snapshot.getProtocol();
+    Metadata metadata = snapshot.getMetadata();
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
-        fileFormat.buildReaderWithPartitionValues(
+            new DeltaParquetFileFormat(protocol, metadata, tablePath, kernelEngine).buildReaderWithPartitionValues(
             SparkSession.active(),
             dataSchema,
             partitionSchema,
@@ -136,26 +129,6 @@ public class SparkBatch implements Batch {
             hadoopConf);
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
-  }
-
-  /** Check if Delta-specific features are needed (Column Mapping or Deletion Vectors). */
-  private boolean needsDeltaFeatures() {
-    Metadata metadata = snapshot.getMetadata();
-    Protocol protocol = snapshot.getProtocol();
-
-    // Check for column mapping
-    ColumnMapping.ColumnMappingMode columnMappingMode =
-        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
-    if (columnMappingMode != ColumnMapping.ColumnMappingMode.NONE) {
-      return true;
-    }
-
-    // Check for deletion vectors
-    if (protocol.getWriterFeatures().contains("deletionVectors")) {
-      return true;
-    }
-
-    return false;
   }
 
   @Override
