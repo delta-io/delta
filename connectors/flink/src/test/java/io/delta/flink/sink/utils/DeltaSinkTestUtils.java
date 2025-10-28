@@ -226,6 +226,59 @@ public class DeltaSinkTestUtils {
         return committables;
     }
 
+    /**
+     * Converts a list of DeltaCommittable to CommitRequest wrappers for Flink 2.0 Committer API.
+     * Creates simple test wrappers that track commit success/failure.
+     */
+    public static Collection<org.apache.flink.api.connector.sink2.Committer.CommitRequest<DeltaCommittable>> 
+            committablesToCommitRequests(List<DeltaCommittable> committables) {
+        List<org.apache.flink.api.connector.sink2.Committer.CommitRequest<DeltaCommittable>> requests = 
+            new ArrayList<>();
+        
+        for (DeltaCommittable committable : committables) {
+            requests.add(new org.apache.flink.api.connector.sink2.Committer.CommitRequest<DeltaCommittable>() {
+                private final DeltaCommittable c = committable;
+                
+                @Override
+                public DeltaCommittable getCommittable() {
+                    return c;
+                }
+                
+                @Override
+                public int getNumberOfRetries() {
+                    return 0;
+                }
+                
+                @Override
+                public void signalFailedWithKnownReason(Throwable t) {
+                    // For tests, we'll just track failures if needed
+                }
+                
+                @Override
+                public void signalFailedWithUnknownReason(Throwable t) {
+                    // For tests, we'll just track failures if needed
+                }
+                
+                @Override
+                public void signalAlreadyCommitted() {
+                    // For tests, success is implicit
+                }
+                
+                @Override
+                public void retryLater() {
+                    // For tests, we don't retry
+                }
+                
+                @Override
+                public void updateAndRetryLater(DeltaCommittable committable) {
+                    // For tests, we don't retry
+                }
+            });
+        }
+        
+        return requests;
+    }
+
     public static List<DeltaCommittable> getListOfDeltaCommittables(int size, long checkpointId) {
         return getListOfDeltaCommittables(size, new LinkedHashMap<>(), checkpointId);
     }

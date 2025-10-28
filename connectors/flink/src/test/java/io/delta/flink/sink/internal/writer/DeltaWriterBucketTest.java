@@ -266,7 +266,8 @@ public class DeltaWriterBucketTest {
 
         if (doCommit) {
             new DeltaCommitter(
-                DeltaSinkTestUtils.createBucketWriter(bucketPath)).commit(deltaCommittables);
+                DeltaSinkTestUtils.createBucketWriter(bucketPath)).commit(
+                    DeltaSinkTestUtils.committablesToCommitRequests(deltaCommittables));
         }
         return deltaCommittables;
     }

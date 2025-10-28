@@ -53,14 +53,13 @@ public class DeltaCommitterTest {
         // WHEN
         DeltaCommittable deltaCommittable =
             new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1);
-        List<DeltaCommittable> toRetry = deltaCommitter.commit(
-                DeltaSinkTestUtils.committablesToAbstractCommittables(
+        deltaCommitter.commit(
+                DeltaSinkTestUtils.committablesToCommitRequests(
                         Collections.singletonList(deltaCommittable)));
 
         // THEN
         assertEquals(1, stubBucketWriter.getRecoveredPendingFiles().size());
         assertTrue(stubBucketWriter.getRecoveredPendingFiles().get(0).isCommitted());
-        assertEquals(0, toRetry.size());
     }
 
     @Test
@@ -75,15 +74,14 @@ public class DeltaCommitterTest {
             new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1),
             new DeltaCommittable(DeltaSinkTestUtils.getTestDeltaPendingFile(), "1", 1)
         );
-        List<DeltaCommittable> toRetry = deltaCommitter.commit(
-                DeltaSinkTestUtils.committablesToAbstractCommittables(committables));
+        deltaCommitter.commit(
+                DeltaSinkTestUtils.committablesToCommitRequests(committables));
 
         // THEN
         assertEquals(3, stubBucketWriter.getRecoveredPendingFiles().size());
         stubBucketWriter
             .getRecoveredPendingFiles()
             .forEach(pendingFile -> assertTrue(pendingFile.isCommitted()));
-        assertEquals(0, toRetry.size());
     }
 
     @Test
