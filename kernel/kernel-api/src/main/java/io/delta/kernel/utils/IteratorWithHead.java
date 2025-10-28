@@ -23,8 +23,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * An utility that extracts the first item from an iterator and provides access to both the
- * head item and a full iterator (head + rest).
+ * An utility that extracts the first item from an iterator and provides access to both the head
+ * item and a full iterator (head + rest).
  */
 public class IteratorWithHead<T> implements AutoCloseable {
 
