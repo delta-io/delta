@@ -2,6 +2,6 @@
   "type": "write",
   "commits": [
     {"data_files_path": "commit_add.json"},
-    {"data_files_path": "commit_remove.json"}
+    {"data_files_path": "commit_2_adds.json"}
   ]
 }

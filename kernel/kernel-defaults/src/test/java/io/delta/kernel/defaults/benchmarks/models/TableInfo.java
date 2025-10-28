@@ -62,7 +62,7 @@ public class TableInfo {
   @JsonProperty("engine_info")
   public String engineInfo;
 
-  /** The resolved absolute path to the root of the table. */
+  /** The path to the table_info directory */
   @JsonProperty("table_info_path")
   private String tableInfoPath;
 
@@ -77,7 +77,6 @@ public class TableInfo {
   /** Resolves the table root path based on the table type and location configuration. */
   @JsonIgnore
   public String getResolvedTableRoot() {
-    // Default to "relative" if tableType is null or "relative"
     return Paths.get(tableInfoPath, "delta").toAbsolutePath().toString();
   }
 
@@ -97,8 +96,7 @@ public class TableInfo {
    * separately with the absolute path.
    *
    * @param jsonPath the path to the JSON file containing the TableInfo metadata
-   * @param tableInfoPath the directory containing the table_info.json file (used for relative path
-   *     resolution)
+   * @param tableInfoPath the directory containing the table_info.json file
    * @return a TableInfo instance populated from the JSON file and table root path
    * @throws RuntimeException if there is an error reading or parsing the JSON file
    */

@@ -27,6 +27,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.DataFileStatus;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.*;
@@ -46,7 +47,7 @@ import org.openjdk.jmh.infra.Blackhole;
 public class WriteRunner extends WorkloadRunner {
   private final Engine engine;
   private final WriteSpec workloadSpec;
-  private List<List<Row>> commitActions;
+  private List<List<DataFileStatus>> commit_contents;
   private Snapshot currentSnapshot;
   private Set<String> initialDeltaLogFiles;
 
@@ -59,11 +60,12 @@ public class WriteRunner extends WorkloadRunner {
   public WriteRunner(WriteSpec workloadSpec, Engine engine) {
     this.workloadSpec = workloadSpec;
     this.engine = engine;
+    this.commit_contents = new ArrayList<>();
   }
 
   @Override
   public void setup() throws Exception {
-    commitActions = new ArrayList<>();
+    this.commit_contents = new ArrayList<>();
 
     String tableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
 
@@ -76,7 +78,9 @@ public class WriteRunner extends WorkloadRunner {
 
     // Load and parse all commit files
     for (WriteSpec.CommitSpec commitSpec : workloadSpec.getCommits()) {
-      commitActions.add(commitSpec.parseActions(engine, workloadSpec.getSpecDirectoryPath()));
+      commit_contents.add(
+          commitSpec.readDataFiles(
+              workloadSpec.getSpecDirectoryPath(), currentSnapshot.getSchema()));
     }
   }
 
@@ -105,7 +109,7 @@ public class WriteRunner extends WorkloadRunner {
   @Override
   public void executeAsBenchmark(Blackhole blackhole) throws Exception {
     // Execute all commits in sequence (timed)
-    for (List<Row> actions : commitActions) {
+    for (List<DataFileStatus> actions : commit_contents) {
       // Create transaction from table (first iteration) or from post-commit snapshot (subsequent)
       UpdateTableTransactionBuilder txnBuilder =
           currentSnapshot.buildUpdateTableTransaction("Delta-Kernel-Benchmarks", Operation.WRITE);
@@ -113,11 +117,16 @@ public class WriteRunner extends WorkloadRunner {
       // Build and commit the transaction
       Transaction txn = txnBuilder.build(engine);
 
-      // Convert actions list to CloseableIterable
-      CloseableIterable<Row> dataActions =
-          CloseableIterable.inMemoryIterable(toCloseableIterator(actions.iterator()));
+      // Prepare data actions from commit contents
+      Row txnState = txn.getTransactionState(engine);
+      DataWriteContext writeContext =
+          Transaction.getWriteContext(engine, txnState, new HashMap<>());
+      CloseableIterator<Row> add_actions =
+          Transaction.generateAppendActions(
+              engine, txnState, toCloseableIterator(actions.iterator()), writeContext);
 
-      TransactionCommitResult result = txn.commit(engine, dataActions);
+      TransactionCommitResult result =
+          txn.commit(engine, CloseableIterable.inMemoryIterable(add_actions));
 
       long version = result.getVersion();
       blackhole.consume(version);
