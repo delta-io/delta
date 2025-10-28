@@ -261,6 +261,12 @@ public class DataSkippingUtils {
         Expression left = getLeft(dataFilters);
         Expression right = getRight(dataFilters);
         Optional<CollationIdentifier> collationIdentifier = dataFilters.getCollationIdentifier();
+        if (collationIdentifier
+            .filter(ci -> !ci.isSparkUTF8BinaryCollation() && ci.getVersion().isEmpty())
+            .isPresent()) {
+          // We can't do data skipping for non-binary collations without a version, since
+          return Optional.empty();
+        }
 
         if (left instanceof Column && right instanceof Literal) {
           Column leftCol = (Column) left;

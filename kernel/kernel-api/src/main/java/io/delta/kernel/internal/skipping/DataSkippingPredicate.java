@@ -74,7 +74,8 @@ public class DataSkippingPredicate extends Predicate {
   }
 
   /**
-   * @return set of (collation identifier, column) pairs referenced by this predicate or any of its child expressions.
+   * @return set of (collation identifier, column) pairs referenced by this predicate or any of its
+   *     child expressions.
    */
   public Set<Tuple2<CollationIdentifier, Column>> getReferencedCollationColumnPairs() {
     Set<Tuple2<CollationIdentifier, Column>> pairs = new HashSet<>();

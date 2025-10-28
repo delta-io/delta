@@ -106,13 +106,13 @@ public class StatsSchemaHelper {
    * |  |  |  |  |-- d: string (nullable = true)
    * |  |-- statsWithCollation: struct (nullable = true)
    * |  |  |-- collationName: struct (nullable = true)
-   * |  |  |  |-- min: struct (nullable = false)
-   * |  |  |  |  |-- a: struct (nullable = false)
-   * |  |  |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |-- min: struct (nullable = true)
+   * |  |  |  |  |-- a: struct (nullable = true)
+   * |  |  |  |  |  |-- b: struct (nullable = true)
    * |  |  |  |  |  |  |-- d: string (nullable = true)
-   * |  |  |  |-- max: struct (nullable = false)
-   * |  |  |  |  |-- a: struct (nullable = false)
-   * |  |  |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |-- max: struct (nullable = true)
+   * |  |  |  |  |-- a: struct (nullable = true)
+   * |  |  |  |  |  |-- b: struct (nullable = true)
    * |  |  |  |  |  |  |-- d: string (nullable = true)
    * |  |-- tightBounds: boolean (nullable = true)
    * </pre>
@@ -279,7 +279,7 @@ public class StatsSchemaHelper {
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
-   * fields (i.e. don't include fields with isSkippingEligibleDataType=false).
+   * fields (i.e. don't include fields with isSkippingEligibleDataType=false)
    */
   private static StructType getMinMaxStatsSchema(StructType dataSchema) {
     List<StructField> fields = new ArrayList<>();
@@ -298,25 +298,29 @@ public class StatsSchemaHelper {
   }
 
   /**
-   * Appends collated stats schema to the provided stats schema based on the data skipping predicate.
+   * Appends collated stats schema to the provided stats schema based on the data skipping
+   * predicate.
    */
-  private static StructType appendCollatedStatsSchema(StructType statsSchema, StructType dataSchema, DataSkippingPredicate dataSkippingPredicate) {
+  private static StructType appendCollatedStatsSchema(
+      StructType statsSchema, StructType dataSchema, DataSkippingPredicate dataSkippingPredicate) {
     StructType collatedMinMaxStatsSchema =
-            getCollatedStatsSchema(dataSchema, dataSkippingPredicate);
+        getCollatedStatsSchema(dataSchema, dataSkippingPredicate);
     if (collatedMinMaxStatsSchema.length() == 1) {
       // All collated stats are under a `statsWithCollation` field.
       statsSchema = statsSchema.add(collatedMinMaxStatsSchema.at(0));
     } else if (collatedMinMaxStatsSchema.length() > 1) {
       throw new IllegalStateException(
-              String.format(
-                      "Expected collated stats schema to have either 0 or 1 top-level fields, but found %d fields: %s",
-                      collatedMinMaxStatsSchema.length(), collatedMinMaxStatsSchema));
+          String.format(
+              "Expected collated stats schema to have either 0 or 1 top-level fields,"
+                  + " but found %d fields: %s",
+              collatedMinMaxStatsSchema.length(), collatedMinMaxStatsSchema));
     }
     return statsSchema;
   }
 
   /**
-   * Given a data schema and a data skipping predicate returns the expected schema for collated min/max columns.
+   * Given a data schema and a data skipping predicate returns the expected schema for collated
+   * min/max columns.
    */
   private static StructType getCollatedStatsSchema(
       StructType dataSchema, DataSkippingPredicate dataSkippingPredicate) {
@@ -324,7 +328,7 @@ public class StatsSchemaHelper {
     for (Tuple2<CollationIdentifier, Column> collationAndColumn :
         dataSkippingPredicate.getReferencedCollationColumnPairs()) {
       CollationIdentifier collationIdentifier = collationAndColumn._1;
-      Column column = getDataColumnFromDataSkippingColumn(collationAndColumn._2);
+      Column column = collationAndColumn._2;
 
       if (collationIdentifier.isSparkUTF8BinaryCollation()
           || collationIdentifier.getVersion().isEmpty()) {
@@ -333,7 +337,10 @@ public class StatsSchemaHelper {
         continue;
       }
 
-      DataType dataType = ColumnMapping.getLogicalColumnNameAndDataType(dataSchema, column)._2;
+      DataType dataType =
+          ColumnMapping.getLogicalColumnNameAndDataType(
+                  dataSchema, getDataColumnFromDataSkippingColumn(column))
+              ._2;
       statsWithCollation = addColumnIfNotExists(statsWithCollation, column, dataType);
     }
     return statsWithCollation;
@@ -344,7 +351,7 @@ public class StatsSchemaHelper {
    */
   private static StructType addColumnIfNotExists(
       StructType structType, Column column, DataType dataType) {
-    return addColumnIfNotExists(structType, column, dataType, 0);
+    return addColumnIfNotExists(structType, column, dataType, /* depth */ 0);
   }
 
   private static StructType addColumnIfNotExists(

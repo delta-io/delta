@@ -1701,7 +1701,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
         }
 
-        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
         val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
 
         // Non-default collations are not supported by the default engine for predicate evaluation.
@@ -1876,6 +1876,179 @@ class ScanSuite extends AnyFunSuite with TestUtils
     }
   }
 
+  test("data skipping - predicate with collation without version on data column") {
+    Seq(true, false).foreach { createCheckpoint =>
+      withTempDir { tempDir =>
+        Seq(("a", "b"), ("c", "d"), ("e", "f")).toDF("p", "d")
+          .write
+          .format("delta")
+          .partitionBy("p")
+          .save(tempDir.getCanonicalPath)
+
+        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+        val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+
+        if (createCheckpoint) {
+          // Create a checkpoint for the table
+          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+        }
+
+        val filterToFileNumber = Map(
+          new Predicate(
+            "<",
+            col("d"),
+            ofString("a"),
+            CollationIdentifier.fromString("SPARK.UTF8_LCASE")) -> totalFiles)
+
+        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
+      }
+    }
+  }
+
+  test("data skipping - predicates with SPARK.UTF8_BINARY on nested data column") {
+    Seq(true, false).foreach { createCheckpoint =>
+      withTempDir { tempDir =>
+        // Create three files with values on non-partitioned nested STRING columns (s.c1, s.c2)
+        // Files: ("a","x"), ("c","y"), ("e","z")
+        Seq(("a", "x")).toDF("c1", "c2").selectExpr("STRUCT(c1, c2) AS s").write
+          .format("delta")
+          .save(tempDir.getCanonicalPath)
+        Seq(("c", "y")).toDF("c1", "c2").selectExpr("STRUCT(c1, c2) AS s").write
+          .format("delta").mode("append")
+          .save(tempDir.getCanonicalPath)
+        Seq(("e", "z")).toDF("c1", "c2").selectExpr("STRUCT(c1, c2) AS s").write
+          .format("delta").mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+        val totalFiles = collectScanFileRows(snapshot.getScanBuilder.build()).length
+
+        if (createCheckpoint) {
+          // Create a checkpoint for the table
+          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+        }
+
+        val filterToFileNumber = Map(
+          new Predicate(
+            "<",
+            nestedCol("s.c1"),
+            ofString("a"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+          new Predicate(
+            "=",
+            ofString("d"),
+            nestedCol("s.c1"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+          new Predicate(
+            "=",
+            ofString("a"),
+            nestedCol("s.c1"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+          new Predicate(
+            "<=",
+            ofString("a"),
+            nestedCol("s.c1"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+          new Predicate(
+            "<",
+            ofString("e"),
+            nestedCol("s.c1"),
+            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+          new And(
+            new Predicate(
+              ">=",
+              nestedCol("s.c1"),
+              ofString("b"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              "<=",
+              nestedCol("s.c1"),
+              ofString("e"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+          new Or(
+            new Predicate(
+              "=",
+              nestedCol("s.c1"),
+              ofString("x"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              ">",
+              nestedCol("s.c1"),
+              ofString("d"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+          new And(
+            new Predicate(
+              ">=",
+              nestedCol("s.c1"),
+              ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              "<=",
+              nestedCol("s.c1"),
+              ofString("z"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
+          new And(
+            new Predicate(
+              "<=",
+              ofString("b"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              ">=",
+              ofString("y"),
+              nestedCol("s.c2"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+          new And(
+            new Predicate(
+              ">=",
+              ofString("c"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              "<=",
+              ofString("y"),
+              nestedCol("s.c2"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+          new Or(
+            new Predicate(
+              "=",
+              ofString("a"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              "=",
+              ofString("z"),
+              nestedCol("s.c2"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+          new Or(
+            new Predicate(
+              "<",
+              ofString("d"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              ">",
+              ofString("y"),
+              nestedCol("s.c2"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+          new And(
+            new Predicate(
+              "<",
+              ofString("e"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY),
+            new Predicate(
+              ">",
+              ofString("y"),
+              nestedCol("s.c2"),
+              CollationIdentifier.SPARK_UTF8_BINARY)) -> 0)
+        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
+      }
+    }
+  }
+
   test("data skipping - collated predicates not or partially convertible to skipping filter") {
     Seq(true, false).foreach { createCheckpoint =>
       withTempDir { tempDir =>
@@ -1894,7 +2067,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
         }
 
-        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
         val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
 
         val filterToFileNumber = Map(
@@ -1966,7 +2139,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
         }
 
-        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
         val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
 
         val failingPredicates = Seq(
@@ -1995,7 +2168,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
     }
   }
 
-  test("partition and data skipping - combined pruning on partition and data columns") {
+  test("partition and data skipping - combined pruning on collated partition and data columns") {
     Seq(true, false).foreach { createCheckpoint =>
       withTempDir { tempDir =>
         Seq(("a", "x", "u")).toDF("p", "c1", "c2")
@@ -2100,7 +2273,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
         }
 
-        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
         val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
 
         val failingPredicates = Seq(
