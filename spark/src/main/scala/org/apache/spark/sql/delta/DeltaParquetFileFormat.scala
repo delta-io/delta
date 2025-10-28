@@ -49,15 +49,15 @@ import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnarBatchRow, ColumnV
 import org.apache.spark.util.SerializableConfiguration
 
 /**
- * A thin wrapper over the Parquet file format to support
+ * Base class for Delta Parquet file format that uses DeltaWrapper abstraction.
+ *
  *  - columns names without restrictions.
  *  - populated a column from the deletion vector of this file (if exists) to indicate
  *    whether the row is deleted or not according to the deletion vector. Consumers
  *    of this scan can use the column values to filter out the deleted rows.
  */
-case class DeltaParquetFileFormat(
-    protocol: Protocol,
-    metadata: Metadata,
+abstract class DeltaParquetFileFormatBase(
+    deltaWrapper: DeltaWrapper,
     nullableRowTrackingConstantFields: Boolean = false,
     nullableRowTrackingGeneratedFields: Boolean = false,
     optimizationsEnabled: Boolean = true,
@@ -76,14 +76,14 @@ case class DeltaParquetFileFormat(
   }
 
   SparkSession.getActiveSession.ifDefined { session =>
-    TypeWidening.assertTableReadable(session.sessionState.conf, protocol, metadata)
+    deltaWrapper.validateTableReadableForTypeWidening(session.sessionState.conf)
   }
 
   require(!nullableRowTrackingConstantFields || nullableRowTrackingGeneratedFields)
 
 
-  val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
-  val referenceSchema: StructType = metadata.schema
+  val columnMappingMode: DeltaColumnMappingMode = deltaWrapper.columnMappingMode()
+  val referenceSchema: StructType = deltaWrapper.getReferenceSchema()
 
   if (columnMappingMode == IdMapping) {
     val requiredReadConf = SQLConf.PARQUET_FIELD_ID_READ_ENABLED
@@ -256,17 +256,15 @@ case class DeltaParquetFileFormat(
     // not strictly required. We do expose it when Row Tracking or DVs are enabled.
     // In general, having 2b+ rows in a single rowgroup is not a common use case. When the issue is
     // hit an exception is thrown.
-    (protocol, metadata) match {
-      // We should not expose row tracking fields for CDC reads.
-      case (p, m) if RowId.isEnabled(p, m) && !isCDCRead =>
-        val extraFields = RowTracking.createMetadataStructFields(
-          protocol,
-          metadata,
-          nullableConstantFields = nullableRowTrackingConstantFields,
-          nullableGeneratedFields = nullableRowTrackingGeneratedFields)
-        super.metadataSchemaFields ++ extraFields
-      case (p, m) if deletionVectorsReadable(p, m) => super.metadataSchemaFields
-      case _ => super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
+    if (deltaWrapper.isRowIdEnabled() && !isCDCRead) {
+      val extraFields = deltaWrapper.createRowTrackingMetadataFields(
+        nullableConstantFields = nullableRowTrackingConstantFields,
+        nullableGeneratedFields = nullableRowTrackingGeneratedFields)
+      super.metadataSchemaFields ++ extraFields
+    } else if (deltaWrapper.isDeletionVectorReadable()) {
+      super.metadataSchemaFields
+    } else {
+      super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
     }
   }
 
@@ -278,11 +276,11 @@ case class DeltaParquetFileFormat(
     val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
     val conf = ContextUtil.getConfiguration(job)
     // Always write timestamp as TIMESTAMP_MICROS for IcebergCompat based on Iceberg spec
-    if (IcebergCompat.isAnyEnabled(metadata)) {
+    if (deltaWrapper.isIcebergCompatEnabled()) {
       conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
         SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
     }
-    if (IcebergCompat.isGeqEnabled(metadata, 2)) {
+    if (deltaWrapper.isIcebergCompatV2OrAbove()) {
       // Starting from IcebergCompatV2, we need to write nested field IDs for list and map
       // types to the parquet schema. Spark currently does not support it so we hook in our
       // own write support class.
@@ -317,15 +315,6 @@ case class DeltaParquetFileFormat(
     super.fileConstantMetadataExtractors
       .updated(RowId.BASE_ROW_ID, extractBaseRowId)
       .updated(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, extractDefaultRowCommitVersion)
-  }
-
-  def copyWithDVInfo(
-      tablePath: String,
-      optimizationsEnabled: Boolean): DeltaParquetFileFormat = {
-    // When predicate pushdown is enabled we allow both splits and predicate pushdown.
-    this.copy(
-      optimizationsEnabled = optimizationsEnabled,
-      tablePath = Some(tablePath))
   }
 
   /**
@@ -539,6 +528,117 @@ case class DeltaParquetFileFormat(
         logError(log"Failed to translate filter ${MDC(DeltaLogKeys.FILTER, filter)}")
         None
     }
+  }
+
+  /** Utility method to create a new writable vector */
+  protected def newVector(
+      useOffHeapBuffers: Boolean, size: Int, dataType: StructField): WritableColumnVector = {
+    if (useOffHeapBuffers) {
+      OffHeapColumnVector.allocateColumns(size, Seq(dataType).toArray)(0)
+    } else {
+      OnHeapColumnVector.allocateColumns(size, Seq(dataType).toArray)(0)
+    }
+  }
+
+  /** Try the operation, if the operation fails release the created resource */
+  protected def trySafely[R <: WritableColumnVector, T](
+      useOffHeapBuffers: Boolean,
+      size: Int,
+      columns: Seq[ColumnMetadata])(f: Seq[WritableColumnVector] => T): T = {
+    val resources = new ArrayBuffer[WritableColumnVector](columns.size)
+    try {
+      columns.foreach(col => resources.append(newVector(useOffHeapBuffers, size, col.structField)))
+      f(resources.toSeq)
+    } catch {
+      case NonFatal(e) =>
+        resources.foreach(closeQuietly(_))
+        throw e
+    }
+  }
+
+  /** Utility method to quietly close an [[AutoCloseable]] */
+  protected def closeQuietly(closeable: AutoCloseable): Unit = {
+    if (closeable != null) {
+      try {
+        closeable.close()
+      } catch {
+        case NonFatal(_) => // ignore
+      }
+    }
+  }
+
+  /**
+   * Helper method to replace the vectors in given [[ColumnarBatch]].
+   * New vectors and its index in the batch are given as tuples.
+   */
+  protected def replaceVectors(
+      batch: ColumnarBatch,
+      indexVectorTuples: (Int, ColumnVector) *): ColumnarBatch = {
+    val vectors = ArrayBuffer[ColumnVector]()
+    for (i <- 0 until batch.numCols()) {
+      var replaced: Boolean = false
+      for (indexVectorTuple <- indexVectorTuples) {
+        val index = indexVectorTuple._1
+        val vector = indexVectorTuple._2
+        if (indexVectorTuple._1 == i) {
+          vectors += indexVectorTuple._2
+          // Make sure to close the existing vector allocated in the Parquet
+          batch.column(i).close()
+          replaced = true
+        }
+      }
+      if (!replaced) {
+        vectors += batch.column(i)
+      }
+    }
+    new ColumnarBatch(vectors.toArray, batch.numRows())
+  }
+}
+
+/**
+ * Backward-compatible case class that uses Spark's Protocol and Metadata.
+ * This wraps DeltaParquetFileFormatBase and provides the same API as before.
+ */
+case class DeltaParquetFileFormat(
+    protocol: Protocol,
+    metadata: Metadata,
+    nullableRowTrackingConstantFields: Boolean = false,
+    nullableRowTrackingGeneratedFields: Boolean = false,
+    optimizationsEnabled: Boolean = true,
+    tablePath: Option[String] = None,
+    isCDCRead: Boolean = false)
+  extends DeltaParquetFileFormatBase(
+    deltaWrapper = DeltaWrapperV1(protocol, metadata),
+    nullableRowTrackingConstantFields = nullableRowTrackingConstantFields,
+    nullableRowTrackingGeneratedFields = nullableRowTrackingGeneratedFields,
+    optimizationsEnabled = optimizationsEnabled,
+    tablePath = tablePath,
+    isCDCRead = isCDCRead) {
+
+  /**
+   * We sometimes need to replace FileFormat within LogicalPlans, so we have to override
+   * `equals` to ensure file format changes are captured
+   */
+  override def equals(other: Any): Boolean = {
+    other match {
+      case ff: DeltaParquetFileFormat =>
+        ff.columnMappingMode == columnMappingMode &&
+        ff.referenceSchema == referenceSchema &&
+        ff.nullableRowTrackingConstantFields == nullableRowTrackingConstantFields &&
+        ff.optimizationsEnabled == optimizationsEnabled
+      case _ => false
+    }
+  }
+
+  override def hashCode(): Int = getClass.getCanonicalName.hashCode()
+
+  def copyWithDVInfo(
+      tablePath: String,
+      optimizationsEnabled: Boolean): DeltaParquetFileFormat = {
+    // When predicate pushdown is enabled we allow both splits and predicate pushdown.
+    this.copy(
+      optimizationsEnabled = optimizationsEnabled,
+      tablePath = Some(tablePath))
   }
 }
 
