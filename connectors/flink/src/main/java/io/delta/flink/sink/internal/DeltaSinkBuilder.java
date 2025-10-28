@@ -263,7 +263,13 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     }
 
     Committer<DeltaCommittable> createCommitter() throws IOException {
-        return new DeltaCommitter(createBucketWriter());
+        return new DeltaCommitter(
+            createBucketWriter(),
+            serializableConfiguration.conf(),
+            tableBasePath,
+            rowType,
+            mergeSchema
+        );
     }
 
     // FLINK 2.0: GlobalCommitter was removed and replaced by DeltaGlobalCommitCoordinator
