@@ -266,8 +266,13 @@ public class DeltaWriterBucketTest {
 
         if (doCommit) {
             new DeltaCommitter(
-                DeltaSinkTestUtils.createBucketWriter(bucketPath)).commit(
-                    DeltaSinkTestUtils.committablesToCommitRequests(deltaCommittables));
+                DeltaSinkTestUtils.createBucketWriter(bucketPath),
+                new org.apache.hadoop.conf.Configuration(),
+                new org.apache.flink.core.fs.Path("/tmp/test-table"),
+                org.apache.flink.table.types.logical.RowType.of(),
+                false
+            ).commit(
+                DeltaSinkTestUtils.committablesToCommitRequests(deltaCommittables));
         }
         return deltaCommittables;
     }
