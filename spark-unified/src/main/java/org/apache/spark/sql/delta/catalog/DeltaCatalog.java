@@ -49,9 +49,6 @@ package org.apache.spark.sql.delta.catalog;
  *   <li>V1 (hybrid DSv1/DSv2): org.apache.spark.sql.delta.catalog.DeltaTableV2 - Connector using DeltaLog</li>
  *   <li>V2 (Pure DSv2): io.delta.kernel.spark.SparkTable - Kernel-backed connector</li>
  * </ul>
- *
- * @see AbstractDeltaCatalog for the base implementation
- * @see io.delta.sql.DeltaSparkSessionExtension for Delta SQL extensions
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
 }
