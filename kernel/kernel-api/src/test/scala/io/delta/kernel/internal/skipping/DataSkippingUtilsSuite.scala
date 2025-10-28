@@ -188,6 +188,119 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
       new StructType())
   }
 
+  test("pruneStatsSchema - collated min/max columns") {
+    val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+    val unicode = CollationIdentifier.fromString("ICU.UNICODE")
+    val testSchema = new StructType()
+      .add(
+        MIN,
+        new StructType()
+          .add("s1", StringType.STRING)
+          .add("i1", INTEGER)
+          .add("i2", INTEGER)
+          .add("nested", new StructType().add("s2", StringType.STRING)))
+      .add(
+        MAX,
+        new StructType()
+          .add("s1", StringType.STRING)
+          .add("i1", INTEGER)
+          .add("i2", INTEGER)
+          .add("nested", new StructType().add("s2", StringType.STRING)))
+      .add(
+        STATS_WITH_COLLATION,
+        new StructType()
+          .add(
+            utf8Lcase.toString,
+            new StructType()
+              .add(
+                MIN,
+                new StructType()
+                  .add("s1", StringType.STRING)
+                  .add("nested", new StructType().add("s2", StringType.STRING)))
+              .add(
+                MAX,
+                new StructType()
+                  .add("s1", StringType.STRING)
+                  .add("nested", new StructType().add("s2", StringType.STRING))))
+          .add(
+            unicode.toString,
+            new StructType()
+              .add(
+                MIN,
+                new StructType()
+                  .add("s1", StringType.STRING)
+                  .add("nested", new StructType().add("s2", StringType.STRING)))
+              .add(
+                MAX,
+                new StructType()
+                  .add("s1", StringType.STRING)
+                  .add("nested", new StructType().add("s2", StringType.STRING)))))
+
+    val testCases = Seq(
+      (
+        Set(nestedCol(s"$MIN.nested.s2"), nestedCol(s"$MAX.i1")),
+        new StructType()
+          .add(
+            MIN,
+            new StructType()
+              .add("i1", INTEGER)
+              .add("nested", new StructType().add("s2", StringType.STRING)))
+          .add(
+            MAX,
+            new StructType()
+              .add("i1", INTEGER))),
+      (
+        Set(
+          collatedStatsCol(utf8Lcase, MIN, "s1"),
+          collatedStatsCol(unicode, MAX, "nested.s2")),
+        new StructType()
+          .add(
+            STATS_WITH_COLLATION,
+            new StructType()
+              .add(
+                utf8Lcase.toString,
+                new StructType()
+                  .add(
+                    MIN,
+                    new StructType().add("s1", StringType.STRING)))
+              .add(
+                unicode.toString,
+                new StructType()
+                  .add(
+                    MAX,
+                    new StructType().add(
+                      "nested",
+                      new StructType().add("s2", StringType.STRING)))))),
+      (
+        Set(
+          nestedCol(s"$MIN.i2"),
+          collatedStatsCol(utf8Lcase, MAX, "nested.s2"),
+          collatedStatsCol(utf8Lcase, MIN, "nested.s2")),
+        new StructType()
+          .add(
+            MIN,
+            new StructType()
+              .add("i2", INTEGER))
+          .add(
+            STATS_WITH_COLLATION,
+            new StructType()
+              .add(
+                utf8Lcase.toString,
+                new StructType()
+                  .add(
+                    MIN,
+                    new StructType()
+                      .add("nested", new StructType().add("s2", StringType.STRING)))
+                  .add(
+                    MAX,
+                    new StructType()
+                      .add("nested", new StructType().add("s2", StringType.STRING)))))))
+
+    testCases.foreach { case (referencedCols, expectedSchema) =>
+      checkPruneStatsSchema(testSchema, referencedCols, expectedSchema)
+    }
+  }
+
   // TODO: add tests for remaining operators
   test("check constructDataSkippingFilter") {
     val testCases = Seq(
