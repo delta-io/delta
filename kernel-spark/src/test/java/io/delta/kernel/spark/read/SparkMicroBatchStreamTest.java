@@ -16,10 +16,12 @@
 package io.delta.kernel.spark.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
-import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.ArrayList;
@@ -30,42 +32,47 @@ import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.connector.read.streaming.Offset;
+import org.apache.spark.sql.connector.read.streaming.ReadLimit;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import scala.Option;
 import scala.collection.immutable.Map$;
 
 public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
-  private SparkMicroBatchStream microBatchStream;
-
-  @BeforeEach
-  void setUp(@TempDir File tempDir) {
-    String testPath = tempDir.getAbsolutePath();
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
-    microBatchStream =
-        new SparkMicroBatchStream(snapshotManager, spark.sessionState().newHadoopConf());
+  /**
+   * Helper method to create a minimal SparkMicroBatchStream instance for tests that only check for
+   * UnsupportedOperationException.
+   */
+  private SparkMicroBatchStream createTestStream(File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_unsupported_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    return new SparkMicroBatchStream(
+        tablePath,
+        new Configuration(),
+        spark,
+        new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf()));
   }
 
   @Test
-  public void testLatestOffset_throwsUnsupportedOperationException() {
+  public void testLatestOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
+    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     UnsupportedOperationException exception =
         assertThrows(UnsupportedOperationException.class, () -> microBatchStream.latestOffset());
-    assertEquals("latestOffset is not supported", exception.getMessage());
   }
 
   @Test
-  public void testPlanInputPartitions_throwsUnsupportedOperationException() {
+  public void testPlanInputPartitions_throwsUnsupportedOperationException(@TempDir File tempDir) {
+    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     Offset start = null;
     Offset end = null;
     UnsupportedOperationException exception =
@@ -76,7 +83,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testCreateReaderFactory_throwsUnsupportedOperationException() {
+  public void testCreateReaderFactory_throwsUnsupportedOperationException(@TempDir File tempDir) {
+    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     UnsupportedOperationException exception =
         assertThrows(
             UnsupportedOperationException.class, () -> microBatchStream.createReaderFactory());
@@ -84,14 +92,16 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testInitialOffset_throwsUnsupportedOperationException() {
+  public void testInitialOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
+    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     UnsupportedOperationException exception =
         assertThrows(UnsupportedOperationException.class, () -> microBatchStream.initialOffset());
     assertEquals("initialOffset is not supported", exception.getMessage());
   }
 
   @Test
-  public void testDeserializeOffset_throwsUnsupportedOperationException() {
+  public void testDeserializeOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
+    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     UnsupportedOperationException exception =
         assertThrows(
             UnsupportedOperationException.class, () -> microBatchStream.deserializeOffset("{}"));
@@ -99,7 +109,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testCommit_throwsUnsupportedOperationException() {
+  public void testCommit_throwsUnsupportedOperationException(@TempDir File tempDir) {
+    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     Offset end = null;
     UnsupportedOperationException exception =
         assertThrows(UnsupportedOperationException.class, () -> microBatchStream.commit(end));
@@ -107,7 +118,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testStop_throwsUnsupportedOperationException() {
+  public void testStop_throwsUnsupportedOperationException(@TempDir File tempDir) {
+    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     UnsupportedOperationException exception =
         assertThrows(UnsupportedOperationException.class, () -> microBatchStream.stop());
     assertEquals("stop is not supported", exception.getMessage());
@@ -144,7 +156,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     // Create 5 versions of data (versions 1-5, version 0 is the CREATE TABLE)
     // Insert 100 rows per commit to potentially trigger multiple batches
-    insertVersions(testTableName, /* numVersions= */ 5, /* rowsPerVersion= */ 100);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 100,
+        /* includeEmptyVersion= */ false);
 
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -172,10 +188,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // dsv2 SparkMicroBatchStream
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, new Configuration());
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, new Configuration());
-    Option<DeltaSourceOffset> endOffsetOption = scalaEndOffset;
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    Optional<DeltaSourceOffset> endOffsetOption = ScalaUtils.toJavaOptional(scalaEndOffset);
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -260,7 +274,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     createEmptyTestTable(testTablePath, testTableName);
 
     // Create 5 versions with 10 rows each (versions 1-5)
-    insertVersions(testTableName, /* numVersions= */ 5, /* rowsPerVersion= */ 10);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ false);
 
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -272,9 +290,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
         deltaSource.getFileChangesWithRateLimit(
-            /*fromVersion=*/ 0L,
-            /* fromIndex=*/ DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot=*/ false,
+            /* fromVersion= */ 0L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
             dsv1Limits);
     List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
     while (deltaChanges.hasNext()) {
@@ -283,18 +301,16 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // dsv2 SparkMicroBatchStream
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, new Configuration());
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, new Configuration());
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
     Option<DeltaSource.AdmissionLimits> dsv2Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
 
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChangesWithRateLimit(
-            /*fromVersion=*/ 0L,
-            /* fromIndex=*/ DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot=*/ false,
+            /* fromVersion= */ 0L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
             dsv2Limits)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
       while (kernelChanges.hasNext()) {
@@ -407,12 +423,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // Test DSv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf()),
-            spark.sessionState().newHadoopConf());
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     try (CloseableIterator<IndexedFile> kernelChanges =
-        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
+        stream.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset))) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
       while (kernelChanges.hasNext()) {
         kernelFilesList.add(kernelChanges.next());
@@ -498,16 +512,17 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
     // Test DSv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf()),
-            spark.sessionState().newHadoopConf());
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
             () -> {
               CloseableIterator<IndexedFile> kernelChanges =
-                  stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset);
+                  stream.getFileChanges(
+                      fromVersion,
+                      fromIndex,
+                      isInitialSnapshot,
+                      ScalaUtils.toJavaOptional(endOffset));
               try {
                 // Consume the iterator to trigger validation (if not already triggered)
                 while (kernelChanges.hasNext()) {
@@ -569,7 +584,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             (ScenarioSetup)
                 (tableName, tempDir) -> {
                   sql(
-                      "INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3'), (4, 'User4'), (5, 'User5')",
+                      "INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3'), (4,"
+                          + " 'User4'), (5, 'User5')",
                       tableName);
                   sql("INSERT INTO %s VALUES (6, 'User6'), (7, 'User7'), (8, 'User8')", tableName);
                   sql("UPDATE %s SET name = 'UpdatedUser' WHERE id <= 3", tableName);
@@ -591,14 +607,334 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
                   // Perform MERGE operation
                   sql(
-                      "MERGE INTO %s AS target USING %s AS source ON target.id = source.id "
-                          + "WHEN MATCHED THEN UPDATE SET target.name = source.name "
-                          + "WHEN NOT MATCHED THEN INSERT (id, name) VALUES (source.id, source.name)",
+                      "MERGE INTO %s AS target USING %s AS source ON target.id = source.id WHEN"
+                          + " MATCHED THEN UPDATE SET target.name = source.name WHEN NOT MATCHED"
+                          + " THEN INSERT (id, name) VALUES (source.id, source.name)",
                       tableName, sourceTableName);
 
                   sql("DROP TABLE IF EXISTS %s", sourceTableName);
                 },
             "MERGE: Matched (REMOVE+ADD) and not matched (ADD)"));
+  }
+
+  // ================================================================================================
+  // Tests for latestOffset parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Parameterized test that verifies parity between DSv1 DeltaSource.latestOffset and DSv2
+   * SparkMicroBatchStream.latestOffset.
+   */
+  @ParameterizedTest
+  @MethodSource("latestOffsetParameters")
+  public void testLatestOffset_NotInitialSnapshot(
+      Long startVersion,
+      Long startIndex,
+      ReadLimitConfig limitConfig,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_latest_offset_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ true);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    String tableId = deltaLog.tableId();
+    Offset startOffset =
+        new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
+    ReadLimit readLimit = limitConfig.toReadLimit();
+
+    // dsv1
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    Offset v1EndOffset = deltaSource.latestOffset(startOffset, readLimit);
+
+    // dsv2
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    Offset v2EndOffset = stream.latestOffset(startOffset, readLimit);
+
+    compareOffsets(v1EndOffset, v2EndOffset, testDescription);
+  }
+
+  /** Provides test parameters for the parameterized latestOffset test. */
+  private static Stream<Arguments> latestOffsetParameters() {
+    long BASE_INDEX = DeltaSourceOffset.BASE_INDEX();
+    long END_INDEX = DeltaSourceOffset.END_INDEX();
+
+    // TODO(#5318): Add tests for initial offset & latestOffset(null, ReadLimit)
+    return Stream.of(
+        // No limits
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            "NoLimits1"),
+        Arguments.of(
+            /* startVersion= */ 2L, /* startIndex= */ 5L, ReadLimitConfig.noLimit(), "NoLimits2"),
+        Arguments.of(
+            /* startVersion= */ 3L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.noLimit(),
+            "NoLimits3"),
+        Arguments.of(
+            /* startVersion= */ 5L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.noLimit(),
+            "NoLimits4"),
+
+        // Max files
+        Arguments.of(
+            /* startVersion= */ 3L,
+            /* startIndex= */ 5L,
+            ReadLimitConfig.maxFiles(10),
+            "MaxFiles1"),
+        Arguments.of(
+            /* startVersion= */ 4L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(5),
+            "MaxFiles2"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.maxFiles(1),
+            "MaxFiles3"),
+        Arguments.of(
+            /* startVersion= */ 5L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.maxFiles(1),
+            "MaxFiles4"),
+
+        // Max bytes
+        Arguments.of(
+            /* startVersion= */ 3L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1000),
+            "MaxBytes1"),
+        Arguments.of(
+            /* startVersion= */ 3L,
+            /* startIndex= */ 5L,
+            ReadLimitConfig.maxBytes(1000),
+            "MaxBytes2"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.maxBytes(1000),
+            "MaxBytes3"),
+        Arguments.of(
+            /* startVersion= */ 5L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.maxBytes(1000),
+            "MaxBytes4"));
+  }
+
+  /**
+   * Parameterized test that verifies sequential batch advancement produces identical offset
+   * sequences for DSv1 and DSv2. This simulates real streaming where latestOffset is called
+   * multiple times, each using the previous offset as the starting point.
+   */
+  @ParameterizedTest
+  @MethodSource("sequentialBatchAdvancementParameters")
+  public void testLatestOffset_SequentialBatchAdvancement(
+      long startVersion,
+      long startIndex,
+      ReadLimitConfig limitConfig,
+      int numIterations,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_sequential_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ true);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    String tableId = deltaLog.tableId();
+
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
+
+    // dsv1
+    ReadLimit readLimit = limitConfig.toReadLimit();
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    List<Offset> dsv1Offsets =
+        advanceOffsetSequenceDsv1(deltaSource, startOffset, numIterations, readLimit);
+
+    // dsv2
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    List<Offset> dsv2Offsets =
+        advanceOffsetSequenceDsv2(stream, startOffset, numIterations, readLimit);
+
+    compareOffsetSequence(dsv1Offsets, dsv2Offsets, testDescription);
+  }
+
+  /** Provides test parameters for sequential batch advancement test. */
+  private static Stream<Arguments> sequentialBatchAdvancementParameters() {
+    long BASE_INDEX = DeltaSourceOffset.BASE_INDEX();
+    long END_INDEX = DeltaSourceOffset.END_INDEX();
+
+    return Stream.of(
+        // No limits
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits1"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits2"),
+        Arguments.of(
+            /* startVersion= */ 4L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits3"),
+        Arguments.of(
+            /* startVersion= */ 4L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits4"),
+
+        // Max files
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(5),
+            /* numIterations= */ 5,
+            "MaxFiles1"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(5),
+            /* numIterations= */ 3,
+            "MaxFiles2"),
+        Arguments.of(
+            /* startVersion= */ 4L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.maxFiles(1),
+            /* numIterations= */ 10,
+            "MaxFiles3"),
+        // Max bytes
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1000),
+            /* numIterations= */ 3,
+            "MaxBytes1"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ 5L,
+            ReadLimitConfig.maxBytes(1000),
+            /* numIterations= */ 3,
+            "MaxBytes2"),
+        Arguments.of(
+            /* startVersion= */ 4L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.maxBytes(1000),
+            /* numIterations= */ 3,
+            "MaxBytes3"));
+  }
+
+  /**
+   * Parameterized test that verifies behavior when calling latestOffset but no new data is
+   * available (we're already at the latest version).
+   */
+  @ParameterizedTest
+  @MethodSource("noNewDataAtLatestVersionParameters")
+  public void testLatestOffset_NoNewDataAtLatestVersion(
+      long startIndex,
+      Long expectedVersionOffset,
+      Long expectedIndex,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_no_new_data_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 1,
+        /* includeEmptyVersion= */ false);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    String tableId = deltaLog.tableId();
+    long latestVersion =
+        deltaLog
+            .update(
+                /* isForce= */ false,
+                /* timestamp= */ scala.Option.empty(),
+                /* version= */ scala.Option.empty())
+            .version();
+
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(tableId, latestVersion, startIndex, /* isInitialSnapshot= */ false);
+    ReadLimit readLimit = ReadLimit.allAvailable();
+
+    // dsv1
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    org.apache.spark.sql.connector.read.streaming.Offset dsv1Offset =
+        deltaSource.latestOffset(startOffset, readLimit);
+
+    // dsv2
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    Offset dsv2Offset = stream.latestOffset(startOffset, readLimit);
+
+    compareOffsets(dsv1Offset, dsv2Offset, testDescription);
+
+    // Verify expected offset
+    if (expectedVersionOffset == null) {
+      assertNull(
+          dsv1Offset,
+          String.format(
+              "Test: %s | Expected null offset but got: %s", testDescription, dsv1Offset));
+    } else {
+      assertNotNull(
+          dsv1Offset,
+          String.format("Test: %s | Expected non-null offset but got null", testDescription));
+      DeltaSourceOffset dsv1DeltaOffset = (DeltaSourceOffset) dsv1Offset;
+      long expectedVersion = latestVersion + expectedVersionOffset;
+      assertEquals(
+          expectedVersion,
+          dsv1DeltaOffset.reservoirVersion(),
+          String.format(
+              "Test: %s | Expected version: %d, Actual version: %d",
+              testDescription, expectedVersion, dsv1DeltaOffset.reservoirVersion()));
+      assertEquals(
+          expectedIndex,
+          dsv1DeltaOffset.index(),
+          String.format(
+              "Test: %s | Expected index: %d, Actual index: %d",
+              testDescription, expectedIndex, dsv1DeltaOffset.index()));
+    }
+  }
+
+  /** Provides test parameters for no new data at latest version test. */
+  private static Stream<Arguments> noNewDataAtLatestVersionParameters() {
+    long BASE_INDEX = DeltaSourceOffset.BASE_INDEX();
+    long END_INDEX = DeltaSourceOffset.END_INDEX();
+
+    // Arguments: (startIndex, expectedVersionOffset, expectedIndex, testDescription)
+    // expectedVersionOffset is relative to latestVersion (null means expect null offset)
+    return Stream.of(
+        Arguments.of(BASE_INDEX, 1L, BASE_INDEX, "Latest version BASE_INDEX, no new data"),
+        Arguments.of(END_INDEX, 0L, END_INDEX, "Latest version END_INDEX, no new data"),
+        Arguments.of(0L, 1L, BASE_INDEX, "Latest version index=0, no new data"));
   }
 
   // ================================================================================================
@@ -617,6 +953,80 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     void setup(String tableName, File tempDir) throws Exception;
   }
 
+  static class ReadLimitConfig {
+    private final Optional<Integer> maxFiles;
+    private final Optional<Long> maxBytes;
+
+    private ReadLimitConfig(Optional<Integer> maxFiles, Optional<Long> maxBytes) {
+      this.maxFiles = maxFiles;
+      this.maxBytes = maxBytes;
+    }
+
+    static ReadLimitConfig noLimit() {
+      return new ReadLimitConfig(Optional.empty(), Optional.empty());
+    }
+
+    static ReadLimitConfig maxFiles(int files) {
+      return new ReadLimitConfig(Optional.of(files), Optional.empty());
+    }
+
+    static ReadLimitConfig maxBytes(long bytes) {
+      return new ReadLimitConfig(Optional.empty(), Optional.of(bytes));
+    }
+
+    ReadLimit toReadLimit() {
+      if (maxFiles.isPresent()) {
+        return ReadLimit.maxFiles(maxFiles.get());
+      } else if (maxBytes.isPresent()) {
+        return new ReadMaxBytes(maxBytes.get());
+      } else {
+        return ReadLimit.allAvailable();
+      }
+    }
+  }
+
+  private void compareOffsets(Offset dsv1Offset, Offset dsv2Offset, String testDescription) {
+    if (dsv1Offset == null && dsv2Offset == null) {
+      return; // Both null is valid (no data case)
+    }
+
+    // Both should be non-null or both should be null
+    if (dsv1Offset == null || dsv2Offset == null) {
+      throw new AssertionError(
+          String.format(
+              "Offset mismatch for test '%s': DSv1=%s, DSv2=%s",
+              testDescription, dsv1Offset, dsv2Offset));
+    }
+
+    DeltaSourceOffset dsv1DeltaOffset = (DeltaSourceOffset) dsv1Offset;
+    DeltaSourceOffset dsv2DeltaOffset = (DeltaSourceOffset) dsv2Offset;
+
+    assertEquals(
+        dsv1DeltaOffset.reservoirVersion(),
+        dsv2DeltaOffset.reservoirVersion(),
+        String.format(
+            "Version mismatch for test '%s': DSv1=%d, DSv2=%d",
+            testDescription,
+            dsv1DeltaOffset.reservoirVersion(),
+            dsv2DeltaOffset.reservoirVersion()));
+
+    assertEquals(
+        dsv1DeltaOffset.index(),
+        dsv2DeltaOffset.index(),
+        String.format(
+            "Index mismatch for test '%s': DSv1=%d, DSv2=%d",
+            testDescription, dsv1DeltaOffset.index(), dsv2DeltaOffset.index()));
+
+    assertEquals(
+        dsv1DeltaOffset.isInitialSnapshot(),
+        dsv2DeltaOffset.isInitialSnapshot(),
+        String.format(
+            "isInitialSnapshot mismatch for test '%s': DSv1=%b, DSv2=%b",
+            testDescription,
+            dsv1DeltaOffset.isInitialSnapshot(),
+            dsv2DeltaOffset.isInitialSnapshot()));
+  }
+
   /** Helper method to execute SQL with String.format. */
   private static void sql(String query, Object... args) {
     SparkDsv2TestBase.spark.sql(String.format(query, args));
@@ -628,16 +1038,23 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    * @param tableName The name of the table to insert into
    * @param numVersions The number of versions (commits) to create
    * @param rowsPerVersion The number of rows to insert per version
+   * @param includeEmptyVersion Whether to include an empty version (metadata-only change) at
+   *     version 1
    */
-  private void insertVersions(String tableName, int numVersions, int rowsPerVersion) {
+  private void insertVersions(
+      String tableName, int numVersions, int rowsPerVersion, boolean includeEmptyVersion) {
     for (int i = 0; i < numVersions; i++) {
-      StringBuilder values = new StringBuilder();
-      for (int j = 0; j < rowsPerVersion; j++) {
-        if (j > 0) values.append(", ");
-        int id = i * rowsPerVersion + j;
-        values.append(String.format("(%d, 'User%d')", id, id));
+      if (i == 1 && includeEmptyVersion) {
+        sql("ALTER TABLE %s SET TBLPROPERTIES ('test.property' = 'value')", tableName);
+      } else {
+        StringBuilder values = new StringBuilder();
+        for (int j = 0; j < rowsPerVersion; j++) {
+          if (j > 0) values.append(", ");
+          int id = i * rowsPerVersion + j;
+          values.append(String.format("(%d, 'User%d')", id, id));
+        }
+        sql("INSERT INTO %s VALUES %s", tableName, values.toString());
       }
-      sql("INSERT INTO %s VALUES %s", tableName, values.toString());
     }
   }
 
@@ -666,15 +1083,15 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                 new java.util.ArrayList<org.apache.spark.sql.catalyst.expressions.Expression>())
             .toList();
     org.apache.spark.sql.delta.Snapshot snapshot =
-        deltaLog.update(false, Option.empty(), Option.empty());
+        deltaLog.update(false, scala.Option.empty(), scala.Option.empty());
     return new DeltaSource(
         spark,
         deltaLog,
-        /* catalogTableOpt= */ Option.empty(),
+        /* catalogTableOpt= */ scala.Option.empty(),
         options,
         /* snapshotAtSourceInit= */ snapshot,
         /* metadataPath= */ tablePath + "/_checkpoint",
-        /* metadataTrackingLog= */ Option.empty(),
+        /* metadataTrackingLog= */ scala.Option.empty(),
         /* filters= */ emptySeq);
   }
 
@@ -690,5 +1107,50 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     return String.format(
         "IndexedFile(version=%d, index=%d, hasAdd=%b)",
         file.getVersion(), file.getIndex(), file.getAddFile() != null);
+  }
+
+  private List<Offset> advanceOffsetSequenceDsv1(
+      DeltaSource deltaSource, Offset startOffset, int numIterations, ReadLimit limit) {
+    List<Offset> offsets = new ArrayList<>();
+    offsets.add(startOffset);
+
+    Offset currentOffset = startOffset;
+    for (int i = 0; i < numIterations; i++) {
+      Offset nextOffset = deltaSource.latestOffset(currentOffset, limit);
+      offsets.add(nextOffset);
+      currentOffset = nextOffset;
+    }
+    return offsets;
+  }
+
+  private List<Offset> advanceOffsetSequenceDsv2(
+      SparkMicroBatchStream stream, Offset startOffset, int numIterations, ReadLimit limit) {
+    List<Offset> offsets = new ArrayList<>();
+    offsets.add(startOffset);
+
+    Offset currentOffset = startOffset;
+    for (int i = 0; i < numIterations; i++) {
+      Offset nextOffset = stream.latestOffset(currentOffset, limit);
+      offsets.add(nextOffset);
+      currentOffset = nextOffset;
+    }
+    return offsets;
+  }
+
+  private void compareOffsetSequence(
+      List<Offset> dsv1Offsets, List<Offset> dsv2Offsets, String testDescription) {
+    assertEquals(
+        dsv1Offsets.size(),
+        dsv2Offsets.size(),
+        String.format(
+            "Offset sequence length mismatch for test '%s': DSv1=%d, DSv2=%d",
+            testDescription, dsv1Offsets.size(), dsv2Offsets.size()));
+
+    for (int i = 0; i < dsv1Offsets.size(); i++) {
+      compareOffsets(
+          dsv1Offsets.get(i),
+          dsv2Offsets.get(i),
+          String.format("%s (iteration %d)", testDescription, i));
+    }
   }
 }
