@@ -172,24 +172,8 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
         }
 
         // PHASE 2: Commit to Delta Log (group by checkpoint and commit)
-        // NOTE: Delta Log commits may fail in unit test environments where
-        // no real Delta table exists. This is acceptable as unit tests focus
-        // on local file commit behavior.
         if (!successfulCommittables.isEmpty()) {
-            try {
-                commitToDeltaLog(successfulCommittables);
-            } catch (Exception e) {
-                // Check if this is a test environment (table path doesn't exist or is /tmp/*)
-                if (tableBasePath.toString().startsWith("/tmp/")) {
-                    LOG.warn("Delta Log commit skipped for test environment: {}", tableBasePath, e);
-                    // In test environments, we only test local file commits
-                } else {
-                    LOG.error("Failed to commit to Delta Log. " +
-                        "Files were committed locally but not registered in Delta Log!", e);
-                    // This is a critical error in production - files exist but aren't in Delta Log
-                    throw new IOException("Delta Log commit failed", e);
-                }
-            }
+            commitToDeltaLog(successfulCommittables);
         }
     }
 
@@ -198,9 +182,9 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
      * Groups committables by checkpoint ID and commits each checkpoint atomically.
      *
      * @param committables list of committables that were successfully committed locally
-     * @throws Exception if Delta Log commit fails
+     * @throws IOException if Delta Log commit fails
      */
-    private void commitToDeltaLog(List<DeltaCommittable> committables) throws Exception {
+    private void commitToDeltaLog(List<DeltaCommittable> committables) throws IOException {
         // Group committables by checkpoint ID
         Map<Long, List<DeltaCommittable>> byCheckpoint = new HashMap<>();
         for (DeltaCommittable committable : committables) {
