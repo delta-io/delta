@@ -17,6 +17,8 @@ package io.delta.kernel.spark.utils;
 
 import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
+import scala.Option;
 import scala.Tuple2;
 import scala.collection.immutable.Map$;
 import scala.collection.mutable.Builder;
@@ -47,5 +49,27 @@ public final class ScalaUtils {
       return Collections.emptyMap();
     }
     return CollectionConverters.asJava(scalaMap);
+  }
+
+  /**
+   * Converts a Java {@link Optional} to a Scala {@link Option}.
+   *
+   * @param optional the Java Optional to convert
+   * @param <T> the type of the value
+   * @return the corresponding Scala Option
+   */
+  public static <T> Option<T> toScalaOption(Optional<T> optional) {
+    return optional.map(Option::apply).orElse(Option.empty());
+  }
+
+  /**
+   * Converts a Scala {@link Option} to a Java {@link Optional}.
+   *
+   * @param option the Scala Option to convert
+   * @param <T> the type of the value
+   * @return the corresponding Java Optional
+   */
+  public static <T> Optional<T> toJavaOptional(Option<T> option) {
+    return option.isDefined() ? Optional.of(option.get()) : Optional.empty();
   }
 }
