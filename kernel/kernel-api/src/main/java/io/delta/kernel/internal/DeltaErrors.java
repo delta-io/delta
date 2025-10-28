@@ -166,14 +166,24 @@ public final class DeltaErrors {
     return new UnsupportedTableFeatureException(null, feature, message);
   }
 
-  public static UnsupportedReaderFeatureException unsupportedReaderFeatures(
+  public static UnsupportedTableFeatureException unsupportedReaderFeatures(
       String tablePath, Set<String> readerFeatures) {
-    return new UnsupportedReaderFeatureException(tablePath, readerFeatures);
+    String message =
+        String.format(
+            "Unsupported Delta reader features: table `%s` requires reader table features [%s] "
+                + "which is unsupported by this version of Delta Kernel.",
+            tablePath, String.join(", ", readerFeatures));
+    return new UnsupportedTableFeatureException(tablePath, readerFeatures, message);
   }
 
-  public static UnsupportedWriterFeatureException unsupportedWriterFeatures(
+  public static UnsupportedTableFeatureException unsupportedWriterFeatures(
       String tablePath, Set<String> writerFeatures) {
-    return new UnsupportedWriterFeatureException(tablePath, writerFeatures);
+    String message =
+        String.format(
+            "Unsupported Delta writer features: table `%s` requires writer table features [%s] "
+                + "which is unsupported by this version of Delta Kernel.",
+            tablePath, String.join(", ", writerFeatures));
+    return new UnsupportedTableFeatureException(tablePath, writerFeatures, message);
   }
 
   public static KernelException columnInvariantsNotSupported() {
