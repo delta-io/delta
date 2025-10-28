@@ -31,6 +31,8 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
+import io.delta.kernel.utils.CloseableIterator;
+import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Optional;
@@ -157,6 +159,28 @@ public class StreamingHelper {
     int index = batch.getSchema().indexOf(fieldName);
     checkArgument(index >= 0, "Field '%s' not found in schema: %s", fieldName, batch.getSchema());
     return index;
+  }
+
+  /**
+   * Returns the last element from the iterator, if present. This method consumes all elements from
+   * the iterator and automatically closes it.
+   *
+   * @throws RuntimeException if an IOException occurs while closing the iterator
+   */
+  public static <T> Optional<T> iteratorLast(CloseableIterator<T> iterator) {
+    try {
+      T last = null;
+      while (iterator.hasNext()) {
+        last = iterator.next();
+      }
+      return Optional.ofNullable(last);
+    } finally {
+      try {
+        iterator.close();
+      } catch (IOException e) {
+        throw new RuntimeException("Failed to close iterator", e);
+      }
+    }
   }
 
   /**
