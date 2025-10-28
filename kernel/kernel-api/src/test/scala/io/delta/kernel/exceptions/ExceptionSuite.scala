@@ -56,6 +56,7 @@ class ExceptionSuite extends AnyFunSuite {
     assert(ex.isInstanceOf[UnsupportedTableFeatureException])
   }
 
+
   test("UnsupportedProtocolVersionException - reader version") {
     val tablePath = "/path/to/table"
     val version = 3
@@ -82,7 +83,7 @@ class ExceptionSuite extends AnyFunSuite {
     assert(ex.getMessage.contains("version 7"))
   }
 
-  test("CommitRangeNotFoundException - with end version") {
+  test("CommitRangeNotFoundException - with start and end version") {
     val tablePath = "/path/to/table"
     val startVersion = 5L
     val endVersion = Optional.of(java.lang.Long.valueOf(10L))
