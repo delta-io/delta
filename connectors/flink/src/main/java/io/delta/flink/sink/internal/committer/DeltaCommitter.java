@@ -144,6 +144,8 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
     public void commit(Collection<CommitRequest<DeltaCommittable>> commitRequests)
             throws IOException {
 
+        LOG.info("DeltaCommitter.commit() called with {} commit requests", commitRequests.size());
+
         List<DeltaCommittable> successfulCommittables = new ArrayList<>();
 
         // PHASE 1: Commit files locally (rename temp files)
