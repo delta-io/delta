@@ -33,7 +33,8 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import io.delta.kernel.utils.PeekableIterator;
+import io.delta.kernel.utils.IteratorWithHead;
+import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Optional;
@@ -53,12 +54,12 @@ import java.util.stream.Collectors;
  *   <li>Calling {@link #getActions()} transfers resource ownership to the returned iterator.
  *   <li>Callers MUST close the returned iterator (preferably using try-with-resources) to release
  *       file handles and other resources.
- *   <li>If {@link #getActions()} is never called, internal resources will be released when the
- *       object is garbage collected (though explicit cleanup via {@link #getActions()} followed by
- *       iterator closure is preferred).
+ *   <li>If {@link #getActions()} is never called, callers should explicitly call {@link #close()}
+ *       to release internal resources. Otherwise, resources will be released when the object is
+ *       garbage collected.
  * </ul>
  */
-public class CommitActionsImpl implements CommitActions {
+public class CommitActionsImpl implements CommitActions, AutoCloseable {
 
   private final Engine engine;
   private final FileStatus commitFile;
@@ -70,10 +71,10 @@ public class CommitActionsImpl implements CommitActions {
   private final long timestamp;
 
   /**
-   * Peekable iterator for ActionWrappers. Supports peeking at the first element for metadata
-   * extraction. Used for the first getActions() call, then set to null.
+   * Iterator with cached head for ActionWrappers. Stores the first action for metadata extraction
+   * and provides access to the full iterator.
    */
-  private PeekableIterator<ActionWrapper> peekableIterator;
+  private IteratorWithHead<ActionWrapper> iteratorWithHead;
 
   /**
    * Creates a CommitActions from a commit file.
@@ -112,10 +113,10 @@ public class CommitActionsImpl implements CommitActions {
                 .map(action -> new StructField(action.colName, action.schema, true))
                 .collect(Collectors.toList()));
     this.engine = engine;
-    this.peekableIterator = getNewIterator();
+    this.iteratorWithHead = getNewIteratorWithHead();
 
     // Extract version and timestamp from first action (or use fallback)
-    Optional<ActionWrapper> firstWrapper = peekableIterator.peek();
+    Optional<ActionWrapper> firstWrapper = iteratorWithHead.getHead();
     if (firstWrapper.isPresent()) {
       this.version = firstWrapper.get().getVersion();
       this.timestamp =
@@ -125,17 +126,17 @@ public class CommitActionsImpl implements CommitActions {
               .orElseThrow(
                   () -> new RuntimeException("timestamp should always exist for Delta File"));
     } else {
-      // Empty commit file - from file
+      // Empty commit file - extract from file metadata
       this.version = FileNames.deltaVersion(new Path(commitFile.getPath()));
       this.timestamp = commitFile.getModificationTime();
     }
   }
 
-  private PeekableIterator<ActionWrapper> getNewIterator() {
+  private IteratorWithHead<ActionWrapper> getNewIteratorWithHead() {
     CloseableIterator<ActionWrapper> actionsIter =
         new ActionsIterator(
             engine, Collections.singletonList(commitFile), readSchema, Optional.empty());
-    return new PeekableIterator<>(actionsIter);
+    return new IteratorWithHead<>(actionsIter);
   }
 
   @Override
@@ -151,14 +152,16 @@ public class CommitActionsImpl implements CommitActions {
   @Override
   public synchronized CloseableIterator<ColumnarBatch> getActions() {
     CloseableIterator<ColumnarBatch> result =
-        peekableIterator.map(
-            wrapper ->
-                validateProtocolAndDropInternalColumns(
-                    wrapper.getColumnarBatch(),
-                    tablePath,
-                    shouldDropProtocolColumn,
-                    shouldDropCommitInfoColumn));
-    peekableIterator = getNewIterator();
+        iteratorWithHead
+            .getFullIterator()
+            .map(
+                wrapper ->
+                    validateProtocolAndDropInternalColumns(
+                        wrapper.getColumnarBatch(),
+                        tablePath,
+                        shouldDropProtocolColumn,
+                        shouldDropCommitInfoColumn));
+    iteratorWithHead = getNewIteratorWithHead();
     return result;
   }
 
@@ -192,5 +195,15 @@ public class CommitActionsImpl implements CommitActions {
     }
 
     return result;
+  }
+
+  /**
+   * Closes this CommitActionsImpl and releases any underlying resources.
+   *
+   * @throws IOException if an I/O error occurs while closing resources
+   */
+  @Override
+  public synchronized void close() throws IOException {
+    iteratorWithHead.close();
   }
 }
