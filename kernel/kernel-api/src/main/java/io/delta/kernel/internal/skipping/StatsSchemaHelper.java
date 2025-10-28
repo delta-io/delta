@@ -133,7 +133,8 @@ public class StatsSchemaHelper {
 
     statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
 
-    StructType collatedMinMaxStatsSchema = getCollatedStatsSchema(dataSchema, dataSkippingPredicate);
+    StructType collatedMinMaxStatsSchema =
+        getCollatedStatsSchema(dataSchema, dataSkippingPredicate);
     if (collatedMinMaxStatsSchema.length() > 0) {
       statsSchema = statsSchema.add(STATS_WITH_COLLATION, collatedMinMaxStatsSchema, true);
     }
@@ -309,11 +310,13 @@ public class StatsSchemaHelper {
   private static StructType getCollatedStatsSchema(
       StructType dataSchema, DataSkippingPredicate dataSkippingPredicate) {
     StructType statsWithCollation = new StructType();
-    for (Tuple2<CollationIdentifier, Column> collationAndColumn : dataSkippingPredicate.getReferencedCollations()) {
+    for (Tuple2<CollationIdentifier, Column> collationAndColumn :
+        dataSkippingPredicate.getReferencedCollations()) {
       CollationIdentifier collationIdentifier = collationAndColumn._1;
       Column column = getDataColumnFromDataSkippingColumn(collationAndColumn._2);
 
-      if (collationIdentifier.isSparkUTF8BinaryCollation() || collationIdentifier.getVersion().isEmpty()) {
+      if (collationIdentifier.isSparkUTF8BinaryCollation()
+          || collationIdentifier.getVersion().isEmpty()) {
         // SPARK_UTF8_BINARY uses binary stats. Also, we can't do skipping for a collation without
         // a version since we don't know which version to use.
         continue;
@@ -325,20 +328,23 @@ public class StatsSchemaHelper {
     return statsWithCollation;
   }
 
-  private static StructType addColumnIfNotExists(StructType structType, Column column, DataType dataType) {
+  private static StructType addColumnIfNotExists(
+      StructType structType, Column column, DataType dataType) {
     return addColumnIfNotExists(structType, column, dataType, 0);
   }
 
-  private static StructType addColumnIfNotExists(StructType structType, Column column, DataType dataType, int depth) {
+  private static StructType addColumnIfNotExists(
+      StructType structType, Column column, DataType dataType, int depth) {
     String namePart = column.getNames()[depth];
     int index = structType.indexOf(namePart);
     if (index < 0) {
       // Column does not exist, add it
       if (depth == column.getNames().length - 1) {
-          return structType.add(new StructField(namePart, dataType, true));
+        return structType.add(new StructField(namePart, dataType, true));
       } else {
-          StructType nestedStruct = addColumnIfNotExists(new StructType(), column, dataType, depth + 1);
-          return structType.add(new StructField(namePart, nestedStruct, true));
+        StructType nestedStruct =
+            addColumnIfNotExists(new StructType(), column, dataType, depth + 1);
+        return structType.add(new StructField(namePart, nestedStruct, true));
       }
     } else {
       StructField structField = structType.at(index);
@@ -348,8 +354,7 @@ public class StatsSchemaHelper {
         if (!(structField.getDataType() instanceof StructType)) {
           throw new IllegalArgumentException(
               String.format(
-                  "Cannot add nested column %s under non-struct field %s",
-                  column, structField));
+                  "Cannot add nested column %s under non-struct field %s", column, structField));
         }
         StructType nestedStruct =
             addColumnIfNotExists(
@@ -363,16 +368,18 @@ public class StatsSchemaHelper {
     String[] names = dataSkippingColumn.getNames();
     if (names.length < 2) {
       throw new IllegalArgumentException(
-              String.format("Invalid data skipping column %s. Expected at least 2 name parts.",
-                      dataSkippingColumn));
+          String.format(
+              "Invalid data skipping column %s. Expected at least 2 name parts.",
+              dataSkippingColumn));
     }
 
     if (Objects.equals(names[0], STATS_WITH_COLLATION)) {
       // statsWithCollation.<collationName>.<minValues|maxValues>.<physicalPath...>
       if (names.length < 4) {
         throw new IllegalArgumentException(
-                String.format("Invalid collated data skipping column %s. Expected at least 4 name parts.",
-                        dataSkippingColumn));
+            String.format(
+                "Invalid collated data skipping column %s. Expected at least 4 name parts.",
+                dataSkippingColumn));
       }
       return new Column(Arrays.copyOfRange(names, 3, names.length));
     } else if (Objects.equals(names[0], MIN) || Objects.equals(names[0], MAX)) {
@@ -380,8 +387,9 @@ public class StatsSchemaHelper {
       return new Column(Arrays.copyOfRange(names, 1, names.length));
     } else {
       throw new IllegalArgumentException(
-              String.format("Invalid data skipping column %s. Expected to start with %s, %s or %s.",
-                      dataSkippingColumn, STATS_WITH_COLLATION, MIN, MAX));
+          String.format(
+              "Invalid data skipping column %s. Expected to start with %s, %s or %s.",
+              dataSkippingColumn, STATS_WITH_COLLATION, MIN, MAX));
     }
   }
 

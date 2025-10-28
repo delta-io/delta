@@ -15,11 +15,12 @@
  */
 package io.delta.kernel.internal.skipping
 
+import scala.collection.JavaConverters.{asJavaIterableConverter, setAsJavaSetConverter}
+
 import io.delta.kernel.expressions.{Column, Expression}
 import io.delta.kernel.test.TestUtils
-
-import scala.collection.JavaConverters.{asJavaIterableConverter, setAsJavaSetConverter}
 import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, CollationIdentifier, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
@@ -324,9 +325,9 @@ class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
             true),
         true)
 
-
     val minAUtf8Lcase = collatedStatsCol(utf8Lcase, StatsSchemaHelper.MIN, "a")
-    val maxBUnicodeWithoutVersion = collatedStatsCol(unicodeWithoutVersion, StatsSchemaHelper.MAX, "b")
+    val maxBUnicodeWithoutVersion =
+      collatedStatsCol(unicodeWithoutVersion, StatsSchemaHelper.MAX, "b")
     val maxBUnicodeWithVersion = collatedStatsCol(unicodeWithVersion, StatsSchemaHelper.MAX, "b")
     val minBUnicodeWithVersion = collatedStatsCol(unicodeWithVersion, StatsSchemaHelper.MIN, "b")
 

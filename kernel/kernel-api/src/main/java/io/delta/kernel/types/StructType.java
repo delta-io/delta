@@ -93,9 +93,9 @@ public final class StructType extends DataType {
 
   public StructType replace(int index, StructField newField) {
     if (index < 0 || index >= fields.size()) {
-        throw new IndexOutOfBoundsException(
-            String.format(
-                "Index %d is out of bounds for struct type with %d fields", index, fields.size()));
+      throw new IndexOutOfBoundsException(
+          String.format(
+              "Index %d is out of bounds for struct type with %d fields", index, fields.size()));
     }
     final List<StructField> fieldsCopy = new ArrayList<>(fields);
     fieldsCopy.set(index, newField);

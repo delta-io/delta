@@ -16,6 +16,7 @@
 package io.delta.kernel.test
 
 import java.util.Optional
+
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.skipping.StatsSchemaHelper.STATS_WITH_COLLATION
 import io.delta.kernel.types.CollationIdentifier

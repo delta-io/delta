@@ -20,8 +20,6 @@ import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.CollationIdentifier;
-
-import javax.xml.crypto.Data;
 import java.util.*;
 
 /** A {@link Predicate} with a set of columns referenced by the expression. */
