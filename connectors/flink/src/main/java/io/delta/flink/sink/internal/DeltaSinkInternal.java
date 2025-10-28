@@ -154,12 +154,13 @@ public class DeltaSinkInternal<IN>
         }
     }
 
-    @Override
+    // NOTE: These methods are NOT part of the Sink<IN> interface in Flink 2.0.
+    // However, they are called by the framework via reflection or a different mechanism.
+    // Keeping them public so they can be discovered.
     public Optional<Committer<DeltaCommittable>> createCommitter() throws IOException {
         return Optional.of(sinkBuilder.createCommitter());
     }
 
-    @Override
     public Optional<SimpleVersionedSerializer<DeltaCommittable>>
         getCommittableSerializer() {
         try {
