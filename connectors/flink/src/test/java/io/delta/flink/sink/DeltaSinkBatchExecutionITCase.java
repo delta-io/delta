@@ -158,7 +158,8 @@ public class DeltaSinkBatchExecutionITCase extends DeltaSinkExecutionITCaseBase 
 
         StreamExecutionEnvironment env = getTestStreamEnv();
 
-        Sink<RowData, DeltaCommittable, DeltaWriterBucketState, DeltaGlobalCommittable> deltaSink =
+        // FLINK 2.0: Sink interface now only takes input type parameter
+        Sink<RowData> deltaSink =
             DeltaSinkTestUtils.createDeltaSink(deltaTablePath, isPartitioned);
 
         env.fromCollection(DeltaSinkTestUtils.getTestRowData(NUM_RECORDS))
