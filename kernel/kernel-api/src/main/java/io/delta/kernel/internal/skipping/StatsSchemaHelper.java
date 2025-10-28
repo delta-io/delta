@@ -133,11 +133,7 @@ public class StatsSchemaHelper {
 
     statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
 
-    StructType collatedMinMaxStatsSchema =
-        getCollatedStatsSchema(dataSchema, dataSkippingPredicate);
-    if (collatedMinMaxStatsSchema.length() > 0) {
-      statsSchema = statsSchema.add(STATS_WITH_COLLATION, collatedMinMaxStatsSchema, true);
-    }
+    statsSchema = appendCollatedStatsSchema(statsSchema, dataSchema, dataSkippingPredicate);
 
     return statsSchema;
   }
@@ -283,8 +279,7 @@ public class StatsSchemaHelper {
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
-   * fields (i.e. don't include fields with isSkippingEligibleDataType=false). In case when
-   * isCollatedSkipping is true, only `StringType` fields are eligible.
+   * fields (i.e. don't include fields with isSkippingEligibleDataType=false).
    */
   private static StructType getMinMaxStatsSchema(StructType dataSchema) {
     List<StructField> fields = new ArrayList<>();
@@ -303,15 +298,31 @@ public class StatsSchemaHelper {
   }
 
   /**
-   * Given a data schema and a set of collation identifiers returns the expected schema for
-   * collation-aware statistics columns. This means 1) replace logical names with physical names 2)
-   * set nullable=true 3) only keep collated-stats eligible fields (`StringType` fields)
+   * Appends collated stats schema to the provided stats schema based on the data skipping predicate.
+   */
+  private static StructType appendCollatedStatsSchema(StructType statsSchema, StructType dataSchema, DataSkippingPredicate dataSkippingPredicate) {
+    StructType collatedMinMaxStatsSchema =
+            getCollatedStatsSchema(dataSchema, dataSkippingPredicate);
+    if (collatedMinMaxStatsSchema.length() == 1) {
+      // All collated stats are under a `statsWithCollation` field.
+      statsSchema = statsSchema.add(collatedMinMaxStatsSchema.at(0));
+    } else if (collatedMinMaxStatsSchema.length() > 1) {
+      throw new IllegalStateException(
+              String.format(
+                      "Expected collated stats schema to have either 0 or 1 top-level fields, but found %d fields: %s",
+                      collatedMinMaxStatsSchema.length(), collatedMinMaxStatsSchema));
+    }
+    return statsSchema;
+  }
+
+  /**
+   * Given a data schema and a data skipping predicate returns the expected schema for collated min/max columns.
    */
   private static StructType getCollatedStatsSchema(
       StructType dataSchema, DataSkippingPredicate dataSkippingPredicate) {
     StructType statsWithCollation = new StructType();
     for (Tuple2<CollationIdentifier, Column> collationAndColumn :
-        dataSkippingPredicate.getReferencedCollations()) {
+        dataSkippingPredicate.getReferencedCollationColumnPairs()) {
       CollationIdentifier collationIdentifier = collationAndColumn._1;
       Column column = getDataColumnFromDataSkippingColumn(collationAndColumn._2);
 
@@ -328,6 +339,9 @@ public class StatsSchemaHelper {
     return statsWithCollation;
   }
 
+  /**
+   * Adds the given column with the given data type to the struct type if it does not already exist.
+   */
   private static StructType addColumnIfNotExists(
       StructType structType, Column column, DataType dataType) {
     return addColumnIfNotExists(structType, column, dataType, 0);

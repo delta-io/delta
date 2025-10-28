@@ -74,11 +74,10 @@ public class DataSkippingPredicate extends Predicate {
   }
 
   /**
-   * @return set of collation identifiers referenced by this predicate or any of its child
-   *     expressions
+   * @return set of (collation identifier, column) pairs referenced by this predicate or any of its child expressions.
    */
-  public Set<Tuple2<CollationIdentifier, Column>> getReferencedCollations() {
-    Set<Tuple2<CollationIdentifier, Column>> referencedCollations = new HashSet<>();
+  public Set<Tuple2<CollationIdentifier, Column>> getReferencedCollationColumnPairs() {
+    Set<Tuple2<CollationIdentifier, Column>> pairs = new HashSet<>();
 
     if (this.getCollationIdentifier().isPresent()) {
       CollationIdentifier collationIdentifier = this.getCollationIdentifier().get();
@@ -90,12 +89,12 @@ public class DataSkippingPredicate extends Predicate {
                     + " found %s",
                 this.getChildren().get(0).getClass().getName()));
       }
-      referencedCollations.add(new Tuple2<>(collationIdentifier, (Column) child));
+      pairs.add(new Tuple2<>(collationIdentifier, (Column) child));
     }
 
     for (Expression child : children) {
       if (child instanceof DataSkippingPredicate) {
-        referencedCollations.addAll(((DataSkippingPredicate) child).getReferencedCollations());
+        pairs.addAll(((DataSkippingPredicate) child).getReferencedCollationColumnPairs());
       } else if (child instanceof Predicate) {
         throw new IllegalStateException(
             String.format(
@@ -104,7 +103,7 @@ public class DataSkippingPredicate extends Predicate {
                 child.getClass().getName()));
       }
     }
-    return Collections.unmodifiableSet(referencedCollations);
+    return Collections.unmodifiableSet(pairs);
   }
 
   /** @return an unmodifiable set containing all elements from both sets. */
