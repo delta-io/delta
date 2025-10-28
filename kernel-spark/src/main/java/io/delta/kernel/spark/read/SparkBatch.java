@@ -34,7 +34,6 @@ import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -60,6 +59,7 @@ public class SparkBatch implements Batch {
   private final Engine kernelEngine;
 
   public SparkBatch(
+      Engine kernelEngine,
       String tablePath,
       org.apache.spark.sql.types.StructType dataSchema,
       org.apache.spark.sql.types.StructType partitionSchema,
@@ -70,9 +70,9 @@ public class SparkBatch implements Batch {
       long totalBytes,
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
-      SnapshotImpl snapshot,
-      Engine kernelEngine) {
+      SnapshotImpl snapshot) {
 
+    this.kernelEngine = Objects.requireNonNull(kernelEngine, "kernelEngine is null");
     this.tablePath = Objects.requireNonNull(tablePath, "tableName is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
@@ -90,7 +90,6 @@ public class SparkBatch implements Batch {
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
     this.snapshot = Objects.requireNonNull(snapshot, "snapshot is null");
-    this.kernelEngine = Objects.requireNonNull(kernelEngine, "kernelEngine is null");
     this.sqlConf = SQLConf.get();
   }
 
@@ -119,14 +118,15 @@ public class SparkBatch implements Batch {
     Metadata metadata = snapshot.getMetadata();
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
-            new DeltaParquetFileFormat(protocol, metadata, tablePath, kernelEngine).buildReaderWithPartitionValues(
-            SparkSession.active(),
-            dataSchema,
-            partitionSchema,
-            readDataSchema,
-            JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-            optionsWithBatch,
-            hadoopConf);
+        new DeltaParquetFileFormat(kernelEngine, protocol, metadata, tablePath)
+            .buildReaderWithPartitionValues(
+                SparkSession.active(),
+                dataSchema,
+                partitionSchema,
+                readDataSchema,
+                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
+                optionsWithBatch,
+                hadoopConf);
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
   }

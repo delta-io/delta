@@ -23,16 +23,24 @@ import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.spark.utils.SchemaUtils;
+import io.delta.kernel.spark.utils.SerializableKernelRowWrapper;
 import io.delta.kernel.types.StructType;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.vectorized.ColumnarBatch;
+import org.apache.spark.sql.vectorized.ColumnarBatchRow;
 import scala.Function1;
 import scala.collection.Iterator;
 
@@ -48,19 +56,28 @@ public class DeltaParquetFileFormat extends ParquetFileFormat {
   // Metadata key for deletion vector descriptor
   public static final String DV_DESCRIPTOR_KEY = "__delta_dv_descriptor";
 
-  private final Protocol protocol;
-  private final Metadata metadata;
+  // Serializable wrappers for Protocol and Metadata
+  private final SerializableKernelRowWrapper protocolWrapper;
+  private final SerializableKernelRowWrapper metadataWrapper;
   private final String tablePath;
-  private final Engine kernelEngine;
   private final ColumnMapping.ColumnMappingMode columnMappingMode;
 
   public DeltaParquetFileFormat(
-      Protocol protocol, Metadata metadata, String tablePath, Engine kernelEngine) {
-    this.protocol = Objects.requireNonNull(protocol, "protocol is null");
-    this.metadata = Objects.requireNonNull(metadata, "metadata is null");
+      Engine kernelEngine, Protocol protocol, Metadata metadata, String tablePath) {
+    Objects.requireNonNull(kernelEngine, "kernelEngine is null");
+    Objects.requireNonNull(protocol, "protocol is null");
+    Objects.requireNonNull(metadata, "metadata is null");
     this.tablePath = Objects.requireNonNull(tablePath, "tablePath is null");
-    this.kernelEngine = Objects.requireNonNull(kernelEngine, "kernelEngine is null");
+
+    // Wrap Protocol and Metadata in serializable wrappers
+    this.protocolWrapper = new SerializableKernelRowWrapper(protocol.toRow());
+    this.metadataWrapper = new SerializableKernelRowWrapper(metadata.toRow());
     this.columnMappingMode = ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
+  }
+
+  /** Get Metadata from wrapper */
+  private Metadata getMetadata() {
+    return Metadata.fromRow(metadataWrapper.getRow());
   }
 
   public Function1<PartitionedFile, Iterator<InternalRow>> buildReaderWithPartitionValues(
@@ -100,7 +117,7 @@ public class DeltaParquetFileFormat extends ParquetFileFormat {
     // Step 4: Wrap reader to apply deletion vector filtering
     return (PartitionedFile file) -> {
       Iterator<InternalRow> baseIterator = baseReader.apply(file);
-      return applyDeletionVectorIfNeeded(file, baseIterator);
+      return applyDeletionVectorIfNeeded(file, baseIterator, hadoopConf);
     };
   }
 
@@ -110,6 +127,8 @@ public class DeltaParquetFileFormat extends ParquetFileFormat {
     if (columnMappingMode == ColumnMapping.ColumnMappingMode.NONE) {
       return logicalSchema;
     }
+
+    Metadata metadata = getMetadata();
 
     // Convert Spark StructType to Kernel StructType
     StructType kernelLogicalSchema = SchemaUtils.convertSparkSchemaToKernelSchema(logicalSchema);
@@ -135,9 +154,13 @@ public class DeltaParquetFileFormat extends ParquetFileFormat {
         .toSeq();
   }
 
-  /** Apply deletion vector filtering if present. */
+  /**
+   * Apply deletion vector filtering if present. Supports both vectorized (ColumnarBatch) and
+   * non-vectorized (InternalRow) data from Parquet reader.
+   */
+  @SuppressWarnings("unchecked")
   private Iterator<InternalRow> applyDeletionVectorIfNeeded(
-      PartitionedFile file, Iterator<InternalRow> dataIterator) {
+      PartitionedFile file, Iterator<InternalRow> dataIterator, Configuration hadoopConf) {
 
     Optional<DeletionVectorDescriptor> dvDescriptorOpt = extractDeletionVectorDescriptor(file);
 
@@ -146,10 +169,12 @@ public class DeltaParquetFileFormat extends ParquetFileFormat {
     }
 
     // Load deletion vector using Kernel API
-    RoaringBitmapArray deletionVector = loadDeletionVector(dvDescriptorOpt.get());
+    RoaringBitmapArray deletionVector = loadDeletionVector(dvDescriptorOpt.get(), hadoopConf);
 
-    // Filter out deleted rows
-    return new DeletionVectorFilterIterator(dataIterator, deletionVector);
+    // Filter out deleted rows - handle both vectorized and row-based data
+    // Cast to Iterator<Object> since Parquet may return ColumnarBatch or InternalRow
+    Iterator<Object> objectIterator = (Iterator<Object>) (Iterator<?>) dataIterator;
+    return new DeletionVectorFilterIterator(objectIterator, deletionVector);
   }
 
   /** Extract deletion vector descriptor from PartitionedFile metadata. */
@@ -168,11 +193,14 @@ public class DeltaParquetFileFormat extends ParquetFileFormat {
   }
 
   /** Load deletion vector bitmap using Kernel API. */
-  private RoaringBitmapArray loadDeletionVector(DeletionVectorDescriptor dvDescriptor) {
+  private RoaringBitmapArray loadDeletionVector(
+      DeletionVectorDescriptor dvDescriptor, Configuration hadoopConf) {
     try {
+      // Create a new engine for this task
+      Engine engine = io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf);
       Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> result =
           io.delta.kernel.internal.deletionvectors.DeletionVectorUtils.loadNewDvAndBitmap(
-              kernelEngine, tablePath, dvDescriptor);
+              engine, tablePath, dvDescriptor);
       return result._2;
     } catch (Exception e) {
       throw new RuntimeException("Failed to load deletion vector", e);
@@ -194,31 +222,42 @@ public class DeltaParquetFileFormat extends ParquetFileFormat {
     return Objects.hash(tablePath, columnMappingMode);
   }
 
-  /** Iterator that filters out rows marked as deleted in the deletion vector. */
+  /**
+   * Iterator that filters out rows marked as deleted in the deletion vector. Supports both
+   * vectorized (ColumnarBatch) and non-vectorized (InternalRow) data.
+   */
   private static class DeletionVectorFilterIterator
       extends scala.collection.AbstractIterator<InternalRow> {
-    private final Iterator<InternalRow> underlying;
+    private final Iterator<Object> underlying;
     private final RoaringBitmapArray deletionVector;
     private long currentRowIndex = 0;
-    private InternalRow nextRow = null;
 
-    DeletionVectorFilterIterator(
-        Iterator<InternalRow> underlying, RoaringBitmapArray deletionVector) {
+    // For handling ColumnarBatch - use Scala Iterator
+    private scala.collection.Iterator<InternalRow> currentBatchIterator = null;
+
+    // Type handlers map for processing different data formats
+    private final Map<Class<?>, Function<Object, InternalRow>> typeHandlers;
+
+    DeletionVectorFilterIterator(Iterator<Object> underlying, RoaringBitmapArray deletionVector) {
       this.underlying = underlying;
       this.deletionVector = deletionVector;
+
+      // Initialize type handlers
+      this.typeHandlers = new HashMap<>();
+      typeHandlers.put(ColumnarBatch.class, this::handleColumnarBatch);
+      typeHandlers.put(ColumnarBatchRow.class, this::handleColumnarBatchRow);
+      typeHandlers.put(InternalRow.class, this::handleInternalRow);
     }
 
     @Override
     public boolean hasNext() {
-      // Find the next non-deleted row
-      while (nextRow == null && underlying.hasNext()) {
-        InternalRow row = underlying.next();
-        if (!deletionVector.contains(currentRowIndex)) {
-          nextRow = row;
-        }
-        currentRowIndex++;
+      // First check if we have rows from current batch
+      if (currentBatchIterator != null && currentBatchIterator.hasNext()) {
+        return true;
       }
-      return nextRow != null;
+
+      // Try to get next batch or row
+      return underlying.hasNext();
     }
 
     @Override
@@ -226,8 +265,87 @@ public class DeltaParquetFileFormat extends ParquetFileFormat {
       if (!hasNext()) {
         throw new NoSuchElementException();
       }
-      InternalRow result = nextRow;
-      nextRow = null;
+
+      // If we have rows from current batch, return next one
+      if (currentBatchIterator != null && currentBatchIterator.hasNext()) {
+        return currentBatchIterator.next();
+      }
+
+      // Get next item from underlying iterator
+      Object next = underlying.next();
+
+      // Use type handlers map to process different data formats
+      Function<Object, InternalRow> handler = typeHandlers.get(next.getClass());
+      if (handler != null) {
+        return handler.apply(next);
+      } else {
+        throw new RuntimeException(
+            "Unexpected row type from Parquet reader: " + next.getClass().getName());
+      }
+    }
+
+    /** Handle vectorized ColumnarBatch data */
+    private InternalRow handleColumnarBatch(Object obj) {
+      ColumnarBatch batch = (ColumnarBatch) obj;
+      List<InternalRow> filteredRows = filterColumnarBatch(batch);
+      // Convert Java Iterator to Scala Iterator
+      currentBatchIterator =
+          scala.collection.JavaConverters.asScalaIterator(filteredRows.iterator());
+      return currentBatchIterator.next();
+    }
+
+    /**
+     * Handle ColumnarBatchRow - vectorized reader enabled but returns immutable rows. This is not
+     * efficient and should only affect wide tables.
+     */
+    private InternalRow handleColumnarBatchRow(Object obj) {
+      ColumnarBatchRow columnarRow = (ColumnarBatchRow) obj;
+      // Need to copy the row since ColumnarBatchRow is immutable
+      InternalRow row = columnarRow.copy();
+      // Filter out deleted rows
+      while (deletionVector.contains(currentRowIndex)) {
+        currentRowIndex++;
+        if (!underlying.hasNext()) {
+          throw new NoSuchElementException();
+        }
+        Object next = underlying.next();
+        if (next instanceof ColumnarBatchRow) {
+          row = ((ColumnarBatchRow) next).copy();
+        } else {
+          row = (InternalRow) next;
+        }
+      }
+      currentRowIndex++;
+      return row;
+    }
+
+    /** Handle non-vectorized InternalRow data */
+    private InternalRow handleInternalRow(Object obj) {
+      InternalRow row = (InternalRow) obj;
+      // Filter out deleted rows
+      while (deletionVector.contains(currentRowIndex)) {
+        currentRowIndex++;
+        if (!underlying.hasNext()) {
+          throw new NoSuchElementException();
+        }
+        row = (InternalRow) underlying.next();
+      }
+      currentRowIndex++;
+      return row;
+    }
+
+    /** Filter ColumnarBatch by deletion vector. Returns list of non-deleted rows. */
+    private List<InternalRow> filterColumnarBatch(ColumnarBatch batch) {
+      List<InternalRow> result = new ArrayList<>();
+      int numRows = batch.numRows();
+
+      for (int i = 0; i < numRows; i++) {
+        if (!deletionVector.contains(currentRowIndex + i)) {
+          result.add(batch.getRow(i).copy());
+        }
+      }
+
+      currentRowIndex += numRows;
       return result;
     }
   }

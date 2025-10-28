@@ -120,6 +120,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public Batch toBatch() {
     ensurePlanned();
     return new SparkBatch(
+        kernelEngine,
         tablePath,
         dataSchema,
         partitionSchema,
@@ -130,8 +131,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         totalBytes,
         scalaOptions,
         hadoopConf,
-        snapshot,
-        kernelEngine);
+        snapshot);
   }
 
   @Override
