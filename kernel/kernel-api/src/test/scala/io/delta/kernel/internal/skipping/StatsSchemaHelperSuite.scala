@@ -15,15 +15,17 @@
  */
 package io.delta.kernel.internal.skipping
 
-import scala.collection.JavaConverters.setAsJavaSetConverter
+import io.delta.kernel.expressions.{Column, Expression}
+import io.delta.kernel.test.TestUtils
 
+import scala.collection.JavaConverters.{asJavaIterableConverter, setAsJavaSetConverter}
 import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, CollationIdentifier, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
-
 import org.scalatest.funsuite.AnyFunSuite
 
-class StatsSchemaHelperSuite extends AnyFunSuite {
-  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
-  val unicode = CollationIdentifier.fromString("ICU.UNICODE")
+class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
+  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.75")
+  val unicodeWithVersion = CollationIdentifier.fromString("ICU.UNICODE.74.1")
+  val unicodeWithoutVersion = CollationIdentifier.fromString("ICU.UNICODE")
 
   test("check getStatsSchema for supported data types") {
     val testCases = Seq(
@@ -131,7 +133,10 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
     testCases.foreach { case (dataSchema, expectedStatsSchema) =>
       val statsSchema = StatsSchemaHelper.getStatsSchema(
         dataSchema,
-        Set.empty[CollationIdentifier].asJava)
+        new DataSkippingPredicate(
+          "ALWAYS_TRUE",
+          java.util.Collections.emptyList[Expression](),
+          java.util.Collections.emptySet[Column]()))
       assert(
         statsSchema == expectedStatsSchema,
         s"Stats schema mismatch for data schema: $dataSchema")
@@ -250,7 +255,10 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
     testCases.foreach { case (dataSchema, expectedStatsSchema) =>
       val statsSchema = StatsSchemaHelper.getStatsSchema(
         dataSchema,
-        Set.empty[CollationIdentifier].asJava)
+        new DataSkippingPredicate(
+          "ALWAYS_TRUE",
+          java.util.Collections.emptyList[Expression](),
+          java.util.Collections.emptySet[Column]()))
       assert(
         statsSchema == expectedStatsSchema,
         s"Stats schema mismatch for data schema: $dataSchema")
@@ -260,12 +268,8 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
   test("check getStatsSchema with collations - un-nested mix") {
     val dataSchema = new StructType()
       .add("a", StringType.STRING)
-      .add("b", IntegerType.INTEGER)
-      .add("c", BinaryType.BINARY)
-
-    val collations = Set(utf8Lcase)
-
-    val expectedCollatedMinMax = new StructType().add("a", StringType.STRING, true)
+      .add("b", new StringType(utf8Lcase))
+      .add("c", IntegerType.INTEGER)
 
     val expectedStatsSchema = new StructType()
       .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
@@ -273,13 +277,15 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
         StatsSchemaHelper.MIN,
         new StructType()
           .add("a", StringType.STRING, true)
-          .add("b", IntegerType.INTEGER, true),
+          .add("b", new StringType(utf8Lcase), true)
+          .add("c", IntegerType.INTEGER, true),
         true)
       .add(
         StatsSchemaHelper.MAX,
         new StructType()
           .add("a", StringType.STRING, true)
-          .add("b", IntegerType.INTEGER, true),
+          .add("b", new StringType(utf8Lcase), true)
+          .add("c", IntegerType.INTEGER, true),
         true)
       .add(
         StatsSchemaHelper.NULL_COUNT,
@@ -295,12 +301,67 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
           .add(
             utf8Lcase.toString,
             new StructType()
-              .add(StatsSchemaHelper.MIN, expectedCollatedMinMax, true)
-              .add(StatsSchemaHelper.MAX, expectedCollatedMinMax, true),
+              .add(
+                StatsSchemaHelper.MIN,
+                new StructType().add("a", StringType.STRING, true),
+                true)
+              .add(
+                StatsSchemaHelper.MAX,
+                new StructType().add("a", StringType.STRING, true),
+                true),
+            true)
+          .add(
+            unicodeWithVersion.toString,
+            new StructType()
+              .add(
+                StatsSchemaHelper.MIN,
+                new StructType().add("b", new StringType(utf8Lcase), true),
+                true)
+              .add(
+                StatsSchemaHelper.MAX,
+                new StructType().add("b", new StringType(utf8Lcase), true),
+                true),
             true),
         true)
 
-    val statsSchema = StatsSchemaHelper.getStatsSchema(dataSchema, collations.asJava)
+
+    val minAUtf8Lcase = collatedStatsCol(utf8Lcase, StatsSchemaHelper.MIN, "a")
+    val maxBUnicodeWithoutVersion = collatedStatsCol(unicodeWithoutVersion, StatsSchemaHelper.MAX, "b")
+    val maxBUnicodeWithVersion = collatedStatsCol(unicodeWithVersion, StatsSchemaHelper.MAX, "b")
+    val minBUnicodeWithVersion = collatedStatsCol(unicodeWithVersion, StatsSchemaHelper.MIN, "b")
+
+    val leftAnd = new DataSkippingPredicate(
+      "AND",
+      new DataSkippingPredicate(
+        "<",
+        java.util.Arrays.asList[Expression](minAUtf8Lcase, literal("aaa")),
+        utf8Lcase,
+        new java.util.HashSet[Column](java.util.Arrays.asList(minAUtf8Lcase))),
+      new DataSkippingPredicate(
+        ">",
+        java.util.Arrays.asList[Expression](maxBUnicodeWithoutVersion, literal("ccc")),
+        unicodeWithoutVersion,
+        new java.util.HashSet[Column](java.util.Arrays.asList(maxBUnicodeWithoutVersion))))
+
+    val rightAnd = new DataSkippingPredicate(
+      "AND",
+      new DataSkippingPredicate(
+        ">",
+        java.util.Arrays.asList[Expression](maxBUnicodeWithVersion, literal("bbb")),
+        unicodeWithVersion,
+        new java.util.HashSet[Column](java.util.Arrays.asList(maxBUnicodeWithVersion))),
+      new DataSkippingPredicate(
+        "<",
+        java.util.Arrays.asList[Expression](minBUnicodeWithVersion, literal("bbb")),
+        unicodeWithVersion,
+        new java.util.HashSet[Column](java.util.Arrays.asList(minBUnicodeWithVersion))))
+
+    val predicate = new DataSkippingPredicate(
+      "AND",
+      leftAnd,
+      rightAnd)
+
+    val statsSchema = StatsSchemaHelper.getStatsSchema(dataSchema, predicate)
     assert(statsSchema == expectedStatsSchema)
   }
 
@@ -314,8 +375,6 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
           .add("z", new StructType().add("p", StringType.STRING).add("q", DoubleType.DOUBLE)))
       .add("arr", new ArrayType(StringType.STRING, true))
       .add("mp", new MapType(StringType.STRING, StringType.STRING, true))
-
-    val collations = Set(utf8Lcase, CollationIdentifier.SPARK_UTF8_BINARY)
 
     val expectedCollatedNested = new StructType()
       .add(
@@ -384,49 +443,43 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
           .add(
             utf8Lcase.toString,
             new StructType()
-              .add(StatsSchemaHelper.MIN, expectedCollatedNested, true)
-              .add(StatsSchemaHelper.MAX, expectedCollatedNested, true),
+              .add(StatsSchemaHelper.MIN, expectedCollatedNested, true),
             true)
           .add(
-            CollationIdentifier.SPARK_UTF8_BINARY.toString,
+            unicodeWithVersion.toString,
             new StructType()
-              .add(StatsSchemaHelper.MIN, expectedCollatedNested, true)
               .add(StatsSchemaHelper.MAX, expectedCollatedNested, true),
             true),
         true)
 
-    val statsSchema = StatsSchemaHelper.getStatsSchema(dataSchema, collations.asJava)
-    assert(statsSchema == expectedStatsSchema)
-  }
+    val minXUTF8Lcase = collatedStatsCol(utf8Lcase, StatsSchemaHelper.MIN, "s.x")
+    val maxPUnicodeWithoutVersion =
+      collatedStatsCol(unicodeWithoutVersion, StatsSchemaHelper.MAX, "s.z.p")
+    val maxPUnicodeWithVersion =
+      collatedStatsCol(unicodeWithVersion, StatsSchemaHelper.MAX, "s.z.p")
 
-  test("check getStatsSchema with collations - no eligible string columns") {
-    val dataSchema = new StructType()
-      .add("a", IntegerType.INTEGER)
-      .add("b", new ArrayType(StringType.STRING, true))
-      .add("c", new MapType(StringType.STRING, LongType.LONG, true))
+    val left = new DataSkippingPredicate(
+      "<",
+      java.util.Arrays.asList[Expression](minXUTF8Lcase, literal("m")),
+      utf8Lcase,
+      new java.util.HashSet[Column](java.util.Arrays.asList(minXUTF8Lcase)))
 
-    val collations = Set(utf8Lcase, unicode, CollationIdentifier.SPARK_UTF8_BINARY)
+    val right = new DataSkippingPredicate(
+      "AND",
+      new DataSkippingPredicate(
+        ">",
+        java.util.Arrays.asList[Expression](maxPUnicodeWithoutVersion, literal("t")),
+        unicodeWithoutVersion,
+        new java.util.HashSet[Column](java.util.Arrays.asList(maxPUnicodeWithoutVersion))),
+      new DataSkippingPredicate(
+        ">",
+        java.util.Arrays.asList[Expression](maxPUnicodeWithVersion, literal("s")),
+        unicodeWithVersion,
+        new java.util.HashSet[Column](java.util.Arrays.asList(maxPUnicodeWithVersion))))
 
-    val expectedStatsSchema = new StructType()
-      .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
-      .add(
-        StatsSchemaHelper.MIN,
-        new StructType().add("a", IntegerType.INTEGER, true),
-        true)
-      .add(
-        StatsSchemaHelper.MAX,
-        new StructType().add("a", IntegerType.INTEGER, true),
-        true)
-      .add(
-        StatsSchemaHelper.NULL_COUNT,
-        new StructType()
-          .add("a", LongType.LONG, true)
-          .add("b", LongType.LONG, true)
-          .add("c", LongType.LONG, true),
-        true)
-      .add(StatsSchemaHelper.TIGHT_BOUNDS, BooleanType.BOOLEAN, true)
+    val predicate = new DataSkippingPredicate("AND", left, right)
 
-    val statsSchema = StatsSchemaHelper.getStatsSchema(dataSchema, collations.asJava)
+    val statsSchema = StatsSchemaHelper.getStatsSchema(dataSchema, predicate)
     assert(statsSchema == expectedStatsSchema)
   }
 }

@@ -16,8 +16,9 @@
 package io.delta.kernel.test
 
 import java.util.Optional
-
 import io.delta.kernel.expressions.{Column, Literal}
+import io.delta.kernel.internal.skipping.StatsSchemaHelper.STATS_WITH_COLLATION
+import io.delta.kernel.types.CollationIdentifier
 
 /** Utility functions for tests. */
 trait TestUtils {
@@ -25,6 +26,15 @@ trait TestUtils {
 
   def nestedCol(name: String): Column = {
     new Column(name.split("\\."))
+  }
+
+  def collatedStatsCol(
+      collation: CollationIdentifier,
+      statName: String,
+      fieldName: String): Column = {
+    val columnPath =
+      Array(STATS_WITH_COLLATION, collation.toString, statName) ++ fieldName.split('.')
+    new Column(columnPath)
   }
 
   def literal(value: Any): Literal = {

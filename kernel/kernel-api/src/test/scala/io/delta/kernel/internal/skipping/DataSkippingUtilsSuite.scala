@@ -53,15 +53,6 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
     new DataSkippingPredicate(operator, children.asJava, collation, referencedColumns.asJava)
   }
 
-  private def collatedStatsCol(
-      collation: CollationIdentifier,
-      statName: String,
-      fieldName: String): Column = {
-    val columnPath =
-      Array(STATS_WITH_COLLATION, collation.toString, statName) ++ fieldName.split('.')
-    new Column(columnPath)
-  }
-
   /* For struct type checks for equality based on field names & data type only */
   def compareDataTypeUnordered(type1: DataType, type2: DataType): Boolean = (type1, type2) match {
     case (schema1: StructType, schema2: StructType) =>

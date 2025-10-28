@@ -18,7 +18,10 @@ package io.delta.kernel.internal.skipping;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.CollationIdentifier;
+
+import javax.xml.crypto.Data;
 import java.util.*;
 
 /** A {@link Predicate} with a set of columns referenced by the expression. */
@@ -76,24 +79,31 @@ public class DataSkippingPredicate extends Predicate {
    * @return set of collation identifiers referenced by this predicate or any of its child
    *     expressions
    */
-  public Set<CollationIdentifier> getReferencedCollations() {
-    Set<CollationIdentifier> referencedCollations = new HashSet<>();
+  public Set<Tuple2<CollationIdentifier, Column>> getReferencedCollations() {
+    Set<Tuple2<CollationIdentifier, Column>> referencedCollations = new HashSet<>();
 
     if (this.getCollationIdentifier().isPresent()) {
-      referencedCollations.add(this.getCollationIdentifier().get());
+      CollationIdentifier collationIdentifier = this.getCollationIdentifier().get();
+      Expression child = this.getChildren().get(0);
+      if (!(child instanceof Column)) {
+        throw new IllegalStateException(
+            String.format(
+                "Expected first child of DataSkippingPredicate with collation to be a Column, but"
+                    + " found %s",
+                this.getChildren().get(0).getClass().getName()));
+      }
+      referencedCollations.add(new Tuple2<>(collationIdentifier, (Column) child));
     }
 
     for (Expression child : children) {
-      if (child instanceof Predicate) {
-        if (child instanceof DataSkippingPredicate) {
-          referencedCollations.addAll(((DataSkippingPredicate) child).getReferencedCollations());
-        } else {
-          throw new IllegalStateException(
-              String.format(
-                  "Expected child Predicate of DataSkippingPredicate to also be a"
-                      + " DataSkippingPredicate, but found %s",
-                  child.getClass().getName()));
-        }
+      if (child instanceof DataSkippingPredicate) {
+        referencedCollations.addAll(((DataSkippingPredicate) child).getReferencedCollations());
+      } else if (child instanceof Predicate) {
+        throw new IllegalStateException(
+            String.format(
+                "Expected child Predicate of DataSkippingPredicate to also be a"
+                    + " DataSkippingPredicate, but found %s",
+                child.getClass().getName()));
       }
     }
     return Collections.unmodifiableSet(referencedCollations);

@@ -22,6 +22,7 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.ScalarExpression;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -117,7 +118,7 @@ public class StatsSchemaHelper {
    * </pre>
    */
   public static StructType getStatsSchema(
-      StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
+      StructType dataSchema, DataSkippingPredicate dataSkippingPredicate) {
     StructType statsSchema = new StructType().add(NUM_RECORDS, LongType.LONG, true);
 
     StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
@@ -132,7 +133,7 @@ public class StatsSchemaHelper {
 
     statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
 
-    StructType collatedMinMaxStatsSchema = getCollatedStatsSchema(dataSchema, collationIdentifiers);
+    StructType collatedMinMaxStatsSchema = getCollatedStatsSchema(dataSchema, dataSkippingPredicate);
     if (collatedMinMaxStatsSchema.length() > 0) {
       statsSchema = statsSchema.add(STATS_WITH_COLLATION, collatedMinMaxStatsSchema, true);
     }
@@ -281,16 +282,6 @@ public class StatsSchemaHelper {
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
-   * fields (i.e. don't include fields with isSkippingEligibleDataType=false). Collation-aware
-   * statistics are not included.
-   */
-  private static StructType getMinMaxStatsSchema(StructType dataSchema) {
-    return getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ false);
-  }
-
-  /**
-   * Given a data schema returns the expected schema for a min or max statistics column. This means
-   * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
    * fields (i.e. don't include fields with isSkippingEligibleDataType=false). In case when
    * isCollatedSkipping is true, only `StringType` fields are eligible.
    */
@@ -316,22 +307,82 @@ public class StatsSchemaHelper {
    * set nullable=true 3) only keep collated-stats eligible fields (`StringType` fields)
    */
   private static StructType getCollatedStatsSchema(
-      StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
+      StructType dataSchema, DataSkippingPredicate dataSkippingPredicate) {
     StructType statsWithCollation = new StructType();
-    StructType minMaxSchemaForCollationAwareFields =
-        getMinMaxStatsSchema(dataSchema, /* isCollatedSkipping */ true);
-    if (minMaxSchemaForCollationAwareFields.length() > 0) {
-      for (CollationIdentifier collationIdentifier : collationIdentifiers) {
-        statsWithCollation =
-            statsWithCollation.add(
-                collationIdentifier.toString(),
-                new StructType()
-                    .add(MIN, minMaxSchemaForCollationAwareFields, true)
-                    .add(MAX, minMaxSchemaForCollationAwareFields, true),
-                true);
+    for (Tuple2<CollationIdentifier, Column> collationAndColumn : dataSkippingPredicate.getReferencedCollations()) {
+      CollationIdentifier collationIdentifier = collationAndColumn._1;
+      Column column = getDataColumnFromDataSkippingColumn(collationAndColumn._2);
+
+      if (collationIdentifier.isSparkUTF8BinaryCollation() || collationIdentifier.getVersion().isEmpty()) {
+        // SPARK_UTF8_BINARY uses binary stats. Also, we can't do skipping for a collation without
+        // a version since we don't know which version to use.
+        continue;
       }
+
+      DataType dataType = ColumnMapping.getLogicalColumnNameAndDataType(dataSchema, column)._2;
+      statsWithCollation = addColumnIfNotExists(statsWithCollation, column, dataType);
     }
     return statsWithCollation;
+  }
+
+  private static StructType addColumnIfNotExists(StructType structType, Column column, DataType dataType) {
+    return addColumnIfNotExists(structType, column, dataType, 0);
+  }
+
+  private static StructType addColumnIfNotExists(StructType structType, Column column, DataType dataType, int depth) {
+    String namePart = column.getNames()[depth];
+    int index = structType.indexOf(namePart);
+    if (index < 0) {
+      // Column does not exist, add it
+      if (depth == column.getNames().length - 1) {
+          return structType.add(new StructField(namePart, dataType, true));
+      } else {
+          StructType nestedStruct = addColumnIfNotExists(new StructType(), column, dataType, depth + 1);
+          return structType.add(new StructField(namePart, nestedStruct, true));
+      }
+    } else {
+      StructField structField = structType.at(index);
+      if (depth == column.getNames().length - 1) {
+        return structType.replace(index, new StructField(namePart, dataType, true));
+      } else {
+        if (!(structField.getDataType() instanceof StructType)) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "Cannot add nested column %s under non-struct field %s",
+                  column, structField));
+        }
+        StructType nestedStruct =
+            addColumnIfNotExists(
+                (StructType) structField.getDataType(), column, dataType, depth + 1);
+        return structType.replace(index, new StructField(namePart, nestedStruct, true));
+      }
+    }
+  }
+
+  private static Column getDataColumnFromDataSkippingColumn(Column dataSkippingColumn) {
+    String[] names = dataSkippingColumn.getNames();
+    if (names.length < 2) {
+      throw new IllegalArgumentException(
+              String.format("Invalid data skipping column %s. Expected at least 2 name parts.",
+                      dataSkippingColumn));
+    }
+
+    if (Objects.equals(names[0], STATS_WITH_COLLATION)) {
+      // statsWithCollation.<collationName>.<minValues|maxValues>.<physicalPath...>
+      if (names.length < 4) {
+        throw new IllegalArgumentException(
+                String.format("Invalid collated data skipping column %s. Expected at least 4 name parts.",
+                        dataSkippingColumn));
+      }
+      return new Column(Arrays.copyOfRange(names, 3, names.length));
+    } else if (Objects.equals(names[0], MIN) || Objects.equals(names[0], MAX)) {
+      // <minValues|maxValues>.<physicalPath...>
+      return new Column(Arrays.copyOfRange(names, 1, names.length));
+    } else {
+      throw new IllegalArgumentException(
+              String.format("Invalid data skipping column %s. Expected to start with %s, %s or %s.",
+                      dataSkippingColumn, STATS_WITH_COLLATION, MIN, MAX));
+    }
   }
 
   /**

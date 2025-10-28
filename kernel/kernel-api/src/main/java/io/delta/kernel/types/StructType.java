@@ -91,6 +91,17 @@ public final class StructType extends DataType {
     return add(new StructField(name, dataType, nullable, metadata));
   }
 
+  public StructType replace(int index, StructField newField) {
+    if (index < 0 || index >= fields.size()) {
+        throw new IndexOutOfBoundsException(
+            String.format(
+                "Index %d is out of bounds for struct type with %d fields", index, fields.size()));
+    }
+    final List<StructField> fieldsCopy = new ArrayList<>(fields);
+    fieldsCopy.set(index, newField);
+    return new StructType(fieldsCopy);
+  }
+
   /** Add a predefined metadata column of {@link MetadataColumnSpec} to the struct type. */
   public StructType addMetadataColumn(String name, MetadataColumnSpec colType) {
     return add(StructField.createMetadataColumn(name, colType));
