@@ -69,7 +69,10 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
  */
 class DeltaCatalogV1 extends AbstractDeltaCatalog
 
-// Abstract base class that contains the core Delta Catalog logic.
+/**
+ * Base class for Dsv2 catalog implementation, it contains all dsv1 based connector logic.
+ * Introduced for compatibility purpose in the implementation of dsv2 based connector
+ */
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier

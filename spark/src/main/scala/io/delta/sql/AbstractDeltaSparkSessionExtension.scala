@@ -36,10 +36,13 @@ import org.apache.spark.sql.internal.SQLConf
 /**
  * Legacy DeltaSparkSessionExtension implementation,
  */
-// V1 entry point class for backwards compatibility with Spark V1 APIs.
 class DeltaSparkSessionExtensionV1 extends AbstractDeltaSparkSessionExtension
 
-// Abstract base class that contains the core Delta Spark Session extension logic.
+/**
+* Abstract base class that contains the base Delta Spark Session extension logic.
+* As part of evolution for Delta connector(e.g. Dsv2), new Spark session extension
+* will be built based on that.
+*/
 class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (_, parser) =>
