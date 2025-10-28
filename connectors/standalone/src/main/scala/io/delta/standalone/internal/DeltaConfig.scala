@@ -250,4 +250,17 @@ private[internal] object DeltaConfigs extends Logging {
     _ => true,
     "needs to be a boolean.",
     Some(new Protocol(0, 2)))
+
+  /**
+   * The shortest duration within which new [[Snapshot]]s will retain transaction identifiers (i.e.
+   * [[SetTransaction]]s). When a new [[Snapshot]] sees a transaction identifier older than or equal
+   * to the specified TRANSACTION_ID_RETENTION_DURATION, it considers it expired and ignores it.
+   */
+  val TRANSACTION_ID_RETENTION_DURATION = buildConfig[Option[CalendarInterval]](
+    "setTransactionRetentionDuration",
+    null,
+    v => if (v == null) None else Some(parseCalendarInterval(v)),
+    opt => opt.forall(isValidIntervalConfigValue),
+    "needs to be provided as a calendar interval such as '2 weeks'. Months " +
+      "and years are not accepted. You may specify '365 days' for a year instead.")
 }

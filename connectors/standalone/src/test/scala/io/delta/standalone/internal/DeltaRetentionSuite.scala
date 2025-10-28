@@ -20,7 +20,7 @@ import java.io.File
 
 import io.delta.standalone.Operation
 
-import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, RemoveFile}
+import io.delta.standalone.internal.actions.{Action, AddFile, Metadata, RemoveFile, SetTransaction}
 import io.delta.standalone.internal.util.ManualClock
 import io.delta.standalone.internal.util.TestUtils._
 
@@ -228,13 +228,55 @@ class DeltaRetentionSuite extends DeltaRetentionSuiteBase {
       // times that the latest log files should have.
       getLogFiles(logPath)
         .filter(_.getName.contains("001."))
-        .foreach(_.setLastModified(now + log.deltaRetentionMillis + 1000*60*60*24))
+        .foreach(_.setLastModified(now + log.deltaRetentionMillis + 1000 * 60 * 60 * 24))
 
       log.cleanUpExpiredLogs()
       val afterCleanup = getLogFiles(logPath)
       initialFiles.foreach { file =>
         assert(!afterCleanup.contains(file))
       }
+    }
+  }
+
+  test("allow users to expire transaction identifiers from checkpoints") {
+    withTempDir { tempDir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      val log = DeltaLogImpl.forTable(hadoopConf, tempDir.getCanonicalPath, clock)
+      log.startTransaction().commit(
+        metadata.copy(
+          configuration = Map(DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION.key -> "interval 1 days")
+        ) :: Nil,
+        manualUpdate, writerId)
+
+      // commit at time < TRANSACTION_ID_RETENTION_DURATION
+      log.startTransaction().commit(Seq(SetTransaction("app", 1, Some(clock.getTimeMillis()))), manualUpdate, writerId)
+      assert(log.update().transactions == Map("app" -> 1))
+      assert(log.update().setTransactionsScala.size == 1)
+
+      clock.advance(DeltaConfigs.getMilliSeconds(DeltaConfigs.parseCalendarInterval("interval 1 days")))
+
+      // query at time == TRANSACTION_ID_RETENTION_DURATION & NO new commit
+      // No new commit has been made, so we will see expired transactions (this is not ideal, but
+      // it's a tradeoff we've accepted)
+      assert(log.update().transactions == Map("app" -> 1))
+      assert(log.snapshot.setTransactionsScala.size == 1)
+
+      clock.advance(1)
+
+      // query at time > TRANSACTION_ID_RETENTION_DURATION & NO new commit
+      // we continue to see expired transactions
+      assert(log.update().transactions == Map("app" -> 1))
+      assert(log.snapshot.setTransactionsScala.size == 1)
+
+      // query at time > TRANSACTION_ID_RETENTION_DURATION & there IS a new commit
+      // We will only filter expired transactions when time is >= TRANSACTION_ID_RETENTION_DURATION
+      // and a new commit has been made
+      val addFile = AddFile(
+        path = "fake/path/1", partitionValues = Map.empty, size = 1,
+        modificationTime = 1, dataChange = true)
+      log.startTransaction().commit(Seq(addFile), manualUpdate, writerId)
+      assert(log.update().transactions.isEmpty)
+      assert(log.snapshot.setTransactionsScala.size == 0)
     }
   }
 }

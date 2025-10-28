@@ -23,9 +23,16 @@ import org.scalatest.FunSuite
 
 import io.delta.standalone.internal.DeltaConfigs.{isValidIntervalConfigValue, parseCalendarInterval}
 import io.delta.standalone.internal.actions.Metadata
-import io.delta.standalone.internal.util.{CalendarInterval, DateTimeConstants}
+import io.delta.standalone.internal.util.{CalendarInterval, DateTimeConstants, ManualClock, ConversionUtils}
+import io.delta.standalone.internal.util.TestUtils._
+import io.delta.standalone.types.{StringType, StructType}
+import io.delta.standalone.Operation
+import io.delta.standalone.actions.{Metadata => MetadataJ}
 
 class DeltaConfigSuite extends FunSuite {
+
+  val manualUpdate = new Operation(Operation.Name.MANUAL_UPDATE)
+  val writerId = "test-writer-id"
 
   test("mergeGlobalConfigs") {
 
@@ -103,6 +110,54 @@ class DeltaConfigSuite extends FunSuite {
       "1 month",
       "1 year")) {
       assert(!isValidIntervalConfigValue(parseCalendarInterval(input)), s"$input")
+    }
+  }
+
+  test("Optional Calendar Interval config") {
+    val clock = new ManualClock(System.currentTimeMillis())
+    val emptyMetadata = new Metadata()
+    val metadataJ = MetadataJ.builder().schema(new StructType().add("part", new StringType())).build()
+    val metadata = ConversionUtils.convertMetadataJ(metadataJ)
+    val conf = new Configuration()
+
+    // case 1: duration not specified
+    withTempDir { dir =>
+      val log = DeltaLogImpl.forTable(conf, dir.getCanonicalPath, clock)
+      val retentionTimestampOpt = log.minSetTransactionRetentionInterval(emptyMetadata)
+
+      assert(retentionTimestampOpt.isEmpty)
+    }
+
+    // case 2: valid duration specified
+    withTempDir { dir =>
+      val log = DeltaLogImpl.forTable(conf, dir.getCanonicalPath, clock)
+      log.startTransaction().commit(
+        metadata.copy(
+          configuration = Map(DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION.key -> "1 day")
+        ) :: Nil,
+        manualUpdate, writerId)
+
+
+      val retentionTimestampOpt = log.snapshot.minSetTransactionRetentionTimestamp
+      assert(log.clock.getTimeMillis() == clock.getTimeMillis())
+      val expectedRetentionTimestamp =
+        clock.getTimeMillis() - DeltaConfigs.getMilliSeconds(parseCalendarInterval("interval 1 days"))
+
+      assert(retentionTimestampOpt.contains(expectedRetentionTimestamp))
+    }
+
+    // case 3: invalid duration specified
+    withTempDir { dir =>
+      val e = intercept[IllegalArgumentException] {
+        val log = DeltaLogImpl.forTable(conf, dir.getCanonicalPath, clock)
+        log.startTransaction().commit(
+          metadata.copy(
+            configuration = Map(DeltaConfigs.TRANSACTION_ID_RETENTION_DURATION.key -> "interval 1 foo")
+          ) :: Nil,
+          manualUpdate, writerId)
+        log.snapshot.minSetTransactionRetentionTimestamp // TODO: This step required to get the exception
+      }
+      assert(e.getMessage.contains("Invalid interval"))
     }
   }
 }
