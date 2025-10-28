@@ -2,7 +2,7 @@
 
 This module contains the final, published `delta-spark` JAR that unifies both:
 - **V1 (hybrid DSv1 and DSv2)**: The traditional Delta Lake connector using `DeltaLog` for Delta support
-- **V2 (DSv2)**: The new Kernel-backed connector.
+- **V2 (Pure DSv2)**: The new Kernel-backed connector.
 
 ## Architecture
 

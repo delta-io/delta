@@ -64,8 +64,8 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
 
 /**
- * Legacy implementation for DeltaCatalog, please use the new DeltaCatalog defined in
- * spark-unified/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java
+ * V1 legacy implementation. Use [[org.apache.spark.sql.delta.catalog.DeltaCatalog]] instead.
+ * See spark-unified/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java
  */
 class DeltaCatalogV1 extends AbstractDeltaCatalog
 

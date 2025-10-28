@@ -34,7 +34,8 @@ import org.apache.spark.sql.internal.SQLConf
 
 
 /**
- * Legacy DeltaSparkSessionExtension implementation,
+ * V1 legacy implementation. Use [[io.delta.sql.DeltaSparkSessionExtension]] instead.
+ * See spark-unified/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala
  */
 class DeltaSparkSessionExtensionV1 extends AbstractDeltaSparkSessionExtension
 
