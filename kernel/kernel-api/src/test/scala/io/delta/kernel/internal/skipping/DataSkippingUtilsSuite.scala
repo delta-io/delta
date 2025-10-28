@@ -495,12 +495,17 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
             dataSkippingPredicateWithCollation("<", Seq(minA, literal("m")), utf8Lcase, Set(minA)),
             dataSkippingPredicate("<", Seq(minB, literal(1)), Set(minB))))
         }),
-      // Ineligible: non-string column with collation
       (
         new StructType()
           .add("a", IntegerType.INTEGER),
-        createPredicate("<", col("a"), literal("m"), Optional.of(utf8Lcase)),
-        None))
+        createPredicate("<", col("a"), literal(1), Optional.of(utf8Lcase)), {
+          val minA = collatedStatsCol(utf8Lcase, MIN, "a")
+          Some(dataSkippingPredicateWithCollation(
+            "<",
+            Seq(minA, literal(1)),
+            utf8Lcase,
+            Set(minA)))
+        }))
 
     testCases.foreach { case (schema, predicate, expectedDataSkippingPredicateOpt) =>
       val dataSkippingPredicateOpt =

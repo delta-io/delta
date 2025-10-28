@@ -265,7 +265,7 @@ public class DataSkippingUtils {
         if (left instanceof Column && right instanceof Literal) {
           Column leftCol = (Column) left;
           Literal rightLit = (Literal) right;
-          if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol, collationIdentifier.isPresent())
+          if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
               && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
             return constructComparatorDataSkippingFilters(
                 dataFilters.getName(), leftCol, rightLit, collationIdentifier, schemaHelper);
@@ -604,7 +604,7 @@ public class DataSkippingUtils {
     if (leftChild instanceof Column && rightChild instanceof Literal) {
       Column leftCol = (Column) leftChild;
       Literal rightLit = (Literal) rightChild;
-      if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol, collationIdentifier.isPresent())
+      if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
           && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
         return buildDataSkippingPredicateFunc.apply(leftCol, rightLit);
       }
