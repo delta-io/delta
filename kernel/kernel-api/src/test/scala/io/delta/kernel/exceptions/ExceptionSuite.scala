@@ -56,7 +56,6 @@ class ExceptionSuite extends AnyFunSuite {
     assert(ex.isInstanceOf[UnsupportedTableFeatureException])
   }
 
-
   test("UnsupportedProtocolVersionException - reader version") {
     val tablePath = "/path/to/table"
     val version = 3
