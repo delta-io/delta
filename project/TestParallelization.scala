@@ -54,7 +54,6 @@ object TestParallelization {
     Test / testGroupingStrategy := {
       val groupsCount = (Test / forkTestJVMCount).value
       val shard = (Test / shardId).value
-      // Use regular baseDirectory for target directory (not Test/baseDirectory)
       val baseJvmDir = baseDirectory.value
       MinShardGroupDurationStrategy(groupsCount, baseJvmDir, shard, defaultForkOptions.value)
     },
