@@ -210,7 +210,11 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
         // Commit all pending checkpoints to Delta Log
         for (Long checkpointId : byCheckpoint.keySet()) {
             LOG.info("Committing checkpoint {} to Delta Log", checkpointId);
-            globalCommitCoordinator.commitCheckpoint(checkpointId);
+            try {
+                globalCommitCoordinator.commitCheckpoint(checkpointId);
+            } catch (RuntimeException e) {
+                throw new IOException("Delta Log commit failed for checkpoint " + checkpointId, e);
+            }
         }
 
         LOG.info("Successfully committed all checkpoints to Delta Log");
