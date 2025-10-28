@@ -65,18 +65,17 @@ public class WriteRunner extends WorkloadRunner {
 
   @Override
   public void setup() throws Exception {
-    this.commit_contents = new ArrayList<>();
-
     String tableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
 
     // Get the current snapshot
     SnapshotBuilder builder = TableManager.loadSnapshot(tableRoot);
     currentSnapshot = builder.build(engine);
 
-    // Capture initial listing of delta log files
+    // Capture initial listing of delta log files. This is used during cleanup to revert changes.
     initialDeltaLogFiles = captureFileListing();
 
     // Load and parse all commit files
+    this.commit_contents.clear();
     for (WriteSpec.CommitSpec commitSpec : workloadSpec.getCommits()) {
       commit_contents.add(
           commitSpec.readDataFiles(
@@ -108,23 +107,18 @@ public class WriteRunner extends WorkloadRunner {
    */
   @Override
   public void executeAsBenchmark(Blackhole blackhole) throws Exception {
-    // Execute all commits in sequence (timed)
+    // Execute all commits in sequence
     for (List<DataFileStatus> actions : commit_contents) {
-      // Create transaction from table (first iteration) or from post-commit snapshot (subsequent)
       UpdateTableTransactionBuilder txnBuilder =
           currentSnapshot.buildUpdateTableTransaction("Delta-Kernel-Benchmarks", Operation.WRITE);
 
-      // Build and commit the transaction
       Transaction txn = txnBuilder.build(engine);
-
-      // Prepare data actions from commit contents
       Row txnState = txn.getTransactionState(engine);
       DataWriteContext writeContext =
-          Transaction.getWriteContext(engine, txnState, new HashMap<>());
+          Transaction.getWriteContext(engine, txnState, new HashMap<>() /* partitionValues */);
       CloseableIterator<Row> add_actions =
           Transaction.generateAppendActions(
               engine, txnState, toCloseableIterator(actions.iterator()), writeContext);
-
       TransactionCommitResult result =
           txn.commit(engine, CloseableIterable.inMemoryIterable(add_actions));
 
