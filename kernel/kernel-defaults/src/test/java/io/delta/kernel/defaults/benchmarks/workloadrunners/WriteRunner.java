@@ -47,7 +47,7 @@ import org.openjdk.jmh.infra.Blackhole;
 public class WriteRunner extends WorkloadRunner {
   private final Engine engine;
   private final WriteSpec workloadSpec;
-  private List<List<DataFileStatus>> commitContents;
+  private final List<List<DataFileStatus>> commitContents;
   private Snapshot currentSnapshot;
   private Set<String> initialDeltaLogFiles;
 
@@ -74,12 +74,13 @@ public class WriteRunner extends WorkloadRunner {
     // Capture initial listing of delta log files. This is used during cleanup to revert changes.
     initialDeltaLogFiles = captureFileListing();
 
-    // Load and parse all commit files
-    this.commitContents.clear();
-    for (WriteSpec.CommitSpec commitSpec : workloadSpec.getCommits()) {
-      commitContents.add(
-          commitSpec.readDataFiles(
-              workloadSpec.getSpecDirectoryPath(), currentSnapshot.getSchema()));
+    // Load and parse all commit files if we haven't already done so
+    if (commitContents.isEmpty()) {
+      for (WriteSpec.CommitSpec commitSpec : workloadSpec.getCommits()) {
+        commitContents.add(
+            commitSpec.readDataFiles(
+                workloadSpec.getSpecDirectoryPath(), currentSnapshot.getSchema()));
+      }
     }
   }
 
