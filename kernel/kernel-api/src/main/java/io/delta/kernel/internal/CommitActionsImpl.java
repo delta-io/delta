@@ -120,11 +120,11 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
     CloseableIterator<ActionWrapper> actionsIter =
         new ActionsIterator(
             engine, Collections.singletonList(commitFile), readSchema, Optional.empty());
-    
+
     Tuple2<Optional<ActionWrapper>, CloseableIterator<ActionWrapper>> headAndIter =
         peekHeadAndGetFullIterator(actionsIter);
     this.iterator = headAndIter._2;
-    
+
     // Extract version and timestamp from first action (or use reading file if not exists)
     if (headAndIter._1.isPresent()) {
       ActionWrapper firstWrapper = headAndIter._1.get();
@@ -148,8 +148,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
    */
   private static Tuple2<Optional<ActionWrapper>, CloseableIterator<ActionWrapper>>
       peekHeadAndGetFullIterator(CloseableIterator<ActionWrapper> iter) {
-    Optional<ActionWrapper> head =
-        iter.hasNext() ? Optional.of(iter.next()) : Optional.empty();
+    Optional<ActionWrapper> head = iter.hasNext() ? Optional.of(iter.next()) : Optional.empty();
     CloseableIterator<ActionWrapper> fullIterator =
         head.isPresent() ? Utils.singletonCloseableIterator(head.get()).combine(iter) : iter;
     return new Tuple2<>(head, fullIterator);
@@ -179,7 +178,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
     iterator =
         new ActionsIterator(
             engine, Collections.singletonList(commitFile), readSchema, Optional.empty());
-    
+
     return result;
   }
 
@@ -217,6 +216,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
 
   /**
    * Closes this CommitActionsImpl and releases any underlying resources.
+   *
    * @throws IOException if an I/O error occurs while closing resources
    */
   @Override
