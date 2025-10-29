@@ -101,6 +101,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
 
   public HiveCatalog() {}
 
+  // HACK-HACK
   public void initialize(String inputName, Map<String, String> properties, List<MetadataUpdate> metadataUpdates) {
     initialize(inputName, properties);
     this.metadataUpdates = metadataUpdates;
@@ -458,6 +459,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     }
   }
 
+  // HACK-HACK
   private void validateTableIsIceberg(Table table, String fullName) {
     HiveOperationsBase.validateTableIsIceberg(table, fullName);
     String metadataLocation = table.getParameters().get(BaseMetastoreTableOperations.METADATA_LOCATION_PROP);
@@ -529,7 +531,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
 
   @Override
   public List<Namespace> listNamespaces(Namespace namespace) {
-    if (!isValidateNamespace(namespace) && !namespace.isEmpty()) {
+    if (!namespace.isEmpty() && (!isValidateNamespace(namespace) || !namespaceExists(namespace))) {
       throw new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
     }
     if (!namespace.isEmpty()) {
@@ -707,6 +709,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
   public TableOperations newTableOps(TableIdentifier tableIdentifier) {
     String dbName = tableIdentifier.namespace().level(0);
     String tableName = tableIdentifier.name();
+    // HACK-HACK
     return new HiveTableOperations(conf, clients, fileIO, name, dbName, tableName, metadataUpdates);
   }
 
