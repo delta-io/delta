@@ -44,6 +44,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import scala.Option;
 import scala.collection.immutable.Map$;
 
 public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
@@ -285,7 +286,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
     DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
 
-    Option<DeltaSource.AdmissionLimits> dsv1Limits =
+    Optional<DeltaSource.AdmissionLimits> dsv1Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
@@ -293,7 +294,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             /* fromVersion= */ 0L,
             /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
             /* isInitialSnapshot= */ false,
-            dsv1Limits);
+            ScalaUtils.toScalaOption(dsv1Limits));
     List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
     while (deltaChanges.hasNext()) {
       deltaFilesList.add(deltaChanges.next());
@@ -303,7 +304,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv2 SparkMicroBatchStream
     SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
-    Option<DeltaSource.AdmissionLimits> dsv2Limits =
+    Optional<DeltaSource.AdmissionLimits> dsv2Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
 
     try (CloseableIterator<IndexedFile> kernelChanges =
@@ -1058,21 +1059,16 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     }
   }
 
-  private Option<DeltaSource.AdmissionLimits> createAdmissionLimits(
+  private Optional<DeltaSource.AdmissionLimits> createAdmissionLimits(
       DeltaSource deltaSource, Optional<Integer> maxFiles, Optional<Long> maxBytes) {
-    Option<Object> scalaMaxFiles =
-        maxFiles.isPresent() ? Option.apply(maxFiles.get()) : Option.empty();
-    Option<Object> scalaMaxBytes =
-        maxBytes.isPresent() ? Option.apply(maxBytes.get()) : Option.empty();
+    Option<Object> scalaMaxFiles = ScalaUtils.toScalaOption(maxFiles.map(i -> (Object) i));
+    Option<Object> scalaMaxBytes = ScalaUtils.toScalaOption(maxBytes.map(l -> (Object) l));
 
     if (scalaMaxFiles.isEmpty() && scalaMaxBytes.isEmpty()) {
-      return Option.empty();
+      return Optional.empty();
     }
-    return Option.apply(
-        deltaSource
-        .new AdmissionLimits(
-            scalaMaxFiles,
-            scalaMaxBytes.isDefined() ? (Long) scalaMaxBytes.get() : Long.MAX_VALUE));
+    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    return Optional.of(new DeltaSource.AdmissionLimits(options, scalaMaxFiles, scalaMaxBytes));
   }
 
   /** Helper method to create a DeltaSource instance for testing. */
