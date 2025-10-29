@@ -43,20 +43,23 @@ import scala.collection.Iterable;
  * Widening) require more Spark-Kernel integration work.
  */
 public class KernelDeltaWrapper implements DeltaWrapper {
-  private final SerializableKernelRowWrapper protocolWrapper;
-  private final SerializableKernelRowWrapper metadataWrapper;
+  private static final long serialVersionUID = 1L;
 
-  public KernelDeltaWrapper(Protocol protocol, Metadata metadata) {
-    this.protocolWrapper = new SerializableKernelRowWrapper(protocol.toRow());
-    this.metadataWrapper = new SerializableKernelRowWrapper(metadata.toRow());
+  private final SerializableKernelRowWrapper protocol;
+  private final SerializableKernelRowWrapper metadata;
+
+  public KernelDeltaWrapper(
+      SerializableKernelRowWrapper protocol, SerializableKernelRowWrapper metadata) {
+    this.protocol = protocol;
+    this.metadata = metadata;
   }
 
   private Protocol getProtocol() {
-    return Protocol.fromRow(protocolWrapper.getRow());
+    return Protocol.fromRow(protocol.getRow());
   }
 
   private Metadata getMetadata() {
-    return Metadata.fromRow(metadataWrapper.getRow());
+    return Metadata.fromRow(metadata.getRow());
   }
 
   @Override

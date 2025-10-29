@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.read;
 
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.spark.utils.SerializableKernelRowWrapper;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -109,9 +110,10 @@ public class SparkBatch implements Batch {
                 String.valueOf(enableVectorizedReader)));
 
     // Use DeltaParquetFileFormat for Delta-specific features (Column Mapping, DV, Row Tracking)
-    io.delta.kernel.internal.actions.Protocol protocol = snapshot.getProtocol();
-    io.delta.kernel.internal.actions.Metadata metadata = snapshot.getMetadata();
-    DeltaParquetFileFormat fileFormat = new DeltaParquetFileFormat(protocol, metadata);
+    DeltaParquetFileFormat fileFormat =
+        new DeltaParquetFileFormat(
+            new SerializableKernelRowWrapper(snapshot.getProtocol().toRow()),
+            new SerializableKernelRowWrapper(snapshot.getMetadata().toRow()));
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         fileFormat.buildReaderWithPartitionValues(

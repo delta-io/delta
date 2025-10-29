@@ -17,6 +17,7 @@ package io.delta.kernel.spark.read;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.spark.utils.SerializableKernelRowWrapper;
 import org.apache.spark.sql.delta.DeltaParquetFileFormatBase;
 import scala.Option;
 
@@ -37,8 +38,8 @@ import scala.Option;
  */
 public class DeltaParquetFileFormat extends DeltaParquetFileFormatBase {
 
-  private final Protocol protocol;
-  private final Metadata metadata;
+  private final SerializableKernelRowWrapper protocol;
+  private final SerializableKernelRowWrapper metadata;
   private final boolean nullableRowTrackingConstantFields;
   private final boolean nullableRowTrackingGeneratedFields;
   private final boolean optimizationsEnabled;
@@ -51,7 +52,8 @@ public class DeltaParquetFileFormat extends DeltaParquetFileFormatBase {
    * @param protocol Kernel's Protocol
    * @param metadata Kernel's Metadata
    */
-  public DeltaParquetFileFormat(Protocol protocol, Metadata metadata) {
+  public DeltaParquetFileFormat(
+      SerializableKernelRowWrapper protocol, SerializableKernelRowWrapper metadata) {
     this(
         protocol,
         metadata,
@@ -74,8 +76,8 @@ public class DeltaParquetFileFormat extends DeltaParquetFileFormatBase {
    * @param isCDCRead whether this is a CDC read
    */
   public DeltaParquetFileFormat(
-      Protocol protocol,
-      Metadata metadata,
+      SerializableKernelRowWrapper protocol,
+      SerializableKernelRowWrapper metadata,
       boolean nullableRowTrackingConstantFields,
       boolean nullableRowTrackingGeneratedFields,
       boolean optimizationsEnabled,

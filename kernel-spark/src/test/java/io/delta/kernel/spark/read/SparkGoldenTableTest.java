@@ -603,8 +603,7 @@ public class SparkGoldenTableTest extends QueryTest {
             // while Reconstructing
             "deltalog-state-reconstruction-from-checkpoint-missing-protocol",
             // Answer mismatch
-            "dv-partitioned-with-checkpoint",
-            "dv-with-columnmapping");
+            "dv-partitioned-with-checkpoint");
 
     for (String tableName : tableNames) {
       if (unsupportedTables.contains(tableName)) {
