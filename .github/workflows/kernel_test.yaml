@@ -68,6 +68,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
+      - uses: technote-space/get-diff-action@v4
+        id: git-diff
+        with:
+          PATTERNS: |
+            kernel/**
+            project/**
+            connectors/golden-tables/**
+            'storage/**'
+            .github/workflows/kernel_test.yaml
+            build.sbt
+            version.sbt
+            run-tests.py
       - name: install java
         uses: actions/setup-java@v3
         with:
