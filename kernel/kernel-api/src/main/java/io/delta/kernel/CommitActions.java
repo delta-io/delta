@@ -28,9 +28,9 @@ import io.delta.kernel.utils.CloseableIterator;
  * <ul>
  *   <li>Each iterator returned by {@link #getActions()} must be closed after use to release
  *       underlying resources.
- *   <li>The {@code CommitActions} object should be closed correctly
- *   (preferably using try-with-resources) to ensure any resources allocated during construction
- *   are properly released.
+ *   <li>The {@code CommitActions} object should be closed correctly (preferably using
+ *       try-with-resources) to ensure any resources allocated during construction are properly
+ *       released.
  * </ul>
  *
  * <p>Example usage:
