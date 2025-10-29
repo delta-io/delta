@@ -43,21 +43,21 @@ case class CheckDeltaInvariant(
   override def foldable: Boolean = false
   override def nullable: Boolean = true
 
-  private def assertRule(input: InternalRow): Unit = constraint match {
-    case n: NotNull =>
-      if (child.eval(input) == null) {
-        throw DeltaInvariantViolationException(n)
+  private def assertRule(input: InternalRow): Unit = {
+    val result = child.eval(input)
+    if (result == null || result == false) {
+      constraint match {
+        case n: NotNull =>
+          throw DeltaInvariantViolationException(n)
+        case c: Check =>
+          throw DeltaInvariantViolationException(
+            c,
+            columnExtractors.map {
+              case (column, extractor) => column -> extractor.eval(input)
+            }.toMap
+          )
       }
-    case c: Check =>
-      val result = child.eval(input)
-      if (result == null || result == false) {
-        throw DeltaInvariantViolationException(
-          c,
-          columnExtractors.map {
-            case (column, extractor) => column -> extractor.eval(input)
-          }.toMap
-        )
-      }
+    }
   }
 
   override def eval(input: InternalRow): Any = {
@@ -113,21 +113,31 @@ case class CheckDeltaInvariant(
     val invariantField = ctx.addReferenceObj("errMsg", constraint)
     val colListName = ctx.freshName("colList")
     val valListName = ctx.freshName("valList")
+
+    val throwException = constraint match {
+      case _: NotNull =>
+        code"""
+          |throw org.apache.spark.sql.delta.schema.DeltaInvariantViolationException.apply(
+          | $invariantField);
+          |""".stripMargin
+      case _: Check =>
+        code"""
+          |throw org.apache.spark.sql.delta.schema.DeltaInvariantViolationException.apply(
+          |  $invariantField, $colListName, $valListName);
+          |""".stripMargin
+    }
+
     code"""${elementValue.code}
        |
        |if (${elementValue.isNull} || ${elementValue.value} == false) {
        |  ${generateColumnValuesCode(colListName, valListName, ctx)}
-       |  throw org.apache.spark.sql.delta.schema.DeltaInvariantViolationException.apply(
-       |     $invariantField, $colListName, $valListName);
+       |  $throwException
        |}
      """.stripMargin
   }
 
   override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
-    val code = constraint match {
-      case _: NotNull => generateNotNullCode(ctx)
-      case _: Check => generateExpressionValidationCode(ctx)
-    }
+    val code = generateExpressionValidationCode(ctx)
     ev.copy(code = code, isNull = TrueLiteral, value = JavaCode.literal("null", NullType))
   }
 
