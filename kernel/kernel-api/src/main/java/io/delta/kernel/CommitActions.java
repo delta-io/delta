@@ -29,7 +29,7 @@ import io.delta.kernel.utils.CloseableIterator;
  * @since 4.1.0
  */
 @Evolving
-public interface CommitActions {
+public interface CommitActions extends AutoCloseable {
 
   /**
    * Returns the commit version number.
