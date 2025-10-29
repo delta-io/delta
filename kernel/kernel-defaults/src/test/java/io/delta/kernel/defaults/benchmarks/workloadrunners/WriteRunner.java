@@ -47,7 +47,7 @@ import org.openjdk.jmh.infra.Blackhole;
 public class WriteRunner extends WorkloadRunner {
   private final Engine engine;
   private final WriteSpec workloadSpec;
-  private List<List<DataFileStatus>> commit_contents;
+  private List<List<DataFileStatus>> commitContents;
   private Snapshot currentSnapshot;
   private Set<String> initialDeltaLogFiles;
 
@@ -60,7 +60,7 @@ public class WriteRunner extends WorkloadRunner {
   public WriteRunner(WriteSpec workloadSpec, Engine engine) {
     this.workloadSpec = workloadSpec;
     this.engine = engine;
-    this.commit_contents = new ArrayList<>();
+    this.commitContents = new ArrayList<>();
   }
 
   @Override
@@ -75,9 +75,9 @@ public class WriteRunner extends WorkloadRunner {
     initialDeltaLogFiles = captureFileListing();
 
     // Load and parse all commit files
-    this.commit_contents.clear();
+    this.commitContents.clear();
     for (WriteSpec.CommitSpec commitSpec : workloadSpec.getCommits()) {
-      commit_contents.add(
+      commitContents.add(
           commitSpec.readDataFiles(
               workloadSpec.getSpecDirectoryPath(), currentSnapshot.getSchema()));
     }
@@ -108,7 +108,7 @@ public class WriteRunner extends WorkloadRunner {
   @Override
   public void executeAsBenchmark(Blackhole blackhole) throws Exception {
     // Execute all commits in sequence
-    for (List<DataFileStatus> actions : commit_contents) {
+    for (List<DataFileStatus> actions : commitContents) {
       UpdateTableTransactionBuilder txnBuilder =
           currentSnapshot.buildUpdateTableTransaction("Delta-Kernel-Benchmarks", Operation.WRITE);
 
@@ -143,6 +143,9 @@ public class WriteRunner extends WorkloadRunner {
   /** Cleans up the state created during benchmark execution by reverting all committed changes. */
   @Override
   public void cleanup() throws Exception {
+    if (initialDeltaLogFiles == null) {
+      return; // Setup didn't complete, nothing to clean up
+    }
     // Delete any files that weren't present initially
     Set<String> currentFiles = captureFileListing();
     for (String filePath : currentFiles) {
@@ -152,7 +155,7 @@ public class WriteRunner extends WorkloadRunner {
     }
   }
 
-  /** @return a set of all file paths in the the `_delta_log/` directory of the table. */
+  /** @return a set of all file paths in the `_delta_log/` directory of the table. */
   private Set<String> captureFileListing() throws IOException {
     // Construct path prefix for all files in `_delta_log/`. The prefix is for file with name `0`
     // because the filesystem client lists all _sibling_ files in the directory with a path greater
