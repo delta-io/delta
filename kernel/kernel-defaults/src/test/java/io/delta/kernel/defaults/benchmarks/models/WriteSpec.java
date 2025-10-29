@@ -50,11 +50,24 @@ public class WriteSpec extends WorkloadSpec {
    * committed.
    */
   public static class CommitSpec {
+    /**
+     * Container for data file actions (adds) from a commit specification file.
+     *
+     * <p>This class is used to deserialize the JSON structure containing the list of files to add
+     * in a commit.
+     */
     public static class DataFiles {
       @JsonProperty("adds")
       public ArrayList<DataFilesStatusSerde> adds;
     }
 
+    /**
+     * Serialization/deserialization wrapper for {@link DataFileStatus}.
+     *
+     * <p>This class represents the JSON structure for data file metadata, including path, size,
+     * modification time, and optional statistics. It can be converted to a {@link DataFileStatus}
+     * instance for use in Delta Kernel APIs.
+     */
     public static class DataFilesStatusSerde {
       @JsonProperty("path")
       private String path;
@@ -68,6 +81,12 @@ public class WriteSpec extends WorkloadSpec {
       @JsonProperty("stats")
       private String stats;
 
+      /**
+       * Converts this serialization object to a {@link DataFileStatus} instance.
+       *
+       * @param schema the table schema used to parse statistics
+       * @return a DataFileStatus instance with the file metadata
+       */
       public DataFileStatus toDataFileStatus(StructType schema) {
         Optional<DataFileStatistics> parsedStats = Optional.empty();
         if (stats != null) {
