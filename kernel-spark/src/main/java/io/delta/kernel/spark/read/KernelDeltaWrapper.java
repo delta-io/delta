@@ -22,6 +22,7 @@ import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndU
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.spark.utils.SchemaUtils;
+import io.delta.kernel.spark.utils.SerializableKernelRowWrapper;
 import org.apache.spark.sql.delta.DeltaColumnMappingMode;
 import org.apache.spark.sql.delta.DeltaWrapper;
 import org.apache.spark.sql.internal.SQLConf;

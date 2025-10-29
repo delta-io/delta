@@ -62,6 +62,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final scala.collection.immutable.Map<String, String> scalaOptions;
   private final SQLConf sqlConf;
   private final ZoneId zoneId;
+  private final io.delta.kernel.internal.SnapshotImpl snapshot;
 
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
@@ -76,7 +77,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
-      CaseInsensitiveStringMap options) {
+      CaseInsensitiveStringMap options,
+      io.delta.kernel.internal.SnapshotImpl snapshot) {
 
     final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
     this.tablePath =
@@ -89,6 +91,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.options = Objects.requireNonNull(options, "options is null");
+    this.snapshot = Objects.requireNonNull(snapshot, "snapshot is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
@@ -121,7 +124,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataFilters,
         totalBytes,
         scalaOptions,
-        hadoopConf);
+        hadoopConf,
+        snapshot);
   }
 
   @Override

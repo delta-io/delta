@@ -47,11 +47,12 @@ public class SparkScanBuilder
   private StructType requiredDataSchema;
   // pushedKernelPredicates: Predicates that have been pushed down to the Delta Kernel for
   // evaluation.
-  // pushedSparkFilters: The same pushed predicates, but represented using Spark’s {@link Filter}
+  // pushedSparkFilters: The same pushed predicates, but represented using Spark's {@link Filter}
   // API (needed because Spark operates on Filter objects while the Kernel uses Predicate)
   private Predicate[] pushedKernelPredicates;
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
+  private final SnapshotImpl snapshot;
 
   public SparkScanBuilder(
       String tableName,
@@ -60,7 +61,8 @@ public class SparkScanBuilder
       StructType partitionSchema,
       SnapshotImpl snapshot,
       CaseInsensitiveStringMap options) {
-    this.kernelScanBuilder = requireNonNull(snapshot, "snapshot is null").getScanBuilder();
+    this.snapshot = requireNonNull(snapshot, "snapshot is null");
+    this.kernelScanBuilder = this.snapshot.getScanBuilder();
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
@@ -153,7 +155,8 @@ public class SparkScanBuilder
         pushedKernelPredicates,
         dataFilters,
         kernelScanBuilder.build(),
-        options);
+        options,
+        snapshot);
   }
 
   CaseInsensitiveStringMap getOptions() {

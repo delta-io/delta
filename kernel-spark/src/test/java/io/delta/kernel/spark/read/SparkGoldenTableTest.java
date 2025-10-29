@@ -590,8 +590,6 @@ public class SparkGoldenTableTest extends QueryTest {
             "data-reader-escaped-chars",
             "data-reader-timestamp_ntz-id-mode",
             "data-reader-timestamp_ntz-name-mode",
-            "data-skipping-basic-stats-all-types-columnmapping-id",
-            "data-skipping-basic-stats-all-types-columnmapping-name",
             // File delete-re-add-same-file-different-transactions/bar does not exist
             "delete-re-add-same-file-different-transactions",
             // Root node at key schemaString is null but field isn't nullable
