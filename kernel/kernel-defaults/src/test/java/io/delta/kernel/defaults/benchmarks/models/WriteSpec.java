@@ -50,7 +50,7 @@ public class WriteSpec extends WorkloadSpec {
    * <p>This class is used to deserialize the JSON structure containing the list of files to add in
    * a commit.
    */
-  private static class DataFiles {
+  private static class DataFileOperations {
     @JsonProperty("adds")
     private ArrayList<DataFilesStatusSerde> adds;
 
@@ -130,9 +130,9 @@ public class WriteSpec extends WorkloadSpec {
       ObjectMapper mapper = new ObjectMapper();
       String commitFilePath = new Path(specPath, getDataFilesPath()).toString();
 
-      WriteSpec.DataFiles dataFiles =
-          mapper.readValue(new File(commitFilePath), WriteSpec.DataFiles.class);
-      return dataFiles.adds.stream()
+      DataFileOperations dataFileOps =
+          mapper.readValue(new File(commitFilePath), DataFileOperations.class);
+      return dataFileOps.adds.stream()
           .map(file -> file.toDataFileStatus(schema))
           .collect(Collectors.toList());
     }
