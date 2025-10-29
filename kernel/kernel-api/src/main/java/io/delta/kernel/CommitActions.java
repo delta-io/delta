@@ -23,8 +23,31 @@ import io.delta.kernel.utils.CloseableIterator;
 /**
  * Represents all actions from a single commit version in a table.
  *
- * <p><b>Important:</b> Each iterator returned by {@link #getActions()} must be closed after use to
- * release underlying resources.
+ * <p><b>Resource Management:</b>
+ *
+ * <ul>
+ *   <li>Each iterator returned by {@link #getActions()} must be closed after use to release
+ *       underlying resources.
+ *   <li>The {@code CommitActions} object should be closed correctly
+ *   (preferably using try-with-resources) to ensure any resources allocated during construction
+ *   are properly released.
+ * </ul>
+ *
+ * <p>Example usage:
+ *
+ * <pre>{@code
+ * try (CommitActions commitActions = ...) {
+ *   long version = commitActions.getVersion();
+ *   long timestamp = commitActions.getTimestamp();
+ *
+ *   try (CloseableIterator<ColumnarBatch> actions = commitActions.getActions()) {
+ *     while (actions.hasNext()) {
+ *       ColumnarBatch batch = actions.next();
+ *       // process batch
+ *     }
+ *   }
+ * }
+ * }</pre>
  *
  * @since 4.1.0
  */
