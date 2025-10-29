@@ -25,8 +25,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
   val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.75")
-  val unicodeWithVersion = CollationIdentifier.fromString("ICU.UNICODE.74.1")
-  val unicodeWithoutVersion = CollationIdentifier.fromString("ICU.UNICODE")
+  val unicode = CollationIdentifier.fromString("ICU.UNICODE.74.1")
 
   test("check getStatsSchema for supported data types") {
     val testCases = Seq(
@@ -316,11 +315,11 @@ class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
 
     val unicodeStatsSchemas = Seq(
       statsField(
-        unicodeWithVersion.toString,
+        unicode.toString,
         new StructType().add("b", new StringType(utf8Lcase)),
         Seq(StatsSchemaHelper.MAX, StatsSchemaHelper.MIN)),
       statsField(
-        unicodeWithVersion.toString,
+        unicode.toString,
         new StructType().add("b", new StringType(utf8Lcase)),
         Seq(StatsSchemaHelper.MIN, StatsSchemaHelper.MAX)))
 
@@ -341,10 +340,8 @@ class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
       }
 
     val minAUtf8Lcase = collatedStatsCol(utf8Lcase, StatsSchemaHelper.MIN, "a")
-    val maxBUnicodeWithoutVersion =
-      collatedStatsCol(unicodeWithoutVersion, StatsSchemaHelper.MAX, "b")
-    val maxBUnicodeWithVersion = collatedStatsCol(unicodeWithVersion, StatsSchemaHelper.MAX, "b")
-    val minBUnicodeWithVersion = collatedStatsCol(unicodeWithVersion, StatsSchemaHelper.MIN, "b")
+    val maxBUnicode = collatedStatsCol(unicode, StatsSchemaHelper.MAX, "b")
+    val minBUnicode = collatedStatsCol(unicode, StatsSchemaHelper.MIN, "b")
 
     val leftAnd = new DataSkippingPredicate(
       "AND",
@@ -355,22 +352,22 @@ class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
         new java.util.HashSet[Column](java.util.Arrays.asList(minAUtf8Lcase))),
       new DataSkippingPredicate(
         ">",
-        java.util.Arrays.asList[Expression](maxBUnicodeWithoutVersion, literal("ccc")),
-        unicodeWithoutVersion,
-        new java.util.HashSet[Column](java.util.Arrays.asList(maxBUnicodeWithoutVersion))))
+        java.util.Arrays.asList[Expression](maxBUnicode, literal("ccc")),
+        unicode,
+        new java.util.HashSet[Column](java.util.Arrays.asList(maxBUnicode))))
 
     val rightAnd = new DataSkippingPredicate(
       "AND",
       new DataSkippingPredicate(
         ">",
-        java.util.Arrays.asList[Expression](maxBUnicodeWithVersion, literal("bbb")),
-        unicodeWithVersion,
-        new java.util.HashSet[Column](java.util.Arrays.asList(maxBUnicodeWithVersion))),
+        java.util.Arrays.asList[Expression](maxBUnicode, literal("bbb")),
+        unicode,
+        new java.util.HashSet[Column](java.util.Arrays.asList(maxBUnicode))),
       new DataSkippingPredicate(
         "<",
-        java.util.Arrays.asList[Expression](minBUnicodeWithVersion, literal("bbb")),
-        unicodeWithVersion,
-        new java.util.HashSet[Column](java.util.Arrays.asList(minBUnicodeWithVersion))))
+        java.util.Arrays.asList[Expression](minBUnicode, literal("bbb")),
+        unicode,
+        new java.util.HashSet[Column](java.util.Arrays.asList(minBUnicode))))
 
     val predicate = new DataSkippingPredicate(
       "AND",
@@ -467,7 +464,7 @@ class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
         .add(StatsSchemaHelper.MIN, xField, true),
       true)
     val unicodeStatsSchema = new StructField(
-      unicodeWithVersion.toString,
+      unicode.toString,
       new StructType()
         .add(StatsSchemaHelper.MAX, pField, true),
       true)
@@ -485,10 +482,8 @@ class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
         true)
 
     val minXUTF8Lcase = collatedStatsCol(utf8Lcase, StatsSchemaHelper.MIN, "s.x")
-    val maxPUnicodeWithoutVersion =
-      collatedStatsCol(unicodeWithoutVersion, StatsSchemaHelper.MAX, "s.z.p")
-    val maxPUnicodeWithVersion =
-      collatedStatsCol(unicodeWithVersion, StatsSchemaHelper.MAX, "s.z.p")
+    val maxPUnicode =
+      collatedStatsCol(unicode, StatsSchemaHelper.MAX, "s.z.p")
 
     val left = new DataSkippingPredicate(
       "<",
@@ -500,14 +495,14 @@ class StatsSchemaHelperSuite extends AnyFunSuite with TestUtils {
       "AND",
       new DataSkippingPredicate(
         ">",
-        java.util.Arrays.asList[Expression](maxPUnicodeWithoutVersion, literal("t")),
-        unicodeWithoutVersion,
-        new java.util.HashSet[Column](java.util.Arrays.asList(maxPUnicodeWithoutVersion))),
+        java.util.Arrays.asList[Expression](maxPUnicode, literal("t")),
+        unicode,
+        new java.util.HashSet[Column](java.util.Arrays.asList(maxPUnicode))),
       new DataSkippingPredicate(
         ">",
-        java.util.Arrays.asList[Expression](maxPUnicodeWithVersion, literal("s")),
-        unicodeWithVersion,
-        new java.util.HashSet[Column](java.util.Arrays.asList(maxPUnicodeWithVersion))))
+        java.util.Arrays.asList[Expression](maxPUnicode, literal("s")),
+        unicode,
+        new java.util.HashSet[Column](java.util.Arrays.asList(maxPUnicode))))
 
     val predicate = new DataSkippingPredicate("AND", left, right)
 
