@@ -84,16 +84,14 @@ public class DataSkippingPredicate extends Predicate {
     }
 
     for (Expression child : children) {
-      if (child instanceof Predicate) {
-        if (child instanceof DataSkippingPredicate) {
-          referencedCollations.addAll(((DataSkippingPredicate) child).getReferencedCollations());
-        } else {
-          throw new IllegalStateException(
-              String.format(
-                  "Expected child Predicate of DataSkippingPredicate to also be a"
-                      + " DataSkippingPredicate, but found %s",
-                  child.getClass().getName()));
-        }
+      if (child instanceof DataSkippingPredicate) {
+        referencedCollations.addAll(((DataSkippingPredicate) child).getReferencedCollations());
+      } else if (child instanceof Predicate) {
+        throw new IllegalStateException(
+            String.format(
+                "Expected child Predicate of DataSkippingPredicate to be an instance of" +
+                        " DataSkippingPredicate but found: %s",
+                child, this));
       }
     }
     return referencedCollations;
