@@ -74,7 +74,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
   /**
    * Iterator over ActionWrappers. The first call to {@link #getActions()} uses this iterator which
    * was created during construction (to extract metadata). Subsequent calls lazily create new
-   * iterators.
+   * iterators, by constructing an ActionsIterator which does not open the file.
    */
   private CloseableIterator<ActionWrapper> iterator;
 
@@ -175,6 +175,7 @@ public class CommitActionsImpl implements CommitActions, AutoCloseable {
                     tablePath,
                     shouldDropProtocolColumn,
                     shouldDropCommitInfoColumn));
+    // Constructing an ActionsIterator does not open the file.
     iterator =
         new ActionsIterator(
             engine, Collections.singletonList(commitFile), readSchema, Optional.empty());
