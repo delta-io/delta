@@ -337,9 +337,9 @@ public class StatsSchemaHelper {
       if (collationIdentifier.getVersion().isEmpty()) {
         throw new IllegalStateException(
             String.format(
-                "Invalid collation stats column %s: collation identifier %s does not" +
-                        " have a version",
-                    column, collationIdentifier));
+                "Invalid collation stats column %s: collation identifier %s does not"
+                    + " have a version",
+                column, collationIdentifier));
       }
 
       DataType dataType =
