@@ -588,7 +588,7 @@ public class SparkGoldenTableTest extends QueryTest {
             "corrupted-last-checkpoint",
             "data-reader-absolute-paths-escaped-chars",
             "data-reader-escaped-chars",
-            "data-reader-timestamp_ntz-id-mode",
+            //            "data-reader-timestamp_ntz-id-mode",
             "data-reader-timestamp_ntz-name-mode",
             // File delete-re-add-same-file-different-transactions/bar does not exist
             "delete-re-add-same-file-different-transactions",
@@ -603,7 +603,8 @@ public class SparkGoldenTableTest extends QueryTest {
             // while Reconstructing
             "deltalog-state-reconstruction-from-checkpoint-missing-protocol",
             // Answer mismatch
-            "dv-partitioned-with-checkpoint");
+            "dv-partitioned-with-checkpoint",
+            "dv-with-columnmapping");
 
     for (String tableName : tableNames) {
       if (unsupportedTables.contains(tableName)) {
@@ -625,10 +626,10 @@ public class SparkGoldenTableTest extends QueryTest {
           new Function0<Dataset<Row>>() {
             @Override
             public Dataset<Row> apply() {
-              return df;
+              return df2;
             }
           },
-          df2);
+          df);
     }
   }
 

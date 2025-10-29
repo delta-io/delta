@@ -176,10 +176,17 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
     final Object[] values = new Object[numPartCols];
 
-    // Build field name -> index map once
-    final Map<String, Integer> fieldIndex = new HashMap<>(numPartCols);
+    // Build physical name -> index map.
+    // In column mapping mode, partitionValues keys use physical names, not logical names.
+    // Physical name is stored in field metadata under "delta.columnMapping.physicalName".
+    final Map<String, Integer> physicalNameIndex = new HashMap<>(numPartCols);
     for (int i = 0; i < numPartCols; i++) {
-      fieldIndex.put(partitionSchema.fields()[i].name(), i);
+      StructField field = partitionSchema.fields()[i];
+      String physicalName = field.name(); // Default to logical name
+      if (field.metadata().contains("delta.columnMapping.physicalName")) {
+        physicalName = field.metadata().getString("delta.columnMapping.physicalName");
+      }
+      physicalNameIndex.put(physicalName, i);
       values[i] = null;
     }
 
@@ -187,7 +194,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     for (int idx = 0; idx < partitionValues.getSize(); idx++) {
       final String key = partitionValues.getKeys().getString(idx);
       final String strVal = partitionValues.getValues().getString(idx);
-      final Integer pos = fieldIndex.get(key);
+      final Integer pos = physicalNameIndex.get(key);
       if (pos != null) {
         final StructField field = partitionSchema.fields()[pos];
         values[pos] =

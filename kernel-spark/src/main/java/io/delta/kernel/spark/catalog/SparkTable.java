@@ -28,6 +28,7 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -81,7 +82,7 @@ public class SparkTable implements Table, SupportsRead {
             io.delta.kernel.TableManager.loadSnapshot(tablePath)
                 .build(io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf));
 
-    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    StructType baseSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.partColNames =
         Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
 
@@ -90,7 +91,7 @@ public class SparkTable implements Table, SupportsRead {
 
     // Build a map for O(1) field lookups to improve performance
     Map<String, StructField> fieldMap = new HashMap<>();
-    for (StructField field : schema.fields()) {
+    for (StructField field : baseSchema.fields()) {
       fieldMap.put(field.name(), field);
     }
 
@@ -107,13 +108,23 @@ public class SparkTable implements Table, SupportsRead {
 
     // Add remaining fields as data fields (non-partition columns)
     // These are fields that exist in the schema but are not partition columns
-    for (StructField field : schema.fields()) {
+    for (StructField field : baseSchema.fields()) {
       if (!partColNames.contains(field.name())) {
         dataFields.add(field);
       }
     }
+
+    // dataSchema and partitionSchema are used internally and MUST preserve column mapping metadata
+    // for DeltaParquetFileFormat to work correctly (especially in ID/Name mapping mode)
     this.dataSchema = new StructType(dataFields.toArray(new StructField[0]));
     this.partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
+
+    // Only clean metadata for the public-facing schema (returned by schema())
+    // to match DeltaTableV2 behavior
+    this.schema =
+        DeltaTableUtils.removeInternalDeltaMetadata(
+            SparkSession.active(),
+            DeltaTableUtils.removeInternalWriterMetadata(SparkSession.active(), baseSchema));
 
     this.columns = CatalogV2Util.structTypeToV2Columns(schema);
     this.partitionTransforms =
@@ -139,7 +150,7 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public StructType schema() {
-    return schema;
+    return DeltaTableUtils.removeInternalWriterMetadata(SparkSession.active(), schema);
   }
 
   @Override
