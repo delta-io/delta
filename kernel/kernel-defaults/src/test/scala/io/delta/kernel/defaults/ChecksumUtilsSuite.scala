@@ -25,6 +25,7 @@ import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.checksum.ChecksumUtils
 import io.delta.kernel.internal.util.ManualClock
+import io.delta.kernel.test.DeltaKernelTestUtils.OptimisticTxnTestHelper
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
