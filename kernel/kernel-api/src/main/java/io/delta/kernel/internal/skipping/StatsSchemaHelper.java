@@ -301,25 +301,42 @@ public class StatsSchemaHelper {
 
   /**
    * Given a data schema and a set of collation identifiers returns the expected schema for
-   * collation-aware statistics columns. This means 1) replace logical names with physical names 2)
-   * set nullable=true 3) only keep collated-stats eligible fields (`StringType` fields)
+   * collation-aware statistics columns.
    */
   private static StructType getCollatedStatsSchema(
       StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
     StructType statsWithCollation = new StructType();
-    StructType collatedMinMaxStatsSchema = getMinMaxStatsSchema(dataSchema, true);
+    StructType collationAwareFields = getCollationAwareFields(dataSchema);
     for (CollationIdentifier collationIdentifier : collationIdentifiers) {
-      if (collatedMinMaxStatsSchema.length() > 0) {
+      if (collationAwareFields.length() > 0) {
         statsWithCollation =
             statsWithCollation.add(
                 collationIdentifier.toString(),
                 new StructType()
-                    .add(MIN, collatedMinMaxStatsSchema, true)
-                    .add(MAX, collatedMinMaxStatsSchema, true),
+                    .add(MIN, collationAwareFields, true)
+                    .add(MAX, collationAwareFields, true),
                 true);
       }
     }
     return statsWithCollation;
+  }
+
+  /** Given a data schema returns its collation aware fields. */
+  private static StructType getCollationAwareFields(StructType dataSchema) {
+    StructType collationAwareFields = new StructType();
+    for (StructField field : dataSchema.fields()) {
+      DataType dataType = field.getDataType();
+      if (dataType instanceof StructType) {
+        StructType nestedCollationAwareFields = getCollationAwareFields((StructType) dataType);
+        if (nestedCollationAwareFields.length() > 0) {
+          collationAwareFields =
+              collationAwareFields.add(getPhysicalName(field), nestedCollationAwareFields, true);
+        }
+      } else if (dataType instanceof StringType) {
+        collationAwareFields = collationAwareFields.add(getPhysicalName(field), dataType, true);
+      }
+    }
+    return collationAwareFields;
   }
 
   /**

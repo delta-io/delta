@@ -22,8 +22,10 @@ import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, Coll
 import org.scalatest.funsuite.AnyFunSuite
 
 class StatsSchemaHelperSuite extends AnyFunSuite {
-  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
-  val unicode = CollationIdentifier.fromString("ICU.UNICODE")
+  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
+  val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+  val utf8LcaseString = new StringType(utf8Lcase)
+  val unicodeString = new StringType(unicode)
 
   test("check getStatsSchema for supported data types") {
     val testCases = Seq(
@@ -126,15 +128,21 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
           .add(StatsSchemaHelper.MIN, new StructType().add("k", new DecimalType(20, 5), true), true)
           .add(StatsSchemaHelper.MAX, new StructType().add("k", new DecimalType(20, 5), true), true)
           .add(StatsSchemaHelper.NULL_COUNT, new StructType().add("k", LongType.LONG, true), true)
+          .add(StatsSchemaHelper.TIGHT_BOUNDS, BooleanType.BOOLEAN, true)),
+      (
+        new StructType().add("b", utf8LcaseString),
+        new StructType()
+          .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
+          .add(StatsSchemaHelper.MIN, new StructType().add("b", utf8LcaseString, true), true)
+          .add(StatsSchemaHelper.MAX, new StructType().add("b", utf8LcaseString, true), true)
+          .add(StatsSchemaHelper.NULL_COUNT, new StructType().add("b", LongType.LONG, true), true)
           .add(StatsSchemaHelper.TIGHT_BOUNDS, BooleanType.BOOLEAN, true)))
 
     testCases.foreach { case (dataSchema, expectedStatsSchema) =>
       val statsSchema = StatsSchemaHelper.getStatsSchema(
         dataSchema,
         Set.empty[CollationIdentifier].asJava)
-      assert(
-        statsSchema == expectedStatsSchema,
-        s"Stats schema mismatch for data schema: $dataSchema")
+      assert(statsSchema == expectedStatsSchema)
     }
   }
 
@@ -262,10 +270,12 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
       .add("a", StringType.STRING)
       .add("b", IntegerType.INTEGER)
       .add("c", BinaryType.BINARY)
+      .add("d", unicodeString)
 
     val collations = Set(utf8Lcase)
 
-    val expectedCollatedMinMax = new StructType().add("a", StringType.STRING, true)
+    val expectedCollatedMinMax = new StructType()
+      .add("a", StringType.STRING, true).add("d", unicodeString, true)
 
     val expectedStatsSchema = new StructType()
       .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
@@ -273,20 +283,23 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
         StatsSchemaHelper.MIN,
         new StructType()
           .add("a", StringType.STRING, true)
-          .add("b", IntegerType.INTEGER, true),
+          .add("b", IntegerType.INTEGER, true)
+          .add("d", unicodeString, true),
         true)
       .add(
         StatsSchemaHelper.MAX,
         new StructType()
           .add("a", StringType.STRING, true)
-          .add("b", IntegerType.INTEGER, true),
+          .add("b", IntegerType.INTEGER, true)
+          .add("d", unicodeString, true),
         true)
       .add(
         StatsSchemaHelper.NULL_COUNT,
         new StructType()
           .add("a", LongType.LONG, true)
           .add("b", LongType.LONG, true)
-          .add("c", LongType.LONG, true),
+          .add("c", LongType.LONG, true)
+          .add("d", LongType.LONG, true),
         true)
       .add(StatsSchemaHelper.TIGHT_BOUNDS, BooleanType.BOOLEAN, true)
       .add(

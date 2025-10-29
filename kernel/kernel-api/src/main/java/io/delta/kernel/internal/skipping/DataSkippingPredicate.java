@@ -89,12 +89,12 @@ public class DataSkippingPredicate extends Predicate {
       } else if (child instanceof Predicate) {
         throw new IllegalStateException(
             String.format(
-                "Expected child Predicate of DataSkippingPredicate to be an instance of" +
-                        " DataSkippingPredicate but found: %s",
+                "Expected child Predicate of DataSkippingPredicate to be an instance of"
+                    + " DataSkippingPredicate but found: %s",
                 child, this));
       }
     }
-    return referencedCollations;
+    return Collections.unmodifiableSet(referencedCollations);
   }
 
   /** @return an unmodifiable set containing all elements from both sets. */
