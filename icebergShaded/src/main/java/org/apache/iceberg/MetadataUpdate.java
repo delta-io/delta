@@ -112,10 +112,12 @@ public interface MetadataUpdate extends Serializable {
       return schema;
     }
 
+    // HACK-HACK This is modified
     public int lastColumnId() {
       return lastColumnId;
     }
 
+    // HACK-HACK This is modified
     @Override
     public void applyTo(TableMetadata.Builder metadataBuilder) {
       metadataBuilder.addSchema(schema, lastColumnId);

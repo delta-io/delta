@@ -198,7 +198,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
       }
     }
     TableMetadata adjustedMetadata = builder.build();
-    // This is newly added
+    // HACK-HACK This is modified
     String newMetadataLocation = writeNewMetadataIfRequired(newTable, adjustedMetadata);
     boolean hiveEngineEnabled = hiveEngineEnabled(metadata, conf);
     boolean keepHiveStats = conf.getBoolean(ConfigProperties.KEEP_HIVE_STATS, false);

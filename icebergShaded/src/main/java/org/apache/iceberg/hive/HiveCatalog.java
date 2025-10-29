@@ -97,11 +97,12 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
   private boolean listAllTables = false;
   private Map<String, String> catalogProperties;
 
+  // HACK-HACK This is newly added
   private List<MetadataUpdate> metadataUpdates = new ArrayList();
 
   public HiveCatalog() {}
 
-  // HACK-HACK
+  // HACK-HACK This is newly added
   public void initialize(String inputName, Map<String, String> properties, List<MetadataUpdate> metadataUpdates) {
     initialize(inputName, properties);
     this.metadataUpdates = metadataUpdates;
@@ -446,6 +447,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     String tableName = baseTableIdentifier.name();
     try {
       Table table = clients.run(client -> client.getTable(database, tableName));
+      // HACK-HACK This is modified
       validateTableIsIceberg(table, fullTableName(name, baseTableIdentifier));
       return true;
     } catch (NoSuchTableException | NoSuchObjectException e) {
@@ -459,7 +461,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     }
   }
 
-  // HACK-HACK
+  // HACK-HACK This is added
   private void validateTableIsIceberg(Table table, String fullName) {
     HiveOperationsBase.validateTableIsIceberg(table, fullName);
     String metadataLocation = table.getParameters().get(BaseMetastoreTableOperations.METADATA_LOCATION_PROP);
@@ -709,7 +711,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
   public TableOperations newTableOps(TableIdentifier tableIdentifier) {
     String dbName = tableIdentifier.namespace().level(0);
     String tableName = tableIdentifier.name();
-    // HACK-HACK
+    // HACK-HACK This is modified
     return new HiveTableOperations(conf, clients, fileIO, name, dbName, tableName, metadataUpdates);
   }
 
