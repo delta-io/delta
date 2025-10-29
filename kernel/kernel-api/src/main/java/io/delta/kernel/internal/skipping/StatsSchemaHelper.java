@@ -330,11 +330,16 @@ public class StatsSchemaHelper {
       CollationIdentifier collationIdentifier = collationAndColumn._1;
       Column column = collationAndColumn._2;
 
-      if (collationIdentifier.isSparkUTF8BinaryCollation()
-          || collationIdentifier.getVersion().isEmpty()) {
-        // SPARK_UTF8_BINARY uses binary stats. Also, we can't do skipping for a collation without
-        // a version since we don't know which version to use.
+      if (collationIdentifier.isSparkUTF8BinaryCollation()) {
+        // SPARK_UTF8_BINARY uses binary stats.
         continue;
+      }
+      if (collationIdentifier.getVersion().isEmpty()) {
+        throw new IllegalStateException(
+            String.format(
+                "Invalid collation stats column %s: collation identifier %s does not" +
+                        " have a version",
+                    column, collationIdentifier));
       }
 
       DataType dataType =
