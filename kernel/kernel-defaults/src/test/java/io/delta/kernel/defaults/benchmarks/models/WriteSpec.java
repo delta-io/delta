@@ -16,6 +16,7 @@
 
 package io.delta.kernel.defaults.benchmarks.models;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.defaults.benchmarks.workloadrunners.WorkloadRunner;
@@ -44,58 +45,64 @@ import java.util.stream.Collectors;
 public class WriteSpec extends WorkloadSpec {
 
   /**
+   * Container for data file actions (adds) from a commit specification file.
+   *
+   * <p>This class is used to deserialize the JSON structure containing the list of files to add in
+   * a commit.
+   */
+  private static class DataFiles {
+    @JsonProperty("adds")
+    private ArrayList<DataFilesStatusSerde> adds;
+
+    /** @return the list of added data files in this commit. */
+    @JsonIgnore
+    public ArrayList<DataFilesStatusSerde> getAdds() {
+      return adds;
+    }
+  }
+
+  /**
+   * Serialization/deserialization wrapper for {@link DataFileStatus}.
+   *
+   * <p>This class represents the JSON structure for data file metadata, including path, size,
+   * modification time, and optional statistics. It can be converted to a {@link DataFileStatus}
+   * instance for use in Delta Kernel APIs.
+   */
+  private static class DataFilesStatusSerde {
+    @JsonProperty("path")
+    private String path;
+
+    @JsonProperty("size")
+    private long size;
+
+    @JsonProperty("modification_time")
+    private long modificationTime;
+
+    @JsonProperty("stats")
+    private String stats;
+
+    /**
+     * Converts this serialization object to a {@link DataFileStatus} instance.
+     *
+     * @param schema the table schema used to parse statistics
+     * @return a DataFileStatus instance with the file metadata
+     */
+    public DataFileStatus toDataFileStatus(StructType schema) {
+      Optional<DataFileStatistics> parsedStats = Optional.empty();
+      if (stats != null) {
+        parsedStats = DataFileStatistics.deserializeFromJson(stats, schema);
+      }
+      return new DataFileStatus(path, size, modificationTime, parsedStats);
+    }
+  }
+
+  /**
    * Container for a single commit's configuration.
    *
    * <p>Each commit references a file containing the Delta log JSON actions (add/remove files) to be
    * committed.
    */
   public static class CommitSpec {
-    /**
-     * Container for data file actions (adds) from a commit specification file.
-     *
-     * <p>This class is used to deserialize the JSON structure containing the list of files to add
-     * in a commit.
-     */
-    public static class DataFiles {
-      @JsonProperty("adds")
-      public ArrayList<DataFilesStatusSerde> adds;
-    }
-
-    /**
-     * Serialization/deserialization wrapper for {@link DataFileStatus}.
-     *
-     * <p>This class represents the JSON structure for data file metadata, including path, size,
-     * modification time, and optional statistics. It can be converted to a {@link DataFileStatus}
-     * instance for use in Delta Kernel APIs.
-     */
-    public static class DataFilesStatusSerde {
-      @JsonProperty("path")
-      private String path;
-
-      @JsonProperty("size")
-      private long size;
-
-      @JsonProperty("modification_time")
-      private long modificationTime;
-
-      @JsonProperty("stats")
-      private String stats;
-
-      /**
-       * Converts this serialization object to a {@link DataFileStatus} instance.
-       *
-       * @param schema the table schema used to parse statistics
-       * @return a DataFileStatus instance with the file metadata
-       */
-      public DataFileStatus toDataFileStatus(StructType schema) {
-        Optional<DataFileStatistics> parsedStats = Optional.empty();
-        if (stats != null) {
-          parsedStats = DataFileStatistics.deserializeFromJson(stats, schema);
-        }
-        return new DataFileStatus(path, size, modificationTime, parsedStats);
-      }
-    }
-
     /**
      * Path to the commit file containing Delta log JSON actions. The path is relative to the spec
      * directory (where spec.json is located).
@@ -123,8 +130,8 @@ public class WriteSpec extends WorkloadSpec {
       ObjectMapper mapper = new ObjectMapper();
       String commitFilePath = new Path(specPath, getDataFilesPath()).toString();
 
-      WriteSpec.CommitSpec.DataFiles dataFiles =
-          mapper.readValue(new File(commitFilePath), WriteSpec.CommitSpec.DataFiles.class);
+      WriteSpec.DataFiles dataFiles =
+          mapper.readValue(new File(commitFilePath), WriteSpec.DataFiles.class);
       return dataFiles.adds.stream()
           .map(file -> file.toDataFileStatus(schema))
           .collect(Collectors.toList());
