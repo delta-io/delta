@@ -102,8 +102,8 @@ public class WorkloadBenchmark<T> {
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
             .forks(1)
-            .warmupIterations(3)
-            .measurementIterations(5)
+            .warmupIterations(3) // Proper warmup for production benchmarks
+            .measurementIterations(5) // Proper measurement iterations for production benchmarks
             .warmupTime(TimeValue.seconds(1))
             .measurementTime(TimeValue.seconds(1))
             .addProfiler(KernelMetricsProfiler.class)

@@ -98,6 +98,11 @@ public class ReadMetadataRunner extends WorkloadRunner {
     }
   }
 
+  @Override
+  public void cleanup() throws Exception {
+    /* This is a read-only workload; no cleanup necessary. */
+  }
+
   /**
    * Executes the read_metadata workload, returning an iterator over the results. This must be fully
    * consumed by the caller to ensure the workload is fully executed.

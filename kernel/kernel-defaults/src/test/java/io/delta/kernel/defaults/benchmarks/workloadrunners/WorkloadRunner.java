@@ -70,9 +70,7 @@ public abstract class WorkloadRunner {
    *
    * @throws Exception if any error occurs during cleanup.
    */
-  public void cleanup() throws Exception {
-    // Default implementation is no-op
-  }
+  public abstract void cleanup() throws Exception;
 
   // TODO: Add executeAsTest() method for correctness validation
   // public abstract void executeAsTest() throws Exception;
