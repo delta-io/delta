@@ -229,18 +229,11 @@ public class SchemaUtils {
                     convertKernelFieldMetadataToSparkMetadata(
                         (io.delta.kernel.types.FieldMetadata) value));
               } else if (value instanceof Long[]) {
-                builder.putLongArray(
-                    key, Arrays.stream((Long[]) value).mapToLong(l -> l).toArray());
+                builder.putLongArray(key, unboxLongArray((Long[]) value, key));
               } else if (value instanceof Double[]) {
-                builder.putDoubleArray(
-                    key, Arrays.stream((Double[]) value).mapToDouble(d -> d).toArray());
+                builder.putDoubleArray(key, unboxDoubleArray((Double[]) value, key));
               } else if (value instanceof Boolean[]) {
-                Boolean[] valArray = (Boolean[]) value;
-                boolean[] booleanArray = new boolean[valArray.length];
-                for (int i = 0; i < valArray.length; i++) {
-                  booleanArray[i] = valArray[i];
-                }
-                builder.putBooleanArray(key, booleanArray);
+                builder.putBooleanArray(key, unboxBooleanArray((Boolean[]) value, key));
               } else if (value instanceof String[]) {
                 builder.putStringArray(key, (String[]) value);
               } else if (value instanceof io.delta.kernel.types.FieldMetadata[]) {
@@ -321,5 +314,53 @@ public class SchemaUtils {
               }
             });
     return builder.build();
+  }
+
+  /**
+   * Unboxes a Long[] to long[], checking for nulls.
+   *
+   * @throws NullPointerException if any element is null
+   */
+  private static long[] unboxLongArray(Long[] boxedArray, String key) {
+    long[] primitiveArray = new long[boxedArray.length];
+    for (int i = 0; i < boxedArray.length; i++) {
+      requireNonNull(
+          boxedArray[i],
+          String.format("Null element at index %s in Long array for key '%s'", i, key));
+      primitiveArray[i] = boxedArray[i];
+    }
+    return primitiveArray;
+  }
+
+  /**
+   * Unboxes a Double[] to double[], checking for nulls.
+   *
+   * @throws NullPointerException if any element is null
+   */
+  private static double[] unboxDoubleArray(Double[] boxedArray, String key) {
+    double[] primitiveArray = new double[boxedArray.length];
+    for (int i = 0; i < boxedArray.length; i++) {
+      requireNonNull(
+          boxedArray[i],
+          String.format("Null element at index %s in Double array for key '%s'", i, key));
+      primitiveArray[i] = boxedArray[i];
+    }
+    return primitiveArray;
+  }
+
+  /**
+   * Unboxes a Boolean[] to boolean[], checking for nulls.
+   *
+   * @throws NullPointerException if any element is null
+   */
+  private static boolean[] unboxBooleanArray(Boolean[] boxedArray, String key) {
+    boolean[] primitiveArray = new boolean[boxedArray.length];
+    for (int i = 0; i < boxedArray.length; i++) {
+      requireNonNull(
+          boxedArray[i],
+          String.format("Null element at index %s in Boolean array for key '%s'", i, key));
+      primitiveArray[i] = boxedArray[i];
+    }
+    return primitiveArray;
   }
 }

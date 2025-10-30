@@ -17,6 +17,8 @@
 package io.delta.kernel.spark.utils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BinaryType;
@@ -164,6 +166,35 @@ public class SchemaUtilsTest {
     org.apache.spark.sql.types.StructType actualSparkSchema =
         SchemaUtils.convertKernelSchemaToSparkSchema(kernelSchema);
     assertEquals(expectedSparkSchema, actualSparkSchema);
+  }
+
+  static Stream<Arguments> nullInPrimitiveArraysProvider() {
+    return Stream.of(
+        Arguments.of(
+            "Long",
+            FieldMetadata.builder().putLongArray("ids", new Long[] {1L, null, 3L}).build(),
+            1),
+        Arguments.of(
+            "Double",
+            FieldMetadata.builder().putDoubleArray("scores", new Double[] {1.1, 2.2, null}).build(),
+            2),
+        Arguments.of(
+            "Boolean",
+            FieldMetadata.builder()
+                .putBooleanArray("flags", new Boolean[] {true, null, false})
+                .build(),
+            1));
+  }
+
+  @ParameterizedTest(name = "{0} array with null at index {2}")
+  @MethodSource("nullInPrimitiveArraysProvider")
+  public void testNullInPrimitiveArrays(
+      String typeName, FieldMetadata kernelMetadata, int expectedNullIndex) {
+    Exception ex =
+        assertThrows(
+            Exception.class,
+            () -> SchemaUtils.convertKernelFieldMetadataToSparkMetadata(kernelMetadata));
+    assertTrue(ex.getMessage().contains("Null element at index " + expectedNullIndex));
   }
 
   @Test
