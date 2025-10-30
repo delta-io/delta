@@ -105,4 +105,22 @@ public interface CommitRange {
    */
   CloseableIterator<ColumnarBatch> getActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet);
+
+  /**
+   * Returns an iterator of commits in this commit range, where each commit is represented as a
+   * {@link CommitActions} object.
+   *
+   * @param engine the {@link Engine} to use for reading the Delta log files
+   * @param startSnapshot the snapshot for startVersion, required to ensure the table is readable by
+   *     Kernel at startVersion
+   * @param actionSet the set of action types to include in the results. Only actions of these types
+   *     will be returned in each commit's actions iterator
+   * @return a {@link CloseableIterator} over {@link CommitActions}, one per commit version in this
+   *     range
+   * @throws IllegalArgumentException if startSnapshot.getVersion() != startVersion
+   * @throws KernelException if the version range contains a version with reader protocol that is
+   *     unsupported by Kernel
+   */
+  CloseableIterator<CommitActions> getCommitActions(
+      Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet);
 }

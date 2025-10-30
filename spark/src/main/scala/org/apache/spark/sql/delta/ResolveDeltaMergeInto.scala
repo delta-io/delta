@@ -77,172 +77,29 @@ object ResolveDeltaMergeInto {
     resolveOrFail(resolveExprsFn, Seq(expr), plansToResolveExpr, mergeClauseTypeStr).head
   }
 
-  def resolveReferencesAndSchema(
-      merge: DeltaMergeInto,
-      conf: SQLConf)(resolveExprsFn: ResolveExpressionsFn): DeltaMergeInto = {
-    val DeltaMergeInto(
-      target,
-      source,
-      condition,
-      matchedClauses,
-      notMatchedClauses,
-      notMatchedBySourceClauses,
-      withSchemaEvolution,
-      _) = merge
-
-    val canEvolveSchema =
-      withSchemaEvolution || conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
-
-    val mergeActionResolver =
-      if (conf.getConf(DeltaSQLConf.DELTA_MERGE_ANALYSIS_BATCH_RESOLUTION)) {
-        new BatchedDeltaMergeActionResolver(target, source, conf, resolveExprsFn)
-      } else {
-        new IndividualDeltaMergeActionResolver(target, source, conf, resolveExprsFn)
-      }
-    /**
-     * Resolves a clause using the given plans (used for resolving the action exprs) and
-     * returns the resolved clause.
-     */
-    def resolveClause[T <: DeltaMergeIntoClause](
-        clause: T,
-        plansToResolveAction: Seq[LogicalPlan]): T = {
-
-      /*
-       * Returns the sequence of [[DeltaMergeActions]] corresponding to
-       * [ `columnName = sourceColumnBySameName` ] for every column name in the schema. Nested
-       * columns are unfolded to create an assignment for each leaf.
-       *
-       * @param currSchema: schema to generate DeltaMergeAction for every 'leaf'
-       * @param qualifier: used to recurse to leaves; represents the qualifier of the current schema
-       * @return seq of DeltaMergeActions corresponding to columnName = sourceColumnName updates
-       */
-      def getActions(currSchema: StructType, qualifier: Seq[String] = Nil): Seq[DeltaMergeAction] =
-        currSchema.flatMap {
-          case StructField(name, struct: StructType, _, _) =>
-            getActions(struct, qualifier :+ name)
-          case StructField(name, _, _, _) =>
-            val nameParts = qualifier :+ name
-            val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
-              // if we use getActions to expand target columns, this will fail on target columns not
-              // present in the source
-              throw new DeltaIllegalArgumentException(
-                errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
-                messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
-              )
-            }
-            Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
-        }
-
-      val clauseType = clause.clauseType.toUpperCase(Locale.ROOT)
-      val mergeClauseTypeStr = s"$clauseType clause"
-
-      // We split the actions of a clause (expressions) into two mutually exclusive groups:
-      // 1) DeltaMergeActions and 2) everything else (UnresolvedStar).
-      // The DeltaMergeActions can be resolved already or unresolved at this point.
-      // Unresolved DeltaMergeActions correspond to actions like
-      // `UPDATE SET x = a, y = b` or `INSERT (x, y) VALUES (a, b)`
-      // By the end of this function, every action needs to be transformed into
-      // a resolved DeltaMergeAction. We handle the DeltaMergeActions separately in
-      // [[DeltaMergeActionResolver]] as we have different strategies to
-      // enable better analysis performance.
-      val (deltaMergeActions, allOtherExpressions) = clause.actions.partition {
-        case _: DeltaMergeAction => true
-        case _ => false
-      }
-      assert(
-        deltaMergeActions.isEmpty || allOtherExpressions.isEmpty,
-        s"Cannot have DeltaMergeActions combined with other expressions in a $mergeClauseTypeStr")
-
-      val shouldTryUnresolvedTargetExprOnSource = clause match {
-        case _: DeltaMergeIntoMatchedUpdateClause |
-             _: DeltaMergeIntoNotMatchedClause => canEvolveSchema
-        case _ => false
-      }
-      val resolvedDeltaMergeActions: Seq[DeltaMergeAction] = mergeActionResolver.resolve(
-        mergeClauseTypeStr,
-        plansToResolveAction,
-        shouldTryUnresolvedTargetExprOnSource,
-        deltaMergeActions.map(_.asInstanceOf[DeltaMergeAction])
-      )
-
-      val resolvedOtherExpressions: Seq[DeltaMergeAction] = allOtherExpressions.flatMap { action =>
-        action match {
-          // For actions like `UPDATE SET *` or `INSERT *`
-          case _: UnresolvedStar if !canEvolveSchema =>
-            // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every target
-            // column name. The target columns do not need resolution. The right hand side
-            // expression (i.e. sourceColumnBySameName) needs to be resolved only by the source
-            // plan.
-            val unresolvedExprs = target.output.map { attr =>
-              UnresolvedAttribute.quotedString(s"`${attr.name}`")
-            }
-            val resolvedExprs = resolveOrFail(
-              resolveExprsFn = resolveExprsFn,
-              exprs = unresolvedExprs,
-              plansToResolveExprs = Seq(source),
-              mergeClauseTypeStr = mergeClauseTypeStr)
-            (resolvedExprs, target.output.map(_.name))
-              .zipped
-              .map { (resolvedExpr, targetColName) =>
-                DeltaMergeAction(Seq(targetColName), resolvedExpr, targetColNameResolved = true)
-              }
-          case _: UnresolvedStar if canEvolveSchema =>
-            clause match {
-              case _: DeltaMergeIntoNotMatchedInsertClause =>
-                // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
-                // column name. Target columns not present in the source will be filled in
-                // with null later.
-                source.output.map { attr =>
-                  DeltaMergeAction(Seq(attr.name), attr, targetColNameResolved = true)
-                }
-              case _: DeltaMergeIntoMatchedUpdateClause =>
-                // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
-                // column name. Target columns not present in the source will be filled in with
-                // no-op actions later.
-                // Nested columns are unfolded to accommodate the case where a source struct has a
-                // subset of the nested columns in the target. If a source struct (a, b) is writing
-                // into a target (a, b, c), the final struct after filling in the no-op actions will
-                // be (s.a, s.b, t.c).
-                getActions(source.schema, Seq.empty)
-            }
-
-
-          case _ =>
-            action.failAnalysis("INTERNAL_ERROR",
-              Map("message" -> s"Unexpected action expression '$action' in clause $clause"))
-        }
-      }
-
-      val resolvedCondition = clause.condition.map { condExpr =>
-        resolveSingleExprOrFail(
-          resolveExprsFn,
-          condExpr,
-          plansToResolveAction,
-          mergeClauseTypeStr = s"$clauseType condition")
-      }
-      clause.makeCopy(Array(resolvedCondition,
-          resolvedDeltaMergeActions ++ resolvedOtherExpressions
-      )).asInstanceOf[T]
-    }
-
-    // We must do manual resolution as the expressions in different clauses of the MERGE have
-    // visibility of the source, the target or both.
-    val resolvedCond = resolveSingleExprOrFail(
-      resolveExprsFn,
-      expr = condition,
-      plansToResolveExpr = Seq(target, source),
-      mergeClauseTypeStr = "search condition")
-    val resolvedMatchedClauses = matchedClauses.map {
-      resolveClause(_, plansToResolveAction = Seq(target, source))
-    }
-    val resolvedNotMatchedClauses = notMatchedClauses.map {
-      resolveClause(_, plansToResolveAction = Seq(source))
-    }
-    val resolvedNotMatchedBySourceClauses = notMatchedBySourceClauses.map {
-      resolveClause(_, plansToResolveAction = Seq(target))
-    }
-
-    val postEvolutionTargetSchema = if (canEvolveSchema) {
+  /**
+   * Computes the target schema after applying schema evolution.
+   *
+   * When schema evolution is enabled, this method adds new columns or nested fields from the source
+   * that are assigned to in merge actions. It filters the source schema to retain only referenced
+   * fields, then merges this with the target schema.
+   *
+   * @param canEvolveSchema whether schema evolution is enabled
+   * @param resolvedMatchedClauses resolved MATCHED clauses
+   * @param resolvedNotMatchedClauses resolved NOT MATCHED clauses
+   * @param target the target table plan
+   * @param source the source data plan
+   * @param conf SQL configuration
+   * @return the evolved target schema (or original target schema if evolution is disabled)
+   */
+  private def computePostEvolutionTargetSchema(
+      canEvolveSchema: Boolean,
+      resolvedMatchedClauses: Seq[DeltaMergeIntoClause],
+      resolvedNotMatchedClauses: Seq[DeltaMergeIntoClause],
+      target: LogicalPlan,
+      source: LogicalPlan,
+      conf: SQLConf): StructType = {
+    if (canEvolveSchema) {
       // When schema evolution is enabled, add to the target table new columns or nested fields that
       // are assigned to in merge actions and not already part of the target schema. This is done by
       // collecting all assignments from merge actions and using them to filter out the source
@@ -315,6 +172,239 @@ object ResolveDeltaMergeInto {
     } else {
       target.schema
     }
+  }
+
+  /**
+   * Resolves a merge clause by resolving its actions and condition.
+   *
+   * Actions are split into two groups:
+   * (1) DeltaMergeActions (like `UPDATE SET x = a, y = b`): resolved with DeltaMergeActionResolver
+   * (2) Star expressions (like `UPDATE SET *` or `INSERT *`): resolved with resolveStar(Except)
+   *
+   * @param clause the merge clause to resolve (MATCHED UPDATE, NOT MATCHED INSERT, etc.)
+   * @param plansToResolveAction the logical plans to use for resolving action expressions
+   * @param target the target table plan
+   * @param source the source data plan
+   * @param canEvolveSchema whether schema evolution is enabled
+   * @param mergeActionResolver resolver for DeltaMergeAction expressions
+   * @param resolveExprsFn function to resolve expressions
+   * @param conf SQL configuration
+   * @return the resolved clause
+   */
+  private def resolveClause[T <: DeltaMergeIntoClause](
+      clause: T,
+      plansToResolveAction: Seq[LogicalPlan],
+      target: LogicalPlan,
+      source: LogicalPlan,
+      canEvolveSchema: Boolean,
+      mergeActionResolver: DeltaMergeActionResolverBase,
+      resolveExprsFn: ResolveExpressionsFn,
+      conf: SQLConf): T = {
+
+    val clauseType = clause.clauseType.toUpperCase(Locale.ROOT)
+    val mergeClauseTypeStr = s"$clauseType clause"
+
+    // We split the actions of a clause (expressions) into two mutually exclusive groups:
+    // 1) DeltaMergeActions and 2) everything else (UnresolvedStar).
+    // The DeltaMergeActions can be resolved already or unresolved at this point.
+    // Unresolved DeltaMergeActions correspond to actions like `UPDATE SET x = a, y = b` or
+    // `INSERT (x, y) VALUES (a, b)`.
+    // By the end of this function, every action needs to be transformed into a resolved
+    // DeltaMergeAction. We handle the DeltaMergeActions separately in [[DeltaMergeActionResolver]]
+    // as we have different strategies to enable better analysis performance.
+    val (deltaMergeActions, allOtherExpressions) = clause.actions.partition {
+      case _: DeltaMergeAction => true
+      case _ => false
+    }
+    assert(
+      deltaMergeActions.isEmpty || allOtherExpressions.isEmpty,
+      s"Cannot have DeltaMergeActions combined with other expressions in a $mergeClauseTypeStr")
+
+    val shouldTryUnresolvedTargetExprOnSource = clause match {
+      case _: DeltaMergeIntoMatchedUpdateClause |
+           _: DeltaMergeIntoNotMatchedClause => canEvolveSchema
+      case _ => false
+    }
+    val resolvedDeltaMergeActions: Seq[DeltaMergeAction] = mergeActionResolver.resolve(
+      mergeClauseTypeStr,
+      plansToResolveAction,
+      shouldTryUnresolvedTargetExprOnSource,
+      deltaMergeActions.map(_.asInstanceOf[DeltaMergeAction])
+    )
+
+    val resolvedOtherExpressions: Seq[DeltaMergeAction] = allOtherExpressions.flatMap { action =>
+      action match {
+        // For actions like `UPDATE SET *` or `INSERT *`
+        case _: UnresolvedStar =>
+          resolveStar(
+            clause, target, source, canEvolveSchema, resolveExprsFn, mergeClauseTypeStr, conf)
+
+
+        case _ =>
+          action.failAnalysis("INTERNAL_ERROR",
+            Map("message" -> s"Unexpected action expression '$action' in clause $clause"))
+      }
+    }
+
+    val resolvedCondition = clause.condition.map { condExpr =>
+      resolveSingleExprOrFail(
+        resolveExprsFn,
+        condExpr,
+        plansToResolveAction,
+        mergeClauseTypeStr = s"$clauseType condition")
+    }
+    clause.makeCopy(Array(resolvedCondition,
+        resolvedDeltaMergeActions ++ resolvedOtherExpressions
+    )).asInstanceOf[T]
+  }
+
+  /**
+   * Resolves UnresolvedStar (`*`) for `UPDATE SET *` or `INSERT *` actions.
+   *
+   * When schema evolution is disabled: expands `*` for all target columns
+   *
+   * When schema evolution is enabled:
+   * - For INSERT clauses: expands `*` for all source columns
+   * - For UPDATE clauses: expands `*` for all source leaf fields
+   *
+   * @param clause the merge clause being resolved (INSERT or UPDATE)
+   * @param target the target table plan
+   * @param source the source data plan
+   * @param canEvolveSchema whether schema evolution is enabled
+   * @param resolveExprsFn function to resolve expressions
+   * @param mergeClauseTypeStr string description of the clause type for error messages
+   * @param conf SQL configuration
+   * @return sequence of resolved DeltaMergeActions
+   */
+  private def resolveStar(
+      clause: DeltaMergeIntoClause,
+      target: LogicalPlan,
+      source: LogicalPlan,
+      canEvolveSchema: Boolean,
+      resolveExprsFn: ResolveExpressionsFn,
+      mergeClauseTypeStr: String,
+      conf: SQLConf): Seq[DeltaMergeAction] = {
+    if (!canEvolveSchema) {
+      // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every target
+      // column name. The target columns do not need resolution. The right hand side
+      // expression (i.e. sourceColumnBySameName) needs to be resolved only by the source plan.
+      val unresolvedExprs = target.output.map { attr =>
+        UnresolvedAttribute.quotedString(s"`${attr.name}`")
+      }
+      val resolvedExprs = resolveOrFail(
+        resolveExprsFn = resolveExprsFn,
+        exprs = unresolvedExprs,
+        plansToResolveExprs = Seq(source),
+        mergeClauseTypeStr = mergeClauseTypeStr)
+      (resolvedExprs, target.output.map(_.name))
+        .zipped
+        .map { (resolvedExpr, targetColName) =>
+          DeltaMergeAction(Seq(targetColName), resolvedExpr, targetColNameResolved = true)
+        }
+    } else {
+      clause match {
+        case _: DeltaMergeIntoNotMatchedInsertClause =>
+          // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
+          // column name. Target columns not present in the source will be filled in
+          // with null later.
+          source.output.map { attr =>
+            DeltaMergeAction(Seq(attr.name), attr, targetColNameResolved = true)
+          }
+        case _: DeltaMergeIntoMatchedUpdateClause =>
+          // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
+          // column name. Target columns not present in the source will be filled in with
+          // no-op actions later.
+          // Nested columns are unfolded to accommodate the case where a source struct has a
+          // subset of the nested columns in the target. If a source struct (a, b) is writing
+          // into a target (a, b, c), the final struct after filling in the no-op actions will
+          // be (s.a, s.b, t.c).
+          getLeafActionsForSchema(source.schema, Seq.empty, source, conf)
+      }
+    }
+  }
+
+  /**
+   * Returns the sequence of [[DeltaMergeActions]] corresponding to
+   * [ `columnName = sourceColumnBySameName` ] for every column name in the schema. Nested
+   * columns are unfolded to create an assignment for each leaf.
+   *
+   * @param currSchema: schema to generate DeltaMergeAction for every 'leaf'
+   * @param qualifier: used to recurse to leaves; represents the qualifier of the current schema
+   * @param source: source plan to resolve expressions against
+   * @param conf: SQL configuration
+   * @return seq of DeltaMergeActions corresponding to columnName = sourceColumnName updates
+   */
+  private def getLeafActionsForSchema(
+      currSchema: StructType,
+      qualifier: Seq[String],
+      source: LogicalPlan,
+      conf: SQLConf): Seq[DeltaMergeAction] = {
+    currSchema.flatMap {
+      case StructField(name, struct: StructType, _, _) =>
+        getLeafActionsForSchema(struct, qualifier :+ name, source, conf)
+      case StructField(name, _, _, _) =>
+        val nameParts = qualifier :+ name
+        val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
+          // if we use getActions to expand target columns, this will fail on target columns not
+          // present in the source
+          throw new DeltaIllegalArgumentException(
+            errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
+            messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
+          )
+        }
+        Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
+    }
+  }
+
+  def resolveReferencesAndSchema(
+      merge: DeltaMergeInto,
+      conf: SQLConf)(resolveExprsFn: ResolveExpressionsFn): DeltaMergeInto = {
+    val DeltaMergeInto(
+      target,
+      source,
+      condition,
+      matchedClauses,
+      notMatchedClauses,
+      notMatchedBySourceClauses,
+      withSchemaEvolution,
+      _) = merge
+
+    val canEvolveSchema =
+      withSchemaEvolution || conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
+
+    val mergeActionResolver =
+      if (conf.getConf(DeltaSQLConf.DELTA_MERGE_ANALYSIS_BATCH_RESOLUTION)) {
+        new BatchedDeltaMergeActionResolver(target, source, conf, resolveExprsFn)
+      } else {
+        new IndividualDeltaMergeActionResolver(target, source, conf, resolveExprsFn)
+    }
+
+    // We must do manual resolution as the expressions in different clauses of the MERGE have
+    // visibility of the source, the target or both.
+    val resolvedCond = resolveSingleExprOrFail(
+      resolveExprsFn,
+      expr = condition,
+      plansToResolveExpr = Seq(target, source),
+      mergeClauseTypeStr = "search condition")
+    val resolvedMatchedClauses = matchedClauses.map {
+      resolveClause(
+        _, Seq(target, source), target, source, canEvolveSchema,
+        mergeActionResolver, resolveExprsFn, conf)
+    }
+    val resolvedNotMatchedClauses = notMatchedClauses.map {
+      resolveClause(
+        _, Seq(source), target, source, canEvolveSchema,
+        mergeActionResolver, resolveExprsFn, conf)
+    }
+    val resolvedNotMatchedBySourceClauses = notMatchedBySourceClauses.map {
+      resolveClause(
+        _, Seq(target), target, source, canEvolveSchema,
+        mergeActionResolver, resolveExprsFn, conf)
+    }
+
+    val postEvolutionTargetSchema = computePostEvolutionTargetSchema(
+      canEvolveSchema, resolvedMatchedClauses, resolvedNotMatchedClauses,
+      target, source, conf)
 
     val resolvedMerge = DeltaMergeInto(
       target,

@@ -122,7 +122,7 @@ trait AbstractTestUtils
         while (iter.hasNext) {
           result.append(iter.next())
         }
-        result
+        result.toSeq
       } finally {
         iter.close()
       }
@@ -256,7 +256,7 @@ trait AbstractTestUtils
         // for all primitive types
         Seq(new Column((basePath :+ field.getName).asJava.toArray(new Array[String](0))));
       case _ => Seq.empty
-    }
+    }.toSeq
   }
 
   def collectScanFileRows(scan: Scan, engine: Engine = defaultEngine): Seq[Row] = {
@@ -334,7 +334,7 @@ trait AbstractTestUtils
         }
       }
     }
-    result
+    result.toSeq
   }
 
   def readTableUsingKernel(
@@ -821,7 +821,7 @@ trait AbstractTestUtils
             field.getName,
             toSparkType(field.getDataType),
             field.isNullable)
-        })
+        }.toSeq)
     }
   }
 
@@ -882,10 +882,14 @@ trait AbstractTestUtils
   }
 
   def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-      .forEach(hook => hook.threadSafeInvoke(engine))
+    val crcSimpleHook = result
+      .getPostCommitHooks
+      .asScala
+      .find(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .getOrElse(throw new IllegalStateException("CRC simple hook not found"))
+
+    crcSimpleHook.threadSafeInvoke(engine)
+
     result
   }
 

@@ -19,9 +19,12 @@ import shutil
 import sys
 import tempfile
 import unittest
+import uuid
 
+from contextlib import contextmanager
 from pyspark import SparkConf
 from pyspark.testing.sqlutils import ReusedSQLTestCase  # type: ignore[import]
+from typing import Generator
 
 
 class DeltaTestCase(ReusedSQLTestCase):
@@ -52,3 +55,10 @@ class DeltaTestCase(ReusedSQLTestCase):
     def tearDown(self) -> None:
         super(DeltaTestCase, self).tearDown()
         shutil.rmtree(self.tempPath)
+
+    @contextmanager
+    def tempTable(self) -> Generator[str, None, None]:
+        table_name = "table_" + str(uuid.uuid4()).replace("-", "_")
+
+        with super(DeltaTestCase, self).table(table_name):
+            yield table_name
