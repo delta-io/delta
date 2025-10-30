@@ -27,23 +27,9 @@ public class SnapshotConstructionSpec extends WorkloadSpec {
   @JsonProperty("version")
   private Long version;
 
-  /** Expected data file for validating the read data result. From spec file. */
-  @JsonProperty("expected_protocol_and_metadata")
-  private String expectedProtocolAndMetadata;
-
   // Default constructor for Jackson
   public SnapshotConstructionSpec() {
     super("snapshot_construction");
-  }
-
-  // Copy constructor
-  public SnapshotConstructionSpec(
-      TableInfo tableInfo, String caseName, Long version, String expectedProtocolAndMetadata) {
-    super("snapshot_construction");
-    this.tableInfo = tableInfo;
-    this.version = version;
-    this.caseName = caseName;
-    this.expectedProtocolAndMetadata = expectedProtocolAndMetadata;
   }
 
   /** @return the snapshot version to read, or null if the latest version should be read. */

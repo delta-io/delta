@@ -31,6 +31,7 @@ public class SnapshotConstructionRunner extends WorkloadRunner {
 
   /**
    * Construct a SnapshotConstructionRunner from the workload spec and engine.
+   *
    * @param workloadSpec The snapshot_construction workload specification.
    * @param engine The engine to use for executing the workload.
    */
