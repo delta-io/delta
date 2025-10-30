@@ -23,12 +23,13 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CloneTableStatement, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeInto
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.trees.TreePattern.COMMAND
-import org.apache.spark.sql.delta.commands.DeltaCommand
+import org.apache.spark.sql.delta.commands.{DeltaCommand, DescribeDeltaDetailCommand}
+import org.apache.spark.sql.delta.TableChanges
 import org.apache.spark.sql.execution.datasources.{DataSource, DataSourceUtils}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
@@ -70,6 +71,23 @@ class MaybeFallbackV1Connector(session: SparkSession)
         // scalastyle:on println
         val newTable = replaceKernelWithFallback(table)
         i.copy(table = newTable)
+
+      // Handle CLONE TABLE (both source and target need fallback)
+      case c @ CloneTableStatement(source, target, ifNotExists, isReplace, isCreate,
+        tablePropertyOverrides, targetLocation) =>
+        val newSource = replaceKernelWithFallback(source)
+        val newTarget = replaceKernelWithFallback(target)
+        c.copy(source = newSource, target = newTarget)
+
+      // Handle table_changes() table-valued function
+      case tc @ TableChanges(child, fnName, cdcAttr) =>
+        val newChild = replaceKernelWithFallback(child)
+        tc.copy(child = newChild)
+
+      // Handle DESCRIBE DETAIL command
+      case dd @ DescribeDeltaDetailCommand(child, hadoopConf) =>
+        val newChild = replaceKernelWithFallback(child)
+        dd.copy(child = newChild)
 
       // Handle V2 AppendData (DataFrameWriterV2.append)
       case a @ AppendData(Batch(fallback), _, _, _, _, _) =>

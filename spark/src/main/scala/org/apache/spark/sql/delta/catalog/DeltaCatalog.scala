@@ -646,6 +646,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
+  def loadTableForAlterTable(ident: Identifier): Table = loadTable(ident)
+
   override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
       "DeltaCatalog", "alterTable") {
     // We group the table changes by their type, since Delta applies each in a separate action.
@@ -671,7 +673,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case (_, _) => false
     }.toSeq.exists(a => a)
     RedirectFeature.withUpdateTableRedirectDDL(isUpdateTableRedirectDDL) {
-    val table = loadTable(ident) match {
+    val table = loadTableForAlterTable(ident) match {
       case deltaTable: DeltaTableV2 => deltaTable
       case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
         throw DeltaErrors.alterClusterByNotOnDeltaTableException()
