@@ -54,7 +54,12 @@ Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
 val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
+
+// Cross-Spark-version building support
 val sparkVersion = settingKey[String]("Spark version")
+
+// Flag to control cross-Spark publishing: set -DcrossSparkPublish=true to enable
+val crossSparkPublishEnabled = sys.props.getOrElse("crossSparkPublish", "false").toBoolean
 spark / sparkVersion := getSparkVersion()
 kernelSpark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
@@ -112,6 +117,30 @@ def getSparkVersion(): String = {
     case _ =>
       throw new IllegalArgumentException(s"Invalid sparkVersion: $input. Must be one of " +
           s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
+  }
+}
+
+/**
+ * Returns the Spark binary version (major.minor) for the given full Spark version.
+ * E.g., "3.5.7" -> "3.5", "4.0.2-SNAPSHOT" -> "4.0"
+ */
+def getSparkBinaryVersion(sparkVer: String): String = {
+  getMajorMinorPatch(sparkVer) match {
+    case (maj, min, _) => s"$maj.$min"
+  }
+}
+
+/**
+ * Returns module name with optional Spark version suffix.
+ * When crossSparkPublish=true: "module-name_spark35"
+ * When crossSparkPublish=false: "module-name"
+ */
+def moduleNameWithOptionalSpark(baseName: String, sparkVer: String): String = {
+  if (crossSparkPublishEnabled) {
+    val sparkBinVer = getSparkBinaryVersion(sparkVer).replace(".", "")
+    s"${baseName}_spark${sparkBinVer}"
+  } else {
+    baseName
   }
 }
 
@@ -256,9 +285,9 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     name := "delta-connect-common",
     commonSettings,
     crossSparkSettings(),
-    // iceberg-core 1.8.0 brings jackson 2.18.2 thus force upgrade
     dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     releaseSettings,
+    moduleName := moduleNameWithOptionalSpark(name.value, sparkVersion.value),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -298,6 +327,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
     name := "delta-connect-client",
     commonSettings,
     releaseSettings,
+    moduleName := moduleNameWithOptionalSpark(name.value, sparkVersion.value),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -360,6 +390,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
     name := "delta-connect-server",
     commonSettings,
     releaseSettings,
+    moduleName := moduleNameWithOptionalSpark(name.value, sparkVersion.value),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -435,6 +466,7 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
+    moduleName := moduleNameWithOptionalSpark(name.value, sparkVersion.value),
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -522,6 +554,7 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    moduleName := moduleNameWithOptionalSpark(name.value, (spark / sparkVersion).value),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -562,6 +595,7 @@ lazy val sharing = (project in file("sharing"))
     scalaStyleSettings,
     releaseSettings,
     crossSparkSettings(),
+    moduleName := moduleNameWithOptionalSpark(name.value, sparkVersion.value),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -862,6 +896,7 @@ lazy val iceberg = (project in file("iceberg"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    moduleName := moduleNameWithOptionalSpark(name.value, (spark / sparkVersion).value),
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
@@ -872,7 +907,9 @@ lazy val iceberg = (project in file("iceberg"))
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
-    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / assemblyJarName := {
+      s"${moduleName.value}_${scalaBinaryVersion.value}-${version.value}.jar"
+    },
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyExcludedJars := {
@@ -1487,24 +1524,7 @@ releaseProcess := Seq[ReleaseStep](
   setReleaseVersion,
   commitReleaseVersion,
   tagRelease,
-  releaseStepCommandAndRemaining("+publishSigned"),
-  // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
-  // manually.
-  //
-  // Do NOT use `sonatypePromote` - it will promote the closed staging repository (i.e. sync to
-  //                                Maven central)
-  //
-  // See https://github.com/xerial/sbt-sonatype#publishing-your-artifact.
-  //
-  // - sonatypePrepare: Drop the existing staging repositories (if exist) and create a new staging
-  //                    repository using sonatypeSessionName as a unique key
-  // - sonatypeBundleUpload: Upload your local staging folder contents to a remote Sonatype
-  //                         repository
-  // - sonatypeClose: closes your staging repository at Sonatype. This step verifies Maven central
-  //                  sync requirement, GPG-signature, javadoc and source code presence, pom.xml
-  //                  settings, etc
-  // TODO: this isn't working yet
-  // releaseStepCommand("sonatypePrepare; sonatypeBundleUpload; sonatypeClose"),
+  releaseStepCommand(if (crossSparkPublishEnabled) "crossSpark +publishSigned" else "+publishSigned"),
   setNextVersion,
   commitNextVersion
 )
