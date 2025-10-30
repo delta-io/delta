@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.spark.read;
 
+import static io.delta.kernel.internal.util.Preconditions.checkState;
+
 import io.delta.kernel.internal.actions.AddFile;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 
@@ -55,6 +57,7 @@ public class IndexedFile implements AdmittableFile {
 
   @Override
   public long getFileSize() {
+    checkState(addFile != null, "addFile is null");
     return addFile.getSize();
   }
 
