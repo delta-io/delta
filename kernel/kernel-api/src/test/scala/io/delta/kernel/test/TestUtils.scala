@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 package io.delta.kernel.test
+
 import java.util.Optional
 
 import io.delta.kernel.expressions.{Column, Literal}

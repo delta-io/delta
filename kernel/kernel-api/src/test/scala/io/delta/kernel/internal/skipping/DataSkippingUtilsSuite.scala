@@ -186,32 +186,27 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
     val unicode = CollationIdentifier.fromString("ICU.UNICODE.74.1")
     val unicodeString = new StringType(unicode)
 
+    val ab = new StructType()
+      .add("a", StringType.STRING)
+      .add("b", unicodeString)
+
     val statsSchema = new StructType()
-      .add(
-        MIN,
-        new StructType()
-          .add("a", StringType.STRING)
-          .add("b", unicodeString))
-      .add(
-        MAX,
-        new StructType()
-          .add("a", StringType.STRING)
-          .add("b", unicodeString))
+      .add(MIN, ab)
+      .add(MAX, ab)
       .add(
         STATS_WITH_COLLATION,
         new StructType()
           .add(
             utf8Lcase.toString,
             new StructType()
-              .add(MIN, new StructType().add("a", StringType.STRING).add("b", unicodeString))
-              .add(MAX, new StructType().add("a", StringType.STRING).add("b", unicodeString)))
+              .add(MIN, ab)
+              .add(MAX, ab))
           .add(
             unicode.toString,
             new StructType()
-              .add(MIN, new StructType().add("a", StringType.STRING).add("b", unicodeString))
-              .add(MAX, new StructType().add("a", StringType.STRING).add("b", unicodeString))))
+              .add(MIN, ab)
+              .add(MAX, ab)))
 
-    // Keep only: binary MAX.b and collated(utf8Lcase) MIN.a
     val referenced = Set(
       nestedCol(s"$MAX.b"),
       collatedStatsCol(utf8Lcase, MIN, "a"),
@@ -568,23 +563,44 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
 
   test("check constructDataSkippingFilter with collations (no version in collation)") {
     val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
-    val unicode = CollationIdentifier.fromString("ICU.UNICODE")
+    val unicodeWithoutVersion = CollationIdentifier.fromString("ICU.UNICODE")
+    val unicodeWithVersion = CollationIdentifier.fromString("ICU.UNICODE.74.1")
 
     val testCases = Seq(
       (
         new StructType()
           .add("a", StringType.STRING)
           .add("b", StringType.STRING),
-        createPredicate("<", col("a"), literal("m"), Optional.of(unicode))),
+        createPredicate("<", col("a"), literal("m"), Optional.of(unicodeWithoutVersion)),
+        Optional.empty[DataSkippingPredicate]),
       (
         new StructType()
           .add("a", StringType.STRING),
-        createPredicate("<", literal("m"), col("a"), Optional.of(utf8Lcase))))
+        createPredicate(
+          "AND",
+          Seq[Expression](
+            createPredicate(
+              "<",
+              col("a"),
+              literal("m"),
+              Optional.of(utf8Lcase)),
+            createPredicate(
+              ">",
+              col("a"),
+              literal("t"),
+              Optional.of(unicodeWithVersion))).asJava,
+          Optional.empty[CollationIdentifier]), {
+          val minAUnicode = collatedStatsCol(unicodeWithVersion, MAX, "a")
+          Optional.of(dataSkippingPredicateWithCollation(
+            ">",
+            Seq(minAUnicode, literal("t")),
+            unicodeWithVersion,
+            Set(minAUnicode)))
+        }))
 
-    testCases.foreach { case (schema, predicate) =>
-      val dataSkippingPredicateOpt =
-        JavaOptionalOps(constructDataSkippingFilter(predicate, schema)).toScala
-      assert(dataSkippingPredicateOpt.isEmpty)
+    testCases.foreach { case (schema, predicate, expectedDataSkippingPredicate) =>
+      val dataSkippingPredicateOpt = constructDataSkippingFilter(predicate, schema)
+      assert(dataSkippingPredicateOpt == expectedDataSkippingPredicate)
     }
   }
 }

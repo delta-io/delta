@@ -103,6 +103,7 @@ public class StatsSchemaHelper {
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
    * |  |  |  |  |-- d: string (nullable = true)
+   * |  |-- tightBounds: boolean (nullable = true)
    * |  |-- statsWithCollation: struct (nullable = true)
    * |  |  |-- collationName: struct (nullable = true)
    * |  |  |  |-- min: struct (nullable = true)
@@ -113,7 +114,6 @@ public class StatsSchemaHelper {
    * |  |  |  |  |-- a: struct (nullable = true)
    * |  |  |  |  |  |-- b: struct (nullable = true)
    * |  |  |  |  |  |  |-- d: string (nullable = true)
-   * |  |-- tightBounds: boolean (nullable = true)
    * </pre>
    */
   public static StructType getStatsSchema(
@@ -308,6 +308,18 @@ public class StatsSchemaHelper {
     StructType statsWithCollation = new StructType();
     StructType collationAwareFields = getCollationAwareFields(dataSchema);
     for (CollationIdentifier collationIdentifier : collationIdentifiers) {
+      if (collationIdentifier.isSparkUTF8BinaryCollation()) {
+        // For SPARK.UTF8_BINARY collation we use the binary stats
+        continue;
+      }
+      if (collationIdentifier.getVersion().isEmpty()) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Collation identifier %s must specify a collation version for collation-aware "
+                    + "statistics.",
+                collationIdentifier));
+      }
+
       if (collationAwareFields.length() > 0) {
         statsWithCollation =
             statsWithCollation.add(

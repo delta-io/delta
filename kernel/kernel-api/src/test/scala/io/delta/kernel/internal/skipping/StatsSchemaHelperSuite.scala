@@ -130,12 +130,12 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
           .add(StatsSchemaHelper.NULL_COUNT, new StructType().add("k", LongType.LONG, true), true)
           .add(StatsSchemaHelper.TIGHT_BOUNDS, BooleanType.BOOLEAN, true)),
       (
-        new StructType().add("b", utf8LcaseString),
+        new StructType().add("l", utf8LcaseString),
         new StructType()
           .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
-          .add(StatsSchemaHelper.MIN, new StructType().add("b", utf8LcaseString, true), true)
-          .add(StatsSchemaHelper.MAX, new StructType().add("b", utf8LcaseString, true), true)
-          .add(StatsSchemaHelper.NULL_COUNT, new StructType().add("b", LongType.LONG, true), true)
+          .add(StatsSchemaHelper.MIN, new StructType().add("l", utf8LcaseString, true), true)
+          .add(StatsSchemaHelper.MAX, new StructType().add("l", utf8LcaseString, true), true)
+          .add(StatsSchemaHelper.NULL_COUNT, new StructType().add("l", LongType.LONG, true), true)
           .add(StatsSchemaHelper.TIGHT_BOUNDS, BooleanType.BOOLEAN, true)))
 
     testCases.foreach { case (dataSchema, expectedStatsSchema) =>
@@ -272,7 +272,12 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
       .add("c", BinaryType.BINARY)
       .add("d", unicodeString)
 
-    val collations = Set(utf8Lcase)
+    val skippableFields = new StructType()
+      .add("a", StringType.STRING)
+      .add("b", IntegerType.INTEGER)
+      .add("d", unicodeString)
+
+    val collations = Set(utf8Lcase, unicode)
 
     val expectedCollatedMinMax = new StructType()
       .add("a", StringType.STRING, true).add("d", unicodeString, true)
@@ -281,17 +286,11 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
       .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
       .add(
         StatsSchemaHelper.MIN,
-        new StructType()
-          .add("a", StringType.STRING, true)
-          .add("b", IntegerType.INTEGER, true)
-          .add("d", unicodeString, true),
+        skippableFields,
         true)
       .add(
         StatsSchemaHelper.MAX,
-        new StructType()
-          .add("a", StringType.STRING, true)
-          .add("b", IntegerType.INTEGER, true)
-          .add("d", unicodeString, true),
+        skippableFields,
         true)
       .add(
         StatsSchemaHelper.NULL_COUNT,
@@ -307,6 +306,12 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
         new StructType()
           .add(
             utf8Lcase.toString,
+            new StructType()
+              .add(StatsSchemaHelper.MIN, expectedCollatedMinMax, true)
+              .add(StatsSchemaHelper.MAX, expectedCollatedMinMax, true),
+            true)
+          .add(
+            unicode.toString,
             new StructType()
               .add(StatsSchemaHelper.MIN, expectedCollatedMinMax, true)
               .add(StatsSchemaHelper.MAX, expectedCollatedMinMax, true),
@@ -328,6 +333,14 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
       .add("arr", new ArrayType(StringType.STRING, true))
       .add("mp", new MapType(StringType.STRING, StringType.STRING, true))
 
+    val skippableFields = new StructType()
+      .add(
+        "s",
+        new StructType()
+          .add("x", StringType.STRING)
+          .add("y", IntegerType.INTEGER)
+          .add("z", new StructType().add("p", StringType.STRING).add("q", DoubleType.DOUBLE)))
+
     val collations = Set(utf8Lcase, CollationIdentifier.SPARK_UTF8_BINARY)
 
     val expectedCollatedNested = new StructType()
@@ -342,35 +355,11 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
       .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
       .add(
         StatsSchemaHelper.MIN,
-        new StructType()
-          .add(
-            "s",
-            new StructType()
-              .add("x", StringType.STRING, true)
-              .add("y", IntegerType.INTEGER, true)
-              .add(
-                "z",
-                new StructType()
-                  .add("p", StringType.STRING, true)
-                  .add("q", DoubleType.DOUBLE, true),
-                true),
-            true),
+        skippableFields,
         true)
       .add(
         StatsSchemaHelper.MAX,
-        new StructType()
-          .add(
-            "s",
-            new StructType()
-              .add("x", StringType.STRING, true)
-              .add("y", IntegerType.INTEGER, true)
-              .add(
-                "z",
-                new StructType()
-                  .add("p", StringType.STRING, true)
-                  .add("q", DoubleType.DOUBLE, true),
-                true),
-            true),
+        skippableFields,
         true)
       .add(
         StatsSchemaHelper.NULL_COUNT,
@@ -382,9 +371,7 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
               .add("y", LongType.LONG, true)
               .add(
                 "z",
-                new StructType()
-                  .add("p", LongType.LONG, true)
-                  .add("q", LongType.LONG, true),
+                new StructType().add("p", LongType.LONG, true).add("q", LongType.LONG, true),
                 true),
             true)
           .add("arr", LongType.LONG, true)
@@ -396,12 +383,6 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
         new StructType()
           .add(
             utf8Lcase.toString,
-            new StructType()
-              .add(StatsSchemaHelper.MIN, expectedCollatedNested, true)
-              .add(StatsSchemaHelper.MAX, expectedCollatedNested, true),
-            true)
-          .add(
-            CollationIdentifier.SPARK_UTF8_BINARY.toString,
             new StructType()
               .add(StatsSchemaHelper.MIN, expectedCollatedNested, true)
               .add(StatsSchemaHelper.MAX, expectedCollatedNested, true),
@@ -418,17 +399,19 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
       .add("b", new ArrayType(StringType.STRING, true))
       .add("c", new MapType(StringType.STRING, LongType.LONG, true))
 
+    val a = new StructType().add("a", IntegerType.INTEGER, true)
+
     val collations = Set(utf8Lcase, unicode, CollationIdentifier.SPARK_UTF8_BINARY)
 
     val expectedStatsSchema = new StructType()
       .add(StatsSchemaHelper.NUM_RECORDS, LongType.LONG, true)
       .add(
         StatsSchemaHelper.MIN,
-        new StructType().add("a", IntegerType.INTEGER, true),
+        a,
         true)
       .add(
         StatsSchemaHelper.MAX,
-        new StructType().add("a", IntegerType.INTEGER, true),
+        a,
         true)
       .add(
         StatsSchemaHelper.NULL_COUNT,

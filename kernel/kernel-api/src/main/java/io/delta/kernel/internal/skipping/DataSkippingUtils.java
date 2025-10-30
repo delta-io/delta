@@ -264,8 +264,8 @@ public class DataSkippingUtils {
         if (collationIdentifier
             .filter(ci -> !ci.isSparkUTF8BinaryCollation() && ci.getVersion().isEmpty())
             .isPresent()) {
-          // Each collated statistics is stored with a specific version, so collation
-          // must specify a version to be used for data skipping.
+          // Each collated statistics is stored with a specific version, so collation must specify a
+          // version to be used for data skipping.
           return Optional.empty();
         }
 
