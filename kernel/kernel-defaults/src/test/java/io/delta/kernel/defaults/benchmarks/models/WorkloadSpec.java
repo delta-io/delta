@@ -33,7 +33,10 @@ import java.util.List;
  * field in the JSON.
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
-@JsonSubTypes({@JsonSubTypes.Type(value = ReadSpec.class, name = "read")})
+@JsonSubTypes({
+  @JsonSubTypes.Type(value = ReadSpec.class, name = "read"),
+  @JsonSubTypes.Type(value = SnapshotConstructionSpec.class, name = "snapshot_construction"),
+})
 public abstract class WorkloadSpec {
   /**
    * The type of workload (e.g., "read"). This is used by Jackson's polymorphic deserialization to
