@@ -36,9 +36,12 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
+import org.apache.spark.sql.types.MetadataBuilder;
+import scala.jdk.CollectionConverters;
 
 /** A utility class for converting between Delta Kernel and Spark schemas and data types. */
 public class SchemaUtils {
@@ -59,8 +62,7 @@ public class SchemaUtils {
               field.getName(),
               convertKernelDataTypeToSparkDataType(field.getDataType()),
               field.isNullable(),
-              // TODO: understand and plumb field metadata.
-              Metadata.empty()));
+              convertKernelFieldMetadataToSparkMetadata(field.getMetadata())));
     }
 
     return new org.apache.spark.sql.types.StructType(
@@ -128,12 +130,12 @@ public class SchemaUtils {
     List<StructField> kernelFields = new ArrayList<>();
 
     for (org.apache.spark.sql.types.StructField field : sparkSchema.fields()) {
-      // TODO: understand and plumb field metadata.
       kernelFields.add(
           new StructField(
               field.name(),
               convertSparkDataTypeToKernelDataType(field.dataType()),
-              field.nullable()));
+              field.nullable(),
+              convertSparkMetadataToKernelFieldMetadata(field.metadata())));
     }
 
     return new StructType(kernelFields);
@@ -190,5 +192,134 @@ public class SchemaUtils {
     } else {
       throw new IllegalArgumentException("unsupported data type " + sparkDataType);
     }
+  }
+
+  ///////////////////////////////
+  // Field Metadata Conversion //
+  ///////////////////////////////
+
+  /**
+   * Converts Kernel FieldMetadata to Spark Metadata.
+   *
+   * @param kernelMetadata the Kernel FieldMetadata to convert
+   * @return the equivalent Spark Metadata
+   */
+  public static Metadata convertKernelFieldMetadataToSparkMetadata(
+      io.delta.kernel.types.FieldMetadata kernelMetadata) {
+    requireNonNull(kernelMetadata);
+    if (kernelMetadata.getEntries().isEmpty()) {
+      return Metadata.empty();
+    }
+    MetadataBuilder builder = new MetadataBuilder();
+    kernelMetadata
+        .getEntries()
+        .forEach(
+            (key, value) -> {
+              if (value instanceof Long) {
+                builder.putLong(key, (Long) value);
+              } else if (value instanceof Double) {
+                builder.putDouble(key, (Double) value);
+              } else if (value instanceof Boolean) {
+                builder.putBoolean(key, (Boolean) value);
+              } else if (value instanceof String) {
+                builder.putString(key, (String) value);
+              } else if (value instanceof io.delta.kernel.types.FieldMetadata) {
+                builder.putMetadata(
+                    key,
+                    convertKernelFieldMetadataToSparkMetadata(
+                        (io.delta.kernel.types.FieldMetadata) value));
+              } else if (value instanceof Long[]) {
+                builder.putLongArray(
+                    key, Arrays.stream((Long[]) value).mapToLong(l -> l).toArray());
+              } else if (value instanceof Double[]) {
+                builder.putDoubleArray(
+                    key, Arrays.stream((Double[]) value).mapToDouble(d -> d).toArray());
+              } else if (value instanceof Boolean[]) {
+                Boolean[] valArray = (Boolean[]) value;
+                boolean[] booleanArray = new boolean[valArray.length];
+                for (int i = 0; i < valArray.length; i++) {
+                  booleanArray[i] = valArray[i];
+                }
+                builder.putBooleanArray(key, booleanArray);
+              } else if (value instanceof String[]) {
+                builder.putStringArray(key, (String[]) value);
+              } else if (value instanceof io.delta.kernel.types.FieldMetadata[]) {
+                io.delta.kernel.types.FieldMetadata[] kernelMetadatas =
+                    (io.delta.kernel.types.FieldMetadata[]) value;
+                Metadata[] sparkMetadatas =
+                    Arrays.stream(kernelMetadatas)
+                        .map(SchemaUtils::convertKernelFieldMetadataToSparkMetadata)
+                        .toArray(Metadata[]::new);
+                builder.putMetadataArray(key, sparkMetadatas);
+              } else if (value == null) {
+                builder.putNull(key);
+              } else {
+                throw new UnsupportedOperationException(
+                    "Unsupported metadata value type: " + value.getClass().getName());
+              }
+            });
+    return builder.build();
+  }
+
+  /**
+   * Converts Spark Metadata to Kernel FieldMetadata.
+   *
+   * @param sparkMetadata the Spark Metadata to convert
+   * @return the equivalent Kernel FieldMetadata
+   */
+  public static io.delta.kernel.types.FieldMetadata convertSparkMetadataToKernelFieldMetadata(
+      Metadata sparkMetadata) {
+    requireNonNull(sparkMetadata);
+    if (sparkMetadata.map().isEmpty()) {
+      return io.delta.kernel.types.FieldMetadata.empty();
+    }
+    io.delta.kernel.types.FieldMetadata.Builder builder =
+        io.delta.kernel.types.FieldMetadata.builder();
+
+    CollectionConverters.MapHasAsJava(sparkMetadata.map())
+        .asJava()
+        .forEach(
+            (key, value) -> {
+              if (value instanceof Long) {
+                builder.putLong(key, (Long) value);
+              } else if (value instanceof Double) {
+                builder.putDouble(key, (Double) value);
+              } else if (value instanceof Boolean) {
+                builder.putBoolean(key, (Boolean) value);
+              } else if (value instanceof String) {
+                builder.putString(key, (String) value);
+              } else if (value instanceof Metadata) {
+                builder.putFieldMetadata(
+                    key, convertSparkMetadataToKernelFieldMetadata((Metadata) value));
+              } else if (value instanceof long[]) {
+                builder.putLongArray(
+                    key, Arrays.stream((long[]) value).boxed().toArray(Long[]::new));
+              } else if (value instanceof double[]) {
+                builder.putDoubleArray(
+                    key, Arrays.stream((double[]) value).boxed().toArray(Double[]::new));
+              } else if (value instanceof boolean[]) {
+                boolean[] valArray = (boolean[]) value;
+                Boolean[] booleanArray = new Boolean[valArray.length];
+                for (int i = 0; i < valArray.length; i++) {
+                  booleanArray[i] = valArray[i];
+                }
+                builder.putBooleanArray(key, booleanArray);
+              } else if (value instanceof String[]) {
+                builder.putStringArray(key, (String[]) value);
+              } else if (value instanceof Metadata[]) {
+                Metadata[] sparkMetadatas = (Metadata[]) value;
+                io.delta.kernel.types.FieldMetadata[] kernelMetadatas =
+                    Arrays.stream(sparkMetadatas)
+                        .map(SchemaUtils::convertSparkMetadataToKernelFieldMetadata)
+                        .toArray(io.delta.kernel.types.FieldMetadata[]::new);
+                builder.putFieldMetadataArray(key, kernelMetadatas);
+              } else if (value == null) {
+                builder.putNull(key);
+              } else {
+                throw new UnsupportedOperationException(
+                    "Unsupported metadata value type: " + value.getClass().getName());
+              }
+            });
+    return builder.build();
   }
 }
