@@ -24,7 +24,7 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, UnsupportedProtocolVersionException, UnsupportedTableFeatureException}
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData, ParsedPublishedDeltaData}
@@ -189,18 +189,19 @@ class SnapshotBuilderSuite extends AnyFunSuite
   }
 
   test("withProtocolAndMetadata: invalid readerVersion throws KernelException") {
-    val exMsg = intercept[KernelException] {
+    val ex = intercept[UnsupportedProtocolVersionException] {
       TableManager.loadSnapshot(dataPath.toString)
         .atVersion(10)
         .withProtocolAndMetadata(new Protocol(999, 2), metadata)
         .build(emptyMockEngine)
-    }.getMessage
+    }
 
-    assert(exMsg.contains("Unsupported Delta protocol reader version"))
+    assert(ex.getVersionType === UnsupportedProtocolVersionException.ProtocolVersionType.READER)
+    assert(ex.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
   test("withProtocolAndMetadata: unknown reader feature throws KernelException") {
-    val exMsg = intercept[KernelException] {
+    val exMsg = intercept[UnsupportedTableFeatureException] {
       TableManager.loadSnapshot(dataPath.toString)
         .atVersion(10)
         .withProtocolAndMetadata(
