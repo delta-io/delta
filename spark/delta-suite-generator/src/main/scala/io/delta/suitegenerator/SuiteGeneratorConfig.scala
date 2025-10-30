@@ -326,6 +326,20 @@ object SuiteGeneratorConfig {
           )
         )
       )
+    ),
+    TestGroup(
+      name = "InsertSuites",
+      imports = List(
+        importer"org.apache.spark.sql.delta._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List("DeltaInsertIntoImplicitCastTests", "DeltaInsertIntoImplicitCastStreamingWriteTests"),
+          List(
+            List()
+          )
+        )
+      )
     )
     // scalastyle:on line.size.limit
   )
