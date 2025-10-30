@@ -1,5 +1,0 @@
-2025-10-23T05:44:41.0640000Z Requested labels: ubuntu-24.04
-2025-10-23T05:44:41.0640000Z Job defined at: delta-io/delta/.github/workflows/spark_test.yaml@refs/pull/5338/merge
-2025-10-23T05:44:41.0640000Z Waiting for a runner to pick up this job...
-2025-10-23T05:44:41.5650000Z Job is waiting for a hosted runner to come online.
-2025-10-23T05:44:41.5650000Z Job is about to start running on the hosted runner: GitHub Actions 1000136162
