@@ -277,7 +277,7 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
       .add("b", IntegerType.INTEGER)
       .add("d", unicodeString)
 
-    val collations = Set(utf8Lcase, unicode)
+    val collations = Set(utf8Lcase, unicode, CollationIdentifier.SPARK_UTF8_BINARY)
 
     val expectedCollatedMinMax = new StructType()
       .add("a", StringType.STRING, true).add("d", unicodeString, true)

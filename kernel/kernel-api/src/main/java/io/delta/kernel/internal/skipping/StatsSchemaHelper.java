@@ -71,15 +71,6 @@ public class StatsSchemaHelper {
   /**
    * Returns the expected statistics schema given a table schema.
    *
-   * <p>To collect collation-aware statistics, use {@link #getStatsSchema(StructType, Set)}.
-   */
-  public static StructType getStatsSchema(StructType dataSchema) {
-    return getStatsSchema(dataSchema, Collections.emptySet());
-  }
-
-  /**
-   * Returns the expected statistics schema given a table schema.
-   *
    * <p>Here is an example of a data schema along with the schema of the statistics that would be
    * collected.
    *
