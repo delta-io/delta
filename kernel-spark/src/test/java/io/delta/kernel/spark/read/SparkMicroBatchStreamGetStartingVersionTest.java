@@ -95,8 +95,7 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
 
     // dsv2
     SparkMicroBatchStream dsv2Stream =
-        new SparkMicroBatchStream(
-            testTablePath, new Configuration(), spark, /* options= */ Optional.empty());
+        new SparkMicroBatchStream(testTablePath, new Configuration());
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, Optional.empty(), "No options provided");
@@ -216,10 +215,7 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     // dsv2
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            testTablePath,
-            new Configuration(),
-            spark,
-            Optional.ofNullable(createDeltaOptions(startingVersion)));
+            testTablePath, new Configuration(), spark, createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(
@@ -256,10 +252,7 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     // DSv2: Create SparkMicroBatchStream and get starting version
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            testTablePath,
-            new Configuration(),
-            spark,
-            Optional.ofNullable(createDeltaOptions(startingVersion)));
+            testTablePath, new Configuration(), spark, createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);

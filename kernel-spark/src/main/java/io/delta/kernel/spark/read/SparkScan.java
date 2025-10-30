@@ -128,8 +128,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
     DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
-    return new SparkMicroBatchStream(
-        tablePath, hadoopConf, SparkSession.active(), Optional.of(deltaOptions));
+    return new SparkMicroBatchStream(tablePath, hadoopConf, SparkSession.active(), deltaOptions);
   }
 
   @Override
