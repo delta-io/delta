@@ -408,7 +408,7 @@ trait IcebergWriterCompatV1SuiteBase
             testSchema,
             tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
           verifyIcebergWriterCompatV1Enabled(tablePath, engine)
-          val e = intercept[UnsupportedTableFeatureException] {
+          val e = intercept[KernelException] {
             // Update the table such that we enable the incompatible feature
             updateTableMetadata(
               engine,
