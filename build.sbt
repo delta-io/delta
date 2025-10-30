@@ -58,8 +58,8 @@ val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
 // Cross-Spark-version building support
 val sparkVersion = settingKey[String]("Spark version")
 
-// Flag to control cross-Spark publishing: set -DcrossSparkPublish=true to enable
-val crossSparkPublishEnabled = sys.props.getOrElse("crossSparkPublish", "false").toBoolean
+// Flag to control cross-Spark releasing: set -DcrossSparkRelease=true to enable
+val crossSparkReleaseEnabled = sys.props.getOrElse("crossSparkRelease", "false").toBoolean
 spark / sparkVersion := getSparkVersion()
 kernelSpark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
@@ -132,11 +132,11 @@ def getSparkBinaryVersion(sparkVer: String): String = {
 
 /**
  * Returns module name with optional Spark version suffix.
- * When crossSparkPublish=true: "module-name_spark35"
- * When crossSparkPublish=false: "module-name"
+ * When crossSparkRelease=true: "module-name_spark35"
+ * When crossSparkRelease=false: "module-name"
  */
 def moduleNameWithOptionalSpark(baseName: String, sparkVer: String): String = {
-  if (crossSparkPublishEnabled) {
+  if (crossSparkReleaseEnabled) {
     val sparkBinVer = getSparkBinaryVersion(sparkVer).replace(".", "")
     s"${baseName}_spark${sparkBinVer}"
   } else {
@@ -1524,7 +1524,7 @@ releaseProcess := Seq[ReleaseStep](
   setReleaseVersion,
   commitReleaseVersion,
   tagRelease,
-  releaseStepCommand(if (crossSparkPublishEnabled) "crossSpark +publishSigned" else "+publishSigned"),
+  releaseStepCommand(if (crossSparkReleaseEnabled) "crossSparkRelease +publishSigned" else "+publishSigned"),
   setNextVersion,
   commitNextVersion
 )
