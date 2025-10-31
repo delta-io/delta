@@ -1280,7 +1280,6 @@ case class DeltaSource(
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
 
   trait DeltaSourceAdmissionBase { self: AdmissionLimits =>
-
     // This variable indicates whether a commit has already been processed by a batch or not.
     var commitProcessedInBatch = false
 
@@ -1337,6 +1336,7 @@ case class DeltaSource(
     def hasCapacity: Boolean = {
       filesToTake > 0 && bytesToTake > 0
     }
+
   }
 
   /**
