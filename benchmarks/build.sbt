@@ -15,7 +15,7 @@
  */
 
 name := "benchmarks"
-scalaVersion := "2.12.18"
+scalaVersion := "2.13.13"
 
 lazy val root = (project in file("."))
   .settings(

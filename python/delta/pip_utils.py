@@ -43,7 +43,7 @@ def configure_spark_with_delta_pip(
         builder = SparkSession.builder \
             .master("local[*]") \
             .appName("test")
-        my_packages = ["org.apache.spark:spark-sql-kafka-0-10_2.12:x.y.z"]
+        my_packages = ["org.apache.spark:spark-sql-kafka-0-10_2.13:x.y.z"]
         spark = configure_spark_with_delta_pip(builder, extra_packages=my_packages).getOrCreate()
 
     :param spark_session_builder: SparkSession.Builder object being used to configure and
