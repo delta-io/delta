@@ -80,6 +80,7 @@ public class StatsSchemaHelper {
    * |-- a: struct (nullable = true)
    * |  |-- b: struct (nullable = true)
    * |  |  |-- c: long (nullable = true)
+   * |  |  |-- d: string (nullable = true)
    * </pre>
    *
    * <p>Collected Statistics:
@@ -91,18 +92,32 @@ public class StatsSchemaHelper {
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
    * |  |-- maxValues: struct (nullable = false)
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
    * |  |-- nullCount: struct (nullable = false)
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
+   * |  |  |  |  |-- d: string (nullable = true)
    * |  |-- tightBounds: boolean (nullable = true)
+   * |  |-- statsWithCollation: struct (nullable = true)
+   * |  |  |-- collationName: struct (nullable = true)
+   * |  |  |  |-- min: struct (nullable = true)
+   * |  |  |  |  |-- a: struct (nullable = true)
+   * |  |  |  |  |  |-- b: struct (nullable = true)
+   * |  |  |  |  |  |  |-- d: string (nullable = true)
+   * |  |  |  |-- max: struct (nullable = true)
+   * |  |  |  |  |-- a: struct (nullable = true)
+   * |  |  |  |  |  |-- b: struct (nullable = true)
+   * |  |  |  |  |  |  |-- d: string (nullable = true)
    * </pre>
    */
-  public static StructType getStatsSchema(StructType dataSchema) {
+  public static StructType getStatsSchema(
+      StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
     StructType statsSchema = new StructType().add(NUM_RECORDS, LongType.LONG, true);
 
     StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
@@ -116,6 +131,11 @@ public class StatsSchemaHelper {
     }
 
     statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
+
+    StructType collatedMinMaxStatsSchema = getCollatedStatsSchema(dataSchema, collationIdentifiers);
+    if (collatedMinMaxStatsSchema.length() > 0) {
+      statsSchema = statsSchema.add(STATS_WITH_COLLATION, collatedMinMaxStatsSchema, true);
+    }
 
     return statsSchema;
   }
@@ -277,6 +297,58 @@ public class StatsSchemaHelper {
       }
     }
     return new StructType(fields);
+  }
+
+  /**
+   * Given a data schema and a set of collation identifiers returns the expected schema for
+   * collation-aware statistics columns.
+   */
+  private static StructType getCollatedStatsSchema(
+      StructType dataSchema, Set<CollationIdentifier> collationIdentifiers) {
+    StructType statsWithCollation = new StructType();
+    StructType collationAwareFields = getCollationAwareFields(dataSchema);
+    for (CollationIdentifier collationIdentifier : collationIdentifiers) {
+      if (collationIdentifier.isSparkUTF8BinaryCollation()) {
+        // For SPARK.UTF8_BINARY collation we use the binary stats
+        continue;
+      }
+      if (collationIdentifier.getVersion().isEmpty()) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Collation identifier %s must specify a collation version for collation-aware "
+                    + "statistics.",
+                collationIdentifier));
+      }
+
+      if (collationAwareFields.length() > 0) {
+        statsWithCollation =
+            statsWithCollation.add(
+                collationIdentifier.toString(),
+                new StructType()
+                    .add(MIN, collationAwareFields, true)
+                    .add(MAX, collationAwareFields, true),
+                true);
+      }
+    }
+    return statsWithCollation;
+  }
+
+  /** Given a data schema returns its collation aware fields. */
+  private static StructType getCollationAwareFields(StructType dataSchema) {
+    StructType collationAwareFields = new StructType();
+    for (StructField field : dataSchema.fields()) {
+      DataType dataType = field.getDataType();
+      if (dataType instanceof StructType) {
+        StructType nestedCollationAwareFields = getCollationAwareFields((StructType) dataType);
+        if (nestedCollationAwareFields.length() > 0) {
+          collationAwareFields =
+              collationAwareFields.add(getPhysicalName(field), nestedCollationAwareFields, true);
+        }
+      } else if (dataType instanceof StringType) {
+        collationAwareFields = collationAwareFields.add(getPhysicalName(field), dataType, true);
+      }
+    }
+    return collationAwareFields;
   }
 
   /**
