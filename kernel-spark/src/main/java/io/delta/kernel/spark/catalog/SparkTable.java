@@ -178,7 +178,6 @@ public class SparkTable implements Table, SupportsRead {
   @Override
   public Map<String, String> properties() {
     Map<String, String> props = new HashMap<>(snapshot.getMetadata().getConfiguration());
-    props.putAll(this.options);
     return Collections.unmodifiableMap(props);
   }
 
