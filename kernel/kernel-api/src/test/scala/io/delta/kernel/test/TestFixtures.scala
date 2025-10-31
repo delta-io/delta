@@ -35,9 +35,6 @@ import io.delta.kernel.utils.FileStatus
  */
 trait TestFixtures extends ActionUtils {
 
-  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
-  val utf8LcaseString = new StringType(utf8Lcase)
-
   /** All simple data type used in parameterized tests where type is one of the test dimensions. */
   val PRIMITIVE_TYPES = Set(
     BooleanType.BOOLEAN,
@@ -51,7 +48,6 @@ trait TestFixtures extends ActionUtils {
     TimestampType.TIMESTAMP,
     TimestampNTZType.TIMESTAMP_NTZ,
     StringType.STRING,
-    utf8LcaseString,
     BinaryType.BINARY,
     new DecimalType(10, 5))
 

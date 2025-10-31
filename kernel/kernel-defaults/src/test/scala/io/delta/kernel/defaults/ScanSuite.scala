@@ -1628,6 +1628,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
     new FilteredColumnarBatch(batch, java.util.Optional.empty())
   }
 
+  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
+  val utf8LcaseString = new StringType(utf8Lcase)
   val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
   val unicodeString = new StringType(unicode)
 

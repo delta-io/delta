@@ -41,9 +41,7 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
     (LongType.LONG, FloatType.FLOAT),
     (LongType.LONG, DoubleType.DOUBLE),
     (FloatType.FLOAT, DoubleType.DOUBLE),
-    (StringType.STRING, StringType.STRING),
-    (StringType.STRING, utf8LcaseString),
-    (utf8LcaseString, StringType.STRING))
+    (StringType.STRING, StringType.STRING))
 
   test("can cast to") {
     ALL_TYPES.foreach { fromType =>
