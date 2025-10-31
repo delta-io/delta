@@ -24,6 +24,7 @@ import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
@@ -41,6 +42,10 @@ public class SparkTable implements Table, SupportsRead {
 
   private final Identifier identifier;
   private final String tablePath;
+  /**
+   * Additional table level storage properties used to configure the Hadoop FileSystem for I/O
+   * operations.
+   */
   private final Map<String, String> options;
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
@@ -52,6 +57,7 @@ public class SparkTable implements Table, SupportsRead {
   private final StructType partitionSchema;
   private final Column[] columns;
   private final Transform[] partitionTransforms;
+  private final Optional<CatalogTable> catalogTable;
 
   /**
    * Creates a SparkTable backed by a Delta Kernel snapshot and initializes Spark-facing metadata
@@ -64,18 +70,20 @@ public class SparkTable implements Table, SupportsRead {
    * <p>Notes: - Partition column order from the snapshot is preserved for partitioning and appended
    * after data columns in the public Spark schema, per Spark conventions. - Read-time scan options
    * are later merged with these options.
-   *
-   * @param identifier logical table identifier used by Spark's catalog
-   * @param tablePath filesystem path to the Delta table root
-   * @param options table options used to configure the Hadoop conf, table reads and writes
-   * @throws NullPointerException if identifier or tablePath is null
    */
-  public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
+  private SparkTable(Identifier identifier, String tablePath, Optional<CatalogTable> catalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
-    this.tablePath = requireNonNull(tablePath, "snapshot is null");
-    this.options = options;
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
+    this.catalogTable = catalogTable;
+
+    // Extract options from catalog table storage properties
+    this.options =
+        catalogTable
+            .map(t -> scala.collection.JavaConverters.mapAsJavaMap(t.storage().properties()))
+            .orElse(Collections.emptyMap());
+
     this.hadoopConf =
-        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
+        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(this.options));
     this.snapshot =
         (SnapshotImpl)
             io.delta.kernel.TableManager.loadSnapshot(tablePath)
@@ -121,15 +129,45 @@ public class SparkTable implements Table, SupportsRead {
   }
 
   /**
-   * Convenience constructor that uses empty options. See {@link #SparkTable(Identifier, String,
-   * java.util.Map)} for full behavior and notes.
+   * Creates a SparkTable from a filesystem path without a catalog table.
    *
    * @param identifier logical table identifier used by Spark's catalog
    * @param tablePath filesystem path to the Delta table root
    * @throws NullPointerException if identifier or tablePath is null
    */
   public SparkTable(Identifier identifier, String tablePath) {
-    this(identifier, tablePath, Collections.emptyMap());
+    this(identifier, tablePath, Optional.empty());
+  }
+
+  /**
+   * Constructor that accepts a Spark CatalogTable. Extracts the table location and storage
+   * properties from the catalog table.
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param catalogTable the Spark CatalogTable containing table metadata including location
+   */
+  public SparkTable(Identifier identifier, CatalogTable catalogTable) {
+    this(
+        identifier,
+        getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
+        Optional.of(catalogTable));
+  }
+
+  /**
+   * Helper method to decode URI path handling URL-encoded characters correctly. E.g., converts
+   * "spark%25dir%25prefix" to "spark%dir%prefix"
+   */
+  private static String getDecodedPath(java.net.URI location) {
+    return new java.io.File(location).getPath();
+  }
+
+  /**
+   * Returns the CatalogTable if this SparkTable was created from a catalog table.
+   *
+   * @return Optional containing the CatalogTable, or empty if this table was created from a path
+   */
+  public Optional<CatalogTable> getCatalogTable() {
+    return catalogTable;
   }
 
   @Override
@@ -155,7 +193,6 @@ public class SparkTable implements Table, SupportsRead {
   @Override
   public Map<String, String> properties() {
     Map<String, String> props = new HashMap<>(snapshot.getMetadata().getConfiguration());
-    props.putAll(this.options);
     return Collections.unmodifiableMap(props);
   }
 
