@@ -1628,9 +1628,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
     new FilteredColumnarBatch(batch, java.util.Optional.empty())
   }
 
-  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
   val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
-  val utf8LcaseString = new StringType(utf8Lcase)
   val unicodeString = new StringType(unicode)
 
   test("partition pruning - predicates with SPARK.UTF8_BINARY on partition column") {
@@ -2138,8 +2136,11 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val c2CollationWithoutVersion =
             CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
           val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
+            .add(
+              "s",
+              new StructType()
+                .add("c1", new StringType(c1CollationWithoutVersion), true)
+                .add("c2", new StringType(c2CollationWithoutVersion), true))
 
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,

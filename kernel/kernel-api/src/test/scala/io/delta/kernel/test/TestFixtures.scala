@@ -26,7 +26,7 @@ import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.internal.actions.{CommitInfo, DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.internal.util.{FileNames, Tuple2}
-import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
+import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, CollationIdentifier, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
 import io.delta.kernel.utils.FileStatus
 
 /**
@@ -34,6 +34,9 @@ import io.delta.kernel.utils.FileStatus
  * defaults.
  */
 trait TestFixtures extends ActionUtils {
+
+  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
+  val utf8LcaseString = new StringType(utf8Lcase)
 
   /** All simple data type used in parameterized tests where type is one of the test dimensions. */
   val PRIMITIVE_TYPES = Set(
@@ -48,6 +51,7 @@ trait TestFixtures extends ActionUtils {
     TimestampType.TIMESTAMP,
     TimestampNTZType.TIMESTAMP_NTZ,
     StringType.STRING,
+    utf8LcaseString,
     BinaryType.BINARY,
     new DecimalType(10, 5))
 
