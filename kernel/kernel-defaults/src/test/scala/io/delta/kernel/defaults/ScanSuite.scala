@@ -1620,7 +1620,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
     new FilteredColumnarBatch(batch, java.util.Optional.empty())
   }
 
-  private def buildNestedBatch2(
+  private def buildNestedBatch(
       schema: StructType,
       v1: AnyRef,
       v2: AnyRef): FilteredColumnarBatch = {
@@ -2094,9 +2094,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map.empty[String, Literal] -> List(buildNestedBatch2(schema, "a", "x")),
-              Map.empty[String, Literal] -> List(buildNestedBatch2(schema, "c", "y")),
-              Map.empty[String, Literal] -> List(buildNestedBatch2(schema, "e", "z"))))
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "e", "z"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder.build()).length
