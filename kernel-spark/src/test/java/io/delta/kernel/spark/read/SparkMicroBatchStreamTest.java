@@ -236,6 +236,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /**
    * Test that verifies parity between DSv1 DeltaSource.getFileChangesWithRateLimit and DSv2
    * SparkMicroBatchStream.getFileChangesWithRateLimit.
+   * 
+   * <p>TODO(#5318): test initial snapshot once we fully support it.
    */
   @ParameterizedTest
   @MethodSource("getFileChangesWithRateLimitParameters")
