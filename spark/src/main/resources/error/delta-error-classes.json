@@ -2187,6 +2187,12 @@
     ],
     "sqlState" : "KD004"
   },
+  "DELTA_READ_SOURCE_SCHEMA_CONFLICT" : {
+    "message" : [
+      "The schema provided for the source read doesn't match the schema of the Delta table"
+    ],
+    "sqlState" : "42K07"
+  },
   "DELTA_READ_TABLE_WITHOUT_COLUMNS" : {
     "message" : [
       "You are trying to read a Delta table <tableName> that does not have any columns.",
