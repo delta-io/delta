@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.spark.table;
 
-import static io.delta.kernel.spark.catalog.SparkTableTestUtils.createCatalogTableFromPath;
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -31,6 +30,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
+import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
@@ -47,7 +47,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
   @ParameterizedTest(name = "{0} - {1}")
   @MethodSource("tableTestCases")
   public void testDeltaKernelTable(
-      TableTestCase testCase, ConstructionMethod method, @TempDir File tempDir) {
+      TableTestCase testCase, ConstructionMethod method, @TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
     String tableName =
         "test_" + testCase.name.toLowerCase().replace(" ", "_") + "_" + method.name().toLowerCase();
@@ -63,8 +63,8 @@ public class SparkTableTest extends SparkDsv2TestBase {
         kernelTable = new SparkTable(identifier, path);
         break;
       case FROM_CATALOG_TABLE:
-        // Manually construct CatalogTable using test utility
-        catalogTable = createCatalogTableFromPath(tableName, path);
+        catalogTable =
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
         kernelTable = new SparkTable(identifier, catalogTable);
         break;
       default:
