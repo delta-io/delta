@@ -1647,8 +1647,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
-          val c1Collation =
-            schema.get("c1").getDataType.asInstanceOf[StringType].getCollationIdentifier
+          val c1Collation = c1Type.getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -1766,8 +1765,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
-          val c1Collation =
-            schema.get("c1").getDataType.asInstanceOf[StringType].getCollationIdentifier
+          val c1Collation = c1Type.getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -2026,8 +2024,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
-          val c1Collation =
-            schema.get("c1").getDataType.asInstanceOf[StringType].getCollationIdentifier
+          val c1Collation = c1Type.getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -2239,9 +2236,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
         withTempDir { tempDir =>
           val tablePath = tempDir.getCanonicalPath
           val schema = new StructType()
-            .add("c1", c1Type, true)
-            .add("c2", c2Type, true)
-
+            .add("c1", STRING, true)
+            .add("c2", STRING, true)
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,
             emptyIterable())
@@ -2411,8 +2407,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
             .add("c3", c3Type, true)
-          val c1Collation =
-            schema.get("c1").getDataType.asInstanceOf[StringType].getCollationIdentifier
+          val c1Collation = c1Type.getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -2499,14 +2494,14 @@ class ScanSuite extends AnyFunSuite with TestUtils
         (utf8LcaseString, unicodeString, unicodeString),
         (STRING, utf8LcaseString, unicodeString),
         (STRING, utf8LcaseString, STRING),
-        (unicodeString, STRING, utf8LcaseString)).foreach { case (c1Type, c2Type, c3Type) =>
+        (unicodeString, STRING, utf8LcaseString)).foreach { case (pType, c2Type, c3Type) =>
         withTempDir { tempDir =>
           val tablePath = tempDir.getCanonicalPath
           val schema = new StructType()
-            .add("c1", c1Type, true)
+            .add("p", pType, true)
             .add("c2", c2Type, true)
             .add("c3", c3Type, true)
-          val c1Collation = c1Type.getCollationIdentifier
+          val c1Collation = pType.getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
