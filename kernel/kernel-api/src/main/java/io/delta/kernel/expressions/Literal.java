@@ -122,17 +122,6 @@ public final class Literal implements Expression {
   }
 
   /**
-   * Create a {@code string} type literal expression with collated {@link StringType}.
-   *
-   * @param value literal value
-   * @param collationIdentifier collation identifier for the string literal
-   * @return a {@link Literal} of type {@link StringType} with the given collation
-   */
-  public static Literal ofString(String value, CollationIdentifier collationIdentifier) {
-    return new Literal(value, new StringType(collationIdentifier));
-  }
-
-  /**
    * Create a {@code binary} type literal expression.
    *
    * @param value binary literal value as an array of bytes
