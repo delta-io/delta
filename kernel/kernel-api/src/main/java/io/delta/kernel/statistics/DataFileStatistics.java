@@ -381,6 +381,22 @@ public class DataFileStatistics {
     DataType expectedLiteralType =
         field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
     if (literal.getDataType() == null || !literal.getDataType().equals(expectedLiteralType)) {
+      if (literal.getDataType() instanceof StringType
+          && expectedLiteralType instanceof StringType) {
+        StringType stringLiteralType = (StringType) literal.getDataType();
+        CollationIdentifier c1 = stringLiteralType.getCollationIdentifier();
+        StringType stringFieldType = (StringType) expectedLiteralType;
+        CollationIdentifier c2 = stringFieldType.getCollationIdentifier();
+        throw new IllegalArgumentException(
+            String.format(
+                "String literal types should match exactly. (%s.%s.%s), (%s.%s.%s)",
+                c1.getProvider(),
+                c1.getName(),
+                c1.getVersion(),
+                c2.getProvider(),
+                c2.getName(),
+                c2.getVersion()));
+      }
       throw DeltaErrors.statsTypeMismatch(
           field.getName(), expectedLiteralType, literal.getDataType());
     }
