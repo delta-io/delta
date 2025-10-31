@@ -73,7 +73,11 @@ public class CCv2Context {
   }
 
   /**
-   * Creates a CCv2Context from a TableInfo that has CCv2 configuration.
+   * Creates a CCv2Context from a TableInfo that has CCv2 configuration.  The resulting committer and ucClient
+   * objects are backed by in-memory implementations suitable for benchmarking. They do not perform operations
+   * on a real Unity Catalog server.
+   * <p>
+   * NOTE: The In-commit timestamps are not populated in UCCommitCoordinator to avoid reading files ICT.
    *
    * @param tableInfo the TableInfo containing CCv2 configuration
    * @param engine the Engine to use for filesystem operations
@@ -111,7 +115,7 @@ public class CCv2Context {
             Option.apply(stagedCommit.getVersion()), // commitVersion
             Option.apply(fileStatus.getSize()), // commitFileSize
             Option.apply(fileStatus.getModificationTime()), // commitFileModTime
-            Option.apply(System.currentTimeMillis()), // commitTimestamp
+            Option.empty(), // commitTimestamp. Note: We do not set this to avoid reading files for ICT.
             Option.empty(), // lastKnownBackfilledVersion
             false, // isDisownCommit
             Option.empty(), // protocolOpt
