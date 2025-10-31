@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
@@ -26,6 +27,7 @@ import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf, DeltaStreamUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.GeneratedColumnValidateOnWriteMode
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
@@ -117,6 +119,29 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     val constraints = mutable.ArrayBuffer[Constraint]()
     // Column names for which we will track high water marks.
     val track = mutable.Set[String]()
+    val generatedColumnsValidateMode =
+      GeneratedColumnValidateOnWriteMode.fromConf(data.sparkSession.sessionState.conf)
+    generatedColumnsValidateMode match {
+      case GeneratedColumnValidateOnWriteMode.LOG_ONLY |
+           GeneratedColumnValidateOnWriteMode.ASSERT =>
+        try {
+          GeneratedColumn.validateGeneratedColumns(data.sparkSession, schema)
+        } catch {
+          case NonFatal(e) =>
+            recordDeltaEvent(
+              deltaLog,
+              "delta.generatedColumns.writeValidationFailure",
+              data = Map(
+                "errorClassName" -> e.getClass,
+                "errorMessage" -> e.getMessage
+              )
+            )
+            if (generatedColumnsValidateMode == GeneratedColumnValidateOnWriteMode.ASSERT) {
+              throw e
+            }
+        }
+      case GeneratedColumnValidateOnWriteMode.OFF =>
+    }
     var selectExprs = schema.flatMap { f =>
       GeneratedColumn.getGenerationExpression(f) match {
         case Some(expr) if GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) =>
