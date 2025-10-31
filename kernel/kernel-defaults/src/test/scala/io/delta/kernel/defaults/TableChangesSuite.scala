@@ -27,7 +27,7 @@ import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
+import io.delta.kernel.exceptions.{CommitRangeNotFoundException, KernelException, TableNotFoundException, UnsupportedProtocolVersionException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.TableImpl
@@ -735,7 +735,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
       }
 
       // startVersion after latest available version
-      assert(intercept[KernelException] {
+      assert(intercept[CommitRangeNotFoundException] {
         getChangesByVersion(3, 8)
       }.getMessage.contains("no log files found in the requested version range"))
 
@@ -790,7 +790,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
 
       // TEST ERRORS
       // endVersion before earliest available version
-      assert(intercept[KernelException] {
+      assert(intercept[CommitRangeNotFoundException] {
         getChanges(tablePath, 0, 9, FULL_ACTION_SET)
       }.getMessage.contains("no log files found in the requested version range"))
 
@@ -869,12 +869,12 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
     // Existing tests suffice to check if the protocol column is present/dropped correctly
     // We test our protocol checks for table features in TableFeaturesSuite
     // Min reader version is too high
-    assert(intercept[KernelException] {
+    assert(intercept[UnsupportedProtocolVersionException] {
       // Use toSeq because we need to consume the iterator to force the exception
       getChanges(goldenTablePath("deltalog-invalid-protocol-version"), 0, 0, FULL_ACTION_SET)
     }.getMessage.contains("Unsupported Delta protocol reader version"))
     // We still get an error if we don't request the protocol file action
-    assert(intercept[KernelException] {
+    assert(intercept[UnsupportedProtocolVersionException] {
       getChanges(goldenTablePath("deltalog-invalid-protocol-version"), 0, 0, Set(DeltaAction.ADD))
     }.getMessage.contains("Unsupported Delta protocol reader version"))
   }

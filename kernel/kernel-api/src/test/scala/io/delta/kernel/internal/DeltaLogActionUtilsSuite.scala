@@ -21,7 +21,7 @@ import java.util.{Collections, Optional}
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
-import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
+import io.delta.kernel.exceptions.{CommitRangeNotFoundException, InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.internal.DeltaLogActionUtils.{getCommitFilesForVersionRange, listDeltaLogFilesAsIter, verifyDeltaVersions}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
@@ -141,22 +141,22 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     }
   }
 
-  testGetCommitFilesExpectedError[KernelException](
+  testGetCommitFilesExpectedError[CommitRangeNotFoundException](
     testName = "empty directory",
     files = Seq(),
     expectedErrorMessageContains = "no log files found in the requested version range")
 
-  testGetCommitFilesExpectedError[KernelException](
+  testGetCommitFilesExpectedError[CommitRangeNotFoundException](
     testName = "all versions less than startVersion",
     files = deltaFileStatuses(Seq(0)),
     expectedErrorMessageContains = "no log files found in the requested version range")
 
-  testGetCommitFilesExpectedError[KernelException](
+  testGetCommitFilesExpectedError[CommitRangeNotFoundException](
     testName = "all versions greater than endVersion",
     files = deltaFileStatuses(Seq(4, 5, 6)),
     expectedErrorMessageContains = "no log files found in the requested version range")
 
-  testGetCommitFilesExpectedError[KernelException](
+  testGetCommitFilesExpectedError[CommitRangeNotFoundException](
     testName = "all versions less than startVersion no endVersion",
     files = deltaFileStatuses(Seq(0)),
     endVersion = Optional.empty(),

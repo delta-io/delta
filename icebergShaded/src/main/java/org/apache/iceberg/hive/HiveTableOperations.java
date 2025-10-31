@@ -58,7 +58,7 @@ import org.slf4j.LoggerFactory;
 /**
  * TODO we should be able to extract some more commonalities to BaseMetastoreTableOperations to
  * avoid code duplication between this class and Metacat Tables.
- * This class is directly copied from iceberg 1.9.0; The only change made are
+ * This class is directly copied from iceberg 1.10.0; The only change made are
  *  1) accept metadataUpdates in constructor apply those before writing metadata
  *  to support using schema/partitionSpec with field ids assigned by Delta lake;
  *  2) handle NoSuchIcebergTableException in doRefresh to regard a table entry
@@ -82,9 +82,9 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
   private final int metadataRefreshMaxRetries;
   private final FileIO fileIO;
   private final ClientPool<IMetaStoreClient, TException> metaClients;
-  // This is newly added
+  // HACK-HACK This is newly added
   private List<MetadataUpdate> metadataUpdates = new ArrayList();
-  // This is newly added
+  // HACK-HACK This is newly added
   protected HiveTableOperations(
           Configuration conf,
           ClientPool<IMetaStoreClient, TException> metaClients,
@@ -134,6 +134,10 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
     String metadataLocation = null;
     try {
       Table table = metaClients.run(client -> client.getTable(database, tableName));
+
+      // Check if we are trying to load an Iceberg View as a Table
+      HiveOperationsBase.validateIcebergViewNotLoadedAsIcebergTable(table, fullName);
+      // Check if it is a valid Iceberg Table
       HiveOperationsBase.validateTableIsIceberg(table, fullName);
 
       metadataLocation = table.getParameters().get(METADATA_LOCATION_PROP);
@@ -142,7 +146,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
       if (currentMetadataLocation() != null) {
         throw new NoSuchTableException("No such table: %s.%s", database, tableName);
       }
-    } catch (NoSuchIcebergTableException e) { // This is newly added
+    } catch (NoSuchIcebergTableException e) { // HACK-HACK This is newly added
       // NoSuchIcebergTableException is throw when table exists in catalog but not with
       // table_type=iceberg; in that case we want to swallow so createTable
       // txn can proceed with creating the iceberg table/metadata and set table_type=iceberg
@@ -166,7 +170,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
   @Override
   protected void doCommit(TableMetadata base, TableMetadata metadata) {
     boolean newTable = base == null;
-    // This is newly added
+    // HACK-HACK This is newly added
     // Apply metadata updates so adjustedMetadata has field id and partition spec created
     // from Delta lake
     TableMetadata.Builder builder = TableMetadata.buildFrom(metadata);
@@ -194,7 +198,7 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
       }
     }
     TableMetadata adjustedMetadata = builder.build();
-    // This is newly added
+    // HACK-HACK This is modified
     String newMetadataLocation = writeNewMetadataIfRequired(newTable, adjustedMetadata);
     boolean hiveEngineEnabled = hiveEngineEnabled(metadata, conf);
     boolean keepHiveStats = conf.getBoolean(ConfigProperties.KEEP_HIVE_STATS, false);
@@ -231,15 +235,15 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
         LOG.debug("Committing new table: {}", fullName);
       }
 
-      // This is newely added
+      // HACK-HACK This is newely added
       StorageDescriptor newsd = HiveOperationsBase.storageDescriptor(
               adjustedMetadata.schema(),
               adjustedMetadata.location(),
               hiveEngineEnabled);
-      // This is newely added: use storage descriptor from Delta
+      // HACK-HACK This is newely added: use storage descriptor from Delta
       newsd.getSerdeInfo().setParameters(tbl.getSd().getSerdeInfo().getParameters());
       tbl.setSd(newsd);
-      // This is newely added: set schema to be empty to match Delta behavior
+      // HACK-HACK This is newely added: set schema to be empty to match Delta behavior
       tbl.getSd().setCols(Collections.singletonList(new FieldSchema("col", "array<string>", "")));
 
       String metadataLocation = tbl.getParameters().get(METADATA_LOCATION_PROP);
