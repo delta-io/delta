@@ -32,10 +32,10 @@ public abstract class SparkDsv2TestBase {
         SparkSession.builder()
             .master("local[*]")
             .appName("SparkKernelDsv2Tests")
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .config("spark.sql.extensions", "io.delta.sql.LegacyDeltaSparkSessionExtension")
             .config(
                 "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+                "org.apache.spark.sql.delta.catalog.LegacyDeltaCatalog")
             .getOrCreate();
     defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
   }

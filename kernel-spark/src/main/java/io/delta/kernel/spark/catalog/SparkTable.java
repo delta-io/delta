@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.table;
+package io.delta.kernel.spark.catalog;
 
 import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
@@ -22,22 +22,35 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead {
+public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
   private static final Set<TableCapability> CAPABILITIES =
       Collections.unmodifiableSet(
-          EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
+          EnumSet.of(
+              TableCapability.BATCH_READ,
+              TableCapability.MICRO_BATCH_READ,
+              TableCapability.STREAMING_WRITE,
+              // Declare write capabilities for DataFrameWriterV2 API compatibility
+              // Actual write operations will be handled by fallback to V1 in connector layer
+              TableCapability.V1_BATCH_WRITE,
+              TableCapability.OVERWRITE_BY_FILTER,
+              TableCapability.TRUNCATE,
+              TableCapability.OVERWRITE_DYNAMIC,
+              TableCapability.ACCEPT_ANY_SCHEMA));
 
   private final Identifier identifier;
   private final String tablePath;
@@ -52,6 +65,7 @@ public class SparkTable implements Table, SupportsRead {
   private final StructType partitionSchema;
   private final Column[] columns;
   private final Transform[] partitionTransforms;
+  private final Optional<org.apache.spark.sql.catalyst.catalog.CatalogTable> v1CatalogTable;
 
   /**
    * Creates a SparkTable backed by a Delta Kernel snapshot and initializes Spark-facing metadata
@@ -71,11 +85,24 @@ public class SparkTable implements Table, SupportsRead {
    * @throws NullPointerException if identifier or tablePath is null
    */
   public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
+    this(identifier, tablePath, options, Optional.empty());
+  }
+
+  /** Private constructor with v1CatalogTable parameter. */
+  private SparkTable(
+      Identifier identifier,
+      String tablePath,
+      Map<String, String> options,
+      Optional<org.apache.spark.sql.catalyst.catalog.CatalogTable> v1CatalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "snapshot is null");
     this.options = options;
+    this.v1CatalogTable = v1CatalogTable;
     this.hadoopConf =
-        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
+        SparkSession.active()
+            .sessionState()
+            .newHadoopConfWithOptions(
+                v1CatalogTable.map(t -> t.storage().properties()).orElse(toScalaMap((options))));
     this.snapshot =
         (SnapshotImpl)
             io.delta.kernel.TableManager.loadSnapshot(tablePath)
@@ -132,6 +159,49 @@ public class SparkTable implements Table, SupportsRead {
     this(identifier, tablePath, Collections.emptyMap());
   }
 
+  /**
+   * Constructor that accepts a Spark CatalogTable. Extracts the table location from the catalog
+   * table and initializes the SparkTable using that location with empty options.
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param catalogTable the Spark CatalogTable containing table metadata including location
+   * @throws NullPointerException if identifier or catalogTable is null
+   */
+  public SparkTable(
+      Identifier identifier, org.apache.spark.sql.catalyst.catalog.CatalogTable catalogTable) {
+    this(
+        identifier,
+        getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
+        Collections.emptyMap(),
+        Optional.of(catalogTable));
+  }
+
+  /**
+   * Helper method to decode URI path handling URL-encoded characters correctly. E.g., converts
+   * "spark%25dir%25prefix" to "spark%dir%prefix"
+   *
+   * @param location the URI location
+   * @return decoded path string suitable for file system access
+   */
+  private static String getDecodedPath(java.net.URI location) {
+    try {
+      // Use new File(URI).getPath() to get properly decoded filesystem path
+      return new java.io.File(location).getPath();
+    } catch (IllegalArgumentException e) {
+      // Fallback to toString() if URI is not a file:// URI
+      return location.toString();
+    }
+  }
+
+  /**
+   * Returns the V1 CatalogTable if this SparkTable was created from a catalog table.
+   *
+   * @return Optional containing the CatalogTable, or empty if this table was created from a path
+   */
+  public Optional<org.apache.spark.sql.catalyst.catalog.CatalogTable> getV1CatalogTable() {
+    return v1CatalogTable;
+  }
+
   @Override
   public String name() {
     return identifier.name();
@@ -175,5 +245,10 @@ public class SparkTable implements Table, SupportsRead {
   @Override
   public String toString() {
     return "SparkTable{identifier=" + identifier + '}';
+  }
+
+  @Override
+  public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
+    return null;
   }
 }
