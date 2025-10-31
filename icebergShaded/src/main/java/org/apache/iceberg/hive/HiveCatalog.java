@@ -69,7 +69,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This class is directly copied from iceberg 1.8.0; The only change made is
+ * This class is directly copied from iceberg 1.10.0; The only change made is
  * 1.
  *  accept metadataUpdates in constructor and pass to HiveTableOperations
  *  to support using schema/partitionSpec with field ids assigned by Delta lake
@@ -97,10 +97,12 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
   private boolean listAllTables = false;
   private Map<String, String> catalogProperties;
 
+  // HACK-HACK This is newly added
   private List<MetadataUpdate> metadataUpdates = new ArrayList();
 
   public HiveCatalog() {}
 
+  // HACK-HACK This is newly added
   public void initialize(String inputName, Map<String, String> properties, List<MetadataUpdate> metadataUpdates) {
     initialize(inputName, properties);
     this.metadataUpdates = metadataUpdates;
@@ -445,6 +447,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     String tableName = baseTableIdentifier.name();
     try {
       Table table = clients.run(client -> client.getTable(database, tableName));
+      // HACK-HACK This is modified
       validateTableIsIceberg(table, fullTableName(name, baseTableIdentifier));
       return true;
     } catch (NoSuchTableException | NoSuchObjectException e) {
@@ -458,6 +461,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     }
   }
 
+  // HACK-HACK This is added
   private void validateTableIsIceberg(Table table, String fullName) {
     HiveOperationsBase.validateTableIsIceberg(table, fullName);
     String metadataLocation = table.getParameters().get(BaseMetastoreTableOperations.METADATA_LOCATION_PROP);
@@ -529,7 +533,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
 
   @Override
   public List<Namespace> listNamespaces(Namespace namespace) {
-    if (!isValidateNamespace(namespace) && !namespace.isEmpty()) {
+    if (!namespace.isEmpty() && (!isValidateNamespace(namespace) || !namespaceExists(namespace))) {
       throw new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
     }
     if (!namespace.isEmpty()) {
@@ -707,6 +711,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
   public TableOperations newTableOps(TableIdentifier tableIdentifier) {
     String dbName = tableIdentifier.namespace().level(0);
     String tableName = tableIdentifier.name();
+    // HACK-HACK This is modified
     return new HiveTableOperations(conf, clients, fileIO, name, dbName, tableName, metadataUpdates);
   }
 
