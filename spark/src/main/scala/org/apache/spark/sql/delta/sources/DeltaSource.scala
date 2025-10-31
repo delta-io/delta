@@ -441,12 +441,12 @@ trait DeltaSourceBase extends Source
       // Block latestOffset() from generating an invalid offset by proactively verifying
       // incompatible schema changes under column mapping. See more details in the method doc.
       checkReadIncompatibleSchemaChangeOnStreamStartOnce(fromVersion)
-      DeltaSource.buildOffsetFromIndexedFile(
+      Some(DeltaSource.buildOffsetFromIndexedFile(
         tableId,
         lastFileChange.get.version,
         lastFileChange.get.index,
         fromVersion,
-        isInitialSnapshot)
+        isInitialSnapshot))
     }
   }
 
@@ -480,12 +480,12 @@ trait DeltaSourceBase extends Source
       // verifying incompatible schema changes under column mapping. See more details in the
       // method scala doc.
       checkReadIncompatibleSchemaChangeOnStreamStartOnce(previousOffset.reservoirVersion)
-      DeltaSource.buildOffsetFromIndexedFile(
+      Some(DeltaSource.buildOffsetFromIndexedFile(
         tableId,
         lastFileChange.get.version,
         lastFileChange.get.index,
         previousOffset.reservoirVersion,
-        previousOffset.isInitialSnapshot)
+        previousOffset.isInitialSnapshot))
     }
   }
 
@@ -1574,13 +1574,14 @@ object DeltaSource extends DeltaLogging {
    * @param fileIndex The index of the last indexed file.
    * @param version Previous offset reservoir version.
    * @param isInitialSnapshot Whether previous offset is starting version or not.
+   * @return A DeltaSourceOffset representing the next offset to read from.
    */
   def buildOffsetFromIndexedFile(
       tableId: String,
       fileVersion: Long,
       fileIndex: Long,
       version: Long,
-      isInitialSnapshot: Boolean): Option[DeltaSourceOffset] = {
+      isInitialSnapshot: Boolean): DeltaSourceOffset = {
     val (v, i) = (fileVersion, fileIndex)
     assert(v >= version,
       s"buildOffsetFromIndexedFile returns an invalid version: $v (expected: >= $version), " +
@@ -1589,23 +1590,22 @@ object DeltaSource extends DeltaLogging {
     // If the last file in previous batch is the end index of that version, automatically bump
     // to next version to skip accessing that version file altogether. The END_INDEX should never
     // be returned as an offset.
-    val offset = if (i == DeltaSourceOffset.END_INDEX) {
+    if (i == DeltaSourceOffset.END_INDEX) {
       // isInitialSnapshot must be false here as we have bumped the version.
-      Some(DeltaSourceOffset(
+      DeltaSourceOffset(
         tableId,
         v + 1,
         index = DeltaSourceOffset.BASE_INDEX,
-        isInitialSnapshot = false))
+        isInitialSnapshot = false)
     } else {
       // isInitialSnapshot will be true only if previous isInitialSnapshot is true and the next file
       // is still at the same version.
-      Some(DeltaSourceOffset(
+      DeltaSourceOffset(
         tableId,
         v,
         index = i,
-        isInitialSnapshot = isInitialSnapshot && v == version))
+        isInitialSnapshot = isInitialSnapshot && v == version)
     }
-    offset
   }
 }
 
