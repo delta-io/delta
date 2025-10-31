@@ -16,6 +16,7 @@
 
 package io.delta.sql
 
+
 import io.delta.kernel.spark.catalog.SparkTable
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -23,11 +24,13 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CloneTableStatement, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CloneTableStatement, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression, OverwritePartitionsDynamic}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeInto
+import org.apache.spark.sql.catalyst.streaming.{WriteToStream, WriteToStreamStatement}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.trees.TreePattern.COMMAND
+import org.apache.spark.sql.connector.catalog.Table
 import org.apache.spark.sql.delta.commands.{DeltaCommand, DescribeDeltaDetailCommand}
 import org.apache.spark.sql.delta.TableChanges
 import org.apache.spark.sql.execution.datasources.{DataSource, DataSourceUtils}
@@ -66,9 +69,6 @@ class MaybeFallbackV1Connector(session: SparkSession)
 
       // Handle V1 INSERT INTO
       case i @ InsertIntoStatement(table, part, cols, query, overwrite, byName, ifNotExists) =>
-        // scalastyle:off println
-        println("[MaybeFallbackV1] InsertIntoStatement")
-        // scalastyle:on println
         val newTable = replaceKernelWithFallback(table)
         i.copy(table = newTable)
 
@@ -89,15 +89,35 @@ class MaybeFallbackV1Connector(session: SparkSession)
         val newChild = replaceKernelWithFallback(child)
         dd.copy(child = newChild)
 
+      // Handle WriteToStream - need to fallback both sink and source
+      case w @ WriteToStream(name, checkpoint, sink, outputMode, deleteCheckpoint,
+        inputQuery, catalogAndIdent, catalogTable) =>
+        // scalastyle:off println
+        println(s"[MaybeFallbackV1] WriteToStream - sink: ${sink.getClass.getSimpleName}")
+        println(s"[MaybeFallbackV1] WriteToStream - inputQuery: " +
+          s"${inputQuery.getClass.getSimpleName}")
+        // scalastyle:on println
+        // Process the input query to replace any SparkTable streaming sources
+        val newTable = TableFallback.unapply(sink)
+        // scalastyle:off println
+        println(s"[MaybeFallbackV1] WriteToStream - new table: " +
+          s"${newTable.getClass.getSimpleName}")
+        // scalastyle:on println
+        if(newTable.isDefined) {
+          w.copy(sink = newTable.get)
+        }
+        w
+
       // Handle V2 AppendData (DataFrameWriterV2.append)
       case a @ AppendData(Batch(fallback), _, _, _, _, _) =>
-        // scalastyle:off println
-        println("[MaybeFallbackV1] AppendData -> falling back")
-        // scalastyle:on println
         a.copy(table = fallback)
 
       // Handle V2 OverwriteByExpression (DataFrameWriterV2.overwrite)
       case o @ OverwriteByExpression(Batch(fallback), _, _, _, _, _, _) =>
+        o.copy(table = fallback)
+
+      // Handle V2 OverwritePartitionsDynamic (DataFrameWriterV2.overwritePartitions)
+      case o @ OverwritePartitionsDynamic(Batch(fallback), _, _, _, _) =>
         o.copy(table = fallback)
 
       // Handle batch reads
@@ -144,6 +164,26 @@ class MaybeFallbackV1Connector(session: SparkSession)
         assert(v1CatalogTable.isPresent())
         val catalogTable = v1CatalogTable.get()
         Some(getStreamingRelation(catalogTable, dsv2.extraOptions))
+      case _ => None
+    }
+  }
+
+  object TableFallback {
+    def unapply(table: Table): Option[Table] = table match {
+      case s: SparkTable =>
+        val v1CatalogTable = s.getV1CatalogTable()
+        if (v1CatalogTable.isPresent()) {
+          val catalogTable = v1CatalogTable.get()
+          val deltaTableV2 = DeltaTableV2(
+            session,
+            new Path(catalogTable.location),
+            catalogTable = Some(catalogTable),
+            tableIdentifier = Some(catalogTable.identifier.toString))
+          Some(deltaTableV2)
+        } else {
+          val deltaTableV2 = DeltaTableV2(session, new Path(s.name()))
+          Some(deltaTableV2)
+        }
       case _ => None
     }
   }

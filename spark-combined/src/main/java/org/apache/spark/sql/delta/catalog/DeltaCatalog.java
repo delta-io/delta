@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.spark.catalog.SparkTable;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.AnalysisException;
@@ -58,7 +59,11 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
                 Map$.MODULE$.<String, String>empty(),
                 Option.empty());
           }
+          try {
           return new SparkTable(identifier, v1Table.catalogTable());
+          } catch (TableNotFoundException ignored) {
+            throw new NoSuchTableException(identifier);
+          }
         }
       }
       // Otherwise return the delegate table as-is
