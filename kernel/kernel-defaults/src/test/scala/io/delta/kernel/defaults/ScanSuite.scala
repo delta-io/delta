@@ -1589,13 +1589,6 @@ class ScanSuite extends AnyFunSuite with TestUtils
   }
 
   // Generic helpers for building batches with fixed column names c1, c2, c3
-  private def buildBatch(schema: StructType, v1: AnyRef): FilteredColumnarBatch = {
-    val c1Type = schema.fields().get(0).getDataType
-    val c1Vec = DefaultGenericVector.fromArray(c1Type, Array(v1))
-    val batch = new DefaultColumnarBatch(1, schema, Array(c1Vec))
-    new FilteredColumnarBatch(batch, java.util.Optional.empty())
-  }
-
   private def buildBatch(schema: StructType, v1: AnyRef, v2: AnyRef): FilteredColumnarBatch = {
     val c1Type = schema.get("c1").getDataType
     val c2Type = schema.get("c2").getDataType
