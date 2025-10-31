@@ -103,8 +103,8 @@ public class WorkloadBenchmark<T> {
             .param("engineName", "default")
             // TODO(#5420): Allow configuring forks, warmup, and measurement via command line args.
             .forks(1)
-            .warmupIterations(3) // Proper warmup for production benchmarks
-            .measurementIterations(5) // Proper measurement iterations for production benchmarks
+            .warmupIterations(3)
+            .measurementIterations(5)
             .warmupTime(TimeValue.seconds(1))
             .measurementTime(TimeValue.seconds(1))
             .addProfiler(KernelMetricsProfiler.class)
