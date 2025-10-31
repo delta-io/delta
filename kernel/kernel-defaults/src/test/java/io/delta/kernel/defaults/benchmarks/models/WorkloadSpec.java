@@ -36,6 +36,7 @@ import java.util.List;
 @JsonSubTypes({
   @JsonSubTypes.Type(value = ReadSpec.class, name = "read"),
   @JsonSubTypes.Type(value = SnapshotConstructionSpec.class, name = "snapshot_construction"),
+  @JsonSubTypes.Type(value = WriteSpec.class, name = "write")
 })
 public abstract class WorkloadSpec {
   /**
@@ -81,6 +82,11 @@ public abstract class WorkloadSpec {
 
   public TableInfo getTableInfo() {
     return tableInfo;
+  }
+
+  @JsonIgnore
+  public String getSpecDirectoryPath() {
+    return tableInfo.getTableInfoPath() + "/specs/" + caseName;
   }
 
   /**

@@ -60,8 +60,13 @@ public class SnapshotConstructionRunner extends WorkloadRunner {
     blackhole.consume(this.execute());
   }
 
+  @Override
+  public void cleanup() throws Exception {
+    /* No cleanup needed for snapshot construction */
+  }
+
   private Snapshot execute() {
-    String workloadTableRoot = workloadSpec.getTableInfo().getTableRoot();
+    String workloadTableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
     SnapshotBuilder builder = TableManager.loadSnapshot(workloadTableRoot);
     if (workloadSpec.getVersion() != null) {
       builder.atVersion(workloadSpec.getVersion());
