@@ -211,7 +211,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
                 (tableName, path) -> {
                   spark.sql(
                       String.format(
-                          "CREATE TABLE IF NOT EXISTS %s (id INT, data STRING, part INT) USING delta "
+                          "CREATE TABLE %s (id INT, data STRING, part INT) USING delta "
                               + "PARTITIONED BY (part) TBLPROPERTIES ('foo'='bar') LOCATION '%s'",
                           tableName, path));
                   return null;
@@ -224,7 +224,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
                 (tableName, path) -> {
                   spark.sql(
                       String.format(
-                          "CREATE TABLE IF NOT EXISTS %s (id INT, data STRING) USING delta LOCATION '%s'",
+                          "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'",
                           tableName, path));
                   return null;
                 },
@@ -236,7 +236,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
                 (tableName, path) -> {
                   spark.sql(
                       String.format(
-                          "CREATE TABLE IF NOT EXISTS %s (id INT) USING delta "
+                          "CREATE TABLE %s (id INT) USING delta "
                               + "TBLPROPERTIES ('prop1'='value1', 'prop2'='value2', 'delta.enableChangeDataFeed'='true') "
                               + "LOCATION '%s'",
                           tableName, path));
