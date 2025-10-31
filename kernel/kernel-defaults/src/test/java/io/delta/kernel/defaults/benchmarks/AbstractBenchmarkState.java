@@ -77,6 +77,17 @@ public abstract class AbstractBenchmarkState {
   }
 
   /**
+   * Teardown method that runs after each benchmark invocation. This calls the {@link
+   * WorkloadRunner#cleanup()} to clean up any state created during execution.
+   *
+   * @throws Exception If any error occurs during cleanup.
+   */
+  @TearDown(Level.Invocation)
+  public void teardownInvocation() throws Exception {
+    runner.cleanup();
+  }
+
+  /**
    * Returns an instance of the desired engine based on the provided engine name.
    *
    * @param engineName The name of the engine to instantiate.
