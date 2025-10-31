@@ -55,7 +55,18 @@ public class SparkTable implements Table, SupportsRead {
   private final Transform[] partitionTransforms;
   private final Optional<CatalogTable> catalogTable;
 
-  /** Private constructor with catalogTable parameter. */
+  /**
+   * Creates a SparkTable backed by a Delta Kernel snapshot and initializes Spark-facing metadata
+   * (schemas, partitioning, capabilities).
+   *
+   * <p>Side effects: - Loads the latest snapshot for the given tablePath. - Builds Hadoop
+   * configuration from options for subsequent I/O. - Derives data schema, partition schema, and
+   * full table schema from the snapshot.
+   *
+   * <p>Notes: - Partition column order from the snapshot is preserved for partitioning and appended
+   * after data columns in the public Spark schema, per Spark conventions. - Read-time scan options
+   * are later merged with these options.
+   */
   private SparkTable(Identifier identifier, String tablePath, Optional<CatalogTable> catalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
