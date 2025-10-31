@@ -42,6 +42,10 @@ public class SparkTable implements Table, SupportsRead {
 
   private final Identifier identifier;
   private final String tablePath;
+  /**
+   * Additional table level storage properties used to configure the Hadoop FileSystem for I/O
+   * operations.
+   */
   private final Map<String, String> options;
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
