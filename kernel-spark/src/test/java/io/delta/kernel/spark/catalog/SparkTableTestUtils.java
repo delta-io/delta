@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.spark.catalog;
 
+import java.io.File;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -44,7 +45,7 @@ public class SparkTableTestUtils {
         new TableIdentifier(tableName, Option.apply("default")),
         CatalogTableType.EXTERNAL(),
         CatalogStorageFormat.apply(
-            Option.apply(new java.io.File(path).toURI()),
+            Option.apply(new File(path).toURI()),
             Option.empty(),
             Option.empty(),
             Option.empty(),

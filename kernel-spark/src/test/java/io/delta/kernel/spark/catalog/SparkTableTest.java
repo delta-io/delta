@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -205,7 +206,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
     singleColumn.add(Column.create("id", DataTypes.IntegerType));
 
     List<TableTestCase> testCases =
-        java.util.Arrays.asList(
+        Arrays.asList(
             new TableTestCase(
                 "Partitioned Table",
                 (tableName, path) -> {
