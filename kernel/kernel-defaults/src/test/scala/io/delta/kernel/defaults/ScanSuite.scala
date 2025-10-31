@@ -1647,15 +1647,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
-
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
+          val c1Collation =
+            schema.get("c1").getDataType.asInstanceOf[StringType].getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -1665,9 +1658,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
+              Map("c1" -> ofString("a", c1Collation)) -> List(buildBatch(schema, "a", "b")),
+              Map("c1" -> ofString("c", c1Collation)) -> List(buildBatch(schema, "c", "d")),
+              Map("c1" -> ofString("e", c1Collation)) -> List(buildBatch(schema, "e", "f"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -1773,15 +1766,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
-
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
+          val c1Collation =
+            schema.get("c1").getDataType.asInstanceOf[StringType].getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -1791,9 +1777,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
+              Map("c1" -> ofString("a", c1Collation)) -> List(buildBatch(schema, "a", "b")),
+              Map("c1" -> ofString("c", c1Collation)) -> List(buildBatch(schema, "c", "d")),
+              Map("c1" -> ofString("e", c1Collation)) -> List(buildBatch(schema, "e", "f"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -1861,16 +1847,6 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
-
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
-
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,
             emptyIterable())
@@ -1879,9 +1855,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "a", "x")),
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "c", "y")),
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "e", "z"))))
+              Map.empty[String, Literal] -> List(buildBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "e", "z"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder.build()).length
@@ -2050,15 +2026,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
-
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
+          val c1Collation =
+            schema.get("c1").getDataType.asInstanceOf[StringType].getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -2068,9 +2037,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
+              Map("c1" -> ofString("a", c1Collation)) -> List(buildBatch(schema, "a", "b")),
+              Map("c1" -> ofString("c", c1Collation)) -> List(buildBatch(schema, "c", "d")),
+              Map("c1" -> ofString("e", c1Collation)) -> List(buildBatch(schema, "e", "f"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -2113,16 +2082,6 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val tablePath = tempDir.getCanonicalPath
           val schema = new StructType()
             .add("s", new StructType().add("c1", c1Type, true).add("c2", c2Type, true), true)
-
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
-
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,
             emptyIterable())
@@ -2131,9 +2090,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map.empty[String, Literal] -> List(buildNestedBatch(schemaWithoutVersion, "a", "x")),
-              Map.empty[String, Literal] -> List(buildNestedBatch(schemaWithoutVersion, "c", "y")),
-              Map.empty[String, Literal] -> List(buildNestedBatch(schemaWithoutVersion, "e", "z"))))
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "e", "z"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder.build()).length
@@ -2283,15 +2242,6 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
 
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
-
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,
             emptyIterable())
@@ -2300,9 +2250,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "a", "x")),
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "c", "y")),
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "e", "z"))))
+              Map.empty[String, Literal] -> List(buildBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "e", "z"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -2386,16 +2336,6 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
-
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
-
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,
             emptyIterable())
@@ -2404,9 +2344,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "a", "x")),
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "c", "y")),
-              Map.empty[String, Literal] -> List(buildBatch(schemaWithoutVersion, "e", "z"))))
+              Map.empty[String, Literal] -> List(buildBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "e", "z"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -2471,18 +2411,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
             .add("c3", c3Type, true)
-
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val c3CollationWithoutVersion =
-            CollationIdentifier.fromString(c3Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
-            .add("c3", new StringType(c3CollationWithoutVersion), true)
+          val c1Collation =
+            schema.get("c1").getDataType.asInstanceOf[StringType].getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -2492,9 +2422,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "x", "u")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "y", "v")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "z", "w"))))
+              Map("c1" -> ofString("a", c1Collation)) -> List(buildBatch(schema, "a", "x", "u")),
+              Map("c1" -> ofString("c", c1Collation)) -> List(buildBatch(schema, "c", "y", "v")),
+              Map("c1" -> ofString("e", c1Collation)) -> List(buildBatch(schema, "e", "z", "w"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -2576,18 +2506,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
             .add("c3", c3Type, true)
-
-          // TODO: Remove this once we have a proper write support for collated types
-          val c1CollationWithoutVersion =
-            CollationIdentifier.fromString(c1Type.getCollationIdentifier.toStringWithoutVersion)
-          val c2CollationWithoutVersion =
-            CollationIdentifier.fromString(c2Type.getCollationIdentifier.toStringWithoutVersion)
-          val c3CollationWithoutVersion =
-            CollationIdentifier.fromString(c3Type.getCollationIdentifier.toStringWithoutVersion)
-          val schemaWithoutVersion = new StructType()
-            .add("c1", new StringType(c1CollationWithoutVersion), true)
-            .add("c2", new StringType(c2CollationWithoutVersion), true)
-            .add("c3", new StringType(c3CollationWithoutVersion), true)
+          val c1Collation = c1Type.getCollationIdentifier
 
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
@@ -2597,9 +2516,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "x", "u")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "y", "v")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "z", "w"))))
+              Map("c1" -> ofString("a", c1Collation)) -> List(buildBatch(schema, "a", "x", "u")),
+              Map("c1" -> ofString("c", c1Collation)) -> List(buildBatch(schema, "c", "y", "v")),
+              Map("c1" -> ofString("e", c1Collation)) -> List(buildBatch(schema, "e", "z", "w"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
