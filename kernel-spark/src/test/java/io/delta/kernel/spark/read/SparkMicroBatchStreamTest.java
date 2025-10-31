@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
+import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.ArrayList;
@@ -26,7 +27,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.delta.DeltaLog;
@@ -47,8 +47,12 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   private SparkMicroBatchStream microBatchStream;
 
   @BeforeEach
-  void setUp() {
-    microBatchStream = new SparkMicroBatchStream(null, new Configuration());
+  void setUp(@TempDir File tempDir) {
+    String testPath = tempDir.getAbsolutePath();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
+    microBatchStream =
+        new SparkMicroBatchStream(snapshotManager, spark.sessionState().newHadoopConf());
   }
 
   @Test
@@ -147,7 +151,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
       }
       sql("INSERT INTO %s VALUES %s", testTableName, insertValues.toString());
     }
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf()),
+            spark.sessionState().newHadoopConf());
 
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
@@ -325,7 +332,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // Test DSv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf()),
+            spark.sessionState().newHadoopConf());
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -414,7 +424,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
     // Test DSv2 SparkMicroBatchStream
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(testTablePath, new Configuration());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf()),
+            spark.sessionState().newHadoopConf());
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,

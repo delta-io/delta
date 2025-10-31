@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.utils;
+package io.delta.kernel.spark.snapshot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -24,7 +24,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
-import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.sql.Timestamp;
 import java.util.stream.Stream;
@@ -37,7 +36,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
-public class StreamingHelperTest extends SparkDsv2TestBase {
+public class PathBasedSnapshotManagerTest extends SparkDsv2TestBase {
 
   private PathBasedSnapshotManager snapshotManager;
 
@@ -108,6 +107,36 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
       assertEquals(expectedVersion, deltaSnapshot.version());
       assertEquals(expectedVersion, kernelSnapshot.getVersion());
     }
+  }
+
+  @Test
+  public void testLoadSnapshotAt(@TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_load_at_version";
+    createEmptyTestTable(testTablePath, testTableName);
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    // Create multiple versions
+    for (int i = 0; i < 3; i++) {
+      spark.sql(
+          String.format("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, 10 + i, 10 + i));
+    }
+
+    // Load specific versions
+    Snapshot snapshot0 = snapshotManager.loadSnapshotAt(0L);
+    assertEquals(0L, snapshot0.getVersion());
+
+    Snapshot snapshot1 = snapshotManager.loadSnapshotAt(1L);
+    assertEquals(1L, snapshot1.getVersion());
+
+    Snapshot snapshot2 = snapshotManager.loadSnapshotAt(2L);
+    assertEquals(2L, snapshot2.getVersion());
+
+    Snapshot snapshot3 = snapshotManager.loadSnapshotAt(3L);
+    assertEquals(3L, snapshot3.getVersion());
+
+    // Note: loadSnapshotAt does not update the cached snapshot
   }
 
   private void setupTableWithDeletedVersions(String testTablePath, String testTableName) {
