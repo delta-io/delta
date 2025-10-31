@@ -1665,9 +1665,15 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
+              Map("c1" -> ofString(
+                "a",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
+              Map("c1" -> ofString(
+                "c",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
+              Map("c1" -> ofString(
+                "e",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -1791,9 +1797,15 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
+              Map("c1" -> ofString(
+                "a",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
+              Map("c1" -> ofString(
+                "c",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
+              Map("c1" -> ofString(
+                "e",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -2068,9 +2080,15 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
+              Map("c1" -> ofString(
+                "a",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "b")),
+              Map("c1" -> ofString(
+                "c",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "d")),
+              Map("c1" -> ofString(
+                "e",
+                c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "f"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -2492,9 +2510,21 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "x", "u")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "y", "v")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "z", "w"))))
+              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(
+                schemaWithoutVersion,
+                "a",
+                "x",
+                "u")),
+              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(
+                schemaWithoutVersion,
+                "c",
+                "y",
+                "v")),
+              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(
+                schemaWithoutVersion,
+                "e",
+                "z",
+                "w"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
@@ -2597,9 +2627,21 @@ class ScanSuite extends AnyFunSuite with TestUtils
             defaultEngine,
             tablePath,
             data = List(
-              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "a", "x", "u")),
-              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "c", "y", "v")),
-              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(schemaWithoutVersion, "e", "z", "w"))))
+              Map("c1" -> ofString("a", c1CollationWithoutVersion)) -> List(buildBatch(
+                schemaWithoutVersion,
+                "a",
+                "x",
+                "u")),
+              Map("c1" -> ofString("c", c1CollationWithoutVersion)) -> List(buildBatch(
+                schemaWithoutVersion,
+                "c",
+                "y",
+                "v")),
+              Map("c1" -> ofString("e", c1CollationWithoutVersion)) -> List(buildBatch(
+                schemaWithoutVersion,
+                "e",
+                "z",
+                "w"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
