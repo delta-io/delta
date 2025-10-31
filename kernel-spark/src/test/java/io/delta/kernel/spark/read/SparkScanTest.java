@@ -40,7 +40,7 @@ public class SparkScanTest extends SparkDsv2TestBase {
 
   private final SparkTable table =
       new SparkTable(
-          Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
+          Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath);
 
   protected static final Predicate cityPredicate =
       new Predicate(
