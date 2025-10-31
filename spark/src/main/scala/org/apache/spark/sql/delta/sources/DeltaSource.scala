@@ -1385,23 +1385,6 @@ object DeltaSource extends DeltaLogging {
     }
   }
 
-  /**
-   * Class that helps controlling how much data should be processed by a single micro-batch.
-   */
-  case class AdmissionLimits(
-      maxFiles: Option[Int] = options.maxFilesPerTrigger,
-      var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)
-  ) extends DeltaSourceAdmissionBase {
-
-    var filesToTake = maxFiles.getOrElse {
-      if (options.maxBytesPerTrigger.isEmpty) {
-        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
-      } else {
-        Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
-      }
-    }
-  }
-
   object AdmissionLimits {
 
     def apply(options: DeltaOptions, limit: ReadLimit): Option[AdmissionLimits] = limit match {
