@@ -64,10 +64,16 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
 
 /**
- * A Catalog extension which can properly handle the interaction between the HiveMetaStore and
- * Delta tables. It delegates all operations DataSources other than Delta to the SparkCatalog.
+ * V1 legacy implementation. Use [[org.apache.spark.sql.delta.catalog.DeltaCatalog]] instead.
+ * See spark-unified/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java
  */
-class DeltaCatalog extends DelegatingCatalogExtension
+class DeltaCatalogV1 extends AbstractDeltaCatalog
+
+/**
+ * Base class for Dsv2 catalog implementation, it contains all dsv1 based connector logic.
+ * Introduced for compatibility purpose in the implementation of dsv2 based connector
+ */
+class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
   with DeltaLogging {
@@ -933,7 +939,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
  * A trait for handling table access through delta.`/some/path`. This is a stop-gap solution
  * until PathIdentifiers are implemented in Apache Spark.
  */
-trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
+trait SupportsPathIdentifier extends TableCatalog { self: AbstractDeltaCatalog =>
 
   private def supportSQLOnFile: Boolean = spark.sessionState.conf.runSQLonFile
 

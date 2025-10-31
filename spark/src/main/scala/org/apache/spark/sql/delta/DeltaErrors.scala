@@ -25,7 +25,6 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
@@ -37,7 +36,6 @@ import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
-import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
@@ -1881,10 +1879,10 @@ trait DeltaErrorsBase
     val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
     new DeltaAnalysisException(
       errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
-      messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
-        catalogImplConfig, classOf[DeltaCatalog].getName,
-        classOf[DeltaSparkSessionExtension].getName,
-        catalogImplConfig, classOf[DeltaCatalog].getName),
+      messageParameters = Array("io.delta.sql.DeltaSparkSessionExtension",
+        catalogImplConfig, "org.apache.spark.sql.delta.catalog.DeltaCatalog",
+        "io.delta.sql.DeltaSparkSessionExtension",
+        catalogImplConfig, "org.apache.spark.sql.delta.catalog.DeltaCatalog"),
       cause = originalException)
   }
 

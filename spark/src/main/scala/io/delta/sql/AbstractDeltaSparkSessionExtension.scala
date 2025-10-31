@@ -32,55 +32,19 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.PreprocessTimeTravel
 import org.apache.spark.sql.internal.SQLConf
 
+
 /**
- * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
- *
- * Scala example to create a `SparkSession` with the Delta SQL parser:
- * {{{
- *    import org.apache.spark.sql.SparkSession
- *
- *    val spark = SparkSession
- *       .builder()
- *       .appName("...")
- *       .master("...")
- *       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
- *       .getOrCreate()
- * }}}
- *
- * Java example to create a `SparkSession` with the Delta SQL parser:
- * {{{
- *    import org.apache.spark.sql.SparkSession;
- *
- *    SparkSession spark = SparkSession
- *                 .builder()
- *                 .appName("...")
- *                 .master("...")
- *                 .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
- *                 .getOrCreate();
- * }}}
- *
- * Python example to create a `SparkSession` with the Delta SQL parser (PySpark doesn't pick up the
- * SQL conf "spark.sql.extensions" in Apache Spark 2.4.x, hence we need to activate it manually in
- * 2.4.x. However, because `SparkSession` has been created and everything has been materialized, we
- * need to clone a new session to trigger the initialization. See SPARK-25003):
- * {{{
- *    from pyspark.sql import SparkSession
- *
- *    spark = SparkSession \
- *        .builder \
- *        .appName("...") \
- *        .master("...") \
- *        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
- *        .getOrCreate()
- *    if spark.sparkContext().version < "3.":
- *        spark.sparkContext()._jvm.io.delta.sql.DeltaSparkSessionExtension() \
- *            .apply(spark._jsparkSession.extensions())
- *        spark = SparkSession(spark.sparkContext(), spark._jsparkSession.cloneSession())
- * }}}
- *
- * @since 0.4.0
+ * V1 legacy implementation. Use [[io.delta.sql.DeltaSparkSessionExtension]] instead.
+ * See spark-unified/src/main/scala/io/delta/sql/DeltaSparkSessionExtension.scala
  */
-class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
+class DeltaSparkSessionExtensionV1 extends AbstractDeltaSparkSessionExtension
+
+/**
+* Abstract base class that contains the base Delta Spark Session extension logic.
+* As part of evolution for Delta connector(e.g. Dsv2), new Spark session extension
+* will be built based on that.
+*/
+class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
