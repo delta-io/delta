@@ -1367,7 +1367,8 @@ object DeltaSource extends DeltaLogging {
     }
 
   }
-    /**
+
+  /**
    * Class that helps controlling how much data should be processed by a single micro-batch.
    */
   case class AdmissionLimits(
@@ -1387,6 +1388,19 @@ object DeltaSource extends DeltaLogging {
 
   object AdmissionLimits {
 
+    def toReadLimit(options: DeltaOptions): ReadLimit = {
+      if (options.maxFilesPerTrigger.isDefined && options.maxBytesPerTrigger.isDefined) {
+        CompositeLimit(
+          ReadMaxBytes(options.maxBytesPerTrigger.get),
+          ReadLimit.maxFiles(options.maxFilesPerTrigger.get).asInstanceOf[ReadMaxFiles])
+      } else if (options.maxBytesPerTrigger.isDefined) {
+        ReadMaxBytes(options.maxBytesPerTrigger.get)
+      } else {
+        ReadLimit.maxFiles(
+          options.maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT))
+      }
+    }
+
     def apply(options: DeltaOptions, limit: ReadLimit): Option[AdmissionLimits] = limit match {
       case _: ReadAllAvailable => None
       case maxFiles: ReadMaxFiles =>
@@ -1405,19 +1419,6 @@ object DeltaSource extends DeltaLogging {
           maxFiles = Some(composite.maxFiles.maxFiles()),
           maxBytes = Some(composite.bytes.maxBytes)))
       case other => throw DeltaErrors.unknownReadLimit(other.toString())
-    }
-
-    def toReadLimit(options: DeltaOptions): ReadLimit = {
-      if (options.maxFilesPerTrigger.isDefined && options.maxBytesPerTrigger.isDefined) {
-        CompositeLimit(
-          ReadMaxBytes(options.maxBytesPerTrigger.get),
-          ReadLimit.maxFiles(options.maxFilesPerTrigger.get).asInstanceOf[ReadMaxFiles])
-      } else if (options.maxBytesPerTrigger.isDefined) {
-        ReadMaxBytes(options.maxBytesPerTrigger.get)
-      } else {
-        ReadLimit.maxFiles(
-          options.maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT))
-      }
     }
   }
 
