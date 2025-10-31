@@ -1608,7 +1608,7 @@ object DeltaSource extends DeltaLogging {
     // If the last file in previous batch is the end index of that version, automatically bump
     // to next version to skip accessing that version file altogether. The END_INDEX should never
     // be returned as an offset.
-    val offset = if (i == DeltaSourceOffset.END_INDEX) {
+    if (i == DeltaSourceOffset.END_INDEX) {
       // isInitialSnapshot must be false here as we have bumped the version.
       DeltaSourceOffset(
         tableId,
@@ -1623,7 +1623,6 @@ object DeltaSource extends DeltaLogging {
         isInitialSnapshot = v == previousVersion && isInitialSnapshot
         )
     }
-    offset
   }
 }
 
