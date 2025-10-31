@@ -35,6 +35,7 @@ import java.util.List;
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({
   @JsonSubTypes.Type(value = ReadSpec.class, name = "read"),
+  @JsonSubTypes.Type(value = SnapshotConstructionSpec.class, name = "snapshot_construction"),
   @JsonSubTypes.Type(value = WriteSpec.class, name = "write")
 })
 public abstract class WorkloadSpec {

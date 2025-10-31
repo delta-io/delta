@@ -147,24 +147,28 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   override def commit(
       tableId: String,
       tableUri: URI,
-      commit: Optional[Commit] = Optional.empty(),
-      lastKnownBackfilledVersion: Optional[JLong],
+      commitOpt: Optional[Commit] = Optional.empty(),
+      lastKnownBackfilledVersionOpt: Optional[JLong],
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
       newProtocol: Optional[AbstractProtocol]): Unit = {
     forceThrowInCommitMethod()
 
-    Seq(
-      (lastKnownBackfilledVersion.isPresent, "lastKnownBackfilledVersion"),
-      (disown, "disown")).foreach { case (isUnsupported, name) =>
-      if (isUnsupported) {
-        throw new UnsupportedOperationException(s"$name not supported yet in InMemoryUCClient")
-      }
+    if (disown) {
+      throw new UnsupportedOperationException("disown not yet supported in InMemoryUCClient")
     }
 
-    if (!commit.isPresent) return
+    val tableData = getOrCreateTableIfNotExists(tableId)
 
-    getOrCreateTableIfNotExists(tableId).appendCommit(commit.get(), newProtocol, newMetadata)
+    tableData.synchronized {
+      commitOpt.ifPresent { commit =>
+        tableData.appendCommit(commit, newProtocol, newMetadata)
+      }
+
+      lastKnownBackfilledVersionOpt.ifPresent { lastKnownBackfilledVersion =>
+        tableData.forceRemoveCommitsUpToVersion(lastKnownBackfilledVersion)
+      }
+    }
   }
 
   override def getCommits(

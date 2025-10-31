@@ -535,7 +535,7 @@ trait IdentityColumnDMLSuiteBase
       checkAnswer(sql(
         s"""SELECT id, value, ${CDCReader.CDC_TYPE_COLUMN_NAME}
            |FROM table_changes('$tgt', 8)
-           |ORDER BY id, value, _change_type""".stripMargin),
+           |ORDER BY value, id, _change_type""".stripMargin),
         Seq(
           Row(1, 1, CDCReader.CDC_TYPE_UPDATE_POSTIMAGE),
           Row(1, 1, CDCReader.CDC_TYPE_UPDATE_PREIMAGE),

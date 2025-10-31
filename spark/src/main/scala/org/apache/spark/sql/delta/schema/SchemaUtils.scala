@@ -1687,7 +1687,13 @@ def normalizeColumnNamesInDataType(
             attributeNameParts
           }
         }
-        .map(columnParts => UnresolvedAttribute(columnParts).name)
+        .map(columnParts =>
+          if (SparkSession.active.conf.get(DeltaSQLConf.DELTA_RENAME_COLUMN_ESCAPE_NAME)) {
+            UnresolvedAttribute(columnParts).sql
+          } else {
+            UnresolvedAttribute(columnParts).name
+          }
+        )
       Map(deltaConfig -> deltaColumnsPath.mkString(","))
     }.getOrElse(Map.empty[String, String])
   }

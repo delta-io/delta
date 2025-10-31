@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.metrics;
 
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
@@ -26,53 +25,25 @@ import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.metrics.MetricsReport;
-import io.delta.kernel.metrics.ScanReport;
-import io.delta.kernel.metrics.SnapshotReport;
-import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import java.io.IOException;
 
-/** Defines JSON serializers for {@link MetricsReport} types */
-public final class MetricsReportSerializers {
-
-  /////////////////
-  // Public APIs //
-  /////////////////
+/** Provides Jackson ObjectMapper configuration for serializing {@link MetricsReport} types */
+public final class MetricsReportSerializer {
 
   /**
-   * Serializes a {@link SnapshotReport} to a JSON string
+   * ObjectMapper configured for serializing metrics reports.
    *
-   * @throws JsonProcessingException
-   */
-  public static String serializeSnapshotReport(SnapshotReport snapshotReport)
-      throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(snapshotReport);
-  }
-
-  /**
-   * Serializes a {@link ScanReport} to a JSON string
+   * <p>This ObjectMapper is pre-configured with custom serializers for:
    *
-   * @throws JsonProcessingException
+   * <ul>
+   *   <li>Java 8 Optional types (serialized as null when empty)
+   *   <li>Exceptions (serialized using their toString() representation)
+   *   <li>Complex types like StructType and Predicate (using string representation)
+   *   <li>Column objects (serialized as arrays of field names)
+   * </ul>
    */
-  public static String serializeScanReport(ScanReport scanReport) throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(scanReport);
-  }
-
-  /**
-   * Serializes a {@link TransactionReport} to a JSON string
-   *
-   * @throws JsonProcessingException
-   */
-  public static String serializeTransactionReport(TransactionReport transactionReport)
-      throws JsonProcessingException {
-    return OBJECT_MAPPER.writeValueAsString(transactionReport);
-  }
-
-  /////////////////////////////////
-  // Private fields and methods //
-  ////////////////////////////////
-
-  private static final ObjectMapper OBJECT_MAPPER =
+  public static final ObjectMapper OBJECT_MAPPER =
       new ObjectMapper()
           .registerModule(new Jdk8Module()) // To support Optional
           .registerModule( // Serialize Exception using toString()
@@ -96,5 +67,5 @@ public final class MetricsReportSerializers {
     }
   }
 
-  private MetricsReportSerializers() {}
+  private MetricsReportSerializer() {}
 }

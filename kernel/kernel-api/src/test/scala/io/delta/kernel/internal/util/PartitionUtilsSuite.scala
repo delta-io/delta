@@ -27,6 +27,9 @@ import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
 class PartitionUtilsSuite extends AnyFunSuite {
+  private val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+  private val unicode = CollationIdentifier.fromString("ICU.UNICODE")
+
   // Table schema
   // Data columns: data1: int, data2: string, date3: struct(data31: boolean, data32: long)
   // Partition columns: part1: int, part2: date, part3: string
@@ -58,27 +61,76 @@ class PartitionUtilsSuite extends AnyFunSuite {
     // single predicate on a data column
     predicate("=", col("data1"), ofInt(12)) ->
       ("ALWAYS_TRUE()", "(column(`data1`) = 12)"),
+    // single predicate with default collation on a data column
+    predicate("=", col("data2"), ofString("12"), CollationIdentifier.SPARK_UTF8_BINARY) ->
+      ("ALWAYS_TRUE()", "(column(`data2`) = 12 COLLATE SPARK.UTF8_BINARY)"),
+    // single predicate with non-default collation on a data column
+    predicate("=", col("data2"), ofString("12"), utf8Lcase) ->
+      ("ALWAYS_TRUE()", "(column(`data2`) = 12 COLLATE SPARK.UTF8_LCASE)"),
+    predicate("=", col("data2"), ofString("12"), unicode) ->
+      ("ALWAYS_TRUE()", "(column(`data2`) = 12 COLLATE ICU.UNICODE)"),
     // multiple predicates on data columns joined with AND
     predicate(
       "AND",
       predicate("=", col("data1"), ofInt(12)),
       predicate(">=", col("data2"), ofString("sss"))) ->
       ("ALWAYS_TRUE()", "((column(`data1`) = 12) AND (column(`data2`) >= sss))"),
+    // multiple predicates with collation on data columns joined with AND
+    predicate(
+      "AND",
+      predicate("=", col("data2"), ofString("12")),
+      predicate(">=", col("data2"), ofString("sss"), utf8Lcase)) ->
+      (
+        "ALWAYS_TRUE()",
+        "((column(`data2`) = 12) AND (column(`data2`) >= sss COLLATE SPARK.UTF8_LCASE))"),
+    // multiple predicates with collation on data columns joined with AND
+    predicate(
+      "AND",
+      predicate("=", col("data2"), ofString("12"), utf8Lcase),
+      predicate(">=", col("data2"), ofString("sss"), unicode)) ->
+      (
+        "ALWAYS_TRUE()",
+        """((column(`data2`) = 12 COLLATE SPARK.UTF8_LCASE) AND
+          |(column(`data2`) >= sss COLLATE ICU.UNICODE))""".stripMargin.replaceAll("\n", " ")),
     // multiple predicates on data columns joined with OR
     predicate(
       "OR",
       predicate("<=", col("data2"), ofString("sss")),
       predicate("=", col("data3", "data31"), ofBoolean(true))) ->
       ("ALWAYS_TRUE()", "((column(`data2`) <= sss) OR (column(`data3`.`data31`) = true))"),
+    predicate(
+      "OR",
+      predicate("<=", col("data2"), ofString("sss"), utf8Lcase),
+      predicate("=", col("data3", "data31"), ofBoolean(true))) ->
+      (
+        "ALWAYS_TRUE()",
+        "((column(`data2`) <= sss COLLATE SPARK.UTF8_LCASE) OR (column(`data3`.`data31`) = true))"),
     // single predicate on a partition column
     predicate("=", col("part1"), ofInt(12)) ->
       ("(column(`part1`) = 12)", "ALWAYS_TRUE()"),
+    // single predicate with default collation on partition column
+    predicate("=", col("part3"), ofString("12"), CollationIdentifier.SPARK_UTF8_BINARY) ->
+      ("(column(`part3`) = 12 COLLATE SPARK.UTF8_BINARY)", "ALWAYS_TRUE()"),
+    // single predicate with non-default collation on partition column
+    predicate("=", col("part3"), ofString("12"), utf8Lcase) ->
+      ("(column(`part3`) = 12 COLLATE SPARK.UTF8_LCASE)", "ALWAYS_TRUE()"),
+    predicate("=", col("part3"), ofString("12"), unicode) ->
+      ("(column(`part3`) = 12 COLLATE ICU.UNICODE)", "ALWAYS_TRUE()"),
     // multiple predicates on partition columns joined with AND
     predicate(
       "AND",
       predicate("=", col("part1"), ofInt(12)),
       predicate(">=", col("part3"), ofString("sss"))) ->
       ("((column(`part1`) = 12) AND (column(`part3`) >= sss))", "ALWAYS_TRUE()"),
+    // multiple predicates with collation on partition columns joined with AND
+    predicate(
+      "AND",
+      predicate("=", col("part3"), ofString("sss"), utf8Lcase),
+      predicate(">=", col("part3"), ofString("sss"), CollationIdentifier.SPARK_UTF8_BINARY)) ->
+      (
+        """((column(`part3`) = sss COLLATE SPARK.UTF8_LCASE) AND (column(`part3`)
+          |>= sss COLLATE SPARK.UTF8_BINARY))""".stripMargin.replaceAll("\n", " "),
+        "ALWAYS_TRUE()"),
     // multiple predicates on partition columns joined with OR
     predicate(
       "OR",
@@ -93,12 +145,31 @@ class PartitionUtilsSuite extends AnyFunSuite {
       predicate(">=", col("part3"), ofString("sss"))) ->
       ("(column(`part3`) >= sss)", "(column(`data1`) = 12)"),
 
+    // predicates with collation (each on data and partition column) joined with AND
+    predicate(
+      "AND",
+      predicate("=", col("data2"), ofString("12"), utf8Lcase),
+      predicate(">=", col("part3"), ofString("sss"), unicode)) ->
+      (
+        "(column(`part3`) >= sss COLLATE ICU.UNICODE)",
+        "(column(`data2`) = 12 COLLATE SPARK.UTF8_LCASE)"),
+
     // predicates (each on data and partition column) joined with OR
     predicate(
       "OR",
       predicate("=", col("data1"), ofInt(12)),
       predicate(">=", col("part3"), ofString("sss"))) ->
       ("ALWAYS_TRUE()", "((column(`data1`) = 12) OR (column(`part3`) >= sss))"),
+
+    // predicates with collation (each on data and partition column) joined with OR
+    predicate(
+      "OR",
+      predicate("=", col("data2"), ofString("12"), unicode),
+      predicate(">=", col("part3"), ofString("sss"), unicode)) ->
+      (
+        "ALWAYS_TRUE()",
+        """((column(`data2`) = 12 COLLATE ICU.UNICODE) OR (column(`part3`)
+          |>= sss COLLATE ICU.UNICODE))""".stripMargin.replaceAll("\n", " ")),
 
     // predicates (multiple on data and partition columns) joined with AND
     predicate(
@@ -155,9 +226,22 @@ class PartitionUtilsSuite extends AnyFunSuite {
         "(column(`part3`) >= sss)",
         "(column(`data1`) = column(`part1`))"),
 
+    // predicates with collation (data and partitions compared in the same expression)
+    predicate(
+      "AND",
+      predicate("=", col("data2"), col("part3"), utf8Lcase),
+      predicate(">=", col("part3"), ofString("sss"), unicode)) ->
+      (
+        "(column(`part3`) >= sss COLLATE ICU.UNICODE)",
+        "(column(`data2`) = column(`part3`) COLLATE SPARK.UTF8_LCASE)"),
+
     // predicate only on data column but reverse order of literal and column
     predicate("=", ofInt(12), col("data1")) ->
-      ("ALWAYS_TRUE()", "(12 = column(`data1`))"))
+      ("ALWAYS_TRUE()", "(12 = column(`data1`))"),
+
+    // predicate with collation only on data column but reverse order of literal and column
+    predicate("=", ofString("12"), col("data2"), utf8Lcase) ->
+      ("ALWAYS_TRUE()", "(12 = column(`data2`) COLLATE SPARK.UTF8_LCASE)"))
 
   partitionTestCases.foreach {
     case (predicate, (partitionPredicate, dataPredicate)) =>
@@ -179,6 +263,14 @@ class PartitionUtilsSuite extends AnyFunSuite {
 
         // exp predicate for checkpoint reader pushdown
         "(column(`add`.`partitionValues_parsed`.`part2`) = 12)"),
+    // single predicate with collation on a partition column
+    predicate("=", col("part3"), ofString("sss"), utf8Lcase) ->
+      (
+        // exp predicate for partition pruning
+        "(ELEMENT_AT(column(`add`.`partitionValues`), part3) = sss COLLATE SPARK.UTF8_LCASE)",
+
+        // exp predicate for checkpoint reader pushdown
+        "(column(`add`.`partitionValues_parsed`.`part3`) = sss COLLATE SPARK.UTF8_LCASE)"),
     // multiple predicates on partition columns joined with AND
     predicate(
       "AND",
@@ -193,6 +285,21 @@ class PartitionUtilsSuite extends AnyFunSuite {
         // exp predicate for checkpoint reader pushdown
         """((column(`add`.`partitionValues_parsed`.`part1`) = 12) AND
           |(column(`add`.`partitionValues_parsed`.`part3`) >= sss))"""
+          .stripMargin.replaceAll("\n", " ")),
+    // multiple predicates with collation on partition columns joined with AND
+    predicate(
+      "AND",
+      predicate("=", col("part3"), ofString("sss"), utf8Lcase),
+      predicate(">=", col("part3"), ofString("sss"), CollationIdentifier.SPARK_UTF8_BINARY)) ->
+      (
+        // exp predicate for partition pruning
+        """((ELEMENT_AT(column(`add`.`partitionValues`), part3) = sss COLLATE SPARK.UTF8_LCASE) AND
+          |(ELEMENT_AT(column(`add`.`partitionValues`), part3) >= sss COLLATE SPARK.UTF8_BINARY))"""
+          .stripMargin.replaceAll("\n", " "),
+
+        // exp predicate for checkpoint reader pushdown
+        """((column(`add`.`partitionValues_parsed`.`part3`) = sss COLLATE SPARK.UTF8_LCASE) AND
+          |(column(`add`.`partitionValues_parsed`.`part3`) >= sss COLLATE SPARK.UTF8_BINARY))"""
           .stripMargin.replaceAll("\n", " ")),
     // multiple predicates on partition columns joined with OR
     predicate(
@@ -309,5 +416,13 @@ class PartitionUtilsSuite extends AnyFunSuite {
 
   private def predicate(name: String, children: Expression*): Predicate = {
     new Predicate(name, children.asJava)
+  }
+
+  private def predicate(
+      name: String,
+      left: Expression,
+      right: Expression,
+      collationIdentifier: CollationIdentifier) = {
+    new Predicate(name, left, right, collationIdentifier)
   }
 }

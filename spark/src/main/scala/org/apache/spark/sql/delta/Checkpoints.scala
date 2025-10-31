@@ -358,22 +358,7 @@ trait Checkpoints extends DeltaLogging {
   protected def writeCheckpointFiles(
       snapshotToCheckpoint: Snapshot,
       catalogTableOpt: Option[CatalogTable] = None): LastCheckpointInfo = {
-    // With Coordinated-Commits, commit files are not guaranteed to be backfilled immediately in the
-    // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
-    // writing the checkpoint file in the log directory before backfilling the relevant commits
-    // will leave gaps in the dir structure. This can cause issues for readers that are not
-    // communicating with the commit-coordinator.
-    //
-    // Sample directory structure with a gap if we don't backfill commit files:
-    // _delta_log/
-    //   _staged_commits/
-    //     00017.$uuid.json
-    //     00018.$uuid.json
-    //   00015.json
-    //   00016.json
-    //   00018.checkpoint.parquet
-    snapshotToCheckpoint.ensureCommitFilesBackfilled(catalogTableOpt)
-    Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
+    Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint, catalogTableOpt)
   }
 
   /** Returns information about the most recent checkpoint. */
@@ -604,6 +589,55 @@ object Checkpoints
   val LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint"
 
   /**
+   * Determines the V2 checkpoint format to use for the given snapshot, if applicable.
+   *
+   * This method evaluates whether V2 checkpoints should be used based on the table's
+   * checkpoint policy and configuration settings. It performs the following checks:
+   *
+   * 1. Force Classic Checkpoint Check (Edge): If the Spark configuration
+   *    [[DeltaSQLConf.FORCE_CLASSIC_CHECKPOINT]] is set to true (typically due to
+   *    a file action count mismatch), this method returns None to force the use
+   *    of classic checkpoints.
+   *
+   * 2. V2 Checkpoint Policy Check: Examines the table's checkpoint policy from
+   *    the snapshot metadata to determine if V2 checkpoint support is required.
+   *
+   * 3. Format Selection: If V2 checkpoints are enabled, determines the format
+   *    for the top-level checkpoint file based on the
+   *    [[DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT]] configuration:
+   *    - JSON format (default if not specified)
+   *    - PARQUET format
+   *
+   * @param spark The SparkSession to retrieve configuration settings
+   * @param snapshot The snapshot for which to determine the checkpoint format
+   * @return Some(V2Checkpoint.Format) if V2 checkpoints should be used with the
+   *         specified format (JSON or PARQUET), or None if classic checkpoints
+   *         should be used
+   * @throws IllegalStateException if an unknown checkpoint format is specified
+   *         in the configuration
+   */
+  def getV2CheckpointFormatOpt(
+      spark: SparkSession,
+      snapshot: Snapshot): Option[V2Checkpoint.Format] = {
+    val policy = DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata)
+    if (policy.needsV2CheckpointSupport) {
+      assert(CheckpointProvider.isV2CheckpointEnabled(snapshot))
+      val v2Format = spark.conf.getOption(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key)
+      // The format of the top level file in V2 checkpoints can be configured through
+      // the optional config [[DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT]].
+      // If nothing is specified, we use the json format. In the future, we may
+      // write json/parquet dynamically based on heuristics.
+      v2Format match {
+        case Some(V2Checkpoint.Format.JSON.name) | None => Some(V2Checkpoint.Format.JSON)
+        case Some(V2Checkpoint.Format.PARQUET.name) => Some(V2Checkpoint.Format.PARQUET)
+        case _ => throw new IllegalStateException("unknown checkpoint format")
+      }
+    } else {
+      None
+    }
+  }
+
+  /**
    * Returns the checkpoint schema that should be written to the last checkpoint file based on
    * [[DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH]] conf.
    */
@@ -625,7 +659,8 @@ object Checkpoints
   private[delta] def writeCheckpoint(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      snapshot: Snapshot): LastCheckpointInfo = recordFrameProfile(
+      snapshot: Snapshot,
+      catalogTableOpt: Option[CatalogTable]): LastCheckpointInfo = recordFrameProfile(
       "Delta", "Checkpoints.writeCheckpoint") {
     if (spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       snapshot.validateChecksum(Map("context" -> "writeCheckpoint"))
@@ -648,25 +683,30 @@ object Checkpoints
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
-    val v2CheckpointFormatOpt = {
-      val policy = DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata)
-      if (policy.needsV2CheckpointSupport) {
-        assert(CheckpointProvider.isV2CheckpointEnabled(snapshot))
-        val v2Format = spark.conf.get(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT)
-        // The format of the top level file in V2 checkpoints can be configured through
-        // the optional config [[DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT]].
-        // If nothing is specified, we use the json format. In the future, we may
-        // write json/parquet dynamically based on heuristics.
-        v2Format match {
-          case Some(V2Checkpoint.Format.JSON.name) | None => Some(V2Checkpoint.Format.JSON)
-          case Some(V2Checkpoint.Format.PARQUET.name) => Some(V2Checkpoint.Format.PARQUET)
-          case _ => throw new IllegalStateException("unknown checkpoint format")
-        }
-      } else {
-        None
-      }
-    }
+    val v2CheckpointFormatOpt = getV2CheckpointFormatOpt(spark, snapshot)
     val v2CheckpointEnabled = v2CheckpointFormatOpt.nonEmpty
+    if (!v2CheckpointEnabled) {
+      // Ensures that commit files are backfilled for Catalog-Managed (CC) tables when
+      // writing Classic checkpoints.
+      //
+      // For CC tables with Classic checkpoint format (V2 checkpoint disabled), this method
+      // ensures that commit files are *synchronously* backfilled from staged commits to the
+      // _delta_log directory before writing the checkpoint. This prevents gaps in the
+      // directory structure that could cause issues for readers not communicating with
+      // the commit coordinator.
+      //
+      // Without backfilling, the directory structure might have gaps like:
+      // {{{
+      // _delta_log/
+      //   _staged_commits/
+      //     00017.$uuid.json
+      //     00018.$uuid.json
+      //   00015.json
+      //   00016.json
+      //   00018.checkpoint.parquet  // Gap: missing 00017.json
+      // }}}
+      snapshot.ensureCommitFilesBackfilled(catalogTableOpt)
+    }
 
     val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
@@ -805,6 +845,12 @@ object Checkpoints
       Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, schema)
 
     val v2Checkpoint = if (v2CheckpointEnabled) {
+      // For CC tables, ensure commit files are backfilled right before publishing the
+      // V2 checkpoint manifest.
+      // At this moment, any existing async commit backfill operations almost certainly
+      // would have completed as the full state reconstruction usually takes longer than
+      // commit backfilling.
+      snapshot.ensureCommitFilesBackfilled(catalogTableOpt)
       val (v2CheckpointFileStatus, nonFileActionsWriten, v2Checkpoint, checkpointSchema) =
         Checkpoints.writeTopLevelV2Checkpoint(
           v2CheckpointFormatOpt.get,

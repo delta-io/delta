@@ -26,6 +26,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 
 /**
  * Various utility methods to help the connectors work with data objects returned by Kernel
@@ -173,6 +174,67 @@ public class Utils {
   public static CloseableIterator<Row> intoRows(
       CloseableIterator<FilteredColumnarBatch> sourceBatches) {
     return new FilteredBatchToRowIter(sourceBatches);
+  }
+
+  /**
+   * Flattens a nested {@link CloseableIterator} structure into a single flat iterator. This method
+   * takes an iterator of iterators (nested structure) and flattens it into a single iterator that
+   * yields all elements from all inner iterators in sequence.
+   *
+   * <p><b>Important:</b> Callers must call {@link CloseableIterator#close()} on the returned
+   * iterator even if it is not fully consumed, to ensure all inner iterators are properly closed
+   * and resources are released.
+   *
+   * @param nestedIterator An iterator of iterators to flatten
+   * @param <T> The type of elements in the inner iterators
+   * @return A new {@link CloseableIterator} that flattens all nested iterators
+   */
+  public static <T> CloseableIterator<T> flatten(
+      CloseableIterator<CloseableIterator<T>> nestedIterator) {
+    return new CloseableIterator<>() {
+      private CloseableIterator<T> currentInnerIterator = null;
+
+      @Override
+      public boolean hasNext() {
+        while (true) {
+          if (currentInnerIterator != null && currentInnerIterator.hasNext()) {
+            return true;
+          }
+
+          if (currentInnerIterator != null) {
+            closeCloseables(currentInnerIterator);
+            currentInnerIterator = null;
+          }
+
+          if (!nestedIterator.hasNext()) {
+            return false;
+          }
+
+          try {
+            currentInnerIterator = nestedIterator.next();
+          } catch (Exception e) {
+            // Ensure cleanup on exception
+            closeCloseables(nestedIterator);
+            throw e;
+          }
+        }
+      }
+
+      @Override
+      public T next() {
+        if (!hasNext()) {
+          throw new NoSuchElementException();
+        }
+        return currentInnerIterator.next();
+      }
+
+      @Override
+      public void close() {
+        // Close both the current inner iterator and the outer iterator
+        // closeCloseables works with null closeable.
+        closeCloseables(currentInnerIterator, nestedIterator);
+      }
+    };
   }
 
   public static String resolvePath(Engine engine, String path) {

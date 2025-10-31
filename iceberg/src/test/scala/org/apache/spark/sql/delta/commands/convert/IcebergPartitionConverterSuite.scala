@@ -22,10 +22,10 @@ import java.util.{List => JList}
 
 import scala.collection.JavaConverters._
 
-import org.apache.iceberg.{PartitionData, PartitionSpec, Schema}
-import org.apache.iceberg.transforms._
-import org.apache.iceberg.types.Conversions
-import org.apache.iceberg.types.Types._
+import shadedForDelta.org.apache.iceberg.{PartitionData, PartitionSpec, Schema}
+import shadedForDelta.org.apache.iceberg.transforms._
+import shadedForDelta.org.apache.iceberg.types.Conversions
+import shadedForDelta.org.apache.iceberg.types.Types._
 
 import org.apache.spark.SparkFunSuite
 

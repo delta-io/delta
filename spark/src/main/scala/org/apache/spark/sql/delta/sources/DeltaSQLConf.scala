@@ -1936,6 +1936,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_RENAME_COLUMN_ESCAPE_NAME =
+    buildConf("changeColumn.renameColumnEscapeName")
+      .internal()
+      .doc(
+        """
+          |Properly escape column names when renaming a column in the metadata.
+          |
+          |This is a safety switch - we should only set this to false if the fix introduces some
+          |regression.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED =
     buildConf("alterTable.dropColumn.enabled")
       .internal()

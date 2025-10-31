@@ -15,9 +15,9 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.createPredicate;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
+import static io.delta.kernel.internal.util.ExpressionUtils.createPredicate;
 import static java.util.stream.Collectors.joining;
 
 import io.delta.kernel.expressions.*;

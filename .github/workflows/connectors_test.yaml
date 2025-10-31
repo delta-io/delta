@@ -7,7 +7,7 @@ jobs:
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
-        scala: [2.13.13, 2.12.18]
+        scala: [2.13.13]
     steps:
       - uses: actions/checkout@v2
       - name: install java
@@ -24,9 +24,9 @@ jobs:
             ~/.cache/coursier
             ~/.m2
           key: build-cache-3-with-scala_${{ matrix.scala }}
-      - name: Run Scala Style tests on test sources (Scala 2.12 only)
+      - name: Run Scala Style tests on test sources (Scala 2.13 only)
         run: build/sbt "++ ${{ matrix.scala }}" testScalastyle
-        if: startsWith(matrix.scala, '2.12.')
+        if: startsWith(matrix.scala, '2.13.')
       - name: Run sqlDeltaImport tests (Scala 2.12 and 2.13 only)
         run: build/sbt "++ ${{ matrix.scala }}" sqlDeltaImport/test
         if: ${{ !startsWith(matrix.scala, '2.11.') }}

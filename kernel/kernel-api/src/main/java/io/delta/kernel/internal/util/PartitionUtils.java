@@ -18,6 +18,7 @@ package io.delta.kernel.internal.util;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import static io.delta.kernel.internal.util.ExpressionUtils.createPredicate;
 import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -270,11 +271,12 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnCheckpointFileSchema(
       Predicate predicate, Map<String, StructField> partitionColNameToField) {
-    return new Predicate(
+    return createPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewriteColRefOnPartitionValuesParsed(child, partitionColNameToField))
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList()),
+        predicate.getCollationIdentifier());
   }
 
   private static Expression rewriteColRefOnPartitionValuesParsed(
@@ -319,11 +321,12 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnScanFileSchema(
       Predicate predicate, Map<String, StructField> partitionColMetadata) {
-    return new Predicate(
+    return createPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewritePartitionColumnRef(child, partitionColMetadata))
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList()),
+        predicate.getCollationIdentifier());
   }
 
   private static Expression rewritePartitionColumnRef(

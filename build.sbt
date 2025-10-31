@@ -40,9 +40,8 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.18"
 val scala213 = "2.13.13"
-val all_scala_versions = Seq(scala212, scala213)
+val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
@@ -51,7 +50,7 @@ val all_scala_versions = Seq(scala212, scala213)
 // sbt 'set default_scala_version := 2.13.13' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala212
+Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
 val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
@@ -675,7 +674,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
-  .dependsOn(spark % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
@@ -703,6 +701,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
+      "io.delta" %% "delta-spark" % "3.3.2" % "test",
 
       "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
@@ -719,7 +718,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 lazy val kernelSpark = (project in file("kernel-spark"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
-  .dependsOn(spark % "test->test")
+  .dependsOn(spark % "compile->compile;test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "kernel-spark",
@@ -735,7 +734,12 @@ lazy val kernelSpark = (project in file("kernel-spark"))
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
+      // Spark test classes for Scala/Java test utilities
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
@@ -870,7 +874,6 @@ lazy val iceberg = (project in file("iceberg"))
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
         s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
-        s"scala-library-${scala212}.jar",
         s"scala-library-${scala213}.jar",
         s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
         "caffeine-2.9.3.jar",
@@ -913,7 +916,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-val icebergShadedVersion = "1.8.0"
+val icebergShadedVersion = "1.9.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -1250,7 +1253,6 @@ lazy val compatibility = (project in file("connectors/oss-compatibility-tests"))
  */
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
-  .dependsOn(spark % "test") // depends on delta-spark
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "golden-tables",
@@ -1260,6 +1262,8 @@ lazy val goldenTables = (project in file("connectors/golden-tables"))
       // Test Dependencies
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
+
+      "io.delta" %% "delta-spark" % "3.3.2" % "test",
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
@@ -1277,7 +1281,6 @@ def sqlDeltaImportScalaVersion(scalaBinaryVersion: String): String = {
 }
 
 lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
-  .dependsOn(spark)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "sql-delta-import",
@@ -1286,6 +1289,9 @@ lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
     publishArtifact := scalaBinaryVersion.value != "2.11",
     Test / publishArtifact := false,
     libraryDependencies ++= Seq(
+      // Using released delta-spark JAR instead of module dependency to break circular dependency
+      "io.delta" %% "delta-spark" % "3.3.2",
+      
       "io.netty" % "netty-buffer"  % "4.1.63.Final" % "test",
       "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % defaultSparkVersion % "provided",
       "org.rogach" %% "scallop" % "3.5.1",

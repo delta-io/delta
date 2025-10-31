@@ -18,6 +18,7 @@ package io.delta.kernel.internal.metrics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.metrics.TransactionMetricsResult;
@@ -114,5 +115,10 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
   @Override
   public TransactionMetricsResult getTransactionMetrics() {
     return transactionMetrics;
+  }
+
+  @Override
+  public String toJson() throws JsonProcessingException {
+    return MetricsReportSerializer.OBJECT_MAPPER.writeValueAsString(this);
   }
 }

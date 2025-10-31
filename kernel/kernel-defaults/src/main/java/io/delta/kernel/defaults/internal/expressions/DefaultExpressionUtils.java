@@ -31,7 +31,6 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
@@ -512,16 +511,6 @@ class DefaultExpressionUtils {
   static void checkIsLiteral(Expression expr, Expression parentExpr, String errorMessage) {
     if (!(expr instanceof Literal)) {
       throw unsupportedExpressionException(parentExpr, errorMessage);
-    }
-  }
-
-  /** Creates a {@link Predicate} with name, children and optional collation. */
-  static Predicate createPredicate(
-      String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
-    if (collationIdentifier.isPresent()) {
-      return new Predicate(name, children, collationIdentifier.get());
-    } else {
-      return new Predicate(name, children);
     }
   }
 

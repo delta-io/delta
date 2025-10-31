@@ -29,7 +29,6 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.hadoop.conf.Configuration
@@ -196,7 +195,7 @@ trait AbstractCheckpointV2ReadSuite extends AnyFunSuite with ExpressionTestUtils
       val protocol = Protocol(3, 7, Some(Set("v2Checkpoint")), Some(supportedFeatures))
       val add = AddFile(new Path("addfile").toUri.toString, Map.empty, 100L, 10L, dataChange = true)
 
-      log.startTransaction().commitManually(Seq(metadata, add): _*)
+      log.startTransaction().commitManuallyWithValidation(metadata, add)
       log.upgradeProtocol(None, log.update(), protocol)
       log.checkpoint(log.update())
 

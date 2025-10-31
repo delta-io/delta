@@ -31,24 +31,21 @@ import org.apache.spark.sql.types._
  * This suite intends to exhaustively cover all the ways INSERT can be run on a Delta table. See
  * [[DeltaInsertIntoTest]] for a list of these INSERT operations covered.
  */
-class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
-
+trait DeltaInsertIntoImplicitCastBase extends DeltaInsertIntoTest {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
+  protected val ignoredTestCases: Map[String, Set[Insert]] = Map.empty
+
   test("all test cases are implemented") {
-    val ignoredTestCases = Map(
-      "null struct with different field order"
-       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert),
-      "cast with dot in column name"
-       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert)
-    )
     checkAllTestCasesImplemented(ignoredTestCases)
   }
+}
 
+trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
   for (schemaEvolution <- BOOLEAN_DOMAIN) {
     testInserts("insert with implicit up and down cast on top-level fields, " +
       s"schemaEvolution=$schemaEvolution")(
@@ -170,6 +167,15 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
   }
+}
+
+trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImplicitCastBase {
+  override protected val ignoredTestCases: Map[String, Set[Insert]] = Map(
+    "null struct with different field order"
+      -> (insertsDataframe.intersect(insertsByName) - StreamingInsert),
+    "cast with dot in column name"
+      -> (insertsDataframe.intersect(insertsByName) - StreamingInsert)
+  )
 
   for { (inserts: Set[Insert], expectedAnswer) <- Seq(
     // Only few INSERT types correctly handle null structs and keep the whole struct null

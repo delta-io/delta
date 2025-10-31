@@ -69,7 +69,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport))
+    assert(expectedJson == snapshotReport.toJson())
   }
 
   test("SnapshotReport serializer") {
@@ -106,7 +106,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport1))
+    assert(expectedJson == snapshotReport1.toJson())
 
     // Check with test function
     testSnapshotReport(snapshotReport1)
@@ -152,7 +152,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport))
+    assert(expectedJson == transactionReport.toJson())
   }
 
   test("TransactionReport serializer") {
@@ -204,7 +204,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport1))
+    assert(expectedJson == transactionReport1.toJson())
     // Check with test function
     testTransactionReport(transactionReport1)
 
@@ -257,7 +257,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport))
+    assert(expectedJson == scanReport.toJson())
   }
 
   test("ScanReport serializer") {
@@ -319,7 +319,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport1))
+    assert(expectedJson == scanReport1.toJson())
 
     // Check with test function
     testScanReport(scanReport1)

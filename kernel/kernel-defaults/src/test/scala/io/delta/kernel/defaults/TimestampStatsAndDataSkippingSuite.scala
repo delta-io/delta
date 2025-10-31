@@ -19,7 +19,7 @@ import java.io.File
 import java.time.{LocalDateTime, ZoneOffset}
 
 import scala.collection.immutable.Seq
-import scala.jdk.CollectionConverters.collectionAsScalaIterableConverter
+import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
@@ -286,8 +286,8 @@ class TimestampStatsAndDataSkippingSuite extends AnyFunSuite with WriteUtils
       }
     }.toArray.asInstanceOf[Array[AnyRef]]
 
-    val vectors = schema.fields().asScala.map { field =>
-      DefaultGenericVector.fromArray(field.getDataType, timestampValues)
+    val vectors = schema.fields().asScala.toSeq.map { field =>
+      DefaultGenericVector.fromArray(field.getDataType, timestampValues.toSeq.toArray)
     }.toArray.asInstanceOf[Array[ColumnVector]]
 
     new DefaultColumnarBatch(rowsPerFile, schema, vectors)

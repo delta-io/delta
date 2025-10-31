@@ -69,7 +69,9 @@ public class WriteRunner extends WorkloadRunner {
     String tableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
 
     // Capture initial listing of delta log files. This is used during cleanup to revert changes.
-    initialDeltaLogFiles = captureFileListing();
+    if (initialDeltaLogFiles == null) {
+        initialDeltaLogFiles = captureFileListing();
+      }
 
     // Create CCv2Context if this is a CCv2 table
     Optional<CCv2Context> ccv2ContextOpt = createCCv2Context(workloadSpec.getTableInfo(), engine);
@@ -111,7 +113,7 @@ public class WriteRunner extends WorkloadRunner {
    * @param blackhole The Blackhole to consume results and avoid dead code elimination.
    */
   @Override
-  public void executeAsBenchmark(Blackhole blackhole) {
+  public void executeAsBenchmark(Blackhole blackhole) throws Exception {
     // Execute all commits in sequence
     for (List<DataFileStatus> actions : commitContents) {
       UpdateTableTransactionBuilder txnBuilder =

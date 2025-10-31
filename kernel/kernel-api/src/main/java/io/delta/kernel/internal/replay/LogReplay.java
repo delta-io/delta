@@ -174,6 +174,8 @@ public class LogReplay {
    * CRC file on first access. Returns empty if no CRC file exists at the snapshot version.
    */
   public Optional<CRCInfo> getCrcInfoAtSnapshotVersion() {
+    // TODO: We should first just check if the checksum file in the LogSegment is at this snapshot
+    //       version.
     return lazyLatestCrcInfo.get().filter(crcInfo -> crcInfo.getVersion() == getVersion());
   }
 

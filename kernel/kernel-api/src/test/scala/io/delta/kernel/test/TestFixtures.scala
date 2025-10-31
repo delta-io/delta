@@ -16,6 +16,7 @@
 
 package io.delta.kernel.test
 
+import java.lang.{Long => JLong}
 import java.util.{Collections, Map => JMap, Optional}
 import java.util.function.Supplier
 
@@ -66,7 +67,8 @@ trait TestFixtures extends ActionUtils {
       committerProperties: Supplier[JMap[String, String]] = () => Collections.emptyMap(),
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
-      newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = {
+      newMetadataOpt: Optional[Metadata] = Optional.empty(),
+      maxKnownPublishedDeltaVersion: Optional[JLong] = Optional.empty()): CommitMetadata = {
     new CommitMetadata(
       version,
       logPath,
@@ -75,7 +77,8 @@ trait TestFixtures extends ActionUtils {
       committerProperties,
       readPandMOpt,
       newProtocolOpt,
-      newMetadataOpt)
+      newMetadataOpt,
+      maxKnownPublishedDeltaVersion)
   }
 
   def createStagedCatalogCommit(

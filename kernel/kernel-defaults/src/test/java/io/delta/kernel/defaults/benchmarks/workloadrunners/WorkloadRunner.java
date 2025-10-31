@@ -77,9 +77,7 @@ public abstract class WorkloadRunner {
    *
    * @throws Exception if any error occurs during cleanup.
    */
-  public void cleanup() throws Exception {
-    // Default implementation is no-op
-  }
+  public abstract void cleanup() throws Exception;
 
   /**
    * Creates a CCv2Context from the given TableInfo if it's a CCv2 table.

@@ -32,13 +32,13 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLNameBasedSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLNameBasedSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsNameBased
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedCDCOnDVsPredPushOffSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
@@ -47,8 +47,8 @@ class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedCDCOnDVsPredPushO
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedCDCOnDVsPredPushOnSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
@@ -57,46 +57,46 @@ class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedCDCOnDVsPredPushO
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedCDCOnSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedCDCOnSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with MergeCDCMixin
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedColMapIdModeSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedColMapIdModeSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
   with MergeIntoSQLColumnMappingOverrides
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedColMapNameModeSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedColMapNameModeSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with MergeIntoSQLColumnMappingOverrides
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedDVsPredPushOffSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with MergeIntoDVsMixin
   with PredicatePushdownDisabled
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedDVsPredPushOnSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with MergeIntoDVsMixin
   with PredicatePushdownEnabled
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicySQLPathBasedSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
 
-class MergeIntoSchemaEvolutionStoreAssignmentPolicyScalaSuite
-  extends MergeIntoSchemaEvolutionStoreAssignmentPolicyTests
+class MergeIntoSchemaEvoStoreAssignmentPolicyScalaSuite
+  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
   with MergeIntoScalaMixin

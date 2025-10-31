@@ -732,8 +732,8 @@ trait DataSkippingReaderBase
      */
     private def shouldRewriteAsPartitionLike(expr: Expression): Boolean = expr match {
       // Expressions supported by traditional data skipping.
-      // Boolean operators. AND is explicitly handled by the caller.
-      case _: Not | _: Or => true
+      // Boolean operators.
+      case _: Not | _: Or | _: And => true
       // Comparison operators.
       case _: EqualNullSafe | _: EqualTo | _: GreaterThan | _: GreaterThanOrEqual | _: IsNull |
            _: IsNotNull | _: LessThan | _: LessThanOrEqual => true
@@ -871,20 +871,6 @@ trait DataSkippingReaderBase
             case (rewrittenChildren, referencedStats) =>
               Some(InSet(rewrittenChildren, possiblyNullValues.toSet), referencedStats)
           }
-        }
-      // Pushdown NOT through OR - we prefer AND to OR because AND can tolerate one branch not being
-      // rewriteable.
-      case Not(Or(e1, e2)) =>
-        rewriteDataFiltersAsPartitionLikeInternal(And(Not(e1), Not(e2)), clusteringColumnPaths)
-      // For AND expressions, we can tolerate one side not being eligible for partition-like
-      // data skipping - simply remove the ineligible side.
-      case And(left, right) =>
-        val leftResult = rewriteDataFiltersAsPartitionLikeInternal(left, clusteringColumnPaths)
-        val rightResult = rewriteDataFiltersAsPartitionLikeInternal(right, clusteringColumnPaths)
-        (leftResult, rightResult) match {
-          case (Some((newLeft, statsLeft)), Some((newRight, statsRight))) =>
-            Some((And(newLeft, newRight), statsLeft ++ statsRight))
-          case _ => leftResult.orElse(rightResult)
         }
       // For all other eligible expressions, recursively rewrite the children.
       case other if shouldRewriteAsPartitionLike(other) =>
@@ -1328,8 +1314,12 @@ trait DataSkippingReaderBase
     // For data skipping, avoid using the filters that either:
     // 1. involve subqueries.
     // 2. are non-deterministic.
+    // 3. involve file metadata struct fields
     var (ineligibleFilters, eligibleFilters) = filters.partition {
-      case f => containsSubquery(f) || !f.deterministic
+      case f => containsSubquery(f) || !f.deterministic || f.exists {
+        case MetadataAttribute(_) => true
+        case _ => false
+      }
     }
 
 

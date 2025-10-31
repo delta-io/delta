@@ -152,7 +152,7 @@ conda env create --name delta_python_tests --file=<absolute_path_to_delta_repo>/
 ```
 
 #### JDK Setup
-Build needs JDK 1.8. Make sure to setup `JAVA_HOME` that points to JDK 1.8.
+Build needs JDK 11. Make sure to setup `JAVA_HOME` that points to JDK 11.
 
 #### Running tests
 ```
@@ -166,9 +166,9 @@ IntelliJ is the recommended IDE to use when developing Delta Lake. To import Del
 1. Clone Delta Lake into, for example, `~/delta`.
 2. In IntelliJ, select `File` > `New Project` > `Project from Existing Sources...` and select `~/delta`.
 3. Under `Import project from external model` select `sbt`. Click `Next`.
-4. Under `Project JDK` specify a valid Java `1.8` JDK and opt to use SBT shell for `project reload` and `builds`.
+4. Under `Project JDK` specify a valid Java `11` JDK and opt to use SBT shell for `project reload` and `builds`.
 5. Click `Finish`.
-6. In your terminal, run `build/sbt clean package`. Make sure you use Java `1.8`. The build will generate files 
+6. In your terminal, run `build/sbt clean package`. Make sure you use Java `11`. The build will generate files 
    that are necessary for Intellij to index the repository.
 
 ### Setup Verification
@@ -190,9 +190,9 @@ Error:(91, 22) not found: type DeltaSqlBaseParser
 ```
 
 then follow these steps:
-1. Ensure you are using Java `1.8`. You can set this using
+1. Ensure you are using Java `11`. You can set this using
 ```
-export JAVA_HOME=`/usr/libexec/java_home -v 1.8`
+export JAVA_HOME=`/usr/libexec/java_home -v 11`
 ```
 2. Compile using the SBT CLI: `build/sbt clean compile`.
 2. Go to `File` > `Project Structure...` > `Modules` > `delta-spark`.
