@@ -75,7 +75,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     this.streamingHelper = new StreamingHelper(tablePath, hadoopConf);
 
     // Initialize snapshot at source init to get table ID, similar to DeltaSource.scala
-    this.snapshotAtSourceInit = TableManager.loadSnapshot(tablePath).build(engine);
+    this.snapshotAtSourceInit = streamingHelper.loadLatestSnapshot();
     this.tableId = ((SnapshotImpl) snapshotAtSourceInit).getMetadata().getId();
 
     this.shouldValidateOffsets =
@@ -165,7 +165,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     }
     // TODO(#5318): Check read-incompatible schema changes during stream start
     IndexedFile lastFile = lastFileChange.get();
-    return ScalaUtils.toJavaOptional(
+    return Optional.of(
         DeltaSource.buildOffsetFromIndexedFile(
             tableId,
             lastFile.getVersion(),
