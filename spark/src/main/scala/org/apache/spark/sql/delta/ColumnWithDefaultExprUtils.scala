@@ -128,11 +128,15 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
           GeneratedColumn.validateGeneratedColumns(data.sparkSession, schema)
         } catch {
           case NonFatal(e) =>
+            val errorClassName = e match {
+              case deltaException: DeltaAnalysisException => deltaException.getErrorClass
+              case _ => e.getClass
+            }
             recordDeltaEvent(
               deltaLog,
               "delta.generatedColumns.writeValidationFailure",
               data = Map(
-                "errorClassName" -> e.getClass,
+                "errorClassName" -> errorClassName,
                 "errorMessage" -> e.getMessage
               )
             )
