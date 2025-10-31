@@ -9,7 +9,6 @@ import Unidoc._
  * Specification for a Spark version with all its build configuration.
  *
  * @param fullVersion The full Spark version (e.g., "3.5.7", "4.0.2-SNAPSHOT")
- * @param aliases Short aliases for this version (e.g., "latest", "master")
  * @param targetJvm Target JVM version (e.g., "11", "17")
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
@@ -18,7 +17,6 @@ import Unidoc._
  */
 case class SparkVersionSpec(
   fullVersion: String,
-  aliases: Seq[String],
   targetJvm: String,
   additionalSourceDir: Option[String],
   antlr4Version: String,
@@ -31,9 +29,6 @@ case class SparkVersionSpec(
       case (maj, min, _) => s"$maj.$min"
     }
   }
-
-  /** Returns all valid input strings that should resolve to this version */
-  def allValidInputs: Seq[String] = Seq(fullVersion, binaryVersion) ++ aliases
 
   /** Returns log4j config file based on source directory */
   def log4jConfig: String = {
@@ -52,7 +47,6 @@ object SparkVersionSpec {
   /** Spark 3.5.7 - latest released version */
   val spark35 = SparkVersionSpec(
     fullVersion = "3.5.7",
-    aliases = Seq("latest"),
     targetJvm = "11",
     additionalSourceDir = Some("scala-spark-3.5"),
     antlr4Version = "4.9.3",
@@ -63,7 +57,6 @@ object SparkVersionSpec {
   /** Spark 4.0.2-SNAPSHOT - master branch */
   val spark40 = SparkVersionSpec(
     fullVersion = "4.0.2-SNAPSHOT",
-    aliases = Seq("master"),
     targetJvm = "17",
     additionalSourceDir = Some("scala-spark-master"),
     antlr4Version = "4.13.1",
@@ -117,16 +110,29 @@ object CrossSparkVersions extends AutoPlugin {
 
   /**
    * Returns the current spark version spec.
+   * Supports inputs: full version (e.g., "3.5.7"), binary version (e.g., "3.5"), or aliases ("latest", "master")
    */
   def getSparkVersionSpec(): SparkVersionSpec = {
     val input = sys.props.getOrElse("sparkVersion", SparkVersionSpec.LATEST_RELEASED.fullVersion)
-    SparkVersionSpec.allSpecs.find(_.allValidInputs.contains(input))
-      .getOrElse {
-        val allValidInputs = SparkVersionSpec.allSpecs.flatMap(_.allValidInputs).mkString(", ")
-        throw new IllegalArgumentException(
-          s"Invalid sparkVersion: $input. Valid values: $allValidInputs"
-        )
-      }
+
+    // Resolve aliases first
+    val resolvedInput = input match {
+      case "latest" => SparkVersionSpec.LATEST_RELEASED.fullVersion
+      case "master" => SparkVersionSpec.MASTER.fullVersion
+      case other => other
+    }
+
+    // Find spec by full version or binary version
+    SparkVersionSpec.allSpecs.find { spec =>
+      spec.fullVersion == resolvedInput || spec.binaryVersion == resolvedInput
+    }.getOrElse {
+      val validInputs = SparkVersionSpec.allSpecs.flatMap { spec =>
+        Seq(spec.fullVersion, spec.binaryVersion)
+      } ++ Seq("latest", "master")
+      throw new IllegalArgumentException(
+        s"Invalid sparkVersion: $input. Valid values: ${validInputs.mkString(", ")}"
+      )
+    }
   }
 
   /**
