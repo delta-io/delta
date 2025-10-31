@@ -26,6 +26,7 @@ import io.delta.kernel.defaults.benchmarks.models.TableInfo;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
@@ -183,8 +184,7 @@ public class CCv2Context {
       long version = commitMetadata.getVersion();
       String stagedCommitsDir = Paths.get(tableRoot, "_delta_log", "_staged_commits").toString();
 
-      String commitUuid = UUID.randomUUID().toString();
-      String stagedCommitFileName = String.format("%020d.%s.json", version, commitUuid);
+      String stagedCommitFileName = FileNames.stagedCommitFile(stagedCommitsDir, version);
       String stagedCommitPath = Paths.get(stagedCommitsDir, stagedCommitFileName).toString();
 
       try {

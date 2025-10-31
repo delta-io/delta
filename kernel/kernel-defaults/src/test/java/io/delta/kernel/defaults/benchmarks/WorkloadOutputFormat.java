@@ -20,8 +20,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.Collection;
 import java.util.HashMap;
 import org.openjdk.jmh.infra.BenchmarkParams;
@@ -357,10 +355,12 @@ public class WorkloadOutputFormat implements OutputFormat {
     ObjectMapper mapper = new ObjectMapper();
     try {
       String jsonReport = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report);
-      System.out.println(jsonReport);
 
+      System.out.println("Generated benchmark report:\n" + jsonReport);
       String outputPath = System.getProperty("user.dir");
-      Files.write(Paths.get(outputPath, "benchmark_report.json"), jsonReport.getBytes());
+      System.out.println("Writing benchmark report to " + outputPath + "/benchmark_report.json");
+      java.nio.file.Files.write(
+          java.nio.file.Paths.get(outputPath, "benchmark_report.json"), jsonReport.getBytes());
     } catch (IOException e) {
       throw new RuntimeException("Failed to serialize benchmark report to JSON", e);
     }

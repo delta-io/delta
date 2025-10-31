@@ -125,7 +125,9 @@ public class CCv2Info {
   public CCv2Info() {}
 
   /**
-   * Constructor for creating CCv2Info.
+   * Constructor for creating CCv2Info. The log tail contains the list of staged commits. Each
+   * staged commit contains the version and the staged commit filename. Since version info is
+   * included, the logTail list does not need to be ordered.
    *
    * @param logTail the list of staged commits
    */
