@@ -23,8 +23,8 @@ case class SparkVersionSpec(
   additionalJavaOptions: Seq[String] = Seq.empty,
   isLatest: Boolean = false
 ) {
-  /** Returns the Spark binary version (e.g., "3.5", "4.0") */
-  def binaryVersion: String = {
+  /** Returns the Spark short version (e.g., "3.5", "4.0") */
+  def shortVersion: String = {
     Mima.getMajorMinorPatch(fullVersion) match {
       case (maj, min, _) => s"$maj.$min"
     }
@@ -105,12 +105,9 @@ object CrossSparkVersions extends AutoPlugin {
 
   override def trigger = allRequirements
 
-  // Custom setting keys
-  val targetJvm = settingKey[String]("Target JVM version")
-
   /**
    * Returns the current spark version spec.
-   * Supports inputs: full version (e.g., "3.5.7"), binary version (e.g., "3.5"), or aliases ("latest", "master")
+   * Supports inputs: full version (e.g., "3.5.7"), short version (e.g., "3.5"), or aliases ("latest", "master")
    */
   def getSparkVersionSpec(): SparkVersionSpec = {
     val input = sys.props.getOrElse("sparkVersion", SparkVersionSpec.LATEST_RELEASED.fullVersion)
@@ -122,12 +119,12 @@ object CrossSparkVersions extends AutoPlugin {
       case other => other
     }
 
-    // Find spec by full version or binary version
+    // Find spec by full version or short version
     SparkVersionSpec.allSpecs.find { spec =>
-      spec.fullVersion == resolvedInput || spec.binaryVersion == resolvedInput
+      spec.fullVersion == resolvedInput || spec.shortVersion == resolvedInput
     }.getOrElse {
       val validInputs = SparkVersionSpec.allSpecs.flatMap { spec =>
-        Seq(spec.fullVersion, spec.binaryVersion)
+        Seq(spec.fullVersion, spec.shortVersion)
       } ++ Seq("latest", "master")
       throw new IllegalArgumentException(
         s"Invalid sparkVersion: $input. Valid values: ${validInputs.mkString(", ")}"
@@ -177,7 +174,7 @@ object CrossSparkVersions extends AutoPlugin {
     if (spec.isLatest) {
       baseName
     } else {
-      s"${baseName}_${spec.binaryVersion}"
+      s"${baseName}_${spec.shortVersion}"
     }
   }
 
@@ -193,7 +190,6 @@ object CrossSparkVersions extends AutoPlugin {
     val baseSettings = Seq(
       scalaVersion := (if (spec.isLatest) defaultScalaVersion.value else scala213),
       crossScalaVersions := (if (spec.isLatest) allScalaVersions else Seq(scala213)),
-      targetJvm := spec.targetJvm,
       // For adding staged Spark RC versions, e.g.:
       // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
       Antlr4 / antlr4Version := spec.antlr4Version,
