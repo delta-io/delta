@@ -19,7 +19,7 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
@@ -152,16 +152,8 @@ public class SparkMicroBatchStream implements MicroBatchStream {
           // inconsistent state. If the snapshot cannot be reconstructed, then the protocol
           // check is skipped, so this is technically not safe, but we keep it this way for
           // historical reasons.
-          try {
-            streamingHelper.checkVersionExists(
-                version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
-          } catch (io.delta.kernel.spark.exception.VersionNotFoundException e) {
-            // Re-throw as DSv1 VersionNotFoundException wrapped in RuntimeException
-            org.apache.spark.sql.delta.VersionNotFoundException dsv1Exception =
-                org.apache.spark.sql.delta.VersionNotFoundException$.MODULE$.apply(
-                    e.getUserVersion(), e.getEarliest(), e.getLatest());
-            throw new RuntimeException(dsv1Exception);
-          }
+          streamingHelper.checkVersionExists(
+              version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
         }
         return Optional.of(version);
       }
@@ -198,23 +190,11 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       // requirement was for the commit to exist
       TableManager.loadSnapshot(tablePath).atVersion(version).build(engine);
       return true;
-    } catch (KernelException e) {
-      // Check if it's an unsupported table feature exception
-      // Kernel throws plain KernelException (not a subclass) for unsupported features,
-      // so we must check the message. See DeltaErrors.unsupportedTableFeature,
-      // DeltaErrors.unsupportedReaderFeatures, and DeltaErrors.unsupportedWriterFeatures.
-      // TODO(#5369): Use specific exception types instead of message parsing
-      String exceptionMessage = e.getMessage();
-      if (exceptionMessage != null
-          && (exceptionMessage.contains("Unsupported Delta reader features")
-              || exceptionMessage.contains("Unsupported Delta table feature"))) {
-        throw e;
-      }
-      // Suppress other non-fatal KernelExceptions
-      logger.warn("Protocol validation failed at version {} with: {}", version, e.getMessage());
-      return false;
+    } catch (UnsupportedTableFeatureException e) {
+      // Re-throw fatal unsupported table feature exceptions
+      throw e;
     } catch (Exception e) {
-      // Suppress other non-fatal exceptions
+      // Suppress non-fatal exceptions
       logger.warn("Protocol validation failed at version {} with: {}", version, e.getMessage());
       return false;
     }
