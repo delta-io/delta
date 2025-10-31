@@ -15,10 +15,8 @@
  */
 package io.delta.kernel.spark.exception;
 
-import io.delta.kernel.exceptions.KernelException;
-
 /** Exception thrown when a requested version is not available in the Delta log. */
-public class VersionNotFoundException extends KernelException {
+public class VersionNotFoundException extends RuntimeException {
 
   private final long userVersion;
   private final long earliest;
