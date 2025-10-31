@@ -550,7 +550,8 @@ lazy val contribs = (project in file("contribs"))
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
       Files.createDirectories(dir.toPath)
     },
-    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
+    TestParallelization.settings
   ).configureUnidoc()
 
 lazy val sharing = (project in file("sharing"))
@@ -577,7 +578,8 @@ lazy val sharing = (project in file("sharing"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
-    )
+    ),
+    TestParallelization.settings
   ).configureUnidoc()
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
@@ -741,7 +743,8 @@ lazy val kernelSpark = (project in file("kernel-spark"))
       "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    TestParallelization.settings
   )
   // TODO to enable unit doc for kernelSpark.
 
@@ -790,6 +793,7 @@ lazy val storage = (project in file("storage"))
 
     // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
+    TestParallelization.settings
   ).configureUnidoc()
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
@@ -810,7 +814,8 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
-    )
+    ),
+    TestParallelization.settings
   ).configureUnidoc()
 
 val icebergSparkRuntimeArtifactName = {
@@ -1015,7 +1020,8 @@ lazy val hudi = (project in file("hudi"))
         MergeStrategy.first
     },
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
-    Compile / packageBin := assembly.value
+    Compile / packageBin := assembly.value,
+    TestParallelization.settings
   )
 
 /**
