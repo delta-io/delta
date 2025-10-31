@@ -1367,6 +1367,23 @@ object DeltaSource extends DeltaLogging {
     }
 
   }
+    /**
+   * Class that helps controlling how much data should be processed by a single micro-batch.
+   */
+  case class AdmissionLimits(
+    options: DeltaOptions,
+    maxFiles: Option[Int] = None,
+    maxBytes: Option[Long] = None
+  ) extends DeltaSourceAdmissionBase {
+    var bytesToTake = maxBytes.getOrElse(options.maxBytesPerTrigger.getOrElse(Long.MaxValue))
+    var filesToTake = maxFiles.getOrElse {
+      if (options.maxBytesPerTrigger.isEmpty) {
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
+      } else {
+        Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
+      }
+    }
+  }
 
   /**
    * Class that helps controlling how much data should be processed by a single micro-batch.
