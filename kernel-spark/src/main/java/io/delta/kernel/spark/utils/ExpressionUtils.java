@@ -36,6 +36,7 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.collection.JavaConverters;
+import scala.collection.Seq;
 
 /**
  * Utility class for converting Spark SQL filter expressions to Delta Kernel predicates.
@@ -64,7 +65,7 @@ public final class ExpressionUtils {
    *     not supported, along with a boolean indicating whether the conversion was partial
    */
   public static ConvertedPredicate convertSparkFilterToKernelPredicate(Filter filter) {
-    return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/);
+    return convertSparkFilterToKernelPredicate(filter, true /* canPartialPushDown */);
   }
 
   /**
@@ -695,6 +696,114 @@ public final class ExpressionUtils {
     } else {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Convert Spark filters to use physical column names for Column Mapping support.
+   *
+   * <p>This method recursively transforms all column references in filters from logical names to
+   * physical names based on the provided schema mapping. This is essential for Column Mapping
+   * feature where Parquet files use physical column names (e.g., "col-abc123" for ID mapping).
+   *
+   * @param filters The filters with logical column names
+   * @param logicalSchema The logical schema
+   * @param physicalSchema The physical schema (must have same structure as logical schema)
+   * @return Immutable Seq of filters with physical column names
+   */
+  public static scala.collection.immutable.Seq<Filter> convertFiltersToPhysicalNames(
+      Seq<Filter> filters, StructType logicalSchema, StructType physicalSchema) {
+
+    // Build logical -> physical column name mapping
+    Map<String, String> logicalToPhysicalMap = new HashMap<>();
+    for (int i = 0; i < logicalSchema.fields().length; i++) {
+      String logicalName = logicalSchema.fields()[i].name();
+      String physicalName = physicalSchema.fields()[i].name();
+      logicalToPhysicalMap.put(logicalName, physicalName);
+    }
+
+    // Convert each filter
+    List<Filter> convertedFilters = new ArrayList<>();
+    List<Filter> filterList = JavaConverters.seqAsJavaList(filters);
+    for (Filter filter : filterList) {
+      convertedFilters.add(convertFilterToPhysicalNames(filter, logicalToPhysicalMap));
+    }
+
+    return JavaConverters.asScalaBuffer(convertedFilters).toSeq();
+  }
+
+  /**
+   * Recursively convert a single filter to use physical column names.
+   *
+   * <p>Supports all common Spark filter types including comparison, logical, string, and null
+   * operations.
+   */
+  private static Filter convertFilterToPhysicalNames(
+      Filter filter, Map<String, String> logicalToPhysicalMap) {
+    if (filter instanceof EqualTo) {
+      EqualTo eq = (EqualTo) filter;
+      return new EqualTo(getPhysicalColumnName(eq.attribute(), logicalToPhysicalMap), eq.value());
+    } else if (filter instanceof EqualNullSafe) {
+      EqualNullSafe eq = (EqualNullSafe) filter;
+      return new EqualNullSafe(
+          getPhysicalColumnName(eq.attribute(), logicalToPhysicalMap), eq.value());
+    } else if (filter instanceof GreaterThan) {
+      GreaterThan gt = (GreaterThan) filter;
+      return new GreaterThan(
+          getPhysicalColumnName(gt.attribute(), logicalToPhysicalMap), gt.value());
+    } else if (filter instanceof GreaterThanOrEqual) {
+      GreaterThanOrEqual gte = (GreaterThanOrEqual) filter;
+      return new GreaterThanOrEqual(
+          getPhysicalColumnName(gte.attribute(), logicalToPhysicalMap), gte.value());
+    } else if (filter instanceof LessThan) {
+      LessThan lt = (LessThan) filter;
+      return new LessThan(getPhysicalColumnName(lt.attribute(), logicalToPhysicalMap), lt.value());
+    } else if (filter instanceof LessThanOrEqual) {
+      LessThanOrEqual lte = (LessThanOrEqual) filter;
+      return new LessThanOrEqual(
+          getPhysicalColumnName(lte.attribute(), logicalToPhysicalMap), lte.value());
+    } else if (filter instanceof In) {
+      In in = (In) filter;
+      return new In(getPhysicalColumnName(in.attribute(), logicalToPhysicalMap), in.values());
+    } else if (filter instanceof IsNull) {
+      IsNull isNull = (IsNull) filter;
+      return new IsNull(getPhysicalColumnName(isNull.attribute(), logicalToPhysicalMap));
+    } else if (filter instanceof IsNotNull) {
+      IsNotNull isNotNull = (IsNotNull) filter;
+      return new IsNotNull(getPhysicalColumnName(isNotNull.attribute(), logicalToPhysicalMap));
+    } else if (filter instanceof StringStartsWith) {
+      StringStartsWith startsWith = (StringStartsWith) filter;
+      return new StringStartsWith(
+          getPhysicalColumnName(startsWith.attribute(), logicalToPhysicalMap), startsWith.value());
+    } else if (filter instanceof StringEndsWith) {
+      StringEndsWith endsWith = (StringEndsWith) filter;
+      return new StringEndsWith(
+          getPhysicalColumnName(endsWith.attribute(), logicalToPhysicalMap), endsWith.value());
+    } else if (filter instanceof StringContains) {
+      StringContains contains = (StringContains) filter;
+      return new StringContains(
+          getPhysicalColumnName(contains.attribute(), logicalToPhysicalMap), contains.value());
+    } else if (filter instanceof org.apache.spark.sql.sources.And) {
+      org.apache.spark.sql.sources.And and = (org.apache.spark.sql.sources.And) filter;
+      return new org.apache.spark.sql.sources.And(
+          convertFilterToPhysicalNames(and.left(), logicalToPhysicalMap),
+          convertFilterToPhysicalNames(and.right(), logicalToPhysicalMap));
+    } else if (filter instanceof org.apache.spark.sql.sources.Or) {
+      org.apache.spark.sql.sources.Or or = (org.apache.spark.sql.sources.Or) filter;
+      return new org.apache.spark.sql.sources.Or(
+          convertFilterToPhysicalNames(or.left(), logicalToPhysicalMap),
+          convertFilterToPhysicalNames(or.right(), logicalToPhysicalMap));
+    } else if (filter instanceof Not) {
+      Not not = (Not) filter;
+      return new Not(convertFilterToPhysicalNames(not.child(), logicalToPhysicalMap));
+    } else {
+      // Unknown filter type, return as-is
+      return filter;
+    }
+  }
+
+  /** Get physical column name from logical name, fallback to logical name if not found. */
+  private static String getPhysicalColumnName(String logicalName, Map<String, String> mapping) {
+    return mapping.getOrDefault(logicalName, logicalName);
   }
 
   private ExpressionUtils() {}
