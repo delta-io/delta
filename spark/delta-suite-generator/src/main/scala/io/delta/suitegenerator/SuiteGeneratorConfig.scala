@@ -163,11 +163,13 @@ object SuiteGeneratorConfig {
       "MergeIntoNotMatchedBySourceCDCPart1Tests",
       "MergeIntoNotMatchedBySourceCDCPart2Tests",
       "MergeIntoSchemaEvolutionCoreTests",
-      "MergeIntoSchemaEvolutionBaseTests",
+      "MergeIntoSchemaEvolutionBaseNewColumnTests",
+      "MergeIntoSchemaEvolutionBaseExistingColumnTests",
       "MergeIntoSchemaEvoStoreAssignmentPolicyTests",
       "MergeIntoSchemaEvolutionNotMatchedBySourceTests",
       "MergeIntoNestedStructInMapEvolutionTests",
-      "MergeIntoNestedStructEvolutionTests"
+      "MergeIntoNestedStructEvolutionUpdateOnlyTests",
+      "MergeIntoNestedStructEvolutionInsertTests"
     )
     val MERGE_SQL = List(
       "MergeIntoSQLTests",
@@ -321,6 +323,20 @@ object SuiteGeneratorConfig {
             List(Dims.CDC.asOptional, Dims.PERSISTENT_DV),
             List(Dims.PERSISTENT_DV_OFF, Dims.COLUMN_MAPPING),
             List(Dims.CDC, Dims.PERSISTENT_DV_ON, Dims.COLUMN_MAPPING)
+          )
+        )
+      )
+    ),
+    TestGroup(
+      name = "InsertSuites",
+      imports = List(
+        importer"org.apache.spark.sql.delta._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List("DeltaInsertIntoImplicitCastTests", "DeltaInsertIntoImplicitCastStreamingWriteTests"),
+          List(
+            List()
           )
         )
       )

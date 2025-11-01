@@ -40,18 +40,17 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.18"
-val scala213 = "2.13.13"
-val all_scala_versions = Seq(scala212, scala213)
+val scala213 = "2.13.16"
+val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
-// sbt 'set default_scala_version := 2.13.13' [commands]
+// sbt 'set default_scala_version := 2.13.16' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala212
+Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
 val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
@@ -719,7 +718,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 lazy val kernelSpark = (project in file("kernel-spark"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
-  .dependsOn(spark % "compile->compile")
+  .dependsOn(spark % "compile->compile;test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "kernel-spark",
@@ -732,18 +731,13 @@ lazy val kernelSpark = (project in file("kernel-spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
-      // Using released delta-spark JAR instead of module dependency to break circular dependency
-      "io.delta" %% "delta-spark" % "3.3.2" % "test",
-
-      // Spark test dependencies for QueryTest and other test utilities
-      // Spark version(3.5.6) matches delta-spark's version 3.3.2
-      "org.apache.spark" %% "spark-sql" % "3.5.6" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % "3.5.6" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % "3.5.6" % "test" classifier "tests",
-
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      // Spark test classes for Scala/Java test utilities
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
@@ -880,7 +874,6 @@ lazy val iceberg = (project in file("iceberg"))
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
         s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
-        s"scala-library-${scala212}.jar",
         s"scala-library-${scala213}.jar",
         s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
         "caffeine-2.9.3.jar",
@@ -923,7 +916,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-val icebergShadedVersion = "1.8.0"
+val icebergShadedVersion = "1.10.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)

@@ -372,7 +372,7 @@ class CreateCheckpointSuite extends CheckpointBase {
       val ex2 = intercept[Exception] {
         kernelCheckpoint(tc, tablePath, checkpointVersion = 4)
       }
-      assert(ex2.getMessage.contains("requires writer table feature \"[checkConstraints]\" " +
+      assert(ex2.getMessage.contains("requires writer table features [checkConstraints] " +
         "which is unsupported by this version of Delta Kernel"))
     }
   }
