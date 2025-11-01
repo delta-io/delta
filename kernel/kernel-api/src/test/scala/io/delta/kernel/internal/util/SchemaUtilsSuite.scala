@@ -25,7 +25,7 @@ import scala.reflect.ClassTag
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
@@ -42,6 +42,9 @@ import org.scalatest.prop.TableFor2
 import org.scalatest.prop.Tables.Table
 
 class SchemaUtilsSuite extends AnyFunSuite {
+
+  val dummyProtocol = new Protocol(0, 0)
+
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
     val e = intercept[KernelException] {
       f
@@ -51,6 +54,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
       shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
       s"Error message '$msg' didn't contain: $shouldContain")
   }
+
+  private def validateSchemaWithDefaultSetting(schema: StructType): Unit =
+    validateSchema(schema, false, false, false)
 
   ///////////////////////////////////////////////////////////////////////////
   // Duplicate Column Checks
@@ -62,7 +68,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       .add("b", INTEGER)
       .add("dupColName", StringType.STRING)
     expectFailure("dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -72,7 +78,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       .add("b", INTEGER)
       .add("dupCOLNAME", StringType.STRING)
     expectFailure("dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -85,7 +91,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add("b", INTEGER))
       .add("dupColName", INTEGER)
     expectFailure("dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -98,7 +104,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add("b", INTEGER))
       .add("dupCOLNAME", INTEGER)
     expectFailure("dupCOLNAME") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -111,7 +117,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add("b", INTEGER)
           .add("dupColName", StringType.STRING))
     expectFailure("top.dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -124,7 +130,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add("b", INTEGER)
           .add("dupCOLNAME", StringType.STRING))
     expectFailure("top.dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -141,7 +147,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
               .add("dupColName", StringType.STRING))
           .add("d", INTEGER))
     expectFailure("top.b.dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -162,7 +168,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
               true))
           .add("d", INTEGER))
     expectFailure("top.b.element.element.dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -175,7 +181,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         new StructType().add("b", INTEGER).add("c", INTEGER).add("d", INTEGER))
 
     val e = intercept[KernelException] {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
     assert(e.getMessage.contains("Schema contains duplicate columns: top, top.b, top.c"))
   }
@@ -190,7 +196,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           "top",
           new StructType()
             .add("b", new MapType(keyType.add("dupColName", StringType.STRING), keyType, true)))
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
     expectFailure("top.b.value.dupColName") {
       val schema = new StructType()
@@ -198,7 +204,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           "top",
           new StructType()
             .add("b", new MapType(keyType, keyType.add("dupColName", StringType.STRING), true)))
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
     // This is okay
     val schema = new StructType()
@@ -206,7 +212,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         "top",
         new StructType()
           .add("b", new MapType(keyType, keyType, true)))
-    validateSchema(schema, false /* isColumnMappingEnabled */ )
+    validateSchemaWithDefaultSetting(schema)
   }
 
   test("duplicate column name in nested array") {
@@ -220,7 +226,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
             .add("dupColName", StringType.STRING),
           true))
     expectFailure("top.element.dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -235,7 +241,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
             .add("dupCOLNAME", StringType.STRING),
           true))
     expectFailure("top.element.dupColName") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -247,7 +253,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add("a", INTEGER)
           .add("b", INTEGER))
       .add("top.a", INTEGER)
-    validateSchema(schema, false /* isColumnMappingEnabled */ )
+    validateSchemaWithDefaultSetting(schema)
   }
 
   test("non duplicate column because of back tick - nested") {
@@ -261,7 +267,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
               .add("a", INTEGER)
               .add("b", INTEGER))
           .add("top.a", INTEGER))
-    validateSchema(schema, false /* isColumnMappingEnabled */ )
+    validateSchemaWithDefaultSetting(schema)
   }
 
   test("variant") {
@@ -270,7 +276,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         "variant",
         VariantType.VARIANT)
 
-    validateSchema(schema, false /* isColumnMappingEnabled */ )
+    validateSchemaWithDefaultSetting(schema)
   }
 
   test("variant - nested") {
@@ -280,7 +286,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         new StructType()
           .add("variant", VariantType.VARIANT))
 
-    validateSchema(schema, false /* isColumnMappingEnabled */ )
+    validateSchemaWithDefaultSetting(schema)
   }
 
   test("duplicate column with back ticks - nested") {
@@ -292,7 +298,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add("b", INTEGER)
           .add("top.a", INTEGER))
     expectFailure("first.`top.a`") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
     }
   }
 
@@ -305,7 +311,23 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add("b", INTEGER)
           .add("top.a", INTEGER))
     expectFailure("first.`top.a`") {
-      validateSchema(schema, false /* isColumnMappingEnabled */ )
+      validateSchemaWithDefaultSetting(schema)
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // check default columns check is invoked
+  ///////////////////////////////////////////////////////////////////////////
+  test("") {
+    val schema = new StructType()
+      .add(
+        "first",
+        new StructType()
+          .add("TOP.a", StringType.STRING)
+          .add("b", INTEGER)
+          .add("top.a", INTEGER))
+    expectFailure("first.`top.a`") {
+      validateSchema(schema, false, true, false)
     }
   }
 
@@ -320,12 +342,16 @@ class SchemaUtilsSuite extends AnyFunSuite {
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
         val schema = new StructType().add(name, INTEGER)
         val e = intercept[KernelException] {
-          validateSchema(schema, false /* isColumnMappingEnabled */ )
+          validateSchemaWithDefaultSetting(schema)
         }
 
         if (char != '\n') {
           // with column mapping disabled this should be a valid name
-          validateSchema(schema, true /* isColumnMappingEnabled */ )
+          validateSchema(
+            schema,
+            true,
+            false,
+            false)
         }
 
         assert(e.getMessage.contains("contains one of the unsupported"))
@@ -336,8 +362,16 @@ class SchemaUtilsSuite extends AnyFunSuite {
       // no issues here
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
         val schema = new StructType().add(name, INTEGER);
-        validateSchema(schema, false /* isColumnMappingEnabled */ )
-        validateSchema(schema, true /* isColumnMappingEnabled */ )
+        validateSchema(
+          schema,
+          false,
+          false,
+          false)
+        validateSchema(
+          schema,
+          true,
+          false,
+          false)
       }
     }
   }
@@ -513,6 +547,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(current, properties = tblProperties),
         metadata(updated, properties = tblProperties),
+        dummyProtocol,
         emptySet(),
         false // allowNewRequiredFields
       )
@@ -710,6 +745,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         validateUpdatedSchemaAndGetUpdatedSchema(
           metadata(schemaBefore),
           metadata(schemaAfter),
+          dummyProtocol,
           emptySet(),
           false /* allowNewRequiredFields */ )
       }
@@ -763,6 +799,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
+        dummyProtocol,
         emptySet(),
         false /* allowNewRequiredFields */ )
     }
@@ -823,6 +860,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
+        dummyProtocol,
         emptySet(),
         true /* allowNewRequiredFields */ )
     }
@@ -1060,6 +1098,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
+        dummyProtocol,
         emptySet(),
         false /* allowNewRequiredFields */ )
     }
@@ -1098,6 +1137,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
+        dummyProtocol,
         emptySet(),
         false /* allowNewRequiredFields */ )
     }
@@ -1202,6 +1242,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         validateUpdatedSchemaAndGetUpdatedSchema(
           metadata(schemaBefore, tableProperties),
           metadata(schemaAfter, tableProperties),
+          dummyProtocol,
           emptySet(),
           allowNewRequiredFields)
       }
@@ -1462,6 +1503,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           validateUpdatedSchemaAndGetUpdatedSchema(
             metadata(schemaBefore, tblProperties),
             metadata(schemaAfter, tblProperties),
+            dummyProtocol,
             emptySet(),
             false /* allowNewRequiredFields */
           )
@@ -1471,6 +1513,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
             validateUpdatedSchemaAndGetUpdatedSchema(
               metadata(schemaBefore, tblProperties),
               metadata(schemaAfter, tblProperties),
+              dummyProtocol,
               emptySet(),
               false /* allowNewRequiredFields */
             )
@@ -1569,6 +1612,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     validateUpdatedSchemaAndGetUpdatedSchema(
       metadata(before, tableProperties),
       metadata(schemaWithVariant, tableProperties),
+      dummyProtocol,
       emptySet(),
       false)
   }
