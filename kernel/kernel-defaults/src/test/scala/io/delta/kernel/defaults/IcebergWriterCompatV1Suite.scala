@@ -82,7 +82,8 @@ trait IcebergWriterCompatV1TestUtils { self: AbstractWriteUtils =>
     // Check expected confs are present
     assert(TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata))
     assert(TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata))
-    assert(TableConfig.COLUMN_MAPPING_MODE.fromMetadata(metadata) == ColumnMappingMode.ID)
+    assert(TableConfig.COLUMN_MAPPING_MODE.fromMetadata(metadata) == ColumnMappingMode.ID
+      || TableConfig.COLUMN_MAPPING_MODE.fromMetadata(metadata) == ColumnMappingMode.NAME)
   }
 }
 
@@ -102,10 +103,14 @@ trait IcebergWriterCompatV1SuiteBase
   private val tblPropertiesColumnMappingModeId = Map(
     TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
 
+  private val tblPropertiesColumnMappingModeName = Map(
+    TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
+
   Seq(
     (Map(), "no other properties"),
     (tblPropertiesIcebergCompatV2Enabled, "icebergCompatV2 enabled"),
     (tblPropertiesColumnMappingModeId, "column mapping mode set to id"),
+    (tblPropertiesColumnMappingModeName, "column mapping mode set to name"),
     (
       tblPropertiesIcebergCompatV2Enabled ++ tblPropertiesColumnMappingModeId,
       "icebergCompatV2 enabled and column mapping mode set to id")).foreach {
@@ -182,7 +187,7 @@ trait IcebergWriterCompatV1SuiteBase
   }
 
   test("Cannot enable when column mapping mode explicitly set to name/none") {
-    Seq("name", "none").foreach { cmMode =>
+    Seq("none").foreach { cmMode =>
       withTempDirAndEngine { (tablePath, engine) =>
         val e = intercept[KernelException] {
           createEmptyTable(
@@ -370,7 +375,7 @@ trait IcebergWriterCompatV1SuiteBase
         tablePath,
         data = Seq.empty,
         tableProperties = tblPropertiesIcebergWriterCompatV1Enabled ++
-          tblPropertiesIcebergCompatV2Enabled ++ tblPropertiesColumnMappingModeId
+          tblPropertiesIcebergCompatV2Enabled ++ tblPropertiesColumnMappingModeName
       ) // version 1
       appendData(engine, tablePath, data = Seq.empty) // version 2
 
