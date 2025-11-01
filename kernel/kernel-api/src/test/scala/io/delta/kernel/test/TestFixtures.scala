@@ -26,7 +26,7 @@ import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.internal.actions.{CommitInfo, DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.internal.util.{FileNames, Tuple2}
-import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
+import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, CollationIdentifier, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
 import io.delta.kernel.utils.FileStatus
 
 /**
