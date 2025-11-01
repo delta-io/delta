@@ -429,11 +429,11 @@ lazy val spark = (project in file("spark"))
   .enablePlugins(Antlr4Plugin)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
-    name := "delta-spark",
+    name := "delta-spark-v1",
     commonSettings,
     scalaStyleSettings,
     sparkMimaSettings,
-    releaseSettings,
+    skipReleaseSettings,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
@@ -715,16 +715,50 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
 
+lazy val sparkShaded = (project in file("sparkShaded"))
+  .dependsOn(spark)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
+  .settings(
+    name := "spark-shaded",
+    commonSettings,
+    skipReleaseSettings,
+    // Generate shaded delta-spark-v1 JAR
+    Compile / packageBin := assembly.value,
+    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyShadeRules := Seq(
+      // Shade all delta-spark-v1 classes to shaded.* package
+      // This is necessary because shading happens at assembly time, not compile time
+      // The wrapper classes in kernelSpark need to extend shaded.* classes at compile time
+      ShadeRule.rename("org.apache.spark.sql.delta.**" -> "shaded.org.apache.spark.sql.delta.@1").inAll,
+      ShadeRule.rename("io.delta.**" -> "shaded.io.delta.@1").inAll,
+      ShadeRule.rename("com.databricks.**" -> "shaded.com.databricks.@1").inAll
+    ),
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.concat
+      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+      case "module-info.class" => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
+    assemblyPackageScala / assembleArtifact := false
+  )
+
 lazy val kernelSpark = (project in file("kernel-spark"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(spark % "compile->compile;test->test")
   .dependsOn(goldenTables % "test")
   .settings(
-    name := "kernel-spark",
+    name := "delta-spark",
     commonSettings,
-    javafmtCheckSettings,
-    skipReleaseSettings,
+    javafmtCheckSettings(),
+    releaseSettings,
+    crossSparkSettings(),
+    // Skip scaladoc generation because wrapper classes extend shaded classes
+    Compile / packageDoc / publishArtifact := false,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -741,7 +775,58 @@ lazy val kernelSpark = (project in file("kernel-spark"))
       "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    // Include the shaded spark JAR
+    Compile / unmanagedJars += (sparkShaded / assembly).value,
+    // Generate the assembly JAR as the package JAR
+    Compile / packageBin := assembly.value,
+    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      // Exclude provided Spark dependencies, but keep spark-shaded
+      val allowedJars = Seq(
+        s"spark-shaded_${scalaBinaryVersion.value}-${version.value}.jar"
+      )
+      cp.filter { f =>
+        !allowedJars.contains(f.data.getName) &&
+        (f.data.getName.startsWith("spark-") || 
+         f.data.getName.startsWith("scala-library") ||
+         f.data.getName.startsWith("hadoop-"))
+      }
+    },
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.concat
+      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+      case "module-info.class" => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
+    assemblyPackageScala / assembleArtifact := false,
+    // Remove dependencies from POM that are already packaged in the fat jar
+    pomPostProcess := { (node: scala.xml.Node) =>
+      new scala.xml.transform.RuleTransformer(new scala.xml.transform.RewriteRule {
+        override def transform(node: scala.xml.Node): scala.xml.NodeSeq = node match {
+          case e: scala.xml.Elem if e.label == "dependency" =>
+            val artifactId = (e \ "artifactId").text
+            // Remove dependencies from POM that are already packaged in the fat jar:
+            // - kernel-api and kernel-defaults are included
+            // - delta-spark-v1 is included as shaded classes
+            // - golden-tables is test-only and not published
+            if (artifactId == "delta-kernel-api" || 
+                artifactId == "delta-kernel-defaults" ||
+                artifactId.startsWith("delta-spark-v1") ||
+                artifactId.startsWith("golden-tables")) {
+              scala.xml.NodeSeq.Empty
+            } else {
+              node
+            }
+          case _ => node
+        }
+      }).transform(node).head
+    }
   )
   // TODO to enable unit doc for kernelSpark.
 
