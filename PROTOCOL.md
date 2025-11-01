@@ -2190,12 +2190,13 @@ containsNull| Boolean denoting whether this array can contain one or more null v
 ### Map Type
 
 A map stores an arbitrary length collection of key-value pairs with a single `keyType` and a single `valueType`.
+Map keys are required, and map values can be null.
 
 Field Name | Description
 -|-
 type| Always the string "map".
 keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
-valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+valueType| The type of element used for the value of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 
 ### Variant Type
 
