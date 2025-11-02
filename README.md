@@ -214,3 +214,4 @@ There are two mediums of communication within the Delta Lake community.
 * Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
 
 <!-- Stack commit 1: Minor documentation update -->
+<!-- Stack commit 2: Additional documentation marker -->
