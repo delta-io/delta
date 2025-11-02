@@ -825,8 +825,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     // Accept both old and new error message formats for non-contiguous versions
     assert(
       e.getMessage.contains("versions are not contiguous") &&
-      e.getMessage.contains("[0, 2]")
-    )
+        e.getMessage.contains("[0, 2]"))
   }
 
   test("table protocol version greater than reader protocol version") {
