@@ -20,12 +20,12 @@ import java.math.BigDecimal
 import java.sql.Date
 import java.time.Instant
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
-import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException, UnsupportedProtocolVersionException}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
@@ -322,6 +322,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       .fields()
       .asScala
       .map(_.getName)
+      .toSeq
 
     val expectedAnswer = Seq(0, 1).map { i =>
       TestRow(
@@ -829,7 +830,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("table protocol version greater than reader protocol version") {
-    val e = intercept[Exception] {
+    val e = intercept[UnsupportedProtocolVersionException] {
       latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
         .getScanBuilder()
         .build()

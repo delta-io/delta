@@ -16,10 +16,12 @@
 
 package io.delta.kernel.defaults.benchmarks.models;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.io.IOException;
-import org.codehaus.jackson.map.ObjectMapper;
+import java.nio.file.Paths;
 
 /**
  * Represents metadata about a Delta table used in benchmark workloads.
@@ -60,23 +62,9 @@ public class TableInfo {
   @JsonProperty("engine_info")
   public String engineInfo;
 
-  /** The root path where the Delta table is stored. */
-  @JsonProperty("table_root")
-  public String tableRoot;
-
-  /** @return the absolute path to the root of the table */
-  public String getTableRoot() {
-    return tableRoot;
-  }
-
-  /**
-   * Sets the root path of the Delta table.
-   *
-   * @param tableRoot the absolute path to the root of the table
-   */
-  public void setTableRoot(String tableRoot) {
-    this.tableRoot = tableRoot;
-  }
+  /** The path to the table_info directory */
+  @JsonProperty("table_info_path")
+  private String tableInfoPath;
 
   /**
    * Default constructor for Jackson deserialization.
@@ -86,6 +74,20 @@ public class TableInfo {
    */
   public TableInfo() {}
 
+  /** Resolves the table root path based on the table type and location configuration. */
+  @JsonIgnore
+  public String getResolvedTableRoot() {
+    return Paths.get(tableInfoPath, "delta").toAbsolutePath().toString();
+  }
+
+  public String getTableInfoPath() {
+    return tableInfoPath;
+  }
+
+  public void setTableInfoPath(String tableInfoDirectory) {
+    this.tableInfoPath = tableInfoDirectory;
+  }
+
   /**
    * Creates a TableInfo instance by reading from a JSON file at the specified path.
    *
@@ -94,15 +96,15 @@ public class TableInfo {
    * separately with the absolute path.
    *
    * @param jsonPath the path to the JSON file containing the TableInfo metadata
-   * @param tableRoot the absolute path to the root of the Delta table
+   * @param tableInfoPath the directory containing the table_info.json file
    * @return a TableInfo instance populated from the JSON file and table root path
    * @throws RuntimeException if there is an error reading or parsing the JSON file
    */
-  public static TableInfo fromJsonPath(String jsonPath, String tableRoot) {
+  public static TableInfo fromJsonPath(String jsonPath, String tableInfoPath) {
     ObjectMapper mapper = new ObjectMapper();
     try {
       TableInfo info = mapper.readValue(new File(jsonPath), TableInfo.class);
-      info.setTableRoot(tableRoot);
+      info.setTableInfoPath(tableInfoPath);
       return info;
     } catch (IOException e) {
       throw new RuntimeException("Failed to read TableInfo from JSON file: " + jsonPath, e);

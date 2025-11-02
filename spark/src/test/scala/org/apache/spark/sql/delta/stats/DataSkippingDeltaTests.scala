@@ -2091,6 +2091,29 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 
+  test("Data skipping handles aliasing for _metadata fields") {
+    withTable("t") {
+      // Create table with BIGINT file_name column
+      sql("create or replace table t(file_name BIGINT) using delta")
+      sql("insert into t values (1), (2), (3)")
+      sql("insert into t values (4), (5), (6)")
+      val (fileName, fileCount) = {
+        val dataFilesDF = sql("select distinct _metadata.file_name from t")
+        (dataFilesDF.first().getString(0), dataFilesDF.count())
+      }
+      // Filter rows by _metadata.file_name
+      val df = sql(s"select * from t where _metadata.file_name = '$fileName'")
+      // Verify the predicate is not used for data skipping
+      val predicates = df.queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+        .filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty,
+        "Expected predicate to be ineligible for data skipping")
+    }
+  }
+
   protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] =
     super.parse(spark, deltaLog, predicate)
 

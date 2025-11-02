@@ -115,11 +115,10 @@ public class BenchmarkUtils {
     validateTableStructure(tableDir);
 
     Path tableInfoPath = tableDir.resolve(TABLE_INFO_FILE_NAME);
-    Path deltaDir = tableDir.resolve(DELTA_DIR_NAME);
     Path specsDir = tableDir.resolve(SPECS_DIR_NAME);
 
     TableInfo tableInfo =
-        TableInfo.fromJsonPath(tableInfoPath.toString(), deltaDir.toAbsolutePath().toString());
+        TableInfo.fromJsonPath(tableInfoPath.toString(), tableDir.toAbsolutePath().toString());
 
     return findSpecDirectories(specsDir).stream()
         .map(specDir -> loadSingleSpec(specDir, tableInfo))

@@ -15,8 +15,8 @@
  */
 package io.delta.kernel.defaults
 
-import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
+import scala.jdk.CollectionConverters._
 
 import io.delta.kernel._
 import io.delta.kernel.data.Row
@@ -178,7 +178,7 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
       val expectedMetadata =
         (winningTxn2DomainMetadatas ++ winningTxn3DomainMetadatas ++ currentTxn1DomainMetadatas)
           .groupBy(_.getDomain)
-          .mapValues(_.last)
+          .view.mapValues(_.last).toMap
       assertDomainMetadata(tablePath, engine, expectedMetadata)
     }
   }
