@@ -212,3 +212,5 @@ There are two mediums of communication within the Delta Lake community.
 * [Linkedin page](https://www.linkedin.com/company/deltalake)
 * [Youtube channel](https://www.youtube.com/c/deltalake)
 * Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
+
+<!-- Stack commit 1: Minor documentation update -->
