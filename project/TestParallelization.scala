@@ -371,9 +371,12 @@ object TestParallelization {
         forkOptionsTemplate: ForkOptions): GroupingStrategy = {
       val testGroups = scala.collection.mutable.Map((0 until groupCount).map {
         groupIdx =>
+          val tmpDir = s"$baseDir/target/tmp/$groupIdx"
+          java.nio.file.Files.createDirectories(java.nio.file.Paths.get(tmpDir))
+
           val forkOptions = forkOptionsTemplate.withRunJVMOptions(
             runJVMOptions = forkOptionsTemplate.runJVMOptions ++
-                Seq(s"-Djava.io.tmpdir=$baseDir/target/tmp/$groupIdx")
+                Seq(s"-Djava.io.tmpdir=$tmpDir")
           )
           val group = Tests.Group(
             name = s"Test group $groupIdx",
