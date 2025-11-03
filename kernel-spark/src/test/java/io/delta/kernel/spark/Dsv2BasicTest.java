@@ -43,10 +43,10 @@ public class Dsv2BasicTest {
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
-            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
             .set(
                 "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+                "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
             .setMaster("local[*]")
             .setAppName("Dsv2BasicTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
