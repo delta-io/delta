@@ -504,6 +504,7 @@ lazy val spark = (project in file("spark-unified"))
     scalaStyleSettings,
     sparkMimaSettings,
     releaseSettings, // Published to Maven as delta-spark.jar
+    moduleName := CrossSparkVersions.moduleName(name.value, sparkVersion.value),
 
     // Set Test baseDirectory before crossSparkSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
@@ -521,7 +522,7 @@ lazy val spark = (project in file("spark-unified"))
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
     ),
 
-    crossSparkSettings(),
+    CrossSparkVersions.crossSparkSettings(default_scala_version, all_scala_versions, scala213),
 
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
     mimaCurrentClassfiles := (Compile / packageBin).value,
