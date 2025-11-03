@@ -414,14 +414,14 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
       if (parents.isEmpty()) {
         return Optional.empty();
       }
-      List<String> names = new ArrayList<>();
+      LinkedList<String> names = new LinkedList<>();
       for (int i = parents.size() - 1; i >= 0; i--) {
         SchemaZipper parent = parents.get(i);
         if (parent.isStructField()) {
           return Optional.of(new Tuple2<>(parent.getField(), SchemaUtils.concatWithDot(names)));
         }
         // We are traversing parents in reverse so need to insert at the start
-        names.add(0, parent.currentField().getName());
+        names.addFirst(parent.currentField().getName());
       }
       throw new IllegalStateException(
           "At least one parent must be a struct field for a valid schema");
