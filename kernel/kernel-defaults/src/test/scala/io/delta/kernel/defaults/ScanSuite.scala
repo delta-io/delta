@@ -1652,6 +1652,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
 
+          val c2Collation = c2Type.getCollationIdentifier
+
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
             emptyIterable())
@@ -1680,7 +1682,20 @@ class ScanSuite extends AnyFunSuite with TestUtils
             new Predicate(
               "<",
               col("c1"),
+              ofString("a")) -> 0,
+            new Predicate(
+              "<",
+              col("c1"),
+              ofString("a", c2Collation)) -> 0,
+            new Predicate(
+              "<",
+              col("c1"),
               ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new Predicate(
+              "<",
+              col("c1"),
+              ofString("a", c2Collation),
               CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
             new Predicate(
               "=",
@@ -1693,9 +1708,27 @@ class ScanSuite extends AnyFunSuite with TestUtils
               ofString("a"),
               CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
             new Predicate(
+              "=",
+              col("c1"),
+              ofString("a", c2Collation),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+            new Predicate(
+              "=",
+              col("c1"),
+              ofString("a")) -> 1,
+            new Predicate(
+              "=",
+              col("c1"),
+              ofString("a", c2Collation)) -> 1,
+            new Predicate(
               ">=",
               col("c1"),
               ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+            new Predicate(
+              ">=",
+              col("c1"),
+              ofString("a", c2Collation),
               CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
             new Predicate(
               ">",
@@ -1769,6 +1802,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
 
+          val c2Collation = c2Type.getCollationIdentifier
+
           getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
             defaultEngine,
             emptyIterable())
@@ -1799,6 +1834,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           // pruning throws.
           val failingPredicates = Seq(
             new Predicate("<", col("c1"), ofString("a"), utf8Lcase),
+            new Predicate("<", col("c1"), ofString("a", c2Collation), utf8Lcase),
             new Predicate("=", ofString("d"), col("c1"), unicode),
             new And(
               new Predicate(">=", col("c1"), ofString("b"), utf8Lcase),
@@ -1810,6 +1846,10 @@ class ScanSuite extends AnyFunSuite with TestUtils
             new In(
               col("c1"),
               java.util.Arrays.asList(ofString("a"), ofString("c")),
+              utf8Lcase),
+            new In(
+              col("c1"),
+              java.util.Arrays.asList(ofString("a", c2Collation), ofString("c")),
               utf8Lcase),
             new Or(
               new In(col("c1"), java.util.Arrays.asList(ofString("x"), ofString("y")), unicode),
@@ -1845,6 +1885,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
 
+          val c2Collation = c2Type.getCollationIdentifier
+
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,
             emptyIterable())
@@ -1877,6 +1919,19 @@ class ScanSuite extends AnyFunSuite with TestUtils
               ofString("a"),
               CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
             new Predicate(
+              "<",
+              col("c1"),
+              ofString("a", c2Collation),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new Predicate(
+              "<",
+              col("c1"),
+              ofString("a")) -> 0,
+            new Predicate(
+              "<",
+              col("c1"),
+              ofString("a", c2Collation)) -> 0,
+            new Predicate(
               "=",
               ofString("d"),
               col("c1"),
@@ -1887,10 +1942,36 @@ class ScanSuite extends AnyFunSuite with TestUtils
               col("c1"),
               CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
             new Predicate(
+              "=",
+              ofString("a", c2Collation),
+              col("c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+            new Predicate(
+              "=",
+              ofString("a"),
+              col("c1")) -> 1,
+            new Predicate(
+              "=",
+              ofString("a", c2Collation),
+              col("c1")) -> 1,
+            new Predicate(
               "<=",
               ofString("a"),
               col("c1"),
               CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+            new Predicate(
+              "<=",
+              ofString("a", c2Collation),
+              col("c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+            new Predicate(
+              "<=",
+              ofString("a"),
+              col("c1")) -> totalFiles,
+            new Predicate(
+              "<=",
+              ofString("a", c2Collation),
+              col("c1")) -> totalFiles,
             new Predicate(
               "<",
               ofString("e"),
@@ -2079,6 +2160,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
           val schema = new StructType()
             .add("s", new StructType().add("c1", c1Type, true).add("c2", c2Type, true), true)
 
+          val c2Collation = c2Type.getCollationIdentifier
+
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,
             emptyIterable())
@@ -2120,6 +2203,19 @@ class ScanSuite extends AnyFunSuite with TestUtils
               ofString("a"),
               nestedCol("s.c1"),
               CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+            new Predicate(
+              "=",
+              ofString("a", c2Collation),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+            new Predicate(
+              "=",
+              ofString("a"),
+              nestedCol("s.c1")) -> 1,
+            new Predicate(
+              "=",
+              ofString("a", c2Collation),
+              nestedCol("s.c1")) -> 1,
             new Predicate(
               "<=",
               ofString("a"),
@@ -2331,6 +2427,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("c1", c1Type, true)
             .add("c2", c2Type, true)
 
+          val c2Collation = c2Type.getCollationIdentifier
+
           getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
             defaultEngine,
             emptyIterable())
@@ -2357,6 +2455,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
           val failingPredicates = Seq(
             new Predicate("<", col("c1"), ofString("a"), utf8Lcase),
+            new Predicate("<", col("c1"), ofString("a", c2Collation), utf8Lcase),
             new Predicate("=", ofString("d"), col("c1"), unicode),
             new And(
               new Predicate(">=", col("c1"), ofString("b"), utf8Lcase),
@@ -2370,6 +2469,13 @@ class ScanSuite extends AnyFunSuite with TestUtils
             new Or(
               new Predicate("<", col("c1"), ofString("b"), utf8Lcase),
               new Predicate(">", col("c1"), ofString("a"), CollationIdentifier.SPARK_UTF8_BINARY)),
+            new Or(
+              new Predicate("<", col("c1"), ofString("b", c2Collation), utf8Lcase),
+              new Predicate(
+                ">",
+                col("c1"),
+                ofString("a", c2Collation),
+                CollationIdentifier.SPARK_UTF8_BINARY)),
             new And(
               new Predicate(">=", col("c1"), ofString("a"), utf8Lcase),
               new Predicate("<=", col("c1"), ofString("z"), unicode)),
