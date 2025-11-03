@@ -1663,7 +1663,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
             tablePath,
             data = List(
               Map("c1" -> ofString("a")) -> List(buildBatch(schema, "a", "b")),
-              Map("c1" -> ofString("c")) -> List(buildBatch(schema, "c", "d")),
+              Map("c1" -> ofString("c", c2Collation)) -> List(buildBatch(schema, "c", "d")),
               Map("c1" -> ofString("e")) -> List(buildBatch(schema, "e", "f"))))
 
           val snapshot = latestSnapshot(tablePath)
@@ -1814,7 +1814,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
             data = List(
               Map("c1" -> ofString("a")) -> List(buildBatch(schema, "a", "b")),
               Map("c1" -> ofString("c")) -> List(buildBatch(schema, "c", "d")),
-              Map("c1" -> ofString("e")) -> List(buildBatch(schema, "e", "f"))))
+              Map("c1" -> ofString("e", c2Collation)) -> List(buildBatch(schema, "e", "f"))))
 
           val snapshot = latestSnapshot(tablePath)
           val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
