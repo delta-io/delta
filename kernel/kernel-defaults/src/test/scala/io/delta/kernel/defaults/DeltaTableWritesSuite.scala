@@ -45,7 +45,6 @@ import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
 import io.delta.kernel.types.ByteType.BYTE
-import io.delta.kernel.types.CollationIdentifier
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DecimalType
 import io.delta.kernel.types.DoubleType.DOUBLE
@@ -681,12 +680,14 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           .add("p2", p2BatchType)
           .add("v", vBatchType)
 
+        val vCollation = vBatchType.getCollationIdentifier
+
         val partCols = Seq("p1", "p2")
 
-        val v0Part = Map("p1" -> ofString("a"), "p2" -> ofString("alpha"))
+        val v0Part = Map("p1" -> ofString("a"), "p2" -> ofString("alpha", vCollation))
         val v0Data = generateData(dataSchema, partCols, v0Part, batchSize = 8, numBatches = 1)
 
-        val v1Part = Map("p1" -> ofString("B"), "p2" -> ofString("beta"))
+        val v1Part = Map("p1" -> ofString("B", vCollation), "p2" -> ofString("beta"))
         val v1Data = generateData(dataSchema, partCols, v1Part, batchSize = 5, numBatches = 1)
 
         val commitResult0 = appendData(
@@ -801,6 +802,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           .add("p", utf8Lcase) // partition column
           .add("c", serbian) // non-partition, collated
 
+        val dCollation = dBatchType.getCollationIdentifier
+
         val txn = getCreateTxn(engine, tblPath, schema, partCols = Seq("p"))
         commitTransaction(txn, engine, emptyIterable())
 
@@ -814,7 +817,10 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val fcb1 = new FilteredColumnarBatch(batch1, Optional.empty())
 
         val commit1 =
-          appendData(engine, tblPath, data = Seq(Map("p" -> ofString("north")) -> Seq(fcb1)))
+          appendData(
+            engine,
+            tblPath,
+            data = Seq(Map("p" -> ofString("north", dCollation)) -> Seq(fcb1)))
         verifyCommitResult(commit1, expVersion = 1, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tblPath, version = 1, partitionCols = null)
 
