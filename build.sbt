@@ -154,7 +154,7 @@ def runTaskOnlyOnSparkMaster[T](
     taskName: String,
     projectName: String,
     emptyValue: => T): Def.Initialize[Task[T]] = {
-  if (CrossSparkVersions.isMasterVersion()) {
+  if (CrossSparkVersions.getSparkVersionSpec().isMaster) {
     Def.task(task.value)
   } else {
     Def.task {
@@ -425,8 +425,8 @@ lazy val spark = (project in file("spark"))
     TestParallelization.settings,
   )
   .configureUnidoc(
-    generatedJavaDoc = CrossSparkVersions.isLatestReleasedVersion(),
-    generateScalaDoc = CrossSparkVersions.isLatestReleasedVersion(),
+    generatedJavaDoc = CrossSparkVersions.getSparkVersionSpec().isLatestReleased,
+    generateScalaDoc = CrossSparkVersions.getSparkVersionSpec().isLatestReleased,
     // spark-connect has classes with the same name as spark-core, this causes compilation issues
     // with unidoc since it concatenates the classpaths from all modules
     // ==> thus we exclude such sources

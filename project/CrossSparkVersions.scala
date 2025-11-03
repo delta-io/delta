@@ -13,15 +13,13 @@ import Unidoc._
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
- * @param isLatest Whether this is the latest released version (affects artifact naming and doc generation)
  */
 case class SparkVersionSpec(
   fullVersion: String,
   targetJvm: String,
   additionalSourceDir: Option[String],
   antlr4Version: String,
-  additionalJavaOptions: Seq[String] = Seq.empty,
-  isLatest: Boolean = false
+  additionalJavaOptions: Seq[String] = Seq.empty
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
   def shortVersion: String = {
@@ -29,6 +27,12 @@ case class SparkVersionSpec(
       case (maj, min, _) => s"$maj.$min"
     }
   }
+
+  /** Whether this is the latest released Spark version */
+  def isLatestReleased: Boolean = this == SparkVersionSpec.LATEST_RELEASED
+
+  /** Whether this is the master Spark version */
+  def isMaster: Boolean = this == SparkVersionSpec.MASTER
 
   /** Returns log4j config file based on source directory */
   def log4jConfig: String = {
@@ -40,7 +44,7 @@ case class SparkVersionSpec(
   def exportJars: Boolean = additionalSourceDir.exists(_.contains("master"))
 
   /** Whether to generate Javadoc/Scaladoc for this version */
-  def generateDocs: Boolean = isLatest
+  def generateDocs: Boolean = isLatestReleased
 }
 
 object SparkVersionSpec {
@@ -50,8 +54,7 @@ object SparkVersionSpec {
     targetJvm = "11",
     additionalSourceDir = Some("scala-spark-3.5"),
     antlr4Version = "4.9.3",
-    additionalJavaOptions = Seq.empty,
-    isLatest = true
+    additionalJavaOptions = Seq.empty
   )
 
   /** Spark 4.0.2-SNAPSHOT - master branch */
@@ -73,8 +76,7 @@ object SparkVersionSpec {
       "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    ),
-    isLatest = false
+    )
   )
 
   /** Latest released Spark version */
@@ -139,30 +141,6 @@ object CrossSparkVersions extends AutoPlugin {
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
   /**
-   * Returns true if the current Spark version is the latest released version.
-   */
-  def isLatestReleasedVersion(): Boolean = {
-    getSparkVersion() == SparkVersionSpec.LATEST_RELEASED.fullVersion
-  }
-
-  /**
-   * Returns true if the current Spark version is the master version.
-   */
-  def isMasterVersion(): Boolean = {
-    getSparkVersion() == SparkVersionSpec.MASTER.fullVersion
-  }
-
-  /**
-   * Returns the Spark binary version (major.minor) for the given full Spark version.
-   * E.g., "3.5.7" -> "3.5", "4.0.2-SNAPSHOT" -> "4.0"
-   */
-  def getSparkBinaryVersion(sparkVer: String): String = {
-    Mima.getMajorMinorPatch(sparkVer) match {
-      case (maj, min, _) => s"$maj.$min"
-    }
-  }
-
-  /**
    * Returns module name with optional Spark version suffix.
    * Latest released Spark version: "module-name" (e.g., delta-spark)
    * Other Spark versions: "module-name_X.Y" (e.g., delta-spark_4.0)
@@ -171,7 +149,7 @@ object CrossSparkVersions extends AutoPlugin {
     val spec = SparkVersionSpec.allSpecs.find(_.fullVersion == sparkVer)
       .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
 
-    if (spec.isLatest) {
+    if (spec.isLatestReleased) {
       baseName
     } else {
       s"${baseName}_${spec.shortVersion}"
@@ -188,8 +166,8 @@ object CrossSparkVersions extends AutoPlugin {
     val spec = getSparkVersionSpec()
 
     val baseSettings = Seq(
-      scalaVersion := (if (spec.isLatest) defaultScalaVersion.value else scala213),
-      crossScalaVersions := (if (spec.isLatest) allScalaVersions else Seq(scala213)),
+      scalaVersion := (if (spec.isLatestReleased) defaultScalaVersion.value else scala213),
+      crossScalaVersions := (if (spec.isLatestReleased) allScalaVersions else Seq(scala213)),
       // For adding staged Spark RC versions, e.g.:
       // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
       Antlr4 / antlr4Version := spec.antlr4Version,
