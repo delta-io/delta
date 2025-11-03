@@ -33,7 +33,11 @@ import java.util.List;
  * field in the JSON.
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
-@JsonSubTypes({@JsonSubTypes.Type(value = ReadSpec.class, name = "read")})
+@JsonSubTypes({
+  @JsonSubTypes.Type(value = ReadSpec.class, name = "read"),
+  @JsonSubTypes.Type(value = SnapshotConstructionSpec.class, name = "snapshot_construction"),
+  @JsonSubTypes.Type(value = WriteSpec.class, name = "write")
+})
 public abstract class WorkloadSpec {
   /**
    * The type of workload (e.g., "read"). This is used by Jackson's polymorphic deserialization to
@@ -78,6 +82,11 @@ public abstract class WorkloadSpec {
 
   public TableInfo getTableInfo() {
     return tableInfo;
+  }
+
+  @JsonIgnore
+  public String getSpecDirectoryPath() {
+    return tableInfo.getTableInfoPath() + "/specs/" + caseName;
   }
 
   /**

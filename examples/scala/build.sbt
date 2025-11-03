@@ -18,7 +18,7 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala213 = "2.13.13"
+val scala213 = "2.13.16"
 val icebergVersion = "1.4.1"
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))

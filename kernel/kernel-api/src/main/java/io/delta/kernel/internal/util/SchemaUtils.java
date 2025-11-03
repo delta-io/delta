@@ -281,7 +281,7 @@ public class SchemaUtils {
 
     List<String> nonSkippingEligibleColumns =
         physicalColumnsWithTypes.stream()
-            .filter(tuple -> !StatsSchemaHelper.isSkippingEligibleDataType(tuple._2, false))
+            .filter(tuple -> !StatsSchemaHelper.isSkippingEligibleDataType(tuple._2))
             .map(tuple -> tuple._1.toString() + " : " + tuple._2)
             .collect(Collectors.toList());
 
