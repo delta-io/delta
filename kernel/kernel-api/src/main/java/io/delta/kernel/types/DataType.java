@@ -27,12 +27,22 @@ import io.delta.kernel.annotation.Evolving;
 public abstract class DataType {
 
   /**
-   * Are the data types same? The metadata or column names could be different.
+   * Are the data types same? The metadata, collations or column names could be different.
    *
    * @param dataType
    * @return
    */
   public boolean equivalent(DataType dataType) {
+    return equals(dataType);
+  }
+
+  /**
+   * Are the data types same? The collations could be different.
+   *
+   * @param dataType
+   * @return
+   */
+  public boolean equivalentIgnoreCollations(DataType dataType) {
     return equals(dataType);
   }
 
