@@ -475,7 +475,11 @@ lazy val sparkV1 = (project in file("spark"))
     Antlr4 / antlr4GenListener := true,
     Antlr4 / antlr4GenVisitor := true,
 
+    // Introduced in https://github.com/delta-io/delta/commit/d2990624d34b6b86fa5cf230e00a89b095fde254
+    //
     // Hack to avoid errors related to missing repo-root/target/scala-2.13/classes/
+    // In multi-module sbt projects, some dependencies may attempt to locate this directory
+    // at the repository root, causing build failures if it doesn't exist.
     createTargetClassesDir := {
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.13" / "classes"
       Files.createDirectories(dir.toPath)
@@ -749,7 +753,11 @@ lazy val contribs = (project in file("contribs"))
       "-Xmx1024m"
     ),
 
+    // Introduced in https://github.com/delta-io/delta/commit/d2990624d34b6b86fa5cf230e00a89b095fde254
+    //
     // Hack to avoid errors related to missing repo-root/target/scala-2.13/classes/
+    // In multi-module sbt projects, some dependencies may attempt to locate this directory
+    // at the repository root, causing build failures if it doesn't exist.
     createTargetClassesDir := {
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.13" / "classes"
       Files.createDirectories(dir.toPath)
