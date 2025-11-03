@@ -1588,148 +1588,244 @@ class ScanSuite extends AnyFunSuite with TestUtils
     }
   }
 
+  //////////////////////////////////////////////////////////////////////////////////////////
+  // Tests for collation data skipping / partition pruning
+  //////////////////////////////////////////////////////////////////////////////////////////
+
+  // Generic helpers for building batches with fixed column names c1, c2, c3
+  private def buildBatch(schema: StructType, v1: AnyRef, v2: AnyRef): FilteredColumnarBatch = {
+    val c1Type = schema.get("c1").getDataType
+    val c2Type = schema.get("c2").getDataType
+    val c1Vec = DefaultGenericVector.fromArray(c1Type, Array(v1))
+    val c2Vec = DefaultGenericVector.fromArray(c2Type, Array(v2))
+    val batch = new DefaultColumnarBatch(1, schema, Array(c1Vec, c2Vec))
+    new FilteredColumnarBatch(batch, java.util.Optional.empty())
+  }
+
+  private def buildBatch(
+      schema: StructType,
+      v1: AnyRef,
+      v2: AnyRef,
+      v3: AnyRef): FilteredColumnarBatch = {
+    val c1Type = schema.get("c1").getDataType
+    val c2Type = schema.get("c2").getDataType
+    val c3Type = schema.get("c3").getDataType
+    val c1Vec = DefaultGenericVector.fromArray(c1Type, Array(v1))
+    val c2Vec = DefaultGenericVector.fromArray(c2Type, Array(v2))
+    val c3Vec = DefaultGenericVector.fromArray(c3Type, Array(v3))
+    val batch = new DefaultColumnarBatch(1, schema, Array(c1Vec, c2Vec, c3Vec))
+    new FilteredColumnarBatch(batch, java.util.Optional.empty())
+  }
+
+  private def buildNestedBatch(
+      schema: StructType,
+      v1: AnyRef,
+      v2: AnyRef): FilteredColumnarBatch = {
+    val sType = schema.get("s").getDataType.asInstanceOf[StructType]
+    val c1Type = sType.get("c1").getDataType
+    val c2Type = sType.get("c2").getDataType
+    val c1Vec = DefaultGenericVector.fromArray(c1Type, Array(v1))
+    val c2Vec = DefaultGenericVector.fromArray(c2Type, Array(v2))
+    val structVec =
+      new DefaultStructVector(1, sType, java.util.Optional.empty(), Array(c1Vec, c2Vec))
+    val batch = new DefaultColumnarBatch(1, schema, Array(structVec))
+    new FilteredColumnarBatch(batch, java.util.Optional.empty())
+  }
+
+  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
+  val utf8LcaseString = new StringType(utf8Lcase)
+  val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+  val unicodeString = new StringType(unicode)
+
   test("partition pruning - predicates with SPARK.UTF8_BINARY on partition column") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        Seq(("a", "b"), ("c", "d"), ("e", "f")).toDF("p", "d")
-          .write
-          .format("delta")
-          .partitionBy("p")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING),
+        (utf8LcaseString, utf8LcaseString),
+        (unicodeString, unicodeString),
+        (utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString),
+        (unicodeString, STRING)).foreach { case (c1Type, c2Type) =>
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("c1", c1Type, true)
+            .add("c2", c2Type, true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-        val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+          getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          // Create a checkpoint for the table
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
-        }
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map("c1" -> ofString("a")) -> List(buildBatch(schema, "a", "b")),
+              Map("c1" -> ofString("c")) -> List(buildBatch(schema, "c", "d")),
+              Map("c1" -> ofString("e")) -> List(buildBatch(schema, "e", "f"))))
 
-        val filterToFileNumber = Map(
-          new Predicate(
-            "<",
-            col("p"),
-            ofString("a"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new Predicate(
-            "=",
-            ofString("d"),
-            col("p"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new Predicate(
-            "=",
-            col("p"),
-            ofString("a"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
-          new Predicate(
-            ">=",
-            col("p"),
-            ofString("a"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
-          new Predicate(
-            ">",
-            col("p"),
-            ofString("e"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new And(
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+
+          assert(totalFiles == 3)
+
+          if (createCheckpoint) {
+            // Create a checkpoint for the table
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(defaultEngine, tempDir.getCanonicalPath)
+              .checkpoint(defaultEngine, version)
+          }
+
+          val filterToFileNumber = Map(
             new Predicate(
-              ">=",
-              col("p"),
-              ofString("b"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              col("p"),
-              ofString("e"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new Or(
+              "<",
+              col("c1"),
+              ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
             new Predicate(
               "=",
-              col("p"),
-              ofString("x"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">",
-              col("p"),
               ofString("d"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
-          new And(
+              col("c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new Predicate(
+              "=",
+              col("c1"),
+              ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
             new Predicate(
               ">=",
-              col("p"),
+              col("c1"),
               ofString("a"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
             new Predicate(
-              "<=",
-              col("p"),
-              ofString("z"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
-          new Predicate(
-            "STARTS_WITH",
-            col("p"),
-            ofString("a"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
-          new In(
-            col("p"),
-            java.util.Arrays.asList(ofString("a"), ofString("x")),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
-          new In(
-            col("p"),
-            java.util.Arrays.asList(ofString("x"), ofString("y")),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0)
-        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
+              ">",
+              col("c1"),
+              ofString("e"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new And(
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("b"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                col("c1"),
+                ofString("e"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new Or(
+              new Predicate(
+                "=",
+                col("c1"),
+                ofString("x"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">",
+                col("c1"),
+                ofString("d"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+            new And(
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("a"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                col("c1"),
+                ofString("z"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+            new In(
+              col("c1"),
+              java.util.Arrays.asList(ofString("a"), ofString("x")),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+            new In(
+              col("c1"),
+              java.util.Arrays.asList(ofString("x"), ofString("y")),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0)
+          checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
+        }
       }
     }
   }
 
   test("partition pruning - predicates with non default collation on partition column") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        Seq(("a", "b"), ("c", "d"), ("e", "f")).toDF("p", "d")
-          .write
-          .format("delta")
-          .partitionBy("p")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING),
+        (utf8LcaseString, utf8LcaseString),
+        (unicodeString, unicodeString),
+        (utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString),
+        (unicodeString, STRING)).foreach { case (c1Type, c2Type) =>
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("c1", c1Type, true)
+            .add("c2", c2Type, true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+          getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          // Create a checkpoint for the table
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
-        }
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map("c1" -> ofString("a")) -> List(buildBatch(schema, "a", "b")),
+              Map("c1" -> ofString("c")) -> List(buildBatch(schema, "c", "d")),
+              Map("c1" -> ofString("e")) -> List(buildBatch(schema, "e", "f"))))
 
-        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
-        val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
 
-        // Non-default collations are not supported by the default engine for predicate evaluation.
-        // Assert that attempting to evaluate such predicates during partition pruning throws.
-        val failingPredicates = Seq(
-          new Predicate("<", col("p"), ofString("a"), utf8Lcase),
-          new Predicate("=", ofString("d"), col("p"), unicode),
-          new And(
-            new Predicate(">=", col("p"), ofString("b"), utf8Lcase),
-            new Predicate("<=", col("p"), ofString("e"), unicode)),
-          new Or(
-            new Predicate("<", col("p"), ofString("b"), utf8Lcase),
-            new Predicate(">", col("p"), ofString("a"), CollationIdentifier.SPARK_UTF8_BINARY)),
-          new Predicate("STARTS_WITH", col("p"), ofString("a"), utf8Lcase),
-          new In(
-            col("p"),
-            java.util.Arrays.asList(ofString("a"), ofString("c")),
-            utf8Lcase),
-          new Or(
-            new In(col("p"), java.util.Arrays.asList(ofString("x"), ofString("y")), unicode),
-            new Predicate("=", col("p"), ofString("z"))))
+          assert(totalFiles == 3)
 
-        failingPredicates.foreach { predicate =>
-          val ex = intercept[KernelEngineException] {
-            collectScanFileRows(snapshot.getScanBuilder().withFilter(predicate).build())
+          if (createCheckpoint) {
+            // Create a checkpoint for the table
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(
+              defaultEngine,
+              tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
           }
-          assert(ex.getMessage.contains("Unsupported collation"))
-          assert(ex.getMessage.contains(CollationIdentifier.SPARK_UTF8_BINARY.toString))
-          assert(ex.getCause.isInstanceOf[UnsupportedOperationException])
+
+          val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
+          val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+
+          // Non-default collations are not supported by the default engine for predicate
+          // evaluation. Assert that attempting to evaluate such predicates during partition
+          // pruning throws.
+          val failingPredicates = Seq(
+            new Predicate("<", col("c1"), ofString("a"), utf8Lcase),
+            new Predicate("=", ofString("d"), col("c1"), unicode),
+            new And(
+              new Predicate(">=", col("c1"), ofString("b"), utf8Lcase),
+              new Predicate("<=", col("c1"), ofString("e"), unicode)),
+            new Or(
+              new Predicate("<", col("c1"), ofString("b"), utf8Lcase),
+              new Predicate(">", col("c1"), ofString("a"), CollationIdentifier.SPARK_UTF8_BINARY)),
+            new Predicate("STARTS_WITH", col("c1"), ofString("a"), utf8Lcase),
+            new In(
+              col("c1"),
+              java.util.Arrays.asList(ofString("a"), ofString("c")),
+              utf8Lcase),
+            new Or(
+              new In(col("c1"), java.util.Arrays.asList(ofString("x"), ofString("y")), unicode),
+              new Predicate("=", col("c1"), ofString("z"))))
+
+          failingPredicates.foreach { predicate =>
+            val ex = intercept[KernelEngineException] {
+              collectScanFileRows(snapshot.getScanBuilder().withFilter(predicate).build())
+            }
+            assert(ex.getMessage.contains("Unsupported collation"))
+            assert(ex.getMessage.contains(CollationIdentifier.SPARK_UTF8_BINARY.toString))
+            assert(ex.getCause.isInstanceOf[UnsupportedOperationException])
+          }
         }
       }
     }
@@ -1737,457 +1833,565 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
   test("data skipping - predicates with SPARK.UTF8_BINARY on data column") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        // Create three files with values on non-partitioned STRING columns (c1, c2)
-        // Files: ("a","x"), ("c","y"), ("e","z")
-        Seq(("a", "x")).toDF("c1", "c2").write.format("delta")
-          .save(tempDir.getCanonicalPath)
-        Seq(("c", "y")).toDF("c1", "c2").write.format("delta").mode("append")
-          .save(tempDir.getCanonicalPath)
-        Seq(("e", "z")).toDF("c1", "c2").write.format("delta").mode("append")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING),
+        (utf8LcaseString, utf8LcaseString),
+        (unicodeString, unicodeString),
+        (utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString),
+        (unicodeString, STRING)).foreach { case (c1Type, c2Type) =>
+        withTempDir { tempDir =>
+          // Create three files with values on non-partitioned STRING columns (c1, c2)
+          // Files: ("a","x"), ("c","y"), ("e","z")
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("c1", c1Type, true)
+            .add("c2", c2Type, true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-        val totalFiles = collectScanFileRows(snapshot.getScanBuilder.build()).length
+          getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          // Create a checkpoint for the table
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map.empty[String, Literal] -> List(buildBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "e", "z"))))
+
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder.build()).length
+
+          assert(totalFiles == 3)
+
+          if (createCheckpoint) {
+            // Create a checkpoint for the table
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(
+              defaultEngine,
+              tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          }
+
+          val filterToFileNumber = Map(
+            new Predicate(
+              "<",
+              col("c1"),
+              ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new Predicate(
+              "=",
+              ofString("d"),
+              col("c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new Predicate(
+              "=",
+              ofString("a"),
+              col("c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+            new Predicate(
+              "<=",
+              ofString("a"),
+              col("c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+            new Predicate(
+              "<",
+              ofString("e"),
+              col("c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new And(
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("b"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                col("c1"),
+                ofString("e"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new Or(
+              new Predicate(
+                "=",
+                col("c1"),
+                ofString("x"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">",
+                col("c1"),
+                ofString("d"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+            new And(
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("a"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                col("c1"),
+                ofString("z"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
+            new And(
+              new Predicate(
+                "<=",
+                ofString("b"),
+                col("c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">=",
+                ofString("y"),
+                col("c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+            new And(
+              new Predicate(
+                ">=",
+                ofString("c"),
+                col("c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                ofString("y"),
+                col("c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+            new Or(
+              new Predicate(
+                "=",
+                ofString("a"),
+                col("c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "=",
+                ofString("z"),
+                col("c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new Or(
+              new Predicate(
+                "<",
+                ofString("d"),
+                col("c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">",
+                ofString("y"),
+                col("c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new And(
+              new Predicate(
+                "<",
+                ofString("e"),
+                col("c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">",
+                ofString("y"),
+                col("c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 0,
+            new And(
+              new Predicate(
+                "<",
+                ofString("e"),
+                col("c1")),
+              new Predicate(
+                ">",
+                ofString("y"),
+                col("c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 0,
+            new And(
+              new Predicate(
+                "<",
+                ofString("e"),
+                col("c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">",
+                ofString("y"),
+                col("c2"))) -> 0)
+          checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
         }
-
-        val filterToFileNumber = Map(
-          new Predicate(
-            "<",
-            col("c1"),
-            ofString("a"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new Predicate(
-            "=",
-            ofString("d"),
-            col("c1"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new Predicate(
-            "=",
-            ofString("a"),
-            col("c1"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
-          new Predicate(
-            "<=",
-            ofString("a"),
-            col("c1"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
-          new Predicate(
-            "<",
-            ofString("e"),
-            col("c1"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new And(
-            new Predicate(
-              ">=",
-              col("c1"),
-              ofString("b"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              col("c1"),
-              ofString("e"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new Or(
-            new Predicate(
-              "=",
-              col("c1"),
-              ofString("x"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">",
-              col("c1"),
-              ofString("d"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
-          new And(
-            new Predicate(
-              ">=",
-              col("c1"),
-              ofString("a"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              col("c1"),
-              ofString("z"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
-          new And(
-            new Predicate(
-              "<=",
-              ofString("b"),
-              col("c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">=",
-              ofString("y"),
-              col("c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
-          new And(
-            new Predicate(
-              ">=",
-              ofString("c"),
-              col("c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              ofString("y"),
-              col("c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
-          new Or(
-            new Predicate(
-              "=",
-              ofString("a"),
-              col("c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "=",
-              ofString("z"),
-              col("c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new Or(
-            new Predicate(
-              "<",
-              ofString("d"),
-              col("c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">",
-              ofString("y"),
-              col("c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new And(
-            new Predicate(
-              "<",
-              ofString("e"),
-              col("c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">",
-              ofString("y"),
-              col("c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 0,
-          new And(
-            new Predicate(
-              "<",
-              ofString("e"),
-              col("c1")),
-            new Predicate(
-              ">",
-              ofString("y"),
-              col("c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 0,
-          new And(
-            new Predicate(
-              "<",
-              ofString("e"),
-              col("c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">",
-              ofString("y"),
-              col("c2"))) -> 0)
-        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
       }
     }
   }
 
   test("data skipping - predicate with collation without version on data column") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        Seq(("a", "b"), ("c", "d"), ("e", "f")).toDF("p", "d")
-          .write
-          .format("delta")
-          .partitionBy("p")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING),
+        (utf8LcaseString, utf8LcaseString),
+        (unicodeString, unicodeString),
+        (utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString),
+        (unicodeString, STRING)).foreach { case (c1Type, c2Type) =>
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("c1", c1Type, true)
+            .add("c2", c2Type, true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-        val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+          getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          // Create a checkpoint for the table
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map("c1" -> ofString("a")) -> List(buildBatch(schema, "a", "b")),
+              Map("c1" -> ofString("c")) -> List(buildBatch(schema, "c", "d")),
+              Map("c1" -> ofString("e")) -> List(buildBatch(schema, "e", "f"))))
+
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+
+          assert(totalFiles == 3)
+
+          if (createCheckpoint) {
+            // Create a checkpoint for the table
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(
+              defaultEngine,
+              tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          }
+
+          val filterToFileNumber = Map(
+            new Predicate(
+              "<",
+              col("c2"),
+              ofString("a"),
+              CollationIdentifier.fromString("SPARK.UTF8_LCASE")) -> totalFiles)
+
+          checkSkipping(tablePath, filterToFileNumber)
         }
-
-        val filterToFileNumber = Map(
-          new Predicate(
-            "<",
-            col("d"),
-            ofString("a"),
-            CollationIdentifier.fromString("SPARK.UTF8_LCASE")) -> totalFiles)
-
-        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
       }
     }
   }
 
   test("data skipping - predicates with SPARK.UTF8_BINARY on nested data column") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        // Create three files with values on non-partitioned nested STRING columns (s.c1, s.c2)
-        // Files: ("a","x"), ("c","y"), ("e","z")
-        Seq(("a", "x")).toDF("c1", "c2").selectExpr("STRUCT(c1, c2) AS s").write
-          .format("delta")
-          .save(tempDir.getCanonicalPath)
-        Seq(("c", "y")).toDF("c1", "c2").selectExpr("STRUCT(c1, c2) AS s").write
-          .format("delta").mode("append")
-          .save(tempDir.getCanonicalPath)
-        Seq(("e", "z")).toDF("c1", "c2").selectExpr("STRUCT(c1, c2) AS s").write
-          .format("delta").mode("append")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING),
+        (utf8LcaseString, utf8LcaseString),
+        (unicodeString, unicodeString),
+        (utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString),
+        (unicodeString, STRING)).foreach { case (c1Type, c2Type) =>
+        withTempDir { tempDir =>
+          // Create three files with values on non-partitioned nested STRING columns (s.c1, s.c2)
+          // Files: ("a","x"), ("c","y"), ("e","z")
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("s", new StructType().add("c1", c1Type, true).add("c2", c2Type, true), true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-        val totalFiles = collectScanFileRows(snapshot.getScanBuilder.build()).length
+          getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          // Create a checkpoint for the table
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildNestedBatch(schema, "e", "z"))))
+
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder.build()).length
+
+          assert(totalFiles == 3)
+
+          if (createCheckpoint) {
+            // Create a checkpoint for the table
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(
+              defaultEngine,
+              tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          }
+
+          val filterToFileNumber = Map(
+            new Predicate(
+              "<",
+              nestedCol("s.c1"),
+              ofString("a"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new Predicate(
+              "=",
+              ofString("d"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new Predicate(
+              "=",
+              ofString("a"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
+            new Predicate(
+              "<=",
+              ofString("a"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+            new Predicate(
+              "<",
+              ofString("e"),
+              nestedCol("s.c1"),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
+            new And(
+              new Predicate(
+                ">=",
+                nestedCol("s.c1"),
+                ofString("b"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                nestedCol("s.c1"),
+                ofString("e"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new Or(
+              new Predicate(
+                "=",
+                nestedCol("s.c1"),
+                ofString("x"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">",
+                nestedCol("s.c1"),
+                ofString("d"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+            new And(
+              new Predicate(
+                ">=",
+                nestedCol("s.c1"),
+                ofString("a"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                nestedCol("s.c1"),
+                ofString("z"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
+            new And(
+              new Predicate(
+                "<=",
+                ofString("b"),
+                nestedCol("s.c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">=",
+                ofString("y"),
+                nestedCol("s.c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+            new And(
+              new Predicate(
+                ">=",
+                ofString("c"),
+                nestedCol("s.c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                ofString("y"),
+                nestedCol("s.c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+            new Or(
+              new Predicate(
+                "=",
+                ofString("a"),
+                nestedCol("s.c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "=",
+                ofString("z"),
+                nestedCol("s.c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new Or(
+              new Predicate(
+                "<",
+                ofString("d"),
+                nestedCol("s.c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">",
+                ofString("y"),
+                nestedCol("s.c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new And(
+              new Predicate(
+                "<",
+                ofString("e"),
+                nestedCol("s.c1"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">",
+                ofString("y"),
+                nestedCol("s.c2"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 0)
+          checkSkipping(tablePath, filterToFileNumber)
         }
-
-        val filterToFileNumber = Map(
-          new Predicate(
-            "<",
-            nestedCol("s.c1"),
-            ofString("a"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new Predicate(
-            "=",
-            ofString("d"),
-            nestedCol("s.c1"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new Predicate(
-            "=",
-            ofString("a"),
-            nestedCol("s.c1"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 1,
-          new Predicate(
-            "<=",
-            ofString("a"),
-            nestedCol("s.c1"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
-          new Predicate(
-            "<",
-            ofString("e"),
-            nestedCol("s.c1"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> 0,
-          new And(
-            new Predicate(
-              ">=",
-              nestedCol("s.c1"),
-              ofString("b"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              nestedCol("s.c1"),
-              ofString("e"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new Or(
-            new Predicate(
-              "=",
-              nestedCol("s.c1"),
-              ofString("x"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">",
-              nestedCol("s.c1"),
-              ofString("d"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
-          new And(
-            new Predicate(
-              ">=",
-              nestedCol("s.c1"),
-              ofString("a"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              nestedCol("s.c1"),
-              ofString("z"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles,
-          new And(
-            new Predicate(
-              "<=",
-              ofString("b"),
-              nestedCol("s.c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">=",
-              ofString("y"),
-              nestedCol("s.c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
-          new And(
-            new Predicate(
-              ">=",
-              ofString("c"),
-              nestedCol("s.c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              ofString("y"),
-              nestedCol("s.c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
-          new Or(
-            new Predicate(
-              "=",
-              ofString("a"),
-              nestedCol("s.c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "=",
-              ofString("z"),
-              nestedCol("s.c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new Or(
-            new Predicate(
-              "<",
-              ofString("d"),
-              nestedCol("s.c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">",
-              ofString("y"),
-              nestedCol("s.c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new And(
-            new Predicate(
-              "<",
-              ofString("e"),
-              nestedCol("s.c1"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">",
-              ofString("y"),
-              nestedCol("s.c2"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 0)
-        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
       }
     }
   }
 
   test("data skipping - collated predicates not or partially convertible to skipping filter") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        Seq(("a", "x")).toDF("c1", "c2").write.format("delta")
-          .save(tempDir.getCanonicalPath)
-        Seq(("c", "y")).toDF("c1", "c2").write.format("delta").mode("append")
-          .save(tempDir.getCanonicalPath)
-        Seq(("e", "z")).toDF("c1", "c2").write.format("delta").mode("append")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING),
+        (utf8LcaseString, utf8LcaseString),
+        (unicodeString, unicodeString),
+        (utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString),
+        (unicodeString, STRING)).foreach { case (c1Type, c2Type) =>
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("c1", c1Type, true)
+            .add("c2", c2Type, true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-        val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+          getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
-        }
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map.empty[String, Literal] -> List(buildBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "e", "z"))))
 
-        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
-        val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
 
-        val filterToFileNumber = Map(
-          new Predicate(
-            "STARTS_WITH",
-            col("c1"),
-            ofString("a"),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
-          new Predicate(
-            "STARTS_WITH",
-            col("c1"),
-            ofString("a"),
-            utf8Lcase) -> totalFiles,
-          new Predicate(
-            "STARTS_WITH",
-            col("c1"),
-            ofString("z"),
-            unicode) -> totalFiles,
-          new In(
-            col("c1"),
-            java.util.Arrays.asList(ofString("a"), ofString("z")),
-            CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
-          new In(
-            col("c2"),
-            java.util.Arrays.asList(ofString("x"), ofString("zz")),
-            utf8Lcase) -> totalFiles,
-          new And(
-            new Predicate(
-              "<",
-              col("c1"),
-              ofString("d"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new In(
-              col("c2"),
-              java.util.Arrays.asList(ofString("x"), ofString("zz")),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new Or(
-            new Predicate("STARTS_WITH", col("c1"), ofString("a"), utf8Lcase),
-            new In(
-              col("c2"),
-              java.util.Arrays.asList(ofString("x"), ofString("y")),
-              unicode)) -> totalFiles,
-          new And(
+          assert(totalFiles == 3)
+
+          if (createCheckpoint) {
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(
+              defaultEngine,
+              tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          }
+
+          val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
+          val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+
+          val filterToFileNumber = Map(
             new Predicate(
               "STARTS_WITH",
               col("c1"),
               ofString("a"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate("STARTS_WITH", col("c2"), ofString("x"), unicode)) -> totalFiles)
-        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
+              CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("a"),
+              utf8Lcase) -> totalFiles,
+            new Predicate(
+              "STARTS_WITH",
+              col("c1"),
+              ofString("z"),
+              unicode) -> totalFiles,
+            new In(
+              col("c1"),
+              java.util.Arrays.asList(ofString("a"), ofString("z")),
+              CollationIdentifier.SPARK_UTF8_BINARY) -> totalFiles,
+            new In(
+              col("c2"),
+              java.util.Arrays.asList(ofString("x"), ofString("zz")),
+              utf8Lcase) -> totalFiles,
+            new And(
+              new Predicate(
+                "<",
+                col("c1"),
+                ofString("d"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new In(
+                col("c2"),
+                java.util.Arrays.asList(ofString("x"), ofString("zz")),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new Or(
+              new Predicate("STARTS_WITH", col("c1"), ofString("a"), utf8Lcase),
+              new In(
+                col("c2"),
+                java.util.Arrays.asList(ofString("x"), ofString("y")),
+                unicode)) -> totalFiles,
+            new And(
+              new Predicate(
+                "STARTS_WITH",
+                col("c1"),
+                ofString("a"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate("STARTS_WITH", col("c2"), ofString("x"), unicode)) -> totalFiles)
+          checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
+        }
       }
     }
   }
 
   test("data skipping - evaluation fails with non default collation on data column") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        Seq(("a", "x")).toDF("c1", "c2").write.format("delta")
-          .save(tempDir.getCanonicalPath)
-        Seq(("c", "y")).toDF("c1", "c2").write.format("delta").mode("append")
-          .save(tempDir.getCanonicalPath)
-        Seq(("e", "z")).toDF("c1", "c2").write.format("delta").mode("append")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING),
+        (utf8LcaseString, utf8LcaseString),
+        (unicodeString, unicodeString),
+        (utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString),
+        (unicodeString, STRING)).foreach { case (c1Type, c2Type) =>
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("c1", c1Type, true)
+            .add("c2", c2Type, true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+          getCreateTxn(defaultEngine, tablePath, schema, List.empty).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
-        }
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map.empty[String, Literal] -> List(buildBatch(schema, "a", "x")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "c", "y")),
+              Map.empty[String, Literal] -> List(buildBatch(schema, "e", "z"))))
 
-        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
-        val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
 
-        val failingPredicates = Seq(
-          new Predicate("<", col("c1"), ofString("a"), utf8Lcase),
-          new Predicate("=", ofString("d"), col("c1"), unicode),
-          new And(
-            new Predicate(">=", col("c1"), ofString("b"), utf8Lcase),
-            new Predicate("<=", col("c1"), ofString("e"), unicode)),
-          new And(
-            new Predicate(">=", col("c1"), ofString("b"), utf8Lcase),
-            new Predicate("<=", col("c1"), ofString("e"))),
-          new And(
-            new Predicate(">=", col("c1"), ofString("b")),
-            new Predicate("<=", col("c1"), ofString("e"), unicode)),
-          new Or(
-            new Predicate("<", col("c1"), ofString("b"), utf8Lcase),
-            new Predicate(">", col("c1"), ofString("a"), CollationIdentifier.SPARK_UTF8_BINARY)),
-          new And(
-            new Predicate(">=", col("c1"), ofString("a"), utf8Lcase),
-            new Predicate("<=", col("c1"), ofString("z"), unicode)),
-          new Predicate("=", col("c1"), ofString("a"), utf8Lcase))
+          assert(totalFiles == 3)
 
-        failingPredicates.foreach { predicate =>
-          val ex = intercept[KernelEngineException] {
-            collectScanFileRows(snapshot.getScanBuilder.withFilter(predicate).build())
+          if (createCheckpoint) {
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(
+              defaultEngine,
+              tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
           }
-          assert(ex.getMessage.contains("Unsupported collation"))
-          assert(ex.getMessage.contains(CollationIdentifier.SPARK_UTF8_BINARY.toString))
-          assert(ex.getCause.isInstanceOf[UnsupportedOperationException])
+
+          val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
+          val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+
+          val failingPredicates = Seq(
+            new Predicate("<", col("c1"), ofString("a"), utf8Lcase),
+            new Predicate("=", ofString("d"), col("c1"), unicode),
+            new And(
+              new Predicate(">=", col("c1"), ofString("b"), utf8Lcase),
+              new Predicate("<=", col("c1"), ofString("e"), unicode)),
+            new And(
+              new Predicate(">=", col("c1"), ofString("b"), utf8Lcase),
+              new Predicate("<=", col("c1"), ofString("e"))),
+            new And(
+              new Predicate(">=", col("c1"), ofString("b")),
+              new Predicate("<=", col("c1"), ofString("e"), unicode)),
+            new Or(
+              new Predicate("<", col("c1"), ofString("b"), utf8Lcase),
+              new Predicate(">", col("c1"), ofString("a"), CollationIdentifier.SPARK_UTF8_BINARY)),
+            new And(
+              new Predicate(">=", col("c1"), ofString("a"), utf8Lcase),
+              new Predicate("<=", col("c1"), ofString("z"), unicode)),
+            new Predicate("=", col("c1"), ofString("a"), utf8Lcase))
+
+          failingPredicates.foreach { predicate =>
+            val ex = intercept[KernelEngineException] {
+              collectScanFileRows(snapshot.getScanBuilder.withFilter(predicate).build())
+            }
+            assert(ex.getMessage.contains("Unsupported collation"))
+            assert(ex.getMessage.contains(CollationIdentifier.SPARK_UTF8_BINARY.toString))
+            assert(ex.getCause.isInstanceOf[UnsupportedOperationException])
+          }
         }
       }
     }
@@ -2195,78 +2399,104 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
   test("partition and data skipping - combined pruning on collated partition and data columns") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        Seq(("a", "x", "u")).toDF("p", "c1", "c2")
-          .write
-          .format("delta")
-          .partitionBy("p")
-          .save(tempDir.getCanonicalPath)
-        Seq(("c", "y", "v")).toDF("p", "c1", "c2")
-          .write
-          .format("delta")
-          .mode("append")
-          .save(tempDir.getCanonicalPath)
-        Seq(("e", "z", "w")).toDF("p", "c1", "c2")
-          .write
-          .format("delta")
-          .mode("append")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING, STRING),
+        (utf8LcaseString, utf8LcaseString, utf8LcaseString),
+        (utf8LcaseString, unicodeString, unicodeString),
+        (STRING, utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString, STRING),
+        (unicodeString, STRING, utf8LcaseString)).foreach { case (c1Type, c2Type, c3Type) =>
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("c1", c1Type, true)
+            .add("c2", c2Type, true)
+            .add("c3", c3Type, true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-        val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+          getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map("c1" -> ofString("a")) -> List(buildBatch(
+                schema,
+                "a",
+                "x",
+                "u")),
+              Map("c1" -> ofString("c")) -> List(buildBatch(
+                schema,
+                "c",
+                "y",
+                "v")),
+              Map("c1" -> ofString("e")) -> List(buildBatch(
+                schema,
+                "e",
+                "z",
+                "w"))))
+
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
+
+          assert(totalFiles == 3)
+
+          if (createCheckpoint) {
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(
+              defaultEngine,
+              tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
+          }
+
+          val filterToFileNumber: Map[Predicate, Int] = Map(
+            new And(
+              new Predicate(
+                "<=",
+                col("c2"),
+                ofString("y"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("b"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
+            new And(
+              new Predicate(
+                "<=",
+                col("c1"),
+                ofString("c"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                col("c2"),
+                ofString("z"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
+            new And(
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("a"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<",
+                col("c2"),
+                ofString("d"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> 0,
+            new And(
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("a"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                col("c2"),
+                ofString("z"),
+                CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles)
+
+          checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
         }
-
-        val filterToFileNumber: Map[Predicate, Int] = Map(
-          new And(
-            new Predicate(
-              "<=",
-              col("c1"),
-              ofString("y"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              ">=",
-              col("p"),
-              ofString("b"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 1,
-          new And(
-            new Predicate(
-              "<=",
-              col("p"),
-              ofString("c"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              col("c1"),
-              ofString("z"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 2,
-          new And(
-            new Predicate(
-              ">=",
-              col("p"),
-              ofString("a"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<",
-              col("c1"),
-              ofString("d"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> 0,
-          new And(
-            new Predicate(
-              ">=",
-              col("p"),
-              ofString("a"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              col("c1"),
-              ofString("z"),
-              CollationIdentifier.SPARK_UTF8_BINARY)) -> totalFiles)
-
-        checkSkipping(tempDir.getCanonicalPath, filterToFileNumber)
       }
     }
   }
@@ -2274,75 +2504,102 @@ class ScanSuite extends AnyFunSuite with TestUtils
   test("partition and data skipping - evaluation fails with non default collation on " +
     "combined filter") {
     Seq(true, false).foreach { createCheckpoint =>
-      withTempDir { tempDir =>
-        Seq(("a", "x", "u")).toDF("p", "c1", "c2")
-          .write
-          .format("delta")
-          .partitionBy("p")
-          .save(tempDir.getCanonicalPath)
-        Seq(("c", "y", "v")).toDF("p", "c1", "c2")
-          .write
-          .format("delta")
-          .mode("append")
-          .save(tempDir.getCanonicalPath)
-        Seq(("e", "z", "w")).toDF("p", "c1", "c2")
-          .write
-          .format("delta")
-          .mode("append")
-          .save(tempDir.getCanonicalPath)
+      Seq(
+        (STRING, STRING, STRING),
+        (utf8LcaseString, utf8LcaseString, utf8LcaseString),
+        (utf8LcaseString, unicodeString, unicodeString),
+        (STRING, utf8LcaseString, unicodeString),
+        (STRING, utf8LcaseString, STRING),
+        (unicodeString, STRING, utf8LcaseString)).foreach { case (c1Type, c2Type, c3Type) =>
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val schema = new StructType()
+            .add("c1", c1Type, true)
+            .add("c2", c2Type, true)
+            .add("c3", c3Type, true)
 
-        val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+          getCreateTxn(defaultEngine, tablePath, schema, List("c1")).commit(
+            defaultEngine,
+            emptyIterable())
 
-        if (createCheckpoint) {
-          val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
-          Table.forPath(defaultEngine, tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
-        }
+          appendData(
+            defaultEngine,
+            tablePath,
+            data = List(
+              Map("c1" -> ofString("a")) -> List(buildBatch(
+                schema,
+                "a",
+                "x",
+                "u")),
+              Map("c1" -> ofString("c")) -> List(buildBatch(
+                schema,
+                "c",
+                "y",
+                "v")),
+              Map("c1" -> ofString("e")) -> List(buildBatch(
+                schema,
+                "e",
+                "z",
+                "w"))))
 
-        val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
-        val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+          val snapshot = latestSnapshot(tablePath)
+          val totalFiles = collectScanFileRows(snapshot.getScanBuilder().build()).length
 
-        val failingPredicates = Seq(
-          new And(
-            new Predicate(
-              ">=",
-              col("p"),
-              ofString("a"),
-              CollationIdentifier.SPARK_UTF8_BINARY),
-            new Predicate(
-              "<=",
-              col("c1"),
-              ofString("z"),
-              utf8Lcase)),
-          new And(
-            new Predicate(
-              ">=",
-              col("p"),
-              ofString("a"),
-              unicode),
-            new Predicate(
-              "<=",
-              col("c1"),
-              ofString("z"),
-              CollationIdentifier.SPARK_UTF8_BINARY)),
-          new And(
-            new Predicate(
-              "<",
-              col("p"),
-              ofString("z"),
-              utf8Lcase),
-            new Predicate(
-              ">",
-              col("c1"),
-              ofString("a"),
-              unicode)))
+          assert(totalFiles == 3)
 
-        failingPredicates.foreach { predicate =>
-          val ex = intercept[KernelEngineException] {
-            collectScanFileRows(snapshot.getScanBuilder.withFilter(predicate).build())
+          if (createCheckpoint) {
+            val version = latestSnapshot(tempDir.getCanonicalPath).getVersion
+            Table.forPath(
+              defaultEngine,
+              tempDir.getCanonicalPath).checkpoint(defaultEngine, version)
           }
-          assert(ex.getMessage.contains("Unsupported collation"))
-          assert(ex.getMessage.contains(CollationIdentifier.SPARK_UTF8_BINARY.toString))
-          assert(ex.getCause.isInstanceOf[UnsupportedOperationException])
+
+          val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.74")
+          val unicode = CollationIdentifier.fromString("ICU.UNICODE.75.1")
+
+          val failingPredicates = Seq(
+            new And(
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("a"),
+                CollationIdentifier.SPARK_UTF8_BINARY),
+              new Predicate(
+                "<=",
+                col("c2"),
+                ofString("z"),
+                utf8Lcase)),
+            new And(
+              new Predicate(
+                ">=",
+                col("c1"),
+                ofString("a"),
+                unicode),
+              new Predicate(
+                "<=",
+                col("c2"),
+                ofString("z"),
+                CollationIdentifier.SPARK_UTF8_BINARY)),
+            new And(
+              new Predicate(
+                "<",
+                col("c1"),
+                ofString("z"),
+                utf8Lcase),
+              new Predicate(
+                ">",
+                col("c2"),
+                ofString("a"),
+                unicode)))
+
+          failingPredicates.foreach { predicate =>
+            val ex = intercept[KernelEngineException] {
+              collectScanFileRows(snapshot.getScanBuilder.withFilter(predicate).build())
+            }
+            assert(ex.getMessage.contains("Unsupported collation"))
+            assert(ex.getMessage.contains(CollationIdentifier.SPARK_UTF8_BINARY.toString))
+            assert(ex.getCause.isInstanceOf[UnsupportedOperationException])
+          }
         }
       }
     }
