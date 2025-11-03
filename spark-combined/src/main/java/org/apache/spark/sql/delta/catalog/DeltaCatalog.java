@@ -48,6 +48,13 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       // If delegate table is a V1Table and it's a Delta table, check if we should use SparkTable
       if (delegateTable instanceof V1Table) {
         V1Table v1Table = (V1Table) delegateTable;
+        
+        // Check if this is a Delta Sharing table - if so, return delegate as-is
+        // Delta Sharing tables use provider "deltaSharing" and have special handling
+        if (isDeltaSharingTable(v1Table.catalogTable())) {
+          return delegateTable;
+        }
+        
         if (DeltaTableUtils.isDeltaTable(v1Table.catalogTable())) {
           // Check if schema contains VOID/NullType - if so, use DeltaTableV2 to avoid Kernel issues
           if (containsVoidType(v1Table.catalogTable().schema())) {
@@ -96,6 +103,18 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     }
   }
   
+  /**
+   * Check if this is a Delta Sharing table.
+   * Delta Sharing tables use provider "deltaSharing" and should not be wrapped in SparkTable.
+   */
+  private boolean isDeltaSharingTable(org.apache.spark.sql.catalyst.catalog.CatalogTable catalogTable) {
+    if (catalogTable == null || catalogTable.provider().isEmpty()) {
+      return false;
+    }
+    String provider = catalogTable.provider().get().toLowerCase(java.util.Locale.ROOT);
+    return provider.equals("deltasharing");
+  }
+
   /**
    * Check if the schema contains VOID/NullType fields.
    * Tables with VOID type should use V1 implementation to avoid Kernel parsing issues.

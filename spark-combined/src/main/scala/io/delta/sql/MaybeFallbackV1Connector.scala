@@ -24,8 +24,9 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CloneTableStatement, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression, OverwritePartitionsDynamic}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CloneTableStatement, InsertIntoStatement, LogicalPlan, MergeIntoTable, OverwriteByExpression, OverwritePartitionsDynamic, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeInto
+import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.catalyst.streaming.{WriteToStream, WriteToStreamStatement}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
@@ -89,6 +90,15 @@ class MaybeFallbackV1Connector(session: SparkSession)
         val newChild = replaceKernelWithFallback(child)
         dd.copy(child = newChild)
 
+      // Handle RESTORE TABLE command
+      case restore @ RestoreTableStatement(timeTravel) =>
+        // TimeTravel contains a relation that needs fallback
+        val newTimeTravel = timeTravel.transformUp {
+          case Batch(fallback) => fallback
+          case ResolvedTableWithSparkTable(fallback) => fallback
+        }
+        restore.copy(table = newTimeTravel.asInstanceOf[TimeTravel])
+
       // Handle WriteToStream - need to fallback both sink and source
       case w @ WriteToStream(name, checkpoint, sink, outputMode, deleteCheckpoint,
         inputQuery, catalogAndIdent, catalogTable) =>
@@ -120,6 +130,14 @@ class MaybeFallbackV1Connector(session: SparkSession)
       case o @ OverwritePartitionsDynamic(Batch(fallback), _, _, _, _) =>
         o.copy(table = fallback)
 
+      // Handle CDF reads - must fallback even for read-only queries
+      // because Kernel doesn't expose CDC metadata columns (_change_type, _commit_version, etc.)
+      case dsv2: DataSourceV2Relation if isCDFRead(dsv2) =>
+        // scalastyle:off println
+        println(s"[MaybeFallbackV1] CDF read detected, forcing fallback to V1")
+        // scalastyle:on println
+        Batch.unapply(dsv2).getOrElse(dsv2)
+
       // Handle batch reads
       case Batch(fallback) if !isReadOnly(plan) =>
         fallback
@@ -137,6 +155,19 @@ class MaybeFallbackV1Connector(session: SparkSession)
   private def isReadOnly(plan: LogicalPlan): Boolean = {
     !plan.containsPattern(COMMAND) && !plan.exists(_.isInstanceOf[InsertIntoStatement]) &&
       !plan.exists(_.isInstanceOf[DeltaCommand])
+  }
+
+  /**
+   * Check if a DataSourceV2Relation is a CDF (Change Data Feed) read query.
+   * CDF queries need to fallback to V1 because Kernel doesn't expose CDC metadata columns.
+   */
+  private def isCDFRead(dsv2: DataSourceV2Relation): Boolean = {
+    import org.apache.spark.sql.delta.sources.DeltaDataSource
+    val options = dsv2.options
+    (options.containsKey(DeltaDataSource.CDC_ENABLED_KEY) &&
+      options.get(DeltaDataSource.CDC_ENABLED_KEY).equalsIgnoreCase("true")) ||
+    (options.containsKey(DeltaDataSource.CDC_ENABLED_KEY_LEGACY) &&
+      options.get(DeltaDataSource.CDC_ENABLED_KEY_LEGACY).equalsIgnoreCase("true"))
   }
 
   object Batch {
