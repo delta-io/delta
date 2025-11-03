@@ -22,7 +22,9 @@ import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TypeChange;
 import io.delta.kernel.utils.DataFileStatus;
@@ -506,7 +508,35 @@ public final class DeltaErrors {
             committerClassName, details));
   }
 
+  public static KernelException invalidFieldMove(
+      int columnId,
+      Optional<Tuple2<StructField, String>> currentParent,
+      Optional<Tuple2<StructField, String>> newParent) {
+    return new KernelException(
+        String.format(
+            "Cannot move fields between different levels of nesting: "
+                + "field with fieldId=%s is nested under %s in the current schema and under %s in "
+                + "the new schema",
+            columnId, formatParentField(currentParent), formatParentField(newParent)));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
+
+  private static String formatParentField(Optional<Tuple2<StructField, String>> parent) {
+    if (!parent.isPresent()) {
+      return "ROOT";
+    }
+    StructField parentField = parent.get()._1;
+    String pathToParentField = parent.get()._2;
+    if (pathToParentField.isEmpty()) {
+      // Example: "StructField(name=c1, ...)"
+      return parentField.toString();
+    } else {
+      // Example: "StructField(name=c1, ...) at path=key.element"
+      return parentField.toString() + " at path=" + pathToParentField;
+    }
+  }
+
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();
   }

@@ -500,6 +500,111 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaUpdate.after == fieldMappingAfter.get("id"))
   }
 
+  test("Compute schema changes fails for invalid field moves - basic") {
+    val map_field_type = new MapType(
+      new StructType()
+        .add("c2", StringType.STRING, fieldMetadata(1))
+        .add(
+          "c3",
+          new StructType()
+            .add("c4", IntegerType.INTEGER, fieldMetadata(3)),
+          fieldMetadata(2)),
+      new StructType()
+        .add("c5", IntegerType.INTEGER, fieldMetadata(4)),
+      true /* valueContainsNull */
+    )
+    val array_field_type = new ArrayType(
+      new ArrayType(
+        new StructType()
+          .add("c6", IntegerType.INTEGER, fieldMetadata(6))
+          .add("c7", IntegerType.INTEGER, fieldMetadata(7)),
+        true /* containsNull */
+      ),
+      true /* containsNull */
+    )
+    val beforeSchema = new StructType()
+      .add("nested_map", map_field_type, fieldMetadata(0))
+      .add("nested_array", array_field_type, fieldMetadata(5))
+      .add("c8", StringType.STRING, fieldMetadata(8))
+
+    Seq(
+      // New struct column with existing field under it
+      new StructType()
+        .add(
+          "nested_struct",
+          new StructType()
+            .add("c8", StringType.STRING, fieldMetadata(8)),
+          fieldMetadata(100)),
+      // Un-nest a nested struct all within a Map key
+      new StructType()
+        .add(
+          "nested_map",
+          new MapType(
+            new StructType()
+              .add("c2", StringType.STRING, fieldMetadata(1))
+              .add("c4", IntegerType.INTEGER, fieldMetadata(3)),
+            map_field_type.getValueType,
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0)),
+      // Nested column within Map key moved to top-level
+      new StructType()
+        .add("c2", StringType.STRING, fieldMetadata(1)),
+      // Move struct field from key to value within map type
+      new StructType()
+        .add(
+          "nested_map",
+          new MapType(
+            new StructType()
+              .add(
+                "c3",
+                new StructType()
+                  .add("c4", IntegerType.INTEGER, fieldMetadata(3)),
+                fieldMetadata(2)),
+            new StructType()
+              .add("c5", IntegerType.INTEGER, fieldMetadata(4))
+              .add("c2", StringType.STRING, fieldMetadata(1)),
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0)),
+      // Move existing field into double-nested array
+      new StructType()
+        .add(
+          "nested_array",
+          new ArrayType(
+            new ArrayType(
+              new StructType()
+                .add("c8", StringType.STRING, fieldMetadata(8))
+                .add("c6", IntegerType.INTEGER, fieldMetadata(6))
+                .add("c7", IntegerType.INTEGER, fieldMetadata(7)),
+              true /* containsNull */
+            ),
+            true /* containsNull */
+          ),
+          fieldMetadata(5)),
+      // Move field out of double-nested array
+      new StructType()
+        .add(
+          "nested_array",
+          new ArrayType(
+            new ArrayType(
+              new StructType()
+                .add("c7", IntegerType.INTEGER, fieldMetadata(7)),
+              true /* containsNull */
+            ),
+            true /* containsNull */
+          ),
+          fieldMetadata(5)).add("c6", IntegerType.INTEGER, fieldMetadata(6))).foreach {
+      afterSchema =>
+        val e = intercept[KernelException] {
+          computeSchemaChangesById(beforeSchema, afterSchema)
+        }
+        assert(e.getMessage.contains("Cannot move fields between different levels of nesting"))
+    }
+  }
+
+  // TODO: test doesn't rely on logical name
+
   ///////////////////////////////////////////////////////////////////////////
   // validateUpdatedSchema
   ///////////////////////////////////////////////////////////////////////////
@@ -1228,6 +1333,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
       Optional.empty(), // createdTime
       stringStringMapValue(tblProperties.asJava) // configurationMap
     )
+  }
+
+  private def fieldMetadata(id: Integer): FieldMetadata = {
+    fieldMetadata(id, s"col-$id")
   }
 
   private def fieldMetadata(id: Integer, physicalName: String): FieldMetadata = {
