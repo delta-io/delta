@@ -1756,6 +1756,26 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  object GeneratedColumnValidateOnWriteMode extends Enumeration {
+    val OFF, LOG_ONLY, ASSERT = Value
+
+    def fromConf(conf: SQLConf): Value =
+      withName(conf.getConf(GENERATED_COLUMN_VALIDATE_ON_WRITE))
+
+    def default: Value =
+      withName(GENERATED_COLUMN_VALIDATE_ON_WRITE.defaultValueString)
+  }
+
+  val GENERATED_COLUMN_VALIDATE_ON_WRITE =
+    buildConf("generatedColumn.validateOnWrite.enabled")
+      .internal()
+      .doc("When enabled, validates generated column expressions during write operations to " +
+        "protect against disallowed expressions.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
+      .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
+
   val DELTA_CONVERT_ICEBERG_ENABLED =
     buildConf("convert.iceberg.enabled")
       .internal()

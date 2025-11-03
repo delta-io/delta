@@ -53,13 +53,6 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
     new DataSkippingPredicate(operator, children.asJava, collation, referencedColumns.asJava)
   }
 
-  private def collatedStatsCol(
-      collation: CollationIdentifier,
-      statName: String,
-      fieldName: String): Column = {
-    new Column(Array(STATS_WITH_COLLATION, collation.toString, statName, fieldName))
-  }
-
   /* For struct type checks for equality based on field names & data type only */
   def compareDataTypeUnordered(type1: DataType, type2: DataType): Boolean = (type1, type2) match {
     case (schema1: StructType, schema2: StructType) =>
@@ -186,6 +179,54 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
       testSchema,
       Set(),
       new StructType())
+  }
+
+  test("pruneStatsSchema - collated statistics") {
+    val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.75")
+    val unicode = CollationIdentifier.fromString("ICU.UNICODE.74.1")
+    val unicodeString = new StringType(unicode)
+
+    val ab = new StructType()
+      .add("a", StringType.STRING)
+      .add("b", unicodeString)
+
+    val statsSchema = new StructType()
+      .add(MIN, ab)
+      .add(MAX, ab)
+      .add(
+        STATS_WITH_COLLATION,
+        new StructType()
+          .add(
+            utf8Lcase.toString,
+            new StructType()
+              .add(MIN, ab)
+              .add(MAX, ab))
+          .add(
+            unicode.toString,
+            new StructType()
+              .add(MIN, ab)
+              .add(MAX, ab)))
+
+    val referenced = Set(
+      nestedCol(s"$MAX.b"),
+      collatedStatsCol(utf8Lcase, MIN, "a"),
+      collatedStatsCol(unicode, MAX, "b"))
+
+    val expected = new StructType()
+      .add(MAX, new StructType().add("b", unicodeString))
+      .add(
+        STATS_WITH_COLLATION,
+        new StructType()
+          .add(
+            utf8Lcase.toString,
+            new StructType()
+              .add(MIN, new StructType().add("a", StringType.STRING)))
+          .add(
+            unicode.toString,
+            new StructType()
+              .add(MAX, new StructType().add("b", unicodeString))))
+
+    checkPruneStatsSchema(statsSchema, referenced, expected)
   }
 
   // TODO: add tests for remaining operators
@@ -372,8 +413,8 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("check constructDataSkippingFilter with collations") {
-    val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
-    val unicode = CollationIdentifier.fromString("ICU.UNICODE")
+    val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.75")
+    val unicode = CollationIdentifier.fromString("ICU.UNICODE.74.1")
 
     val testCases = Seq(
       // (schema, predicate, expectedDataSkippingPredicateOpt)
@@ -517,6 +558,49 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
         case _ =>
           fail(s"Expected $expectedDataSkippingPredicateOpt, found $dataSkippingPredicateOpt")
       }
+    }
+  }
+
+  test("check constructDataSkippingFilter with collations (no version in collation)") {
+    val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+    val unicodeWithoutVersion = CollationIdentifier.fromString("ICU.UNICODE")
+    val unicodeWithVersion = CollationIdentifier.fromString("ICU.UNICODE.74.1")
+
+    val testCases = Seq(
+      (
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", StringType.STRING),
+        createPredicate("<", col("a"), literal("m"), Optional.of(unicodeWithoutVersion)),
+        Optional.empty[DataSkippingPredicate]),
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate(
+          "AND",
+          Seq[Expression](
+            createPredicate(
+              "<",
+              col("a"),
+              literal("m"),
+              Optional.of(utf8Lcase)),
+            createPredicate(
+              ">",
+              col("a"),
+              literal("t"),
+              Optional.of(unicodeWithVersion))).asJava,
+          Optional.empty[CollationIdentifier]), {
+          val minAUnicode = collatedStatsCol(unicodeWithVersion, MAX, "a")
+          Optional.of(dataSkippingPredicateWithCollation(
+            ">",
+            Seq(minAUnicode, literal("t")),
+            unicodeWithVersion,
+            Set(minAUnicode)))
+        }))
+
+    testCases.foreach { case (schema, predicate, expectedDataSkippingPredicate) =>
+      val dataSkippingPredicateOpt = constructDataSkippingFilter(predicate, schema)
+      assert(dataSkippingPredicateOpt == expectedDataSkippingPredicate)
     }
   }
 }
