@@ -67,7 +67,9 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
  * A Catalog extension which can properly handle the interaction between the HiveMetaStore and
  * Delta tables. It delegates all operations DataSources other than Delta to the SparkCatalog.
  */
-class DeltaCatalog extends DelegatingCatalogExtension
+class LegacyDeltaCatalog extends AbstractDeltaCatalog
+
+class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
   with DeltaLogging {
@@ -644,6 +646,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
+  def loadTableForAlterTable(ident: Identifier): Table = loadTable(ident)
+
   override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
       "DeltaCatalog", "alterTable") {
     // We group the table changes by their type, since Delta applies each in a separate action.
@@ -669,7 +673,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case (_, _) => false
     }.toSeq.exists(a => a)
     RedirectFeature.withUpdateTableRedirectDDL(isUpdateTableRedirectDDL) {
-    val table = loadTable(ident) match {
+    val table = loadTableForAlterTable(ident) match {
       case deltaTable: DeltaTableV2 => deltaTable
       case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
         throw DeltaErrors.alterClusterByNotOnDeltaTableException()
@@ -933,7 +937,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
  * A trait for handling table access through delta.`/some/path`. This is a stop-gap solution
  * until PathIdentifiers are implemented in Apache Spark.
  */
-trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
+trait SupportsPathIdentifier extends TableCatalog { self: AbstractDeltaCatalog =>
 
   private def supportSQLOnFile: Boolean = spark.sessionState.conf.runSQLonFile
 
