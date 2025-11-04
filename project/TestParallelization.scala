@@ -10,8 +10,12 @@ object TestParallelization {
   lazy val testParallelismOpt = sys.env.get("TEST_PARALLELISM_COUNT").map(_.toInt)
 
   lazy val settings = {
-    if (numShardsOpt.exists(_ > 1) && testParallelismOpt.exists(_ > 1) &&
-        shardIdOpt.exists(_ >= 0)) {
+    println(
+      s"Test parallelization settings: numShardsOpt=$numShardsOpt, " +
+          s"shardIdOpt=$shardIdOpt, testParallelismOpt=$testParallelismOpt"
+    )
+    if ((numShardsOpt.exists(_ > 1) && shardIdOpt.exists(_ >= 0)) ||
+          testParallelismOpt.exists(_ > 1)) {
       customTestGroupingSettings ++ simpleGroupingStrategySettings
     } else {
       Seq.empty[Setting[_]]
@@ -50,7 +54,7 @@ object TestParallelization {
     Test / forkTestJVMCount := {
       testParallelismOpt.getOrElse(java.lang.Runtime.getRuntime.availableProcessors)
     },
-    Test / shardId := { shardIdOpt.get },
+    Test / shardId := { shardIdOpt.getOrElse(0) },
     Test / testGroupingStrategy := {
       val groupsCount = (Test / forkTestJVMCount).value
       val shard = (Test / shardId).value
@@ -200,7 +204,7 @@ object TestParallelization {
 
   object MinShardGroupDurationStrategy {
 
-    val NUM_SHARDS = numShardsOpt.get
+    val NUM_SHARDS = numShardsOpt.getOrElse(1)
 
     val AVG_TEST_SUITE_DURATION_EXCLUDING_SLOWEST_50 = 0.71
 
