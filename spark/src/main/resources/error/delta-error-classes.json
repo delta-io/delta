@@ -7,7 +7,7 @@
   },
   "DELTA_ACTIVE_TRANSACTION_ALREADY_SET" : {
     "message" : [
-      "Cannot set a new txn as active when one is already active"f
+      "Cannot set a new txn as active when one is already active"
     ],
     "sqlState" : "0B000"
   },
