@@ -936,6 +936,33 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
+// Separate project for benchmarks to avoid classpath conflicts between sparkV1 and goldenTables
+lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelDefaults) // Get main code
+  .dependsOn(kernelApi % "test->test") // Get test utilities
+  .dependsOn(storage % "test->test") // Get test utilities  
+  .dependsOn(sparkV1 % "test->compile;test->test") // Get InMemoryUCClient and InMemoryUCCommitCoordinator
+  .settings(
+    name := "delta-kernel-benchmarks",
+    commonSettings,
+    skipReleaseSettings,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
+    
+    Test / javaOptions ++= Seq("-ea"),
+    Test / envVars += ("DELTA_TESTING", "1"),
+    
+    libraryDependencies ++= Seq(
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
+      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
+    ),
+  )
+
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelApi % "compile->compile;test->test")
@@ -1540,7 +1567,7 @@ lazy val icebergGroup = project
   )
 
 lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefaults)
+  .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
