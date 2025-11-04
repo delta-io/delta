@@ -32,7 +32,8 @@ import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DateTimeUtils, DeltaCommitFileProvider, FileNames,
+  JsonUtils, TimestampFormatter}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}

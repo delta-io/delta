@@ -2599,6 +2599,13 @@
     ],
     "sqlState" : "428GU"
   },
+  "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION": {
+    "message" : [
+      "The provided timestamp (<userTimestamp>) is before the earliest version available to",
+      "this table (<commitTs>). Please use a timestamp after <timestampString>."
+    ],
+    "sqlState" : "42816"
+  },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [
       "The provided timestamp (<providedTimestamp>) is after the latest version available to this",
