@@ -19,7 +19,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.spark.snapshot.SnapshotManager;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.utils.ExpressionUtils;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -39,7 +39,7 @@ public class SparkScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
-  private final SnapshotManager snapshotManager;
+  private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final CaseInsensitiveStringMap options;
@@ -55,7 +55,7 @@ public class SparkScanBuilder
 
   public SparkScanBuilder(
       String tableName,
-      SnapshotManager snapshotManager,
+      DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
       CaseInsensitiveStringMap options) {

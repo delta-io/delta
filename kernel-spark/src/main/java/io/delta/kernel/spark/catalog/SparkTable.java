@@ -20,8 +20,8 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
-import io.delta.kernel.spark.snapshot.SnapshotManager;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -43,7 +43,7 @@ public class SparkTable implements Table, SupportsRead {
 
   private final Identifier identifier;
   private final Map<String, String> options;
-  private final SnapshotManager snapshotManager;
+  private final DeltaSnapshotManager snapshotManager;
   private final Snapshot snapshot;
   private final Configuration hadoopConf;
 

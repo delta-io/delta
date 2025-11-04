@@ -35,7 +35,7 @@ import org.apache.spark.annotation.Experimental;
  * loading snapshots from storage and maintaining any necessary caching.
  */
 @Experimental
-public interface SnapshotManager {
+public interface DeltaSnapshotManager {
 
   /**
    * Returns a cached snapshot without guaranteeing its freshness.
@@ -85,9 +85,9 @@ public interface SnapshotManager {
    */
   DeltaHistoryManager.Commit getActiveCommitAtTime(
       Timestamp timestamp,
-      Boolean canReturnLastCommit,
-      Boolean mustBeRecreatable,
-      Boolean canReturnEarliestCommit);
+      boolean canReturnLastCommit,
+      boolean mustBeRecreatable,
+      boolean canReturnEarliestCommit);
 
   /**
    * Checks if a specific version of the Delta table exists and is accessible.
@@ -100,7 +100,7 @@ public interface SnapshotManager {
    * @throws VersionNotFoundException if the version is not available or does not meet the specified
    *     criteria
    */
-  void checkVersionExists(Long version, Boolean mustBeRecreatable, Boolean allowOutOfRange)
+  void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException;
 
   /**

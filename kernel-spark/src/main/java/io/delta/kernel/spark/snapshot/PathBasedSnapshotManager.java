@@ -33,9 +33,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 
-/** Implementation of SnapshotManager for managing Delta snapshots for Path-based Table. */
+/** Implementation of DeltaSnapshotManager for managing Delta snapshots for Path-based Table. */
 @Experimental
-public class PathBasedSnapshotManager implements SnapshotManager {
+public class PathBasedSnapshotManager implements DeltaSnapshotManager {
 
   private final String tablePath;
   private final AtomicReference<Snapshot> snapshotAtomicReference;
@@ -104,9 +104,9 @@ public class PathBasedSnapshotManager implements SnapshotManager {
   @Override
   public DeltaHistoryManager.Commit getActiveCommitAtTime(
       Timestamp timestamp,
-      Boolean canReturnLastCommit,
-      Boolean mustBeRecreatable,
-      Boolean canReturnEarliestCommit) {
+      boolean canReturnLastCommit,
+      boolean mustBeRecreatable,
+      boolean canReturnEarliestCommit) {
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         kernelEngine,
@@ -130,7 +130,7 @@ public class PathBasedSnapshotManager implements SnapshotManager {
    * @throws VersionNotFoundException if the version is not available
    */
   @Override
-  public void checkVersionExists(Long version, Boolean mustBeRecreatable, Boolean allowOutOfRange)
+  public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
     long earliest =

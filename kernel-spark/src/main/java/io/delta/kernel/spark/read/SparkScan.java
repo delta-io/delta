@@ -25,7 +25,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
-import io.delta.kernel.spark.snapshot.SnapshotManager;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -53,7 +53,7 @@ import scala.collection.JavaConverters;
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
-  private final SnapshotManager snapshotManager;
+  private final DeltaSnapshotManager snapshotManager;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -72,7 +72,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private volatile boolean planned = false;
 
   public SparkScan(
-      SnapshotManager snapshotManager,
+      DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,

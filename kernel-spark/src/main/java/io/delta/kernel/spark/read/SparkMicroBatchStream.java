@@ -24,7 +24,7 @@ import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.spark.snapshot.SnapshotManager;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.utils.StreamingHelper;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -45,9 +45,9 @@ public class SparkMicroBatchStream implements MicroBatchStream {
           new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE)));
 
   private final Engine engine;
-  private final SnapshotManager snapshotManager;
+  private final DeltaSnapshotManager snapshotManager;
 
-  public SparkMicroBatchStream(SnapshotManager snapshotManager, Configuration hadoopConf) {
+  public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.engine = DefaultEngine.create(hadoopConf);
   }
