@@ -152,7 +152,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
 
     DeltaHistoryManager.Commit kernelCommit =
         snapshotManager.getActiveCommitAtTime(
-            timestamp,
+            timestamp.getTime(),
             false /* canReturnLastCommit */,
             true /* mustBeRecreatable */,
             false /* canReturnEarliestCommit */);
@@ -185,7 +185,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
 
     DeltaHistoryManager.Commit kernelCommit =
         snapshotManager.getActiveCommitAtTime(
-            futureTimestamp,
+            futureTimestamp.getTime(),
             true /* canReturnLastCommit */,
             true /* mustBeRecreatable */,
             false /* canReturnEarliestCommit */);
@@ -218,7 +218,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
 
     DeltaHistoryManager.Commit kernelCommit =
         snapshotManager.getActiveCommitAtTime(
-            futureTimestamp,
+            futureTimestamp.getTime(),
             true /* canReturnLastCommit */,
             false /* mustBeRecreatable */,
             false /* canReturnEarliestCommit */);
@@ -251,7 +251,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
 
     DeltaHistoryManager.Commit kernelCommit =
         snapshotManager.getActiveCommitAtTime(
-            earlyTimestamp,
+            earlyTimestamp.getTime(),
             false /* canReturnLastCommit */,
             true /* mustBeRecreatable */,
             true /* canReturnEarliestCommit */);
@@ -284,7 +284,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
 
     DeltaHistoryManager.Commit kernelCommit =
         snapshotManager.getActiveCommitAtTime(
-            earlyTimestamp,
+            earlyTimestamp.getTime(),
             false /* canReturnLastCommit */,
             false /* mustBeRecreatable */,
             true /* canReturnEarliestCommit */);

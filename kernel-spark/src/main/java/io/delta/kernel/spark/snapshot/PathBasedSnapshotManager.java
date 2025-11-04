@@ -26,7 +26,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -92,7 +91,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
    * <p>This method searches the Delta table's commit history to find the commit that was active at
    * the specified timestamp.
    *
-   * @param timestamp the timestamp to query
+   * @param timestampMillis the timestamp in milliseconds since epoch (UTC)
    * @param canReturnLastCommit if true, returns the last commit if the timestamp is after all
    *     commits
    * @param mustBeRecreatable if true, only considers commits that can be recreated (i.e., all
@@ -103,7 +102,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
    */
   @Override
   public DeltaHistoryManager.Commit getActiveCommitAtTime(
-      Timestamp timestamp,
+      long timestampMillis,
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
@@ -112,7 +111,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
         kernelEngine,
         snapshot,
         snapshot.getLogPath(),
-        timestamp.getTime(),
+        timestampMillis,
         mustBeRecreatable,
         canReturnLastCommit,
         canReturnEarliestCommit,

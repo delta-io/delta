@@ -20,7 +20,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
-import java.sql.Timestamp;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 
@@ -72,7 +71,7 @@ public interface DeltaSnapshotManager {
   /**
    * Finds and returns the commit that was active at a specific timestamp.
    *
-   * @param timestamp the timestamp to query
+   * @param timestampMillis the timestamp in milliseconds since epoch (UTC)
    * @param canReturnLastCommit if true, returns the last commit if the timestamp is after all
    *     commits; if false, throws an exception
    * @param mustBeRecreatable if true, only considers commits that can be fully recreated from
@@ -84,7 +83,7 @@ public interface DeltaSnapshotManager {
    *     provided flags
    */
   DeltaHistoryManager.Commit getActiveCommitAtTime(
-      Timestamp timestamp,
+      long timestampMillis,
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit);
