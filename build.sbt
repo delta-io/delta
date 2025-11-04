@@ -1600,6 +1600,24 @@ releaseProcess := Seq[ReleaseStep](
   commitReleaseVersion,
   tagRelease,
   releaseStepCommand(if (crossSparkReleaseEnabled) "crossSparkRelease +publishSigned" else "+publishSigned"),
+
+  // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
+  // manually.
+  //
+  // Do NOT use `sonatypePromote` - it will promote the closed staging repository (i.e. sync to
+  //                                Maven central)
+  //
+  // See https://github.com/xerial/sbt-sonatype#publishing-your-artifact.
+  //
+  // - sonatypePrepare: Drop the existing staging repositories (if exist) and create a new staging
+  //                    repository using sonatypeSessionName as a unique key
+  // - sonatypeBundleUpload: Upload your local staging folder contents to a remote Sonatype
+  //                         repository
+  // - sonatypeClose: closes your staging repository at Sonatype. This step verifies Maven central
+  //                  sync requirement, GPG-signature, javadoc and source code presence, pom.xml
+  //                  settings, etc
+  // TODO: this isn't working yet
+  // releaseStepCommand("sonatypePrepare; sonatypeBundleUpload; sonatypeClose")
   setNextVersion,
   commitNextVersion
 )
