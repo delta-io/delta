@@ -2,15 +2,14 @@
 """
 Cross-Spark Version Build Testing
 
-Tests the Delta Lake cross-Spark version build system by building and validating
-JAR file names for multiple Spark versions.
+Tests the Delta Lake build system by publishing and validating JAR file names.
 
 Usage:
     python project/tests/test_cross_spark_publish.py
 
 The script will:
 1. Clean Maven local cache (~/.m2/repository/io/delta/)
-2. Publish JARs for all Spark versions to Maven local using 'build/sbt "crossSparkRelease publishM2"'
+2. Publish JARs to Maven local using 'build/sbt "crossSparkRelease publishM2"'
 3. Validate that all expected JAR files exist in ~/.m2/repository with correct names
 4. Exit with status 0 on success, 1 on failure
 """
@@ -25,18 +24,15 @@ def get_expected_jars(delta_version: str, scala_version: str = "2.13") -> List[s
     """Returns all expected JAR names for all Spark versions."""
     jars = []
 
-    # Spark 3.5.7 (latest - no suffix)
+    # Spark-specific modules (with Scala version)
     for module in ["delta-spark", "delta-connect-common", "delta-connect-client",
-                   "delta-connect-server", "delta-sharing-spark", "delta-contribs", "delta-iceberg"]:
+                   "delta-connect-server", "delta-sharing-spark", "delta-contribs", "delta-iceberg",
+                   "delta-hudi", "delta-standalone", "delta-suite-generator"]:
         jars.append(f"{module}_{scala_version}-{delta_version}.jar")
 
-    # Spark 4.0.x (with _4.0 suffix)
-    for module in ["delta-spark", "delta-connect-common", "delta-connect-client",
-                   "delta-connect-server", "delta-sharing-spark", "delta-contribs", "delta-iceberg"]:
-        jars.append(f"{module}_4.0_{scala_version}-{delta_version}.jar")
-
-    # Java-only modules (no Scala version, no Spark version)
-    for module in ["delta-storage", "delta-kernel-api", "delta-kernel-defaults"]:
+    # Java-only modules (no Scala version)
+    for module in ["delta-storage", "delta-kernel-api", "delta-kernel-defaults",
+                   "delta-storage-s3-dynamodb", "delta-unity"]:
         jars.append(f"{module}-{delta_version}.jar")
 
     return jars
@@ -97,13 +93,20 @@ class CrossSparkPublishTest:
         expected = set(get_expected_jars(self.delta_version, self.scala_version))
         found = set(self.find_all_jars())
 
+        print(f"\nFound JARs in Maven repository ({len(found)} total):")
+        for jar in sorted(found):
+            print(f"  {jar}")
+
+        print(f"\nExpected JARs ({len(expected)} total):")
+        for jar in sorted(expected):
+            print(f"  {jar}")
+
         missing = expected - found
         extra = found - expected
 
+        print()  # blank line
         if not missing and not extra:
-            print("✓ All expected JARs found (17 total)")
-            for jar in sorted(expected):
-                print(f"  ✓ {jar}")
+            print("✓ All expected JARs found - validation passed")
             return True
 
         if missing:
