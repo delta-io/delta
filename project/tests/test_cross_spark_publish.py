@@ -5,14 +5,6 @@ Cross-Spark Version Build Testing
 Tests the Delta Lake cross-Spark version build system by building and validating
 JAR file names for multiple Spark versions.
 
-The Delta Lake build system supports multiple Spark versions with different artifact naming:
-- Latest Spark (3.5.x): Artifacts use base names without Spark version suffix
-  Example: delta-spark_2.13-3.4.0-SNAPSHOT.jar
-- Other Spark versions (4.0.x): Artifacts include Spark binary version
-  Example: delta-spark_4.0_2.13-3.4.0-SNAPSHOT.jar
-- Java-only modules: No Scala version, no Spark version suffix
-  Example: delta-storage-3.4.0-SNAPSHOT.jar
-
 Usage:
     python project/tests/test_cross_spark_publish.py
 
@@ -21,11 +13,6 @@ The script will:
 2. Publish JARs for all Spark versions to Maven local using 'build/sbt "crossSparkRelease publishM2"'
 3. Validate that all expected JAR files exist in ~/.m2/repository with correct names
 4. Exit with status 0 on success, 1 on failure
-
-Modules tested (10 total):
-- 7 Spark-specific: delta-spark, delta-connect-{common,client,server},
-  delta-sharing-spark, delta-contribs, delta-iceberg
-- 3 Java-only: delta-storage, delta-kernel-api, delta-kernel-defaults
 """
 
 import subprocess
