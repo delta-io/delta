@@ -26,7 +26,7 @@ import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.catalog.DeltaCatalogV1
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
@@ -245,7 +245,7 @@ class DeltaAnalysis(session: SparkSession)
         case _ =>
           protocol
       }
-      val newDeltaCatalog = new DeltaCatalog()
+      val newDeltaCatalog = new DeltaCatalogV1()
       val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier)
       val newTable = newDeltaCatalog
         .verifyTableAndSolidify(
