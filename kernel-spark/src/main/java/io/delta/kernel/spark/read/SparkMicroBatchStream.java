@@ -71,7 +71,10 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   }
 
   public SparkMicroBatchStream(
-      DeltaSnapshotManager snapshotManager, Configuration hadoopConf, SparkSession spark, DeltaOptions options) {
+      DeltaSnapshotManager snapshotManager,
+      Configuration hadoopConf,
+      SparkSession spark,
+      DeltaOptions options) {
     this.spark = spark;
     this.snapshotManager = snapshotManager;
     this.engine = DefaultEngine.create(hadoopConf);
