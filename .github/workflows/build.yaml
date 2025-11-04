@@ -1,8 +1,8 @@
-name: "Build Test"
+name: "Delta Build"
 on: [push, pull_request]
 jobs:
   test:
-    name: "Build"
+    name: "Build Test"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
