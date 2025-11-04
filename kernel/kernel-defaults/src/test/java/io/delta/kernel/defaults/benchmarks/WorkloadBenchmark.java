@@ -86,7 +86,7 @@ public class WorkloadBenchmark<T> {
     // Parse the Json specs from the json paths
     List<WorkloadSpec> filteredSpecs = new ArrayList<>();
     for (WorkloadSpec spec : workloadSpecs) {
-      // TODO: In the future, we can filter specific workloads using command line args here.
+      // TODO(#5420): In the future, we can filter specific workloads using command line args here.
       filteredSpecs.addAll(spec.getWorkloadVariants());
     }
 
@@ -101,6 +101,7 @@ public class WorkloadBenchmark<T> {
             .param("workloadSpecJson", workloadSpecsArray)
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
+            // TODO(#5420): Allow configuring forks, warmup, and measurement via command line args.
             .forks(1)
             .warmupIterations(3) // Proper warmup for production benchmarks
             .measurementIterations(5) // Proper measurement iterations for production benchmarks

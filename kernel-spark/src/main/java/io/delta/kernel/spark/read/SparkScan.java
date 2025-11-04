@@ -42,6 +42,7 @@ import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
+import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -127,7 +128,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    return new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
+    return new SparkMicroBatchStream(snapshotManager, hadoopConf, SparkSession.active(), deltaOptions);
   }
 
   @Override
