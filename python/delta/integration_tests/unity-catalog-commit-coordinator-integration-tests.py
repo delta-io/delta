@@ -460,7 +460,7 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
             # DESCRIBE HISTORY is currently unsupported on catalog owned tables.
             self.get_table_history(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).collect()
         except py4j.protocol.Py4JJavaError as error:
-            assert("Path based access is not supported for Catalog-Owned table" in str(error))
+            assert("Path-based access is not allowed for Catalog-Managed table" in str(error))
 
     def test_vacuum(self) -> None:
         try:
@@ -473,9 +473,8 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
         try:
             # Restore is currently unsupported on catalog owned tables.
             spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO VERSION AS OF 0")
-        except py4j.protocol.Py4JJavaError as error:
-            assert("A table's Delta metadata can only be changed from a cluster or warehouse"
-                   in str(error))
+        except AnalysisException as error:
+            assert("Cannot time travel" in str(error))
 
 
 class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
@@ -521,8 +520,8 @@ class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
             self.read_with_cdf_version(
                 0,
                 MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).select("id", "_change_type")
-        except py4j.protocol.Py4JJavaError as error:
-            assert("Path based access is not supported for Catalog-Owned table" in str(error))
+        except AnalysisException as error:
+            assert("Cannot time travel" in str(error))
 
     def test_delta_table_for_path(self) -> None:
         tbl_path = spark.sql(
