@@ -2,7 +2,8 @@
 """
 Cross-Spark Version Build Testing
 
-Tests the Delta Lake build system by publishing and validating JAR file names.
+Tests the Delta Lake build system by publishing and validating JAR file names for
+multiple Spark versions (3.5.7 and 4.0.2-SNAPSHOT).
 
 Usage:
     python project/tests/test_cross_spark_publish.py
@@ -10,7 +11,9 @@ Usage:
 The script will:
 1. Clean Maven local cache (~/.m2/repository/io/delta/)
 2. Publish JARs to Maven local using 'build/sbt "crossSparkRelease publishM2"'
-3. Validate that all expected JAR files exist in ~/.m2/repository with correct names
+3. Validate that all expected JAR files exist in ~/.m2/repository with correct names:
+   - Spark-dependent modules: published for both Spark 3.5.7 and 4.0
+   - Spark-independent modules: published once
 4. Exit with status 0 on success, 1 on failure
 """
 
@@ -24,13 +27,24 @@ def get_expected_jars(delta_version: str, scala_version: str = "2.13") -> List[s
     """Returns all expected JAR names for all Spark versions."""
     jars = []
 
-    # Spark-specific modules (with Scala version)
-    for module in ["delta-spark", "delta-connect-common", "delta-connect-client",
-                   "delta-connect-server", "delta-sharing-spark", "delta-contribs", "delta-iceberg",
-                   "delta-hudi", "delta-standalone", "delta-suite-generator"]:
+    # Spark-dependent modules (requiresCrossSparkBuild := true)
+    # These are built for both Spark 3.5.7 (no suffix) and Spark 4.0 (_4.0 suffix)
+    spark_dependent = ["delta-spark", "delta-connect-common", "delta-connect-client",
+                       "delta-connect-server", "delta-sharing-spark", "delta-contribs", "delta-iceberg"]
+
+    # Spark 3.5.7 (latest - no Spark version suffix)
+    for module in spark_dependent:
         jars.append(f"{module}_{scala_version}-{delta_version}.jar")
 
-    # Java-only modules (no Scala version)
+    # Spark 4.0 (with _4.0 suffix)
+    for module in spark_dependent:
+        jars.append(f"{module}_4.0_{scala_version}-{delta_version}.jar")
+
+    # Spark-independent modules with Scala version (built once)
+    for module in ["delta-hudi", "delta-standalone"]:
+        jars.append(f"{module}_{scala_version}-{delta_version}.jar")
+
+    # Spark-independent Java-only modules (built once, no Scala version)
     for module in ["delta-storage", "delta-kernel-api", "delta-kernel-defaults",
                    "delta-storage-s3-dynamodb", "delta-unity"]:
         jars.append(f"{module}-{delta_version}.jar")
@@ -78,7 +92,7 @@ class CrossSparkPublishTest:
         return sorted(found_jars)
 
     def build_all_versions(self) -> bool:
-        """Builds and publishes JARs using crossSparkRelease."""
+        """Builds and publishes JARs for all Spark versions."""
         print("Publishing JARs with: build/sbt \"crossSparkRelease publishM2\"\n")
         try:
             subprocess.run(["build/sbt", "crossSparkRelease publishM2"],

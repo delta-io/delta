@@ -107,6 +107,12 @@ object CrossSparkVersions extends AutoPlugin {
 
   override def trigger = allRequirements
 
+  // Settings keys
+  object autoImport {
+    val requiresCrossSparkBuild = settingKey[Boolean]("Whether this module requires cross-Spark version building")
+  }
+  import autoImport._
+
   /**
    * Returns the current spark version spec.
    * Supports inputs: full version (e.g., "3.5.7"), short version (e.g., "3.5"), or aliases ("latest", "master")
@@ -156,18 +162,19 @@ object CrossSparkVersions extends AutoPlugin {
     }
   }
 
+  // Scala version constant (Scala 2.12 support was dropped)
+  private val scala213 = "2.13.16"
+
   /**
-   * Returns Spark version-specific build settings.
-   * @param defaultScalaVersion The default Scala version setting key
-   * @param allScalaVersions All Scala versions to cross-build
-   * @param scala213 Scala 2.13 version string
+   * Common Spark version-specific settings used by all Spark-aware modules.
+   * Returns Scala version, source directories, ANTLR version, JVM options, etc.
    */
-  def crossSparkSettings(defaultScalaVersion: SettingKey[String], allScalaVersions: Seq[String], scala213: String): Seq[Setting[_]] = {
+  private def sparkVersionAwareSettings(): Seq[Setting[_]] = {
     val spec = getSparkVersionSpec()
 
     val baseSettings = Seq(
-      scalaVersion := (if (spec.isLatestReleased) defaultScalaVersion.value else scala213),
-      crossScalaVersions := (if (spec.isLatestReleased) allScalaVersions else Seq(scala213)),
+      scalaVersion := scala213,
+      crossScalaVersions := Seq(scala213),
       // For adding staged Spark RC versions, e.g.:
       // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
       Antlr4 / antlr4Version := spec.antlr4Version,
@@ -191,6 +198,62 @@ object CrossSparkVersions extends AutoPlugin {
     baseSettings ++ additionalSourceDirSettings ++ conditionalSettings
   }
 
+  /**
+   * Unified settings for Spark-dependent modules.
+   * Use this for modules that need to be built for multiple Spark versions.
+   *
+   * Sets:
+   * - sparkVersion (from system property or default)
+   * - moduleName (with Spark version suffix for non-latest versions)
+   * - requiresCrossSparkBuild := true
+   * - All sparkVersionAwareSettings (Scala, source dirs, ANTLR, JVM options, etc.)
+   *
+   * @param sparkVersionKey The sparkVersion setting key for this project
+   */
+  def sparkDependentSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
+    Seq(
+      sparkVersionKey := getSparkVersion(),
+      // Dynamically modify moduleName to add Spark version suffix
+      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value),
+      requiresCrossSparkBuild := true
+    ) ++ sparkVersionAwareSettings()
+  }
+
+  /**
+   * Minimal settings for Spark-dependent modules that don't need full Spark integration.
+   * Use this for modules that need versioned artifacts but use default Scala settings.
+   *
+   * Sets:
+   * - sparkVersion (from system property or default)
+   * - moduleName (with Spark version suffix for non-latest versions)
+   * - requiresCrossSparkBuild := true
+   *
+   * @param sparkVersionKey The sparkVersion setting key for this project
+   */
+  def sparkDependentModuleName(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
+    Seq(
+      sparkVersionKey := getSparkVersion(),
+      // Dynamically modify moduleName to add Spark version suffix
+      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value),
+      requiresCrossSparkBuild := true
+    )
+  }
+
+  /**
+   * Spark version-aware settings for internal modules (not published).
+   * Use this for internal modules that need Spark version-specific configuration
+   * but are not published to Maven (e.g., sparkV1, sparkV2).
+   *
+   * Sets sparkVersion and all sparkVersionAwareSettings without publishing-related
+   * settings like requiresCrossSparkBuild, so these modules won't be included in
+   * cross-Spark builds.
+   *
+   * @param sparkVersionKey The sparkVersion setting key for this project
+   */
+  def sparkInternalSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
+    Seq(sparkVersionKey := getSparkVersion()) ++ sparkVersionAwareSettings()
+  }
+
   override lazy val projectSettings = Seq(
     commands += Command.args("crossSparkRelease", "<task>") { (state, args) =>
         if (args.isEmpty) {
@@ -199,22 +262,51 @@ object CrossSparkVersions extends AutoPlugin {
 
         val task = args.mkString(" ")
 
-        // Enable crossSparkRelease flag for release process
-        System.setProperty("crossSparkRelease", "true")
-
         println(s"[info] Running '$task' for Spark versions: ${SparkVersionSpec.allSpecs.map(_.fullVersion).mkString(", ")}")
 
-        val results = SparkVersionSpec.allSpecs.map(_.fullVersion).foldLeft(state) { (currentState, sparkVer) =>
+        // First pass: Build everything for the first (latest) Spark version
+        val firstSparkVer = SparkVersionSpec.LATEST_RELEASED.fullVersion
+        println(s"[info] ========================================")
+        println(s"[info] Building ALL modules with Spark $firstSparkVer")
+        println(s"[info] ========================================")
+        System.setProperty("sparkVersion", firstSparkVer)
+        val afterReload1 = Command.process("reload", state)
+        val afterFirstBuild = Command.process(task, afterReload1)
+
+        // Subsequent passes: Build only Spark-dependent modules for other Spark versions
+        val remainingVersions = SparkVersionSpec.allSpecs.filterNot(_.fullVersion == firstSparkVer)
+
+        val results = remainingVersions.foldLeft(afterFirstBuild) { (currentState, sparkSpec) =>
+          val sparkVer = sparkSpec.fullVersion
           println(s"[info] ========================================")
-          println(s"[info] Building with Spark $sparkVer")
+          println(s"[info] Building Spark-dependent modules with Spark $sparkVer")
           println(s"[info] ========================================")
 
+          // Set system property and reload
           System.setProperty("sparkVersion", sparkVer)
+          val afterReload = Command.process("reload", currentState)
 
-          // Execute: reload, then the task
-          val reloadCommand = "reload"
-          val afterReload = Command.process(reloadCommand, currentState)
-          Command.process(task, afterReload)
+          // Discover Spark-dependent projects dynamically
+          val extracted = sbt.Project.extract(afterReload)
+          val sparkDependentProjects = extracted.structure.allProjectRefs.filter { projRef =>
+            (projRef / requiresCrossSparkBuild).get(extracted.structure.data).getOrElse(false)
+          }
+
+          if (sparkDependentProjects.isEmpty) {
+            println(s"[warn] No projects with requiresCrossSparkBuild := true found")
+            afterReload
+          } else {
+            val projectNames = sparkDependentProjects.map(_.project).mkString(", ")
+            println(s"[info] Spark-dependent projects: $projectNames")
+
+            // Build scoped task for each Spark-dependent project sequentially
+            sparkDependentProjects.foldLeft(afterReload) { (currentState, projRef) =>
+              // Clean before task to ensure rebuild with new Spark version
+              val afterClean = Command.process(s"${projRef.project}/clean", currentState)
+              val scopedTask = s"${projRef.project}/$task"
+              Command.process(scopedTask, afterClean)
+            }
+          }
         }
 
       println(s"[info] ========================================")

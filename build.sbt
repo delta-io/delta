@@ -52,18 +52,16 @@ val all_scala_versions = Seq(scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala213
 
+val internalModuleNames = settingKey[Set[String]]("Internal module artifact names to exclude from POM")
+
 // Cross-Spark-version building support
 val sparkVersion = settingKey[String]("Spark version")
-val internalModuleNames = settingKey[Set[String]]("Internal module artifact names to exclude from POM")
 val crossSparkReleaseEnabled = sys.props.getOrElse("crossSparkRelease", "false").toBoolean
 
-spark / sparkVersion := CrossSparkVersions.getSparkVersion()
+// sparkVersion is now set by CrossSparkVersions.sparkDependentSettings() or sparkDependentModuleName()
+// for each Spark-dependent module
 sparkV1 / sparkVersion := CrossSparkVersions.getSparkVersion()
 sparkV2 / sparkVersion := CrossSparkVersions.getSparkVersion()
-connectCommon / sparkVersion := CrossSparkVersions.getSparkVersion()
-connectClient / sparkVersion := CrossSparkVersions.getSparkVersion()
-connectServer / sparkVersion := CrossSparkVersions.getSparkVersion()
-sharing / sparkVersion := CrossSparkVersions.getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.LATEST_RELEASED.fullVersion
@@ -125,6 +123,9 @@ lazy val commonSettings = Seq(
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
+
+  // Cross-Spark building: default to false (opt-in required)
+  requiresCrossSparkBuild := false,
 )
 
 ////////////////////////////
@@ -174,10 +175,9 @@ lazy val connectCommon = (project in file("spark-connect/common"))
   .settings(
     name := "delta-connect-common",
     commonSettings,
-    CrossSparkVersions.crossSparkSettings(default_scala_version, all_scala_versions, scala213),
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     releaseSettings,
-    moduleName := CrossSparkVersions.moduleName(name.value, sparkVersion.value),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -217,7 +217,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
     name := "delta-connect-client",
     commonSettings,
     releaseSettings,
-    moduleName := CrossSparkVersions.moduleName(name.value, sparkVersion.value),
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -236,7 +236,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
       projectName = "delta-connect-client",
       emptyValue = ()
     ).value,
-    CrossSparkVersions.crossSparkSettings(default_scala_version, all_scala_versions, scala213),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -280,7 +279,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
     name := "delta-connect-server",
     commonSettings,
     releaseSettings,
-    moduleName := CrossSparkVersions.moduleName(name.value, sparkVersion.value),
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -299,7 +298,6 @@ lazy val connectServer = (project in file("spark-connect/server"))
       projectName = "delta-connect-server",
       emptyValue = ()
     ).value,
-    CrossSparkVersions.crossSparkSettings(default_scala_version, all_scala_versions, scala213),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
@@ -357,7 +355,7 @@ lazy val sparkV1 = (project in file("spark"))
     commonSettings,
     scalaStyleSettings,
     skipReleaseSettings, // Internal module - not published to Maven
-    CrossSparkVersions.crossSparkSettings(default_scala_version, all_scala_versions, scala213),
+    CrossSparkVersions.sparkInternalSettings(sparkVersion),
     moduleName := CrossSparkVersions.moduleName(name.value, sparkVersion.value),
 
     // Export as JAR instead of classes directory. This prevents dependent projects
@@ -466,6 +464,7 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     commonSettings,
     javafmtCheckSettings,
     skipReleaseSettings, // Internal module - not published to Maven
+    CrossSparkVersions.sparkInternalSettings(sparkVersion),
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
     Test / javaOptions ++= Seq("-ea"),
@@ -504,13 +503,12 @@ lazy val spark = (project in file("spark-unified"))
     scalaStyleSettings,
     sparkMimaSettings,
     releaseSettings, // Published to Maven as delta-spark.jar
-    moduleName := CrossSparkVersions.moduleName(name.value, sparkVersion.value),
 
-    // Set Test baseDirectory before crossSparkSettings() so it uses the correct directory
+    // Set Test baseDirectory before sparkDependentSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
     // Test sources from spark/ directory (sparkV1's directory)
-    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
+    // MUST be set BEFORE sparkDependentSettings() to avoid overwriting version-specific directories
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       Seq(
@@ -522,7 +520,7 @@ lazy val spark = (project in file("spark-unified"))
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
     ),
 
-    CrossSparkVersions.crossSparkSettings(default_scala_version, all_scala_versions, scala213),
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
     mimaCurrentClassfiles := (Compile / packageBin).value,
@@ -651,7 +649,7 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    moduleName := CrossSparkVersions.moduleName(name.value, (spark / sparkVersion).value),
+    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -695,8 +693,7 @@ lazy val sharing = (project in file("sharing"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.crossSparkSettings(default_scala_version, all_scala_versions, scala213),
-    moduleName := CrossSparkVersions.moduleName(name.value, sparkVersion.value),
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -971,7 +968,7 @@ lazy val iceberg = (project in file("iceberg"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    moduleName := CrossSparkVersions.moduleName(name.value, (spark / sparkVersion).value),
+    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
