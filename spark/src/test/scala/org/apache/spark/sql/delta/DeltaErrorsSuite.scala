@@ -1520,6 +1520,19 @@ trait DeltaErrorsSuiteBase
         "maximumTimestamp" -> "2022-02-28 10:00:00"))
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+        throw DeltaErrors.TimestampEarlierThanCommitRetentionException(
+          new Timestamp(sdf.parse("2022-02-28 10:00:00").getTime),
+          new Timestamp(sdf.parse("2022-02-28 11:00:00").getTime),
+          "2022-02-28 11:00:00")
+      }
+      checkError(e, "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION", "42816", Map(
+        "userTimestamp" -> "2022-02-28 10:00:00.0",
+        "commitTs" -> "2022-02-28 11:00:00.0",
+        "timestampString" -> "2022-02-28 11:00:00"))
+    }
+    {
       val expr = "1".expr
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.timestampInvalid(expr)
