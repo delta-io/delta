@@ -7,7 +7,7 @@
   },
   "DELTA_ACTIVE_TRANSACTION_ALREADY_SET" : {
     "message" : [
-      "Cannot set a new txn as active when one is already active"
+      "Cannot set a new txn as active when one is already active"f
     ],
     "sqlState" : "0B000"
   },
@@ -2599,7 +2599,7 @@
     ],
     "sqlState" : "428GU"
   },
-  "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION": {
+  "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION" : {
     "message" : [
       "The provided timestamp (<userTimestamp>) is before the earliest version available to",
       "this table (<commitTs>). Please use a timestamp after <timestampString>."
