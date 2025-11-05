@@ -89,7 +89,8 @@ public class MetadataCleanup {
     List<String> lastSeenCheckpointFiles = new ArrayList<>();
 
     long fileCutOffTime = clock.getTimeMillis() - retentionMillis;
-    logger.info("{}: Starting the deletion of log files older than {}", tablePath, fileCutOffTime);
+    logger.info(
+        "[tableId={}] Starting the deletion of log files older than {}", tablePath, fileCutOffTime);
     long numDeleted = 0;
     try (CloseableIterator<FileStatus> files = listDeltaLogs(engine, tablePath)) {
       while (files.hasNext()) {
@@ -107,7 +108,7 @@ public class MetadataCleanup {
           //   candidate to delete later if we find another checkpoint
           if (!potentialLogFilesToDelete.isEmpty()) {
             logger.info(
-                "{}: Deleting log files (start = {}, end = {}) because a checkpoint at "
+                "[tableId={}] Deleting log files (start = {}, end = {}) because a checkpoint at "
                     + "version {} indicates that these log files are no longer needed.",
                 tablePath,
                 getFirst(potentialLogFilesToDelete),
@@ -131,8 +132,9 @@ public class MetadataCleanup {
         if (nextFile.getModificationTime() > fileCutOffTime) {
           if (!potentialLogFilesToDelete.isEmpty()) {
             logger.info(
-                "{}: Skipping deletion of expired log files {}, because there is no checkpoint "
-                    + "file that indicates that the log files are no longer needed. ",
+                "[tableId={}] Skipping deletion of expired log files {}, because there is "
+                    + "no checkpoint file that indicates that the log files are no longer "
+                    + "needed. ",
                 tablePath,
                 potentialLogFilesToDelete.size());
           }
@@ -158,8 +160,8 @@ public class MetadataCleanup {
             // checkpoint). We should delete the files gathered so far and start fresh
             // last seen checkpoint state
             logger.info(
-                "{}: Incomplete checkpoint files found at version {}, ignoring the checkpoint"
-                    + " files and adding them to potential log file delete list",
+                "[tableId={}] Incomplete checkpoint files found at version {}, ignoring "
+                    + "the checkpoint files and adding them to potential log file delete list",
                 tablePath,
                 lastSeenCheckpointVersion);
             potentialLogFilesToDelete.addAll(lastSeenCheckpointFiles);
@@ -172,7 +174,8 @@ public class MetadataCleanup {
         // Ignore non-delta and non-checkpoint files.
       }
     }
-    logger.info("{}: Deleted {} log files older than {}", tablePath, numDeleted, fileCutOffTime);
+    logger.info(
+        "[tableId={}] Deleted {} log files older than {}", tablePath, numDeleted, fileCutOffTime);
     return numDeleted;
   }
 
