@@ -163,6 +163,27 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       ISO8601PartitionColTableExpectedResult)
   }
 
+  test(s"end-to-end usage: table with partition column in ISO8601 timestamp format with " +
+    s"partition pruning") {
+    /*
+    str: string         | ts: timestamp (partition col)
+    ------------------------------------------------------------------------
+    2024-01-01 10:00:00 | 2024-01-01T10:00:00.000000Z
+    2024-01-02 12:30:00 | 2024-01-02T12:30:00.000000Z
+     */
+    def row00: TestRow = TestRow(
+      "2024-01-01 10:00:00",
+      1704103200000000L // 2024-01-01 10:00:00 UTC to micros since the epoch
+    )
+    val filter = new Predicate("=", new Column("ts"), Literal.ofTimestamp(1704103200000000L))
+    def ISO8601PartitionColTableExpectedResult: Seq[TestRow] =
+      Seq(row00)
+    checkTable(
+      goldenTablePath("kernel-timestamp-partition-col-ISO8601"),
+      ISO8601PartitionColTableExpectedResult,
+      filter = filter)
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp_NTZ tests
   //////////////////////////////////////////////////////////////////////////////////

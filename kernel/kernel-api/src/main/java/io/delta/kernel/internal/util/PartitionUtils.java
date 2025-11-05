@@ -38,7 +38,6 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -451,7 +450,7 @@ public class PartitionUtils {
   private static Optional<Long> tryParseIsoTimestamp(String value) {
     try {
       Instant instant = Instant.parse(value);
-      long micros = TimeUnit.MILLISECONDS.toMicros(instant.toEpochMilli());
+      long micros = instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1000L;
       return Optional.of(micros);
     } catch (DateTimeParseException e) {
       return Optional.empty();
@@ -462,21 +461,28 @@ public class PartitionUtils {
    * Try parsing the timestamp, could be in the standard format or ISO8601 format. Return the
    * Literal Object.
    */
-  static Literal tryParseTimestamp(String partitionValue) {
-    Optional<Long> micros = tryParseStandardTimestamp(partitionValue);
+  public static long tryParseTimestamp(String partitionValue) {
+    // ISO8601 format contains 'T' separator, standard format uses space
+    Optional<Long> micros =
+        partitionValue.contains("T")
+            ? tryParseIsoTimestamp(partitionValue)
+            : tryParseStandardTimestamp(partitionValue);
+
+    // If the first attempt failed, try the other format as fallback (this really shouldn't happen)
     if (!micros.isPresent()) {
-      micros = tryParseIsoTimestamp(partitionValue);
+      micros =
+          partitionValue.contains("T")
+              ? tryParseStandardTimestamp(partitionValue)
+              : tryParseIsoTimestamp(partitionValue);
     }
-    return micros
-        .map(Literal::ofTimestamp)
-        .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    String.format(
-                        "Invalid timestamp format for value: %s. Expected formats: "
-                            + "'yyyy-MM-dd HH:mm:ss[.SSSSSS]' or ISO-8601 "
-                            + "(e.g. 2020-01-01T00:00:00Z)'",
-                        partitionValue)));
+    return micros.orElseThrow(
+        () ->
+            new IllegalStateException(
+                String.format(
+                    "Invalid timestamp format for value: %s. Expected formats: "
+                        + "'yyyy-MM-dd HH:mm:ss[.SSSSSS]' or ISO-8601 "
+                        + "(e.g. 2020-01-01T00:00:00Z)'",
+                    partitionValue)));
   }
 
   protected static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
@@ -520,7 +526,7 @@ public class PartitionUtils {
           new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
     }
     if (dataType instanceof TimestampType) {
-      return tryParseTimestamp(partitionValue);
+      return Literal.ofTimestamp(tryParseTimestamp(partitionValue));
     }
     if (dataType instanceof TimestampNTZType) {
       // Both the timestamp and timestamp_ntz have no timezone info, so they are interpreted
