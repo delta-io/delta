@@ -254,7 +254,7 @@ class DeltaDataSource
       catalogTableOpt = None
       ).run(sqlContext.sparkSession)
 
-    deltaLog.createRelation()
+    deltaLog.createRelation(catalogTableOpt = catalogTableOpt)
   }
 
   override def createRelation(
