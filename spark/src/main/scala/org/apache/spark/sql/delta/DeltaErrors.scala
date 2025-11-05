@@ -1512,10 +1512,10 @@ trait DeltaErrorsBase
   case class TimestampEarlierThanCommitRetentionException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
-      timestampString: String) extends AnalysisException(
-    s"""The provided timestamp ($userTimestamp) is before the earliest version available to this
-         |table ($commitTs). Please use a timestamp after $timestampString.
-         """.stripMargin)
+      timestampString: String) extends DeltaAnalysisException(
+    errorClass = "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION",
+    messageParameters = Array(userTimestamp.toString, commitTs.toString, timestampString)
+  )
 
   def timestampGreaterThanLatestCommit(
       userTs: java.sql.Timestamp,
