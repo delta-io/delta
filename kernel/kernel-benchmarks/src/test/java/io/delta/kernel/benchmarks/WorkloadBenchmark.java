@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.benchmarks;
 
-import static io.delta.kernel.defaults.benchmarks.BenchmarkUtils.*;
+import static io.delta.kernel.benchmarks.BenchmarkUtils.*;
 
-import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
-import io.delta.kernel.defaults.benchmarks.workloadrunners.WorkloadRunner;
+import io.delta.kernel.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.benchmarks.workloadrunners.WorkloadRunner;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.*;
 import java.io.IOException;

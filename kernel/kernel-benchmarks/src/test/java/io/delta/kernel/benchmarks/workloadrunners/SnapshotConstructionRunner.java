@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks.workloadrunners;
+package io.delta.kernel.benchmarks.workloadrunners;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.TableManager;
-import io.delta.kernel.defaults.benchmarks.models.SnapshotConstructionSpec;
-import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.benchmarks.models.SnapshotConstructionSpec;
+import io.delta.kernel.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.engine.Engine;
 import org.openjdk.jmh.infra.Blackhole;
 

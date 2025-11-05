@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.benchmarks;
 
 import static java.util.concurrent.Executors.newFixedThreadPool;
 
@@ -51,7 +51,7 @@ import org.openjdk.jmh.infra.Blackhole;
  * build/sbt sbt:delta> project kernelDefaults
  * sbt:delta> set fork in run := true sbt:delta>
  * sbt:delta> test:runMain \
- *   io.delta.kernel.defaults.benchmarks.BenchmarkParallelCheckpointReading.
+ *   io.delta.kernel.benchmarks.BenchmarkParallelCheckpointReading.
  *
  * }</pre>
  * </ul>

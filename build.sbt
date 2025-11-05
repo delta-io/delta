@@ -939,13 +939,14 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 // Separate project for benchmarks to avoid classpath conflicts between sparkV1 and goldenTables
 lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
   .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelDefaults) 
-  .dependsOn(kernelApi % "test->test") 
-  .dependsOn(storage % "test->test") 
+  .dependsOn(kernelDefaults % "test->test")
+  .dependsOn(kernelApi % "test->test")
+  .dependsOn(storage % "test->test")
   .settings(
     name := "delta-kernel-benchmarks",
     commonSettings,
     skipReleaseSettings,
+    exportJars := false,
     javafmtCheckSettings,
     scalafmtCheckSettings,
     
@@ -955,10 +956,6 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
     libraryDependencies ++= Seq(
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
     ),
   )
 
@@ -1566,7 +1563,7 @@ lazy val icebergGroup = project
   )
 
 lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
+  .aggregate(kernelApi, kernelDefaults)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
