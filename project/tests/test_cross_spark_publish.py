@@ -55,9 +55,8 @@ NON_SPARK_RELATED_JAR_TEMPLATES = [
 
 
 @dataclass
-class SparkVersionInfo:
+class SparkVersionSpec:
     """Configuration for a specific Spark version."""
-    full_version: str  # e.g., "3.5.7", "4.0.2-SNAPSHOT"
     suffix: str  # e.g., "" for default, "_4.0" for Spark 4.0
 
     def __post_init__(self):
@@ -77,14 +76,14 @@ class SparkVersionInfo:
         return self.spark_related_jars + self.non_spark_related_jars
 
 
-# Spark versions to test
-SPARK_VERSIONS: Dict[str, SparkVersionInfo] = {
-    "spark35": SparkVersionInfo("3.5.7", ""),           # Default - no suffix
-    "spark40": SparkVersionInfo("4.0.2-SNAPSHOT", "_4.0")  # Spark 4.0 - with _4.0 suffix
+# Spark versions to test (key = full version string, value = spec with suffix)
+SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
+    "3.5.7": SparkVersionSpec(""),      # Default - no suffix
+    "4.0.2-SNAPSHOT": SparkVersionSpec("_4.0")  # Spark 4.0 - with _4.0 suffix
 }
 
 # The default Spark version (no suffix in artifact names)
-DEFAULT_SPARK = "spark35"
+DEFAULT_SPARK = "3.5.7"
 
 
 def substitute_version(jar_templates: List[str], delta_version: str) -> Set[str]:
@@ -176,10 +175,10 @@ class CrossSparkPublishTest:
 
     def test_default_publish(self) -> bool:
         """Default publishM2 should publish ALL modules for default Spark version."""
-        spark_info = SPARK_VERSIONS[DEFAULT_SPARK]
+        spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
 
         print("\n" + "="*70)
-        print(f"TEST: Default publishM2 (should publish ALL modules for Spark {spark_info.full_version})")
+        print(f"TEST: Default publishM2 (should publish ALL modules for Spark {DEFAULT_SPARK})")
         print("="*70)
 
         self.clean_maven_cache()
@@ -190,32 +189,32 @@ class CrossSparkPublishTest:
         ):
             return False
 
-        expected = substitute_version(spark_info.all_jars, self.delta_version)
+        expected = substitute_version(spark_spec.all_jars, self.delta_version)
         return self.validate_jars(expected, "Default publishM2")
 
     def test_run_only_for_spark_modules(self) -> bool:
         """runOnlyForSparkModules should publish only Spark-dependent modules."""
-        spark_key = "spark40"  # Test with Spark 4.0
-        spark_info = SPARK_VERSIONS[spark_key]
+        spark_version = "4.0.2-SNAPSHOT"  # Test with Spark 4.0
+        spark_spec = SPARK_VERSIONS[spark_version]
 
         print("\n" + "="*70)
-        print(f"TEST: runOnlyForSparkModules (should publish only Spark-dependent modules for Spark {spark_info.full_version})")
+        print(f"TEST: runOnlyForSparkModules (should publish only Spark-dependent modules for Spark {spark_version})")
         print("="*70)
 
         self.clean_maven_cache()
 
         if not self.run_sbt_command(
-            f"Running: build/sbt -DsparkVersion={spark_info.full_version} \"runOnlyForSparkModules publishM2\"",
-            ["build/sbt", f"-DsparkVersion={spark_info.full_version}", "runOnlyForSparkModules publishM2"]
+            f"Running: build/sbt -DsparkVersion={spark_version} \"runOnlyForSparkModules publishM2\"",
+            ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForSparkModules publishM2"]
         ):
             return False
 
-        expected = substitute_version(spark_info.spark_related_jars, self.delta_version)
+        expected = substitute_version(spark_spec.spark_related_jars, self.delta_version)
         return self.validate_jars(expected, "runOnlyForSparkModules")
 
     def test_cross_spark_workflow(self) -> bool:
         """Full cross-Spark workflow (publishM2 + runOnlyForSparkModules)."""
-        default_info = SPARK_VERSIONS[DEFAULT_SPARK]
+        default_spec = SPARK_VERSIONS[DEFAULT_SPARK]
 
         print("\n" + "="*70)
         print("TEST: Cross-Spark Workflow (all Spark versions)")
@@ -225,26 +224,26 @@ class CrossSparkPublishTest:
 
         # Step 1: Publish all modules for default Spark version
         if not self.run_sbt_command(
-            f"Step 1: build/sbt publishM2 (Spark {default_info.full_version} - all modules)",
+            f"Step 1: build/sbt publishM2 (Spark {DEFAULT_SPARK} - all modules)",
             ["build/sbt", "publishM2"]
         ):
             return False
 
         # Step 2: Publish only Spark-dependent modules for other Spark versions
-        for spark_key, spark_info in SPARK_VERSIONS.items():
-            if spark_key == DEFAULT_SPARK:
+        for spark_version, spark_spec in SPARK_VERSIONS.items():
+            if spark_version == DEFAULT_SPARK:
                 continue  # Skip default, already published
 
             if not self.run_sbt_command(
-                f"Step 2: build/sbt -DsparkVersion={spark_info.full_version} \"runOnlyForSparkModules publishM2\" (Spark {spark_info.full_version} - Spark-dependent only)",
-                ["build/sbt", f"-DsparkVersion={spark_info.full_version}", "runOnlyForSparkModules publishM2"]
+                f"Step 2: build/sbt -DsparkVersion={spark_version} \"runOnlyForSparkModules publishM2\" (Spark {spark_version} - Spark-dependent only)",
+                ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForSparkModules publishM2"]
             ):
                 return False
 
         # Build expected JARs: Spark-related for all versions + non-Spark-related once
         expected = set()
-        for spark_info in SPARK_VERSIONS.values():
-            expected.update(substitute_version(spark_info.spark_related_jars, self.delta_version))
+        for spark_spec in SPARK_VERSIONS.values():
+            expected.update(substitute_version(spark_spec.spark_related_jars, self.delta_version))
         expected.update(substitute_version(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.delta_version))
 
         return self.validate_jars(expected, "Cross-Spark Workflow")
@@ -259,6 +258,70 @@ def get_delta_version(delta_root: Path) -> str:
     sys.exit("Error: Could not parse version from version.sbt")
 
 
+def validate_spark_versions(delta_root: Path) -> None:
+    """
+    Validates that Spark versions in this test match those in CrossSparkVersions.scala.
+
+    Uses 'build/sbt showSparkVersions' to query versions directly from the build.
+    """
+    print("Validating Spark versions against build configuration...")
+
+    try:
+        # Query Spark versions from SBT
+        result = subprocess.run(
+            ["build/sbt", "showSparkVersions"],
+            cwd=delta_root,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        # Parse output - each line is a Spark version
+        # Version format: X.Y.Z or X.Y.Z-SNAPSHOT
+        import re
+        version_pattern = re.compile(r'^\d+\.\d+\.\d+(-SNAPSHOT)?$')
+
+        build_versions = set()
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if version_pattern.match(line):
+                build_versions.add(line)
+
+        # Get Python test versions
+        test_versions = set(SPARK_VERSIONS.keys())
+
+        # Compare versions
+        if build_versions != test_versions:
+            missing_in_test = build_versions - test_versions
+            extra_in_test = test_versions - build_versions
+
+            print("\n" + "="*70)
+            print("ERROR: Spark version mismatch between test and build")
+            print("="*70)
+
+            if missing_in_test:
+                print(f"\n✗ Build defines these versions, missing in test:")
+                for v in sorted(missing_in_test):
+                    print(f"    {v}")
+
+            if extra_in_test:
+                print(f"\n✗ Test defines these versions, missing in build:")
+                for v in sorted(extra_in_test):
+                    print(f"    {v}")
+
+            print("\nPlease update SPARK_VERSIONS in this test to match build configuration.")
+            print("="*70 + "\n")
+            sys.exit(1)
+
+        # Success
+        print(f"✓ Spark versions validated: {', '.join(sorted(build_versions))}")
+        print()
+
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Could not query Spark versions from build: {e}")
+        print("Continuing with tests...\n")
+
+
 def main():
     """Main entry point."""
     delta_root = Path(__file__).parent.parent.parent
@@ -268,6 +331,10 @@ def main():
     print("="*70)
     print("Cross-Spark Build Test Suite")
     print("="*70)
+    print()
+
+    # Validate that test Spark versions match build configuration
+    validate_spark_versions(delta_root)
 
     test = CrossSparkPublishTest(delta_root, get_delta_version(delta_root))
 

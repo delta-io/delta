@@ -3,6 +3,7 @@ import sbt.Keys._
 import sbt.complete.DefaultParsers._
 import com.simplytyped.Antlr4Plugin
 import com.simplytyped.Antlr4Plugin.autoImport._
+import sbtrelease.ReleasePlugin.autoImport.ReleaseStep
 import Unidoc._
 
 /**
@@ -206,34 +207,8 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   /**
-   * Unified settings for Spark-dependent modules.
-   * Use this for modules that need to be built for multiple Spark versions.
-   *
-   * Sets:
-   * - sparkVersion (from system property or default)
-   * - moduleName (with Spark version suffix for non-latest versions)
-   * - requiresCrossSparkBuild := true
-   * - All sparkVersionAwareSettings (Scala, source dirs, ANTLR, JVM options, etc.)
-   *
-   * @param sparkVersionKey The sparkVersion setting key for this project
-   */
-  def sparkDependentSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
-    Seq(
-      sparkVersionKey := getSparkVersion(),
-      // Dynamically modify moduleName to add Spark version suffix
-      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value),
-      requiresCrossSparkBuild := true
-    ) ++ sparkVersionAwareSettings()
-  }
-
-  /**
    * Minimal settings for Spark-dependent modules that don't need full Spark integration.
    * Use this for modules that need versioned artifacts but use default Scala settings.
-   *
-   * Sets:
-   * - sparkVersion (from system property or default)
-   * - moduleName (with Spark version suffix for non-latest versions)
-   * - requiresCrossSparkBuild := true
    *
    * @param sparkVersionKey The sparkVersion setting key for this project
    */
@@ -247,13 +222,19 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   /**
+   * Unified settings for Spark-dependent modules.
+   * Use this for modules that need to be built for multiple Spark versions.
+   *
+   * @param sparkVersionKey The sparkVersion setting key for this project
+   */
+  def sparkDependentSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
+    sparkDependentModuleName(sparkVersionKey) ++ sparkVersionAwareSettings()
+  }
+
+  /**
    * Spark version-aware settings for internal modules (not published).
    * Use this for internal modules that need Spark version-specific configuration
    * but are not published to Maven (e.g., sparkV1, sparkV2).
-   *
-   * Sets sparkVersion and all sparkVersionAwareSettings without publishing-related
-   * settings like requiresCrossSparkBuild, so these modules won't be included in
-   * cross-Spark builds.
    *
    * @param sparkVersionKey The sparkVersion setting key for this project
    */
@@ -261,8 +242,49 @@ object CrossSparkVersions extends AutoPlugin {
     Seq(sparkVersionKey := getSparkVersion()) ++ sparkVersionAwareSettings()
   }
 
+  /**
+   * Generates release steps for cross-Spark publishing.
+   *
+   * Returns a sequence of release steps that:
+   * 1. Publishes all modules for the latest Spark version (default)
+   * 2. Publishes only Spark-dependent modules for other Spark versions
+   *
+   * Usage in build.sbt:
+   *   releaseProcess := Seq[ReleaseStep](
+   *     ...,
+   *   ) ++ CrossSparkVersions.crossSparkReleaseSteps("+publishSigned") ++ Seq(
+   *     ...
+   *   )
+   */
+  def crossSparkReleaseSteps(task: String): Seq[ReleaseStep] = {
+    import sbtrelease.ReleasePlugin.autoImport._
+    import sbtrelease.ReleaseStateTransformations._
+
+    // Step 1: Publish all modules for latest Spark version (default)
+    val latestSparkStep: ReleaseStep = releaseStepCommand(task)
+
+    // Step 2: Publish only Spark-dependent modules for other Spark versions
+    val otherSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.allSpecs
+      .filter(_ != SparkVersionSpec.LATEST_RELEASED)
+      .flatMap { spec =>
+        Seq[ReleaseStep](
+          // Custom release step that sets system property and runs command
+          { (state: State) =>
+            // Set the sparkVersion system property
+            sys.props("sparkVersion") = spec.fullVersion
+
+            // Run the runOnlyForSparkModules command
+            Command.process(s"runOnlyForSparkModules $task", state)
+          }: ReleaseStep
+        )
+      }
+
+    latestSparkStep +: otherSparkSteps
+  }
+
   override lazy val projectSettings = Seq(
     commands += Command.args("runOnlyForSparkModules", "<task>") { (state, args) =>
+      // Used mainly for cross-Spark publishing of the Spark-dependent modules
       if (args.isEmpty) {
         sys.error("Usage: runOnlyForSparkModules <task>\nExample: build/sbt -DsparkVersion=4.0.2-SNAPSHOT \"runOnlyForSparkModules publishM2\"")
       }
@@ -291,6 +313,13 @@ object CrossSparkVersions extends AutoPlugin {
           Command.process(scopedTask, currentState)
         }
       }
+    },
+    commands += Command.command("showSparkVersions") { state =>
+      // Used for testing the cross-Spark publish workflow
+      SparkVersionSpec.allSpecs.foreach { spec =>
+        println(spec.fullVersion)
+      }
+      state
     }
   )
 }
