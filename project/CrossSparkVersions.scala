@@ -239,7 +239,11 @@ object CrossSparkVersions extends AutoPlugin {
    * @param sparkVersionKey The sparkVersion setting key for this project
    */
   def sparkInternalSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
-    Seq(sparkVersionKey := getSparkVersion()) ++ sparkVersionAwareSettings()
+    Seq(
+      sparkVersionKey := getSparkVersion(),
+      // Dynamically modify moduleName to add Spark version suffix
+      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value),
+    ) ++ sparkVersionAwareSettings()
   }
 
   /**
