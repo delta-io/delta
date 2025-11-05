@@ -459,15 +459,17 @@ public class PartitionUtils {
    */
   public static long tryParseTimestamp(String partitionValue) {
     // ISO8601 format contains 'T' separator, standard format uses space
-    Optional<Long> micros = partitionValue.contains("T")
-        ? tryParseIsoTimestamp(partitionValue)
-        : tryParseStandardTimestamp(partitionValue);
+    Optional<Long> micros =
+        partitionValue.contains("T")
+            ? tryParseIsoTimestamp(partitionValue)
+            : tryParseStandardTimestamp(partitionValue);
 
     // If the first attempt failed, try the other format as fallback (this really shouldn't happen)
     if (!micros.isPresent()) {
-      micros = partitionValue.contains("T")
-          ? tryParseStandardTimestamp(partitionValue)
-          : tryParseIsoTimestamp(partitionValue);
+      micros =
+          partitionValue.contains("T")
+              ? tryParseStandardTimestamp(partitionValue)
+              : tryParseIsoTimestamp(partitionValue);
     }
 
     return micros.orElseThrow(
