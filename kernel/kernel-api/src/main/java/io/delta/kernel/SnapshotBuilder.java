@@ -142,7 +142,7 @@ public interface SnapshotBuilder {
    *       latest), the log data must end with the max catalog version.
    * </ul>
    *
-   * @param version the maximum table version known by the catalog (must be >= 0)
+   * @param version the maximum table version known by the catalog (must be {@code >= 0})
    * @return a new builder instance with the specified max catalog version
    * @throws IllegalArgumentException if version is negative
    */
