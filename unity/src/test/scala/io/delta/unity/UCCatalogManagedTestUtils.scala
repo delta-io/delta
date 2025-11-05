@@ -23,15 +23,17 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.commit.PublishMetadata
+import io.delta.kernel.commit.{CommitMetadata, PublishMetadata}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.files.ParsedCatalogCommitData
+import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.test.ActionUtils
+import io.delta.kernel.test.{ActionUtils, TestFixtures}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
 import io.delta.unity.InMemoryUCClient.TableData
@@ -39,7 +41,12 @@ import io.delta.unity.InMemoryUCClient.TableData
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, FileSystem, Path}
 
-trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUtils {
+trait UCCatalogManagedTestUtils
+    extends TestUtils
+    with ActionUtils
+    with TestFixtures
+    with WriteUtils {
+
   val fakeURI = new URI("s3://bucket/table")
   val baseTestTablePath = "/path/to/table"
   val baseTestLogPath = "/path/to/table/_delta_log"
@@ -104,7 +111,6 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
     singletonCloseableIterator(simpleRow)
   }
 
-
   /** Creates a UCCatalogManagedClient with an InMemoryUCClient for testing */
   def createUCClientAndCatalogManagedClient(
       metastoreId: String = "ucMetastoreId"): (InMemoryUCClient, UCCatalogManagedClient) = {
@@ -166,6 +172,17 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
     ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
     new UCCatalogManagedClient(ucClient)
   }
+
+  /** This should be used for WRITE operations (version >= 1), not for CREATE. */
+  def catalogManagedWriteCommitMetadata(
+      version: Long,
+      logPath: String = baseTestLogPath): CommitMetadata = createCommitMetadata(
+    version = version,
+    logPath = logPath,
+    readPandMOpt = Optional.of(
+      new KernelTuple2[Protocol, Metadata](
+        protocolWithCatalogManagedSupport,
+        basicPartitionedMetadata)))
 
   /** Wrapper class around InMemoryUCClient that tracks number of getCommit calls made */
   class InMemoryUCClientWithMetrics(ucMetastoreId: String) extends InMemoryUCClient(ucMetastoreId) {

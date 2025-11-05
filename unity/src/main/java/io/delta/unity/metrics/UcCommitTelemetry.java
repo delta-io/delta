@@ -17,7 +17,9 @@
 package io.delta.unity.metrics;
 
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.commit.CommitMetadata;
+import io.delta.kernel.internal.metrics.MetricsReportSerializer;
 import io.delta.kernel.internal.metrics.Timer;
 import java.util.Optional;
 
@@ -106,6 +108,11 @@ public class UcCommitTelemetry {
     public Report(MetricsResult metrics, Optional<Exception> exception) {
       this.metrics = metrics;
       this.exception = exception.map(Exception::toString);
+    }
+
+    @Override
+    public String toJson() throws JsonProcessingException {
+      return MetricsReportSerializer.OBJECT_MAPPER.writeValueAsString(this);
     }
   }
 }
