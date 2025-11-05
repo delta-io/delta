@@ -478,7 +478,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
           } catch {
             case t: Throwable =>
-              logVacuumEnd(table, spark, commandMetrics = commandMetrics)
+              logVacuumEnd(spark, table, commandMetrics = commandMetrics)
               throw t
           }
           val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
@@ -502,8 +502,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             typeOfVacuum = vacuumType.toString)
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
           logVacuumEnd(
-            table,
             spark,
+            table,
             commandMetrics = commandMetrics,
             Some(filesDeleted),
             Some(dirCounts))
@@ -747,16 +747,16 @@ trait VacuumCommandImpl extends DeltaCommand {
   /**
    * Record Vacuum specific metrics in the commit log at the END of vacuum.
    *
-   * @param table - the delta table
    * @param spark - spark session
+   * @param table - the delta table
    * @param filesDeleted - if the vacuum completed this will contain the number of files deleted.
    *                       if the vacuum failed, this will be None.
    * @param dirCounts - if the vacuum completed this will contain the number of directories
    *                    vacuumed. if the vacuum failed, this will be None.
    */
   protected def logVacuumEnd(
-      table: DeltaTableV2,
       spark: SparkSession,
+      table: DeltaTableV2,
       commandMetrics: Map[String, SQLMetric],
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
