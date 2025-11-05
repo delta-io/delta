@@ -92,16 +92,23 @@ object SparkVersionSpec {
 /**
  * SBT plugin to support cross-building for multiple Spark versions.
  *
- * Provides the `crossSparkRelease` command to run a task for all configured Spark versions.
+ * Provides the `runOnlyForSparkModules` command to run a task only for Spark-dependent modules.
  *
  * Artifact Naming:
  * - Latest Spark version (3.5.x): delta-spark_2.13 (no version suffix)
  * - Other Spark versions (e.g., 4.0.x): delta-spark_4.0_2.13 (includes binary version)
  *
  * Usage:
- *   build/sbt spark/publishM2                        # Publish delta-spark_2.13 (Spark 3.5.7)
- *   build/sbt -DsparkVersion=master spark/publishM2  # Publish delta-spark_4.0_2.13 (Spark 4.0.2-SNAPSHOT)
- *   build/sbt "crossSparkRelease publishM2"          # Publish all Spark versions
+ *   # Publish all modules for Spark 3.5.7 (latest)
+ *   build/sbt publishM2
+ *
+ *   # Publish only Spark-dependent modules for Spark 4.0
+ *   build/sbt -DsparkVersion=4.0.2-SNAPSHOT "runOnlyForSparkModules publishM2"
+ *
+ *   # Or use aliases
+ *   build/sbt -DsparkVersion=master "runOnlyForSparkModules publishM2"
+ *
+ * To publish for all Spark versions, run both commands sequentially.
  */
 object CrossSparkVersions extends AutoPlugin {
 
@@ -255,64 +262,35 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   override lazy val projectSettings = Seq(
-    commands += Command.args("crossSparkRelease", "<task>") { (state, args) =>
-        if (args.isEmpty) {
-          sys.error("Usage: crossSparkRelease <task>")
-        }
+    commands += Command.args("runOnlyForSparkModules", "<task>") { (state, args) =>
+      if (args.isEmpty) {
+        sys.error("Usage: runOnlyForSparkModules <task>\nExample: build/sbt -DsparkVersion=4.0.2-SNAPSHOT \"runOnlyForSparkModules publishM2\"")
+      }
 
-        val task = args.mkString(" ")
+      val task = args.mkString(" ")
 
-        println(s"[info] Running '$task' for Spark versions: ${SparkVersionSpec.allSpecs.map(_.fullVersion).mkString(", ")}")
+      // Discover Spark-dependent projects dynamically
+      val extracted = sbt.Project.extract(state)
+      val sparkDependentProjects = extracted.structure.allProjectRefs.filter { projRef =>
+        (projRef / requiresCrossSparkBuild).get(extracted.structure.data).getOrElse(false)
+      }
 
-        // First pass: Build everything for the first (latest) Spark version
-        val firstSparkVer = SparkVersionSpec.LATEST_RELEASED.fullVersion
+      if (sparkDependentProjects.isEmpty) {
+        println(s"[warn] No projects with requiresCrossSparkBuild := true found")
+        state
+      } else {
+        val projectNames = sparkDependentProjects.map(_.project).mkString(", ")
+        val sparkVer = getSparkVersion()
+        println(s"[info] Running '$task' for Spark-dependent modules with Spark $sparkVer")
+        println(s"[info] Spark-dependent projects: $projectNames")
         println(s"[info] ========================================")
-        println(s"[info] Building ALL modules with Spark $firstSparkVer")
-        println(s"[info] ========================================")
-        System.setProperty("sparkVersion", firstSparkVer)
-        val afterReload1 = Command.process("reload", state)
-        val afterFirstBuild = Command.process(task, afterReload1)
 
-        // Subsequent passes: Build only Spark-dependent modules for other Spark versions
-        val remainingVersions = SparkVersionSpec.allSpecs.filterNot(_.fullVersion == firstSparkVer)
-
-        val results = remainingVersions.foldLeft(afterFirstBuild) { (currentState, sparkSpec) =>
-          val sparkVer = sparkSpec.fullVersion
-          println(s"[info] ========================================")
-          println(s"[info] Building Spark-dependent modules with Spark $sparkVer")
-          println(s"[info] ========================================")
-
-          // Set system property and reload
-          System.setProperty("sparkVersion", sparkVer)
-          val afterReload = Command.process("reload", currentState)
-
-          // Discover Spark-dependent projects dynamically
-          val extracted = sbt.Project.extract(afterReload)
-          val sparkDependentProjects = extracted.structure.allProjectRefs.filter { projRef =>
-            (projRef / requiresCrossSparkBuild).get(extracted.structure.data).getOrElse(false)
-          }
-
-          if (sparkDependentProjects.isEmpty) {
-            println(s"[warn] No projects with requiresCrossSparkBuild := true found")
-            afterReload
-          } else {
-            val projectNames = sparkDependentProjects.map(_.project).mkString(", ")
-            println(s"[info] Spark-dependent projects: $projectNames")
-
-            // Build scoped task for each Spark-dependent project sequentially
-            sparkDependentProjects.foldLeft(afterReload) { (currentState, projRef) =>
-              // Clean before task to ensure rebuild with new Spark version
-              val afterClean = Command.process(s"${projRef.project}/clean", currentState)
-              val scopedTask = s"${projRef.project}/$task"
-              Command.process(scopedTask, afterClean)
-            }
-          }
+        // Build scoped task for each Spark-dependent project sequentially
+        sparkDependentProjects.foldLeft(state) { (currentState, projRef) =>
+          val scopedTask = s"${projRef.project}/$task"
+          Command.process(scopedTask, currentState)
         }
-
-      println(s"[info] ========================================")
-      println(s"[info] Completed cross-Spark build for all versions")
-      println(s"[info] ========================================")
-      results
+      }
     }
   )
 }

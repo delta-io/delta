@@ -1596,7 +1596,7 @@ releaseProcess := Seq[ReleaseStep](
   setReleaseVersion,
   commitReleaseVersion,
   tagRelease,
-  releaseStepCommand(if (crossSparkReleaseEnabled) "crossSparkRelease +publishSigned" else "+publishSigned"),
+  releaseStepCommand("+publishSigned"),
 
   // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
   // manually.

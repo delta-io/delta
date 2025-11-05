@@ -2,54 +2,96 @@
 """
 Cross-Spark Version Build Testing
 
-Tests the Delta Lake build system by publishing and validating JAR file names for
-multiple Spark versions (3.5.7 and 4.0.2-SNAPSHOT).
+Tests the Delta Lake build system by validating JAR file names for:
+1. Default publish (publishM2) - should publish ALL modules
+2. Spark-specific publish (runOnlyForSparkModules) - should publish only Spark-dependent modules
 
 Usage:
     python project/tests/test_cross_spark_publish.py
 
 The script will:
-1. Clean Maven local cache (~/.m2/repository/io/delta/)
-2. Publish JARs to Maven local using 'build/sbt "crossSparkRelease publishM2"'
-3. Validate that all expected JAR files exist in ~/.m2/repository with correct names:
-   - Spark-dependent modules: published for both Spark 3.5.7 and 4.0
-   - Spark-independent modules: published once
+1. Test default publishM2 command publishes all modules for default Spark version
+2. Test runOnlyForSparkModules command publishes only Spark-dependent modules
+3. Test full cross-version build workflow
 4. Exit with status 0 on success, 1 on failure
 """
 
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Set, Dict
 
 
-def get_expected_jars(delta_version: str, scala_version: str = "2.13") -> List[str]:
-    """Returns all expected JAR names for all Spark versions."""
-    jars = []
+# Spark-related modules (requiresCrossSparkBuild := true)
+# These modules get a Spark version suffix (e.g., _4.0) for non-default versions
+# Template format: {suffix} = Spark version suffix (e.g., "", "_4.0")
+#                  {version} = Delta version (e.g., "3.4.0-SNAPSHOT")
+SPARK_RELATED_JAR_TEMPLATES = [
+    "delta-spark{suffix}_2.13-{version}.jar",
+    "delta-connect-common{suffix}_2.13-{version}.jar",
+    "delta-connect-client{suffix}_2.13-{version}.jar",
+    "delta-connect-server{suffix}_2.13-{version}.jar",
+    "delta-sharing-spark{suffix}_2.13-{version}.jar",
+    "delta-contribs{suffix}_2.13-{version}.jar",
+    "delta-iceberg{suffix}_2.13-{version}.jar"
+]
 
-    # Spark-dependent modules (requiresCrossSparkBuild := true)
-    # These are built for both Spark 3.5.7 (no suffix) and Spark 4.0 (_4.0 suffix)
-    spark_dependent = ["delta-spark", "delta-connect-common", "delta-connect-client",
-                       "delta-connect-server", "delta-sharing-spark", "delta-contribs", "delta-iceberg"]
+# Non-spark-related modules (built once, same for all Spark versions)
+# Template format: {version} = Delta version (e.g., "3.4.0-SNAPSHOT")
+NON_SPARK_RELATED_JAR_TEMPLATES = [
+    # Scala modules
+    "delta-hudi_2.13-{version}.jar",
+    "delta-standalone_2.13-{version}.jar",
+    "delta-suite-generator_2.13-{version}.jar",
 
-    # Spark 3.5.7 (latest - no Spark version suffix)
-    for module in spark_dependent:
-        jars.append(f"{module}_{scala_version}-{delta_version}.jar")
+    # Java-only modules (no Scala version)
+    "delta-storage-{version}.jar",
+    "delta-kernel-api-{version}.jar",
+    "delta-kernel-defaults-{version}.jar",
+    "delta-storage-s3-dynamodb-{version}.jar",
+    "delta-unity-{version}.jar"
+]
 
-    # Spark 4.0 (with _4.0 suffix)
-    for module in spark_dependent:
-        jars.append(f"{module}_4.0_{scala_version}-{delta_version}.jar")
 
-    # Spark-independent modules with Scala version (built once)
-    for module in ["delta-hudi", "delta-standalone"]:
-        jars.append(f"{module}_{scala_version}-{delta_version}.jar")
+@dataclass
+class SparkVersionInfo:
+    """Configuration for a specific Spark version."""
+    full_version: str  # e.g., "3.5.7", "4.0.2-SNAPSHOT"
+    suffix: str  # e.g., "" for default, "_4.0" for Spark 4.0
 
-    # Spark-independent Java-only modules (built once, no Scala version)
-    for module in ["delta-storage", "delta-kernel-api", "delta-kernel-defaults",
-                   "delta-storage-s3-dynamodb", "delta-unity"]:
-        jars.append(f"{module}-{delta_version}.jar")
+    def __post_init__(self):
+        """Generate JAR templates with the suffix applied."""
+        # Generate Spark-related JAR templates with the suffix
+        self.spark_related_jars = [
+            jar.format(suffix=self.suffix, version="{version}")
+            for jar in SPARK_RELATED_JAR_TEMPLATES
+        ]
 
-    return jars
+        # Non-Spark-related JAR templates are the same for all Spark versions
+        self.non_spark_related_jars = list(NON_SPARK_RELATED_JAR_TEMPLATES)
+
+    @property
+    def all_jars(self) -> List[str]:
+        """All JAR templates for this Spark version (Spark-related + non-Spark-related)."""
+        return self.spark_related_jars + self.non_spark_related_jars
+
+
+# Spark versions to test
+SPARK_VERSIONS: Dict[str, SparkVersionInfo] = {
+    "spark35": SparkVersionInfo("3.5.7", ""),           # Default - no suffix
+    "spark40": SparkVersionInfo("4.0.2-SNAPSHOT", "_4.0")  # Spark 4.0 - with _4.0 suffix
+}
+
+# The default Spark version (no suffix in artifact names)
+DEFAULT_SPARK = "spark35"
+
+
+def substitute_version(jar_templates: List[str], delta_version: str) -> Set[str]:
+    """
+    Substitutes {version} placeholder in JAR templates with actual Delta version.
+    """
+    return {jar.format(version=delta_version) for jar in jar_templates}
 
 
 class CrossSparkPublishTest:
@@ -73,67 +115,139 @@ class CrossSparkPublishTest:
         else:
             print("Maven cache already clean\n")
 
-    def find_all_jars(self) -> List[str]:
+    def find_all_jars(self) -> Set[str]:
         """Finds all JAR files from Maven local repository."""
-        # Maven local repository location
         m2_repo = Path.home() / ".m2" / "repository" / "io" / "delta"
 
         if not m2_repo.exists():
-            return []
+            return set()
 
         found_jars = set()
-        # Search for all JARs in io.delta Maven artifacts
         for version_dir in m2_repo.rglob(self.delta_version):
             for jar_file in version_dir.glob("*.jar"):
                 # Exclude test/source/javadoc JARs
                 if not any(x in jar_file.name for x in ["-tests", "-sources", "-javadoc"]):
                     found_jars.add(jar_file.name)
 
-        return sorted(found_jars)
+        return found_jars
 
-    def build_all_versions(self) -> bool:
-        """Builds and publishes JARs for all Spark versions."""
-        print("Publishing JARs with: build/sbt \"crossSparkRelease publishM2\"\n")
+    def run_sbt_command(self, description: str, command: List[str]) -> bool:
+        """Runs an SBT command and returns True if successful."""
+        print(f"  {description}")
         try:
-            subprocess.run(["build/sbt", "crossSparkRelease publishM2"],
-                         cwd=self.delta_root, check=True)
+            subprocess.run(command, cwd=self.delta_root, check=True,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
             return True
         except subprocess.CalledProcessError:
-            print("✗ Build failed")
+            print(f"  ✗ Command failed: {' '.join(command)}")
             return False
 
-    def validate_all_versions(self) -> bool:
+    def validate_jars(self, expected: Set[str], test_name: str) -> bool:
         """Validates that found JARs match expected JARs exactly."""
-        expected = set(get_expected_jars(self.delta_version, self.scala_version))
-        found = set(self.find_all_jars())
+        found = self.find_all_jars()
 
-        print(f"\nFound JARs in Maven repository ({len(found)} total):")
+        print(f"\n{test_name} - Found JARs ({len(found)} total):")
         for jar in sorted(found):
             print(f"  {jar}")
 
-        print(f"\nExpected JARs ({len(expected)} total):")
+        print(f"\n{test_name} - Expected JARs ({len(expected)} total):")
         for jar in sorted(expected):
             print(f"  {jar}")
 
         missing = expected - found
         extra = found - expected
 
-        print()  # blank line
+        print()
         if not missing and not extra:
-            print("✓ All expected JARs found - validation passed")
+            print(f"✓ {test_name} - All expected JARs found")
             return True
 
         if missing:
-            print(f"✗ Missing JARs ({len(missing)}):")
+            print(f"✗ {test_name} - Missing JARs ({len(missing)}):")
             for jar in sorted(missing):
                 print(f"  ✗ {jar}")
 
         if extra:
-            print(f"\n✗ Unexpected JARs ({len(extra)}):")
+            print(f"\n✗ {test_name} - Unexpected JARs ({len(extra)}):")
             for jar in sorted(extra):
                 print(f"  ✗ {jar}")
 
         return False
+
+    def test_default_publish(self) -> bool:
+        """Default publishM2 should publish ALL modules for default Spark version."""
+        spark_info = SPARK_VERSIONS[DEFAULT_SPARK]
+
+        print("\n" + "="*70)
+        print(f"TEST: Default publishM2 (should publish ALL modules for Spark {spark_info.full_version})")
+        print("="*70)
+
+        self.clean_maven_cache()
+
+        if not self.run_sbt_command(
+            "Running: build/sbt publishM2",
+            ["build/sbt", "publishM2"]
+        ):
+            return False
+
+        expected = substitute_version(spark_info.all_jars, self.delta_version)
+        return self.validate_jars(expected, "Default publishM2")
+
+    def test_run_only_for_spark_modules(self) -> bool:
+        """runOnlyForSparkModules should publish only Spark-dependent modules."""
+        spark_key = "spark40"  # Test with Spark 4.0
+        spark_info = SPARK_VERSIONS[spark_key]
+
+        print("\n" + "="*70)
+        print(f"TEST: runOnlyForSparkModules (should publish only Spark-dependent modules for Spark {spark_info.full_version})")
+        print("="*70)
+
+        self.clean_maven_cache()
+
+        if not self.run_sbt_command(
+            f"Running: build/sbt -DsparkVersion={spark_info.full_version} \"runOnlyForSparkModules publishM2\"",
+            ["build/sbt", f"-DsparkVersion={spark_info.full_version}", "runOnlyForSparkModules publishM2"]
+        ):
+            return False
+
+        expected = substitute_version(spark_info.spark_related_jars, self.delta_version)
+        return self.validate_jars(expected, "runOnlyForSparkModules")
+
+    def test_cross_spark_workflow(self) -> bool:
+        """Full cross-Spark workflow (publishM2 + runOnlyForSparkModules)."""
+        default_info = SPARK_VERSIONS[DEFAULT_SPARK]
+
+        print("\n" + "="*70)
+        print("TEST: Cross-Spark Workflow (all Spark versions)")
+        print("="*70)
+
+        self.clean_maven_cache()
+
+        # Step 1: Publish all modules for default Spark version
+        if not self.run_sbt_command(
+            f"Step 1: build/sbt publishM2 (Spark {default_info.full_version} - all modules)",
+            ["build/sbt", "publishM2"]
+        ):
+            return False
+
+        # Step 2: Publish only Spark-dependent modules for other Spark versions
+        for spark_key, spark_info in SPARK_VERSIONS.items():
+            if spark_key == DEFAULT_SPARK:
+                continue  # Skip default, already published
+
+            if not self.run_sbt_command(
+                f"Step 2: build/sbt -DsparkVersion={spark_info.full_version} \"runOnlyForSparkModules publishM2\" (Spark {spark_info.full_version} - Spark-dependent only)",
+                ["build/sbt", f"-DsparkVersion={spark_info.full_version}", "runOnlyForSparkModules publishM2"]
+            ):
+                return False
+
+        # Build expected JARs: Spark-related for all versions + non-Spark-related once
+        expected = set()
+        for spark_info in SPARK_VERSIONS.values():
+            expected.update(substitute_version(spark_info.spark_related_jars, self.delta_version))
+        expected.update(substitute_version(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.delta_version))
+
+        return self.validate_jars(expected, "Cross-Spark Workflow")
 
 
 def get_delta_version(delta_root: Path) -> str:
@@ -151,21 +265,31 @@ def main():
     if not (delta_root / "build.sbt").exists():
         sys.exit("Error: build.sbt not found. Run from Delta repository root.")
 
-    print("Cross-Spark Build Test\n")
+    print("="*70)
+    print("Cross-Spark Build Test Suite")
+    print("="*70)
 
     test = CrossSparkPublishTest(delta_root, get_delta_version(delta_root))
 
-    # Clean Maven cache before publishing
-    test.clean_maven_cache()
+    # Run all tests
+    test1_passed = test.test_default_publish()
+    test2_passed = test.test_run_only_for_spark_modules()
+    test3_passed = test.test_cross_spark_workflow()
 
-    if not test.build_all_versions():
-        sys.exit(1)
+    # Summary
+    print("\n" + "="*70)
+    print("TEST SUMMARY")
+    print("="*70)
+    print(f"Default publishM2:              {'✓ PASSED' if test1_passed else '✗ FAILED'}")
+    print(f"runOnlyForSparkModules:         {'✓ PASSED' if test2_passed else '✗ FAILED'}")
+    print(f"Cross-Spark Workflow:           {'✓ PASSED' if test3_passed else '✗ FAILED'}")
+    print("="*70)
 
-    if test.validate_all_versions():
+    if test1_passed and test2_passed and test3_passed:
         print("\n✓ ALL TESTS PASSED")
         sys.exit(0)
     else:
-        print("\n✗ TESTS FAILED")
+        print("\n✗ SOME TESTS FAILED")
         sys.exit(1)
 
 
