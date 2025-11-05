@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal.table;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
@@ -37,6 +38,7 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.replay.ProtocolMetadataLogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.utils.FileStatus;
 import java.util.List;
 import java.util.Optional;
@@ -205,6 +207,10 @@ public class SnapshotFactory {
       metadata = result.metadata;
     }
 
+    // We require maxCatalogVersion to be provided for catalogManaged tables. We cannot validate
+    // this earlier since we need to first load the protocol.
+    validateMaxCatalogVersionPresence(protocol);
+
     // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
     final LogReplay logReplay = new LogReplay(engine, tablePath, lazyLogSegment, lazyCrcInfo);
 
@@ -262,7 +268,23 @@ public class SnapshotFactory {
               ctx.logDatas));
     } else if (ctx.versionOpt.isPresent()) {
       return ctx.versionOpt;
+    } else if (ctx.maxCatalogVersion.isPresent()) {
+      // For latest queries for catalogManaged tables we want to load the maxCatalogVersion
+      return ctx.maxCatalogVersion;
     }
     return Optional.empty();
+  }
+
+  private void validateMaxCatalogVersionPresence(Protocol protocol) {
+    boolean isCatalogManaged = TableFeatures.isCatalogManagedSupported(protocol);
+    if (isCatalogManaged) {
+      checkArgument(
+          ctx.maxCatalogVersion.isPresent(),
+          "Must provide maxCatalogVersion for catalogManaged tables");
+    } else {
+      checkArgument(
+          !ctx.maxCatalogVersion.isPresent(),
+          "Should not provide maxCatalogVersion for file-system managed tables");
+    }
   }
 }

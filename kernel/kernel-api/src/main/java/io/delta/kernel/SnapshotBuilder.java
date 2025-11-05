@@ -118,6 +118,35 @@ public interface SnapshotBuilder {
   SnapshotBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata);
 
   /**
+   * Specifies the maximum table version known by the catalog.
+   *
+   * <p>This method is used by catalog implementations for catalog-managed Delta tables to indicate
+   * the highest version of the table that the catalog is aware of. This ensures that any snapshot
+   * resolution operations respect the catalog's view of the table state.
+   *
+   * <p><b>Important:</b> This method is <b>required</b> for catalog-managed tables and <b>must not
+   * be used</b> for file-system managed tables. An {@link IllegalArgumentException} will be thrown
+   * at build time if this constraint is violated.
+   *
+   * <p>When specified, the following additional constraints are enforced:
+   *
+   * <ul>
+   *   <li>If {@link #atVersion(long)} is used for time travel, the requested version must be less
+   *       than or equal to the max catalog version.
+   *   <li>If {@link #atTimestamp(long, Snapshot)} is used for time travel, the provided {@code
+   *       latestSnapshot} must have a version equal to the max catalog version.
+   *   <li>If {@link #withLogData(List)} is provided, the log data must end with the max catalog
+   *       version.
+   * </ul>
+   *
+   * @param version the maximum table version known by the catalog (must be >= 0)
+   * @return a new builder instance with the specified max catalog version
+   * @throws IllegalArgumentException if version is negative
+   */
+  // TODO revisit specific naming
+  SnapshotBuilder withMaxCatalogVersion(long version);
+
+  /**
    * Constructs the {@link Snapshot} using the provided engine.
    *
    * <p>This method will read any missing information from the filesystem using the provided engine
