@@ -939,10 +939,9 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 // Separate project for benchmarks to avoid classpath conflicts between sparkV1 and goldenTables
 lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
   .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelDefaults) // Get main code
-  .dependsOn(kernelApi % "test->test") // Get test utilities
-  .dependsOn(storage % "test->test") // Get test utilities  
-  .dependsOn(sparkV1 % "test->compile;test->test") // Get InMemoryUCClient and InMemoryUCCommitCoordinator
+  .dependsOn(kernelDefaults) 
+  .dependsOn(kernelApi % "test->test") 
+  .dependsOn(storage % "test->test") 
   .settings(
     name := "delta-kernel-benchmarks",
     commonSettings,
