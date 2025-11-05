@@ -81,12 +81,10 @@ See the online documentation for the correct usage of this function.
     scala_version = "2.13"
 
     # Determine the artifact name based on Spark version
-    # For Spark 3.5.x (latest released): delta-spark_2.13
-    # For other versions (e.g., 4.0.x): delta-spark_<spark_binary>_2.13
-    #
+    
     # NOTE: When updating LATEST_RELEASED_SPARK_VERSION in project/CrossSparkVersions.scala,
     # also update the version check here to match the new latest version.
-    LATEST_RELEASED_SPARK_VERSION_PREFIX = "3.5."
+    latest_released_spark_version_prefix = "3.5."
 
     artifact_name = f"delta-spark_{scala_version}"
 
@@ -94,7 +92,7 @@ See the online documentation for the correct usage of this function.
         spark_major_minor = ".".join(spark_version.split(".")[:2])  # e.g., "3.5" or "4.0"
 
         # If not the latest released Spark version, add Spark version to artifact name
-        if not spark_version.startswith(LATEST_RELEASED_SPARK_VERSION_PREFIX):
+        if not spark_version.startswith(latest_released_spark_version_prefix):
             artifact_name = f"delta-spark_{spark_major_minor}_{scala_version}"
 
     maven_artifact = f"io.delta:{artifact_name}:{delta_version}"
