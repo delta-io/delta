@@ -29,6 +29,7 @@ import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatus;
 import io.delta.kernel.utils.FileStatus;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.*;
 import org.openjdk.jmh.infra.Blackhole;
@@ -48,8 +49,8 @@ public class WriteRunner extends WorkloadRunner {
   private final Engine engine;
   private final WriteSpec workloadSpec;
   private final List<List<DataFileStatus>> commitContents;
-  private Snapshot currentSnapshot;
-  private Set<String> initialDeltaLogFiles;
+  private Snapshot snapshot;
+  private Optional<Set<String>> initialDeltaLogFiles = Optional.empty();
 
   /**
    * Constructs the WriteRunner from the workload spec and engine.
@@ -67,19 +68,19 @@ public class WriteRunner extends WorkloadRunner {
   public void setup() throws Exception {
     String tableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
 
-    // Get the current snapshot
-    SnapshotBuilder builder = TableManager.loadSnapshot(tableRoot);
-    currentSnapshot = builder.build(engine);
-
     // Capture initial listing of delta log files. This is used during cleanup to revert changes.
-    initialDeltaLogFiles = captureFileListing();
+    if (!initialDeltaLogFiles.isPresent()) {
+      initialDeltaLogFiles = Optional.of(captureFileListing());
+    }
 
-    // Load and parse all commit files if we haven't already done so
+    // Load the initial snapshot of the table. This will be used as the starting point for commits
+    // and will be updated after each commit using the post-commit snapshot.
+    snapshot = loadSnapshot(engine, workloadSpec.getTableInfo(), Optional.empty());
+
     if (commitContents.isEmpty()) {
       for (WriteSpec.CommitSpec commitSpec : workloadSpec.getCommits()) {
         commitContents.add(
-            commitSpec.readDataFiles(
-                workloadSpec.getSpecDirectoryPath(), currentSnapshot.getSchema()));
+            commitSpec.readDataFiles(workloadSpec.getSpecDirectoryPath(), snapshot.getSchema()));
       }
     }
   }
@@ -111,7 +112,7 @@ public class WriteRunner extends WorkloadRunner {
     // Execute all commits in sequence
     for (List<DataFileStatus> actions : commitContents) {
       UpdateTableTransactionBuilder txnBuilder =
-          currentSnapshot.buildUpdateTableTransaction("Delta-Kernel-Benchmarks", Operation.WRITE);
+          snapshot.buildUpdateTableTransaction("Delta-Kernel-Benchmarks", Operation.WRITE);
 
       Transaction txn = txnBuilder.build(engine);
       Row txnState = txn.getTransactionState(engine);
@@ -128,7 +129,7 @@ public class WriteRunner extends WorkloadRunner {
 
       // Use the post-commit snapshot for the next transaction
       // Post-commit snapshot should always be present unless there was a conflict
-      currentSnapshot =
+      snapshot =
           result
               .getPostCommitSnapshot()
               .orElseThrow(
@@ -144,34 +145,48 @@ public class WriteRunner extends WorkloadRunner {
   /** Cleans up the state created during benchmark execution by reverting all committed changes. */
   @Override
   public void cleanup() throws Exception {
-    if (initialDeltaLogFiles == null) {
-      return; // Setup didn't complete, nothing to clean up
+    if (!initialDeltaLogFiles.isPresent()) {
+      throw new RuntimeException("Cannot cleanup before setup is called.");
     }
     // Delete any files that weren't present initially
     Set<String> currentFiles = captureFileListing();
+    Set<String> initialFiles =
+        initialDeltaLogFiles.orElseThrow(
+            () -> new RuntimeException("Cannot cleanup before setup is called."));
     for (String filePath : currentFiles) {
-      if (!initialDeltaLogFiles.contains(filePath)) {
+      if (!initialFiles.contains(filePath)) {
         engine.getFileSystemClient().delete(filePath);
       }
     }
   }
 
-  /** @return a set of all file paths in the `_delta_log/` directory of the table. */
+  /**
+   * @return all file paths in the `_delta_log/` directory (including `_staged_commits/` if Unity
+   *     Catalog managed and `_sidecars/` if it exists)
+   */
   private Set<String> captureFileListing() throws IOException {
-    // Construct path prefix for all files in `_delta_log/`. The prefix is for file with name `0`
-    // because the filesystem client lists all _sibling_ files in the directory with a path greater
-    // than `0`.
-    String deltaLogPathPrefix =
-        new Path(workloadSpec.getTableInfo().getResolvedTableRoot(), "_delta_log/0")
-            .toUri()
-            .getPath();
+    List<String> prefixes =
+        new ArrayList<>(
+            Arrays.asList("_delta_log", "_delta_log/_sidecars", "_delta_log/_staged_commits"));
 
     Set<String> files = new HashSet<>();
-    try (CloseableIterator<FileStatus> filesIter =
-        engine.getFileSystemClient().listFrom(deltaLogPathPrefix)) {
-      while (filesIter.hasNext()) {
-        FileStatus file = filesIter.next();
-        files.add(file.getPath());
+    for (String prefix : prefixes) {
+      // Construct path prefix for all files in `_delta_log/`. The prefix is for file with name `0`
+      // because the filesystem client lists all _sibling_ files in the directory with a path
+      // greater than `0`.
+      String deltaLogPathPrefix =
+          new Path(workloadSpec.getTableInfo().getResolvedTableRoot(), new Path(prefix, "0"))
+              .toUri()
+              .getPath();
+
+      // List from the lowest version in the prefix
+      try (CloseableIterator<FileStatus> filesIter =
+          engine.getFileSystemClient().listFrom(deltaLogPathPrefix)) {
+        while (filesIter.hasNext()) {
+          files.add(filesIter.next().getPath());
+        }
+      } catch (FileNotFoundException e) {
+        // Ignore if the directory does not exist
       }
     }
     return files;

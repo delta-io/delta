@@ -1,0 +1,6 @@
+{
+  "name": "basic_catalog_managed",
+  "description": "A basic Unity Catalog managed table with 2 backfilled commits (v0-1) and 2 staged commits (v2-3).",
+  "engine_info": "Apache-Spark/3.5.1 Delta-Lake/3.1.0",
+  "is_catalog_managed": true
+}
