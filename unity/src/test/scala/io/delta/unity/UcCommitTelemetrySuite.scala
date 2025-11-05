@@ -181,6 +181,7 @@ class UcCommitTelemetrySuite
 
     val report = telemetry.createSuccessReport()
 
+    // scalastyle:off line.size.limit
     val expectedJson =
       s"""
          |{"operationType":"UcCommit",
@@ -192,6 +193,7 @@ class UcCommitTelemetrySuite
          |"metrics":{"totalCommitDurationNs":200,"writeCommitFileDurationNs":200,"commitToUcServerDurationNs":0},
          |"exception":null}
          |""".stripMargin.replaceAll("\n", "")
+    // scalastyle:on line.size.limit
 
     assert(report.toJson() === expectedJson)
   }
@@ -206,6 +208,7 @@ class UcCommitTelemetrySuite
 
     val report = telemetry.createSuccessReport()
 
+    // scalastyle:off line.size.limit
     val expectedJson =
       s"""
          |{"operationType":"UcCommit",
@@ -217,6 +220,7 @@ class UcCommitTelemetrySuite
          |"metrics":{"totalCommitDurationNs":300,"writeCommitFileDurationNs":200,"commitToUcServerDurationNs":100},
          |"exception":null}
          |""".stripMargin.replaceAll("\n", "")
+    // scalastyle:on line.size.limit
 
     assert(report.toJson() === expectedJson)
   }
@@ -232,6 +236,7 @@ class UcCommitTelemetrySuite
     val exception = new CommitFailedException(false, false, "errMsg") // notRetryable, notConflict
     val report = telemetry.createFailureReport(exception)
 
+    // scalastyle:off line.size.limit
     val expectedJson =
       s"""
          |{"operationType":"UcCommit",
@@ -243,6 +248,7 @@ class UcCommitTelemetrySuite
          |"metrics":{"totalCommitDurationNs":300,"writeCommitFileDurationNs":200,"commitToUcServerDurationNs":100},
          |"exception":"io.delta.kernel.commit.CommitFailedException: retryable=false, conflict=false, msg=errMsg"}
          |""".stripMargin.replaceAll("\n", "")
+    // scalastyle:on line.size.limit
 
     assert(report.toJson() === expectedJson)
   }
