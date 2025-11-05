@@ -404,8 +404,8 @@ class PartitionUtilsSuite extends AnyFunSuite {
   }
 
   test("parse valid ISO8601 timestamp with microsecond precision") {
-    val result = PartitionUtils.tryParseTimestamp("1970-01-01T00:00:00.123456Z")
-    assert(result == 123456L)
+    val result = PartitionUtils.tryParseTimestamp("2025-01-01T00:00:00.123456Z")
+    assert(result == 1735689600123456L)
   }
 
   test("throw on invalid timestamp") {
