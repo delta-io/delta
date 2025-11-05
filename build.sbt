@@ -807,6 +807,11 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     Compile / classDirectory := target.value / "scala-2.13" / "kernel-api-classes",
 
     Test / javaOptions ++= Seq("-ea"),
+
+    // Also publish a test-jar (classifier = "tests") so consumers (e.g. kernelDefault)
+    // can depend on test utilities via a published artifact instead of depending on raw class directories.
+    Test / publishArtifact := true,
+    Test / packageBin / artifactClassifier := Some("tests"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
@@ -887,8 +892,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelApi)
-  .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
   .dependsOn(goldenTables % "test")
@@ -907,7 +910,18 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
+
+    // Put the shaded kernel-api JAR on the classpath (compile & test)
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
     libraryDependencies ++= Seq(
+      "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
