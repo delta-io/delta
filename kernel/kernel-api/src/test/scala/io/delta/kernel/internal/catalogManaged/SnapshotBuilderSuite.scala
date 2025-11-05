@@ -373,10 +373,9 @@ class SnapshotBuilderSuite extends AnyFunSuite
     assert(!exMsg.contains("latestSnapshot provided for timestamp-based time-travel"))
   }
 
-  test("withMaxCatalogVersion: logData must end with maxCatalogVersion") {
+  test("withMaxCatalogVersion: without version, logData must end with maxCatalogVersion") {
     val exMsg = intercept[IllegalArgumentException] {
       TableManager.loadSnapshot(dataPath.toString)
-        .atVersion(2)
         .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2)).toList.asJava)
         .withMaxCatalogVersion(5)
         .build(emptyMockEngine)
@@ -385,11 +384,10 @@ class SnapshotBuilderSuite extends AnyFunSuite
     assert(exMsg === "Provided catalog commits must end with max catalog version")
   }
 
-  test("withMaxCatalogVersion: logData ending with maxCatalogVersion is valid") {
+  test("withMaxCatalogVersion: without version, logData ending with maxCatalogVersion is valid") {
     // Should not throw - validation passes
     TableManager.loadSnapshot(dataPath.toString)
       .asInstanceOf[SnapshotBuilderImpl]
-      .atVersion(5)
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5)).toList.asJava)
       .withMaxCatalogVersion(5)
@@ -404,6 +402,40 @@ class SnapshotBuilderSuite extends AnyFunSuite
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withLogData(Collections.emptyList())
       .withMaxCatalogVersion(5)
+      .build(emptyMockEngine)
+  }
+
+  test("withMaxCatalogVersion: version time-travel with logData not including version fails") {
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager.loadSnapshot(dataPath.toString)
+        .atVersion(5)
+        .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3)).toList.asJava)
+        .withMaxCatalogVersion(10)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "Provided catalog commits must include versionToLoad for time-travel queries")
+  }
+
+  test("withMaxCatalogVersion: version time-travel with logData ending at version is valid") {
+    // Should not throw - logData ends exactly at requested version
+    TableManager.loadSnapshot(dataPath.toString)
+      .asInstanceOf[SnapshotBuilderImpl]
+      .atVersion(5)
+      .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
+      .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5)).toList.asJava)
+      .withMaxCatalogVersion(10)
+      .build(emptyMockEngine)
+  }
+
+  test("withMaxCatalogVersion: version time-travel with logData beyond version is valid") {
+    // Should not throw - logData extends beyond requested version
+    TableManager.loadSnapshot(dataPath.toString)
+      .asInstanceOf[SnapshotBuilderImpl]
+      .atVersion(5)
+      .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
+      .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)).toList.asJava)
+      .withMaxCatalogVersion(10)
       .build(emptyMockEngine)
   }
 

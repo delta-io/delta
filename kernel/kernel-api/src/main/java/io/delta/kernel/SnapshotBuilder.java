@@ -135,8 +135,11 @@ public interface SnapshotBuilder {
    *       than or equal to the max catalog version.
    *   <li>If {@link #atTimestamp(long, Snapshot)} is used for time travel, the provided {@code
    *       latestSnapshot} must have a version equal to the max catalog version.
-   *   <li>If {@link #withLogData(List)} is provided, the log data must end with the max catalog
-   *       version.
+   *   <li>If {@link #withLogData(List)} is provided and {@link #atVersion(long)} is used, the log
+   *       data must include the requested version (i.e., the tail of the log data must have a
+   *       version greater than or equal to the requested version).
+   *   <li>If {@link #withLogData(List)} is provided and no version is specified (resolving to
+   *       latest), the log data must end with the max catalog version.
    * </ul>
    *
    * @param version the maximum table version known by the catalog (must be >= 0)

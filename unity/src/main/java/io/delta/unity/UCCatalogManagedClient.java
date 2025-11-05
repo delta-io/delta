@@ -129,13 +129,15 @@ public class UCCatalogManagedClient {
             // If timestampOpt is present, we know versionOpt is not ==> logData was not requested
             // with an endVersion and thus can be re-used to load the latest snapshot
             Snapshot latestSnapshot =
-                loadLatestSnapshotForTimestampResolution(engine, ucTableId, tablePath, logData);
+                loadLatestSnapshotForTimestampResolution(
+                    engine, ucTableId, tablePath, logData, ucTableVersion);
             snapshotBuilder = snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
           }
 
           return snapshotBuilder
               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
               .withLogData(logData)
+              .withMaxCatalogVersion(ucTableVersion)
               .build(engine);
         });
   }
@@ -238,7 +240,9 @@ public class UCCatalogManagedClient {
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
     final Lazy<Snapshot> latestSnapshot =
         new Lazy<>(
-            () -> loadLatestSnapshotForTimestampResolution(engine, ucTableId, tablePath, logData));
+            () ->
+                loadLatestSnapshotForTimestampResolution(
+                    engine, ucTableId, tablePath, logData, ucTableVersion));
 
     return timeUncheckedOperation(
         logger,
@@ -460,7 +464,11 @@ public class UCCatalogManagedClient {
    * and were not queried with an endVersion).
    */
   private Snapshot loadLatestSnapshotForTimestampResolution(
-      Engine engine, String ucTableId, String tablePath, List<ParsedLogData> logData) {
+      Engine engine,
+      String ucTableId,
+      String tablePath,
+      List<ParsedLogData> logData,
+      long ucTableVersion) {
     return timeUncheckedOperation(
         logger,
         "TableManager.loadSnapshot at latest for time-travel query",
@@ -469,6 +477,7 @@ public class UCCatalogManagedClient {
             TableManager.loadSnapshot(tablePath)
                 .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
                 .withLogData(logData)
+                .withMaxCatalogVersion(ucTableVersion)
                 .build(engine));
   }
 }

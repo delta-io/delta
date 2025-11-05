@@ -134,7 +134,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
     validateMaxCatalogVersionCompatibleWithTimeTravelParams();
-    validateLogTailEndsWithMaxCatalogVersion();
+    validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad();
   }
 
   private void validateVersionNonNegative() {
@@ -202,14 +202,20 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
         });
   }
 
-  private void validateLogTailEndsWithMaxCatalogVersion() {
+  private void validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad() {
     ctx.maxCatalogVersion.ifPresent(
         maxVersion -> {
           if (!ctx.logDatas.isEmpty()) {
             ParsedLogData tailLogData = ListUtils.getLast(ctx.logDatas);
-            checkArgument(
-                maxVersion == tailLogData.getVersion(),
-                "Provided catalog commits must end with max catalog version");
+            if (ctx.versionOpt.isPresent()) {
+              checkArgument(
+                  tailLogData.getVersion() >= ctx.versionOpt.get(),
+                  "Provided catalog commits must include versionToLoad for time-travel queries");
+            } else {
+              checkArgument(
+                  maxVersion == tailLogData.getVersion(),
+                  "Provided catalog commits must end with max catalog version");
+            }
           }
         });
   }
