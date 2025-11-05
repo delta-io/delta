@@ -193,11 +193,6 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       "2024-01-01 10:00:00",
       1704103200000000L // 2024-01-01 10:00:00 UTC to micros since the epoch
     )
-
-    def row11: TestRow = TestRow(
-      "2024-01-02 12:30:00",
-      1704198600000000L // 2024-01-02 12:30:00 UTC to micros since the epoch
-    )
     val filter = new Predicate("=", new Column("ts"), Literal.ofTimestamp(1704103200000000L))
     def ISO8601PartitionColTableExpectedResult: Seq[TestRow] =
       Seq(row00)

@@ -1944,10 +1944,14 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         TimestampType.TIMESTAMP,
         InternalUtils.microsSinceEpoch(Timestamp.valueOf("2020-02-18 00:00:10.023"))),
       ("null", TimestampType.TIMESTAMP, null),
-      (
+      ( // ISO8601 format
+        "2024-01-02T12:30:00.000000Z",
+        TimestampType.TIMESTAMP,
+        InternalUtils.microsSinceEpoch(Timestamp.valueOf("2024-01-02 12:30:00"))),
+      ( // Test with microsecond precision as well
         "1970-01-01T00:00:00.123456Z",
         TimestampType.TIMESTAMP,
-        InternalUtils.microsSinceEpoch(Timestamp.valueOf("1970-01-01T00:00:00.123456Z"))))
+        InternalUtils.microsSinceEpoch(Timestamp.valueOf("1970-01-01 00:00:00.123456"))))
 
     val inputBatch = zeroColumnBatch(rowCount = 1)
     testCases.foreach { testCase =>

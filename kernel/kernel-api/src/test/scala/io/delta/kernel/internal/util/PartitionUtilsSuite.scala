@@ -393,14 +393,19 @@ class PartitionUtilsSuite extends AnyFunSuite {
   // Test cases for verifying if timestamp can be parsed correctly.
   test("parse valid standard timestamp") {
     val result1 = PartitionUtils.tryParseTimestamp("2024-01-01 10:00:00")
-    assert(result1 == Literal.ofTimestamp(1704103200000000L))
+    assert(result1 == 1704103200000000L)
     val result2 = PartitionUtils.tryParseTimestamp("2024-01-01 10:00:00.123456")
-    assert(result2 == Literal.ofTimestamp(1704103200123456L))
+    assert(result2 == 1704103200123456L)
   }
 
   test("parse valid ISO8601 timestamp") {
     val result = PartitionUtils.tryParseTimestamp("2024-01-01T10:00:00Z")
-    assert(result == Literal.ofTimestamp(1704103200000000L))
+    assert(result == 1704103200000000L)
+  }
+
+  test("parse valid ISO8601 timestamp with microsecond precision") {
+    val result = PartitionUtils.tryParseTimestamp("1970-01-01T00:00:00.123456Z")
+    assert(result == 123456L)
   }
 
   test("throw on invalid timestamp") {
