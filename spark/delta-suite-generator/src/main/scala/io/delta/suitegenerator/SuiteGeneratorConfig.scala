@@ -148,6 +148,9 @@ object SuiteGeneratorConfig {
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
+    val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE = DimensionWithMultipleValues(
+      "StructEvolutionPreserveNullSource",
+      List("Disabled", "Enabled"), alias = Some("PreserveNullSource"))
   }
 
   private object Tests {
@@ -248,7 +251,18 @@ object SuiteGeneratorConfig {
             List(),
             List(Dims.CDC, Dims.MERGE_ROW_TRACKING_DV)
           )
-        )
+        ),
+        TestConfig(
+          "MergeIntoTopLevelStructEvolutionNullnessTests" ::
+            "MergeIntoNestedStructEvolutionNullnessTests" ::
+            "MergeIntoTopLevelArrayStructEvolutionNullnessTests" ::
+            "MergeIntoNestedArrayStructEvolutionNullnessTests" ::
+            "MergeIntoTopLevelMapStructEvolutionNullnessTests" ::
+            "MergeIntoNestedMapStructEvolutionNullnessTests" :: Nil,
+          List(
+            List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional, Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE)
+          )
+        ),
       )
     ),
     TestGroup(
