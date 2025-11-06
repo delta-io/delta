@@ -262,7 +262,7 @@ object SuiteGeneratorConfig {
           List(
             List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional, Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE)
           )
-        ),
+        )
       )
     ),
     TestGroup(
