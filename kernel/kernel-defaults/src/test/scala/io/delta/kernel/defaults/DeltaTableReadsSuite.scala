@@ -17,6 +17,7 @@ package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
