@@ -65,7 +65,6 @@ trait TestUtils {
 
   /**
    * Helper to test Java serialization by performing a round-trip serialize/deserialize.
-   * Useful for testing Spark driver → executor transmission of Protocol, Metadata, etc.
    *
    * @param obj The object to serialize (must be Serializable)
    * @return The deserialized object
