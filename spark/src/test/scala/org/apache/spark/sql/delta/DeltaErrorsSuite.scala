@@ -2166,6 +2166,12 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.readSourceSchemaConflictException
+      }
+      checkError(e, "DELTA_READ_SOURCE_SCHEMA_CONFLICT", "42K07", Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.unexpectedDataChangeException("operation1")
       }
       checkError(e, "DELTA_DATA_CHANGE_FALSE", "0AKDE", Map("op" -> "operation1"))
