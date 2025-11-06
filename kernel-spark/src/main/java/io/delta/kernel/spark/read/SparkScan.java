@@ -17,6 +17,8 @@ package io.delta.kernel.spark.read;
 
 import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
+import org.apache.hadoop.fs.Path;
+
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
@@ -80,8 +82,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       CaseInsensitiveStringMap options) {
 
     final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
-    this.tablePath =
-        normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
+    this.tablePath = new Path(normalizedTablePath).toUri().toString() + "/";  // ensure trailing slash
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -218,11 +219,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         while (addFileRowIter.hasNext()) {
           final Row row = addFileRowIter.next();
           final AddFile addFile = new AddFile(row.getStruct(0));
+          final String filePath = addFile.getPath();
+          final String fullPath = new Path(filePath).isAbsolute() ? filePath : tablePath + filePath;
 
           final PartitionedFile partitionedFile =
               new PartitionedFile(
                   getPartitionRow(addFile.getPartitionValues()),
-                  SparkPath.fromUrlString(tablePath + addFile.getPath()),
+                  SparkPath.fromUrlString(fullPath),
                   0L,
                   addFile.getSize(),
                   locations,
