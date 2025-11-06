@@ -37,6 +37,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.unity.adapters.MetadataAdapter;
 import io.delta.unity.adapters.ProtocolAdapter;
 import io.delta.unity.metrics.UcCommitTelemetry;
+import io.delta.unity.metrics.UcPublishTelemetry;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
@@ -135,14 +136,32 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
         catalogCommits.size(),
         snapshotVersion);
 
-    for (ParsedCatalogCommitData catalogCommit : catalogCommits) {
-      publishSingleCommit(engine, catalogCommit, logPath);
-    }
+    final UcPublishTelemetry telemetry =
+        new UcPublishTelemetry(
+            ucTableId, tablePath.toString(), snapshotVersion, catalogCommits.size());
+    final UcPublishTelemetry.MetricsCollector metricsCollector = telemetry.getMetricsCollector();
 
-    logger.info(
-        "[{}] Successfully published all catalog commits up to version {}",
-        snapshotVersion,
-        ucTableId);
+    try {
+      metricsCollector.totalPublishTimer.time(
+          () -> {
+            for (ParsedCatalogCommitData catalogCommit : catalogCommits) {
+              publishSingleCommit(engine, catalogCommit, logPath, metricsCollector);
+            }
+            return null;
+          });
+
+      logger.info(
+          "[{}] Successfully published all catalog commits up to version {}",
+          snapshotVersion,
+          ucTableId);
+
+      final UcPublishTelemetry.Report successfulReport = telemetry.createSuccessReport();
+      engine.getMetricsReporters().forEach(r -> r.report(successfulReport));
+    } catch (RuntimeException e) {
+      final UcPublishTelemetry.Report failureReport = telemetry.createFailureReport(e);
+      engine.getMetricsReporters().forEach(r -> r.report(failureReport));
+      throw e;
+    }
   }
 
   @Override
@@ -188,7 +207,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
       Engine engine,
       CloseableIterator<Row> finalizedActions,
       CommitMetadata commitMetadata,
-      UcCommitTelemetry.MetricsCollector metricsCollector)
+      UcCommitTelemetry.MetricsCollector commitMetricsCollector)
       throws CommitFailedException {
     checkArgument(
         commitMetadata.getVersion() > 0, "Can only write staged commit files for versions > 0");
@@ -198,9 +217,9 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
             engine,
             finalizedActions,
             commitMetadata.generateNewStagedCommitFilePath(),
-            metricsCollector);
+            commitMetricsCollector);
 
-    commitToUC(commitMetadata, kernelStagedCommitFileStatus, metricsCollector);
+    commitToUC(commitMetadata, kernelStagedCommitFileStatus, commitMetricsCollector);
 
     return new CommitResponse(ParsedCatalogCommitData.forFileStatus(kernelStagedCommitFileStatus));
   }
@@ -210,7 +229,10 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   ////////////////////////////
 
   private void publishSingleCommit(
-      Engine engine, ParsedCatalogCommitData catalogCommit, String logPath)
+      Engine engine,
+      ParsedCatalogCommitData catalogCommit,
+      String logPath,
+      UcPublishTelemetry.MetricsCollector publishMetricsCollector)
       throws PublishFailedException {
     final long commitVersion = catalogCommit.getVersion();
 
@@ -233,9 +255,11 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
           .copyFileAtomically(sourcePath, targetPath, false /* overwrite */);
 
       logger.info("[{}] Successfully published version {}", ucTableId, commitVersion);
+      publishMetricsCollector.incrementCommitsPublished();
     } catch (java.nio.file.FileAlreadyExistsException e) {
       // File already exists - this is okay, it means this version was already published
       logger.info("[{}] Version {} already published", ucTableId, commitVersion);
+      publishMetricsCollector.incrementCommitsAlreadyPublished();
     } catch (Exception ex) {
       throw new PublishFailedException(
           String.format(
