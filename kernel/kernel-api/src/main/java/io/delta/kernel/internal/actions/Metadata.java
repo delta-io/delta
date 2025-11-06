@@ -26,10 +26,14 @@ import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
+import java.io.InvalidObjectException;
+import java.io.ObjectInputStream;
+import java.io.Serializable;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class Metadata {
+public class Metadata implements Serializable {
+  private static final long serialVersionUID = 1L;
 
   public static Metadata fromRow(Row row) {
     requireNonNull(row);
@@ -359,5 +363,68 @@ public class Metadata {
             "Table schema cannot contain metadata columns: " + field.getName());
       }
     }
+  }
+
+  /**
+   * Serializable representation of Metadata for Spark driver → executor transmission. Converts
+   * complex Kernel types (ArrayValue, MapValue) to simple Java types (List, Map).
+   */
+  private static class SerializableMetadata implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    private final String id;
+    private final Optional<String> name;
+    private final Optional<String> description;
+    private final String formatProvider;
+    private final Map<String, String> formatOptions;
+    private final String schemaString;
+    private final List<String> partitionColumnsList;
+    private final Optional<Long> createdTime;
+    private final Map<String, String> configuration;
+
+    SerializableMetadata(Metadata metadata) {
+      this.id = metadata.id;
+      this.name = metadata.name;
+      this.description = metadata.description;
+      this.formatProvider = metadata.format.getProvider();
+      this.formatOptions = metadata.format.getOptions();
+      this.schemaString = metadata.schemaString;
+      this.partitionColumnsList = VectorUtils.toJavaList(metadata.partitionColumns);
+      this.createdTime = metadata.createdTime;
+      this.configuration = VectorUtils.toJavaMap(metadata.configurationMapValue);
+    }
+
+    // Reconstruct Metadata from serialized data
+    private Object readResolve() {
+      Format format = new Format(formatProvider, formatOptions);
+      StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaString);
+      ArrayValue partitionColumns =
+          VectorUtils.buildArrayValue(partitionColumnsList, StringType.STRING);
+      MapValue configurationMapValue = VectorUtils.stringStringMapValue(configuration);
+
+      return new Metadata(
+          id,
+          name,
+          description,
+          format,
+          schemaString,
+          schema,
+          partitionColumns,
+          createdTime,
+          configurationMapValue);
+    }
+  }
+
+  /**
+   * Replace this Metadata with SerializableMetadata during serialization. This is the standard Java
+   * serialization proxy pattern for immutable objects with complex fields.
+   */
+  private Object writeReplace() {
+    return new SerializableMetadata(this);
+  }
+
+  /** Prevent direct deserialization of Metadata (must use SerializableMetadata). */
+  private void readObject(ObjectInputStream stream) throws InvalidObjectException {
+    throw new InvalidObjectException("Use SerializableMetadata");
   }
 }
