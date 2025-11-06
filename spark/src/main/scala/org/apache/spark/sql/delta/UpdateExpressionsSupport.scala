@@ -240,12 +240,52 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                 castIfNeeded(extractedField, field.dataType, castingBehavior, field.name))
             })
 
-            cast(nameMappedStruct, to.asNullable, castingBehavior, columnName)
+            // Fix for null expansion caused by struct type cast by preserving NULL source structs.
+            //
+            // Problem: When assigning a struct column, e.g., MERGE ... WHEN MATCHED THEN UPDATE SET
+            // t.col = s.col, if the source struct is NULL, the casting logic will expand the NULL
+            // into a non-null struct with all fields set to NULL:
+            //   NULL -> struct(field1: null, field2: null, ..., newField: null)
+            //
+            // Expected: The target struct should remain NULL when the source struct is NULL:
+            //   NULL -> NULL
+            //
+            // Solution: Wrap the named_struct expression in an IF expression that preserves NULL:
+            //   IF(source_struct IS NULL, NULL, named_struct(...))
+            val wrappedWithNullPreservation =
+              wrapWithNullPreservation(fromExpression, to.asNullable, nameMappedStruct)
+            cast(wrappedWithNullPreservation, to.asNullable, castingBehavior, columnName)
 
           case (from, to) if from != to =>
             cast(fromExpression, dataType, castingBehavior, columnName)
           case _ => fromExpression
         }
+    }
+  }
+
+  /**
+   * Wraps an expression with an IF expression to fix the null expansion issue by preserving
+   * NULL source struct values:
+   *   IF(sourceExpr IS NULL, NULL, targetNamedStructExpr)
+   *
+   * Without this fix, NULL source structs are incorrectly expanded to structs with NULL fields.
+   *
+   * @param sourceExpr The expression of the source field
+   * @param targetType The target data type for the null literal
+   * @param targetNamedStructExpr The generated target named struct expression
+   */
+  private def wrapWithNullPreservation(
+      sourceExpr: Expression,
+      targetType: DataType,
+      targetNamedStructExpr: Expression): Expression = {
+    if (conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)) {
+      If(
+        IsNull(sourceExpr),
+        Literal.create(null, targetType),
+        targetNamedStructExpr
+      )
+    } else {
+      targetNamedStructExpr
     }
   }
 

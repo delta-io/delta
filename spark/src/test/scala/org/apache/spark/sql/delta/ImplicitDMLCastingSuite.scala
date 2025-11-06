@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommand
 
 import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -237,6 +238,41 @@ class ImplicitUpdateCastingSuite extends ImplicitDMLCastingSuite {
 
             validateException(exception, sqlConfig, testConfig)
           }
+        }
+      }
+    }
+  }
+
+  for (preserveNullSourceStructs <- BOOLEAN_DOMAIN) {
+    test(s"Implicit cast with NULL struct, preserveNullSourceStructs=$preserveNullSourceStructs") {
+      withSQLConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS.key
+          -> preserveNullSourceStructs.toString) {
+        val tableName = "struct_null_expansion_test"
+        withTable(tableName) {
+          sql(
+            s"""CREATE TABLE $tableName (
+               |  col1 STRUCT<x: INT>,
+               |  col2 STRUCT<x:INT, y: INT>
+               |) USING DELTA""".stripMargin)
+          sql(s"INSERT INTO $tableName VALUES (NULL, NULL)")
+
+          // col1: cast col1.x from INT to LONG
+          // col2: reorder col2.x and col2.y
+          sql(
+            s"""UPDATE $tableName SET
+               |  col1 = CAST(NULL AS STRUCT<x: LONG>),
+               |  col2 = CAST(NULL AS STRUCT<y: INT, x: INT>)
+               |""".stripMargin)
+
+          val expectedRow = if (preserveNullSourceStructs) {
+            // The entire structs should be null
+            Row(null, null)
+          } else {
+            // Results are structs with null fields
+            Row(Row(null), Row(null, null))
+          }
+
+          checkAnswer(spark.table(tableName), Seq(expectedRow))
         }
       }
     }
