@@ -401,7 +401,9 @@ class ProtocolSuite extends AnyFunSuite with TestUtils {
   }
 
   test("Protocol serialization round trip") {
-    val source = new Protocol(3, 7,
+    val source = new Protocol(
+      3,
+      7,
       Set("columnMapping", "v2Checkpoint").asJava,
       Set("columnMapping", "domainMetadata").asJava)
     val deserialized = roundTripSerialize(source)

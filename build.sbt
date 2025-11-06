@@ -538,7 +538,6 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 // ============================================================
 lazy val sparkV2 = (project in file("kernel-spark"))
   .dependsOn(sparkV1Filtered)
-  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(goldenTables % "test")
   .settings(
