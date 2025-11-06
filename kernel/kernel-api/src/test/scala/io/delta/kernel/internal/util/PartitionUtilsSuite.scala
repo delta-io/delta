@@ -269,6 +269,31 @@ class PartitionUtilsSuite extends AnyFunSuite {
     assert(result === "/tmp/root/part1=12/part2=sss/part3=1970-01-01 00%3A03%3A54.234234")
   }
 
+  // Test cases for verifying if timestamp can be parsed correctly.
+  test("parse valid standard timestamp") {
+    val result1 = PartitionUtils.tryParseTimestamp("2024-01-01 10:00:00")
+    assert(result1 == 1704103200000000L)
+    val result2 = PartitionUtils.tryParseTimestamp("2024-01-01 10:00:00.123456")
+    assert(result2 == 1704103200123456L)
+  }
+
+  test("parse valid ISO8601 timestamp") {
+    val result = PartitionUtils.tryParseTimestamp("2024-01-01T10:00:00Z")
+    assert(result == 1704103200000000L)
+  }
+
+  test("parse valid ISO8601 timestamp with microsecond precision") {
+    val result = PartitionUtils.tryParseTimestamp("2025-01-01T00:00:00.123456Z")
+    assert(result == 1735689600123456L)
+  }
+
+  test("throw on invalid timestamp") {
+    val thrown = intercept[IllegalStateException] {
+      PartitionUtils.tryParseTimestamp("not-a-timestamp")
+    }
+    assert(thrown.getMessage.contains("Invalid timestamp format for value"))
+  }
+
   private def col(names: String*): Column = {
     new Column(names.toArray)
   }

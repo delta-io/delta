@@ -17,6 +17,7 @@ package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
@@ -27,7 +28,8 @@ import io.delta.kernel.Table
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.delta.implicits.stringEncoder
+import org.apache.spark.sql.functions.{col, current_timestamp, to_timestamp}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.File
@@ -137,6 +139,50 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     test(s"end-to-end usage: timestamp in written in PST read in $timeZone") {
       testTimestampTable("kernel-timestamp-PST", timeZone, pstTableExpectedResult)
     }
+  }
+
+  test(s"end-to-end usage: table with partition column in ISO8601 timestamp format") {
+    /*
+    str: string         | ts: timestamp (partition col)
+    ------------------------------------------------------------------------
+    2024-01-01 10:00:00 | 2024-01-01T10:00:00.000000Z
+    2024-01-02 12:30:00 | 2024-01-02T12:30:00.000000Z
+     */
+    def row00: TestRow = TestRow(
+      "2024-01-01 10:00:00",
+      1704103200000000L // 2024-01-01 10:00:00 UTC to micros since the epoch
+    )
+
+    def row11: TestRow = TestRow(
+      "2024-01-02 12:30:00",
+      1704198600000000L // 2024-01-02 12:30:00 UTC to micros since the epoch
+    )
+    def ISO8601PartitionColTableExpectedResult: Seq[TestRow] =
+      Seq(row00, row11)
+    checkTable(
+      goldenTablePath("kernel-timestamp-partition-col-ISO8601"),
+      ISO8601PartitionColTableExpectedResult)
+  }
+
+  test(s"end-to-end usage: table with partition column in ISO8601 timestamp format with " +
+    s"partition pruning") {
+    /*
+    str: string         | ts: timestamp (partition col)
+    ------------------------------------------------------------------------
+    2024-01-01 10:00:00 | 2024-01-01T10:00:00.000000Z
+    2024-01-02 12:30:00 | 2024-01-02T12:30:00.000000Z
+     */
+    def row00: TestRow = TestRow(
+      "2024-01-01 10:00:00",
+      1704103200000000L // 2024-01-01 10:00:00 UTC to micros since the epoch
+    )
+    val filter = new Predicate("=", new Column("ts"), Literal.ofTimestamp(1704103200000000L))
+    def ISO8601PartitionColTableExpectedResult: Seq[TestRow] =
+      Seq(row00)
+    checkTable(
+      goldenTablePath("kernel-timestamp-partition-col-ISO8601"),
+      ISO8601PartitionColTableExpectedResult,
+      filter = filter)
   }
 
   //////////////////////////////////////////////////////////////////////////////////
