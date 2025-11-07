@@ -330,11 +330,13 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
               ucTableId,
               kernelStagedCommitFileStatus.getPath());
 
+          final CommitMetadata.CommitType commitType = commitMetadata.getCommitType();
+
           // commitToUc is only for normal catalog WRITES, not for CREATE, or UPGRADE, or
           // DOWNGRADE, or anything filesystem related.
           checkState(
-              commitMetadata.getCommitType() == CommitMetadata.CommitType.CATALOG_WRITE,
-              "Only supported commit type is CATALOG_WRITE, but got: %s");
+              commitType == CommitMetadata.CommitType.CATALOG_WRITE,
+              "Only supported commit type is CATALOG_WRITE, but got: " + commitType);
 
           try {
             ucClient.commit(

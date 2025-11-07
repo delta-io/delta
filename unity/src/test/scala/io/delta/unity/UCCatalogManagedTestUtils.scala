@@ -22,17 +22,20 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+import scala.reflect.ClassTag
 
 import io.delta.kernel.commit.{CommitMetadata, PublishMetadata}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
-import io.delta.kernel.engine.Engine
+import io.delta.kernel.engine.{Engine, MetricsReporter}
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+import io.delta.kernel.metrics.MetricsReport
 import io.delta.kernel.test.{ActionUtils, TestFixtures}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
@@ -51,6 +54,36 @@ trait UCCatalogManagedTestUtils
   val baseTestTablePath = "/path/to/table"
   val baseTestLogPath = "/path/to/table/_delta_log"
   val emptyLongOpt = Optional.empty[java.lang.Long]()
+
+  /**
+   * Generic MetricsReporter that captures specific types of MetricsReport instances.
+   * This can be used for both UcCommitTelemetry.Report and UcPublishTelemetry.Report.
+   *
+   * @tparam T the type of MetricsReport to capture
+   */
+  class CapturingMetricsReporter[T <: MetricsReport: ClassTag] extends MetricsReporter {
+    val reports = ArrayBuffer[T]()
+
+    override def report(report: MetricsReport): Unit = {
+      report match {
+        case r: T => reports.append(r)
+        case _ => // Ignore other report types
+      }
+    }
+  }
+
+  /** Creates an Engine with a custom MetricsReporter for testing telemetry */
+  def createEngineWithMetricsCapture(reporter: MetricsReporter): Engine = {
+    val hadoopConf = new Configuration()
+    new DefaultEngine(
+      new io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO(hadoopConf)) {
+      override def getMetricsReporters: java.util.List[MetricsReporter] = {
+        val reporters = new java.util.ArrayList[MetricsReporter]()
+        reporters.add(reporter)
+        reporters
+      }
+    }
+  }
 
   /** Helper method with reasonable defaults */
   def loadSnapshot(

@@ -21,6 +21,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.internal.metrics.MetricsReportSerializer;
 import io.delta.kernel.internal.metrics.Timer;
+import io.delta.kernel.metrics.MetricsReport;
 import java.util.Optional;
 
 /**
@@ -95,7 +96,7 @@ public class UcCommitTelemetry {
     "metrics",
     "exception"
   })
-  public class Report implements io.delta.kernel.metrics.MetricsReport {
+  public class Report implements MetricsReport {
     public final String operationType = "UcCommit";
     public final String reportUUID = java.util.UUID.randomUUID().toString();
     public final String ucTableId = UcCommitTelemetry.this.ucTableId;

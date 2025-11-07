@@ -18,15 +18,11 @@ package io.delta.unity
 
 import java.util.Optional
 
-import scala.collection.mutable.ArrayBuffer
-
 import io.delta.kernel.Operation
 import io.delta.kernel.commit.{CommitFailedException, CommitMetadata}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.engine.{Engine, MetricsReporter}
 import io.delta.kernel.exceptions.MaxCommitRetryLimitReachedException
-import io.delta.kernel.metrics.MetricsReport
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
 import io.delta.unity.metrics.UcCommitTelemetry
@@ -39,34 +35,9 @@ class UcCommitTelemetrySuite
     with UCCatalogManagedTestUtils
     with MockFileSystemClientUtils {
 
-  /** Custom MetricsReporter that captures UcCommitTelemetry.Report instances */
-  class CapturingMetricsReporter extends MetricsReporter {
-    val reports = ArrayBuffer[UcCommitTelemetry#Report]()
-
-    override def report(report: MetricsReport): Unit = {
-      report match {
-        case ucReport: UcCommitTelemetry#Report => reports.append(ucReport)
-        case _ => // Ignore other report types
-      }
-    }
-  }
-
-  /** Creates an Engine with a custom MetricsReporter for testing telemetry */
-  private def createEngineWithMetricsCapture(reporter: MetricsReporter): Engine = {
-    val hadoopConf = new Configuration()
-    new DefaultEngine(
-      new io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO(hadoopConf)) {
-      override def getMetricsReporters: java.util.List[MetricsReporter] = {
-        val reporters = new java.util.ArrayList[MetricsReporter]()
-        reporters.add(reporter)
-        reporters
-      }
-    }
-  }
-
   test("commit metrics for CREATE and WRITE operations") {
     withTempDirAndEngine { case (tablePathUnresolved, _) =>
-      val reporter = new CapturingMetricsReporter()
+      val reporter = new CapturingMetricsReporter[UcCommitTelemetry#Report]
       val engine = createEngineWithMetricsCapture(reporter)
       val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
       val (ucClient, ucCatalogManagedClient) = createUCClientAndCatalogManagedClient()
@@ -127,7 +98,7 @@ class UcCommitTelemetrySuite
   test("telemetry captures exceptions during commit") {
     withTempDirAndEngine { case (tablePathUnresolved, engine) =>
       // ===== GIVEN =====
-      val reporter = new CapturingMetricsReporter()
+      val reporter = new CapturingMetricsReporter[UcCommitTelemetry#Report]
       val throwingJsonHandler = new BaseMockJsonHandler {
         override def writeJsonFileAtomically(
             path: String,
