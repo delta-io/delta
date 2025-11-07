@@ -319,7 +319,15 @@ public class Metadata implements Serializable {
 
   @Override
   public int hashCode() {
-    return Objects.hash(id, name, description, format, schema, createdTime, configuration);
+    return Objects.hash(
+        id,
+        name,
+        description,
+        format,
+        schema,
+        partitionColNames.get(),
+        createdTime,
+        configuration.get());
   }
 
   @Override
