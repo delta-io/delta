@@ -21,8 +21,10 @@ import unittest
 
 from delta.tables import DeltaTable
 from pyspark.errors.exceptions.captured import AnalysisException, UnsupportedOperationException
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import SparkSession, DataFrame, Row
 from pyspark.sql.functions import lit
+from pyspark.sql.streaming import MemoryStream
+from pyspark.sql.streaming import StreamingQuery
 from pyspark.sql.types import IntegerType, StructType, StructField
 from pyspark.testing import assertDataFrameEqual
 
@@ -545,6 +547,28 @@ class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
             # Streaming from a catalog owned table fails as it attempts to access the table by path.
             # This could also throw a better error than jsut 'access denied'.
             assert("AccessDeniedException" in str(error))
+
+    def test_streaming_write(self) -> None:
+        memory_stream = MemoryStream(
+            schema=StructType([StructField("id", IntegerType(), True)]),
+            sparkSession=spark)
+
+        # Start the streaming write.
+        query = memory_stream.toDF() \
+            .writeStream \
+            .option("checkpointLocation", "test") \
+            .toTable(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME) \
+            .start()
+
+        memory_stream.addData([Row(id=1)])
+
+        # Wait for write to complete the micro-batch
+        query.processAllAvailable()
+        query.stop()
+
+        result = spark.table(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).orderBy("id").collect()
+        assert result == [Row(id=1,)]
+
 
 
 if __name__ == "__main__":
