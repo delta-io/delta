@@ -3124,6 +3124,12 @@
     ],
     "sqlState" : "42815"
   },
+  "DELTA_VERSION_NOT_FOUND" : {
+    "message" : [
+      "Cannot time travel Delta table to version <userVersion>. Available versions: [<earliest>, <latest>]."
+    ],
+    "sqlState" : "22003"
+  },
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
     "message" : [
       "CHECK constraint <constraintName> <expression> violated by row with values:",
