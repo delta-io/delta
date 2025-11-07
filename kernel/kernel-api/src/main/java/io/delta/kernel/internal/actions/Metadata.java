@@ -31,6 +31,7 @@ import java.io.ObjectInputStream;
 import java.io.Serializable;
 import java.util.*;
 import java.util.stream.Collectors;
+import javax.annotation.Nullable;
 
 public class Metadata implements Serializable {
   private static final long serialVersionUID = 1L;
@@ -373,20 +374,20 @@ public class Metadata implements Serializable {
   }
 
   /**
-   * Serializable representation of Metadata, Converts complex Kernel types (ArrayValue, MapValue)
+   * Serializable representation of Metadata. Converts complex Kernel types (ArrayValue, MapValue)
    * to simple Java types (List, Map) that are serializable.
    */
   private static class SerializableMetadata implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private final String id;
-    private final String name; // null if absent
-    private final String description; // null if absent
+    @Nullable private final String name;
+    @Nullable private final String description;
     private final String formatProvider;
     private final Map<String, String> formatOptions;
     private final String schemaString;
     private final List<String> partitionColumnsList;
-    private final Long createdTime; // null if absent
+    @Nullable private final Long createdTime;
     private final Map<String, String> configuration;
 
     SerializableMetadata(Metadata metadata) {

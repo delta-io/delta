@@ -821,6 +821,9 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
 
+      // JSR-305 annotations for @Nullable
+      "com.google.code.findbugs" % "jsr305" % "3.0.2",
+
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
