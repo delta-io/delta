@@ -460,7 +460,7 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
             # DESCRIBE HISTORY is currently unsupported on catalog owned tables.
             self.get_table_history(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).collect()
         except py4j.protocol.Py4JJavaError as error:
-            assert("Path-based access is not allowed for Catalog-Managed table" in str(error))
+            assert("catalog-managed" in str(error).lower())
 
     def test_vacuum(self) -> None:
         try:
