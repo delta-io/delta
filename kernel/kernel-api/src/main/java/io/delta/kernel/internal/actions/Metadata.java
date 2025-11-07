@@ -319,8 +319,7 @@ public class Metadata implements Serializable {
 
   @Override
   public int hashCode() {
-    return Objects.hash(
-        id, name, description, format, schema, partitionColNames, createdTime, configuration);
+    return Objects.hash(id, name, description, format, schema, createdTime, configuration);
   }
 
   @Override
@@ -366,31 +365,31 @@ public class Metadata implements Serializable {
   }
 
   /**
-   * Serializable representation of Metadata for Spark driver → executor transmission. Converts
-   * complex Kernel types (ArrayValue, MapValue) to simple Java types (List, Map).
+   * Serializable representation of Metadata,  Convertsccomplex Kernel types (ArrayValue, MapValue)
+   * to simple Java types (List, Map) that are serializable.
    */
   private static class SerializableMetadata implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private final String id;
-    private final Optional<String> name;
-    private final Optional<String> description;
+    private final String name; // null if absent
+    private final String description; // null if absent
     private final String formatProvider;
     private final Map<String, String> formatOptions;
     private final String schemaString;
     private final List<String> partitionColumnsList;
-    private final Optional<Long> createdTime;
+    private final Long createdTime; // null if absent
     private final Map<String, String> configuration;
 
     SerializableMetadata(Metadata metadata) {
       this.id = metadata.id;
-      this.name = metadata.name;
-      this.description = metadata.description;
+      this.name = metadata.name.orElse(null);
+      this.description = metadata.description.orElse(null);
       this.formatProvider = metadata.format.getProvider();
       this.formatOptions = metadata.format.getOptions();
       this.schemaString = metadata.schemaString;
       this.partitionColumnsList = VectorUtils.toJavaList(metadata.partitionColumns);
-      this.createdTime = metadata.createdTime;
+      this.createdTime = metadata.createdTime.orElse(null);
       this.configuration = VectorUtils.toJavaMap(metadata.configurationMapValue);
     }
 
@@ -404,13 +403,13 @@ public class Metadata implements Serializable {
 
       return new Metadata(
           id,
-          name,
-          description,
+          Optional.ofNullable(name),
+          Optional.ofNullable(description),
           format,
           schemaString,
           schema,
           partitionColumns,
-          createdTime,
+          Optional.ofNullable(createdTime),
           configurationMapValue);
     }
   }
