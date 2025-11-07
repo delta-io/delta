@@ -88,7 +88,9 @@ public class SparkGoldenTableTest extends QueryTest {
             });
     SparkTable table =
         new SparkTable(
-            Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath);
+            Identifier.of(new String[] {"spark_catalog", "default"}, tableName),
+            tablePath,
+            options);
     StructType expectedDataSchema =
         DataTypes.createStructType(
             new StructField[] {
