@@ -31,9 +31,9 @@ trait ActionUtils extends VectorTestUtils {
       TableFeatures.TABLE_FEATURES_MIN_READER_VERSION,
       TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION,
       Set(
-        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()).asJava,
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName()).asJava,
       Set(
-        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName(),
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName(),
         TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()).asJava)
 
   val basicPartitionedMetadata = testMetadata(
