@@ -40,7 +40,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   // Tests for [[TableFeature]] implementations                                                  //
   /////////////////////////////////////////////////////////////////////////////////////////////////
   val readerWriterFeatures = Seq(
-    "catalogOwned-preview",
+    "catalogManaged",
     "columnMapping",
     "deletionVectors",
     "timestampNtz",
@@ -196,7 +196,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   })
 
-  Seq("domainMetadata", "vacuumProtocolCheck", "clustering", "catalogOwned-preview").foreach {
+  Seq("domainMetadata", "vacuumProtocolCheck", "clustering", "catalogManaged").foreach {
     feature =>
       test(s"doesn't support auto enable by metadata: $feature") {
         val tableFeature = TableFeatures.getTableFeature(feature)
@@ -228,7 +228,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       .collect(toList()).asScala
 
     val expected = Seq(
-      "catalogOwned-preview",
+      "catalogManaged",
       "columnMapping",
       "v2Checkpoint",
       "variantType",
@@ -252,7 +252,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     // are writable because the metadata has not been set the info that
     // these features are enabled
     val expected = Seq(
-      "catalogOwned-preview",
+      "catalogManaged",
       "columnMapping",
       "v2Checkpoint",
       "deletionVectors",
@@ -316,7 +316,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   // Reads: Supported table features represented as readerFeatures in the protocol
   Seq(
-    "catalogOwned-preview",
+    "catalogManaged",
     "variantType",
     "variantType-preview",
     "variantShredding-preview",
@@ -371,8 +371,8 @@ class TableFeaturesSuite extends AnyFunSuite {
   // Writes
 
   checkWriteSupported(
-    "validateKernelCanWriteToTable: protocol 7 with catalogOwned-preview",
-    new Protocol(3, 7, singleton("catalogOwned-preview"), singleton("catalogOwned-preview")),
+    "validateKernelCanWriteToTable: protocol 7 with catalogManaged",
+    new Protocol(3, 7, singleton("catalogManaged"), singleton("catalogManaged")),
     testMetadata())
 
   checkWriteUnsupported(
