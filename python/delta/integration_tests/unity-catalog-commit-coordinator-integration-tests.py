@@ -80,6 +80,11 @@ class UnityCatalogManagedTableTestBase(unittest.TestCase):
     def read(self, table_name: str) -> DataFrame:
         return spark.read.table(table_name)
 
+    def current_version(self, table_name: str) -> int:
+        # Access the delta table's max version.
+        dt = DeltaTable.forName(spark, table_name)
+        return dt.history().selectExpr("max(version)").collect()[0][0]
+
     def read_with_cdf_timestamp(self, timestamp: str, table_name: str) -> DataFrame:
         return spark.read.option('readChangeFeed', 'true').option(
             "startingTimestamp", timestamp).table(table_name)
@@ -471,8 +476,9 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
 
     def test_restore(self) -> None:
         try:
+            current_version = self.current_version(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
             # Restore is currently unsupported on catalog owned tables.
-            spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO VERSION AS OF 0")
+            spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO VERSION AS OF {current_version-1}")
         except AnalysisException as error:
             assert("Cannot time travel" in str(error))
 
@@ -517,8 +523,9 @@ class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
     def test_change_data_feed_with_version(self) -> None:
         self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
         try:
+            current_version = self.current_version(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
             self.read_with_cdf_version(
-                0,
+                current_version - 1,
                 MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).select("id", "_change_type")
         except AnalysisException as error:
             assert("Cannot time travel" in str(error))
