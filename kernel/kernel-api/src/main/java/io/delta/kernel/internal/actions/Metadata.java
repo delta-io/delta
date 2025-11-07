@@ -373,7 +373,7 @@ public class Metadata implements Serializable {
   }
 
   /**
-   * Serializable representation of Metadata, Convertsccomplex Kernel types (ArrayValue, MapValue)
+   * Serializable representation of Metadata, Converts complex Kernel types (ArrayValue, MapValue)
    * to simple Java types (List, Map) that are serializable.
    */
   private static class SerializableMetadata implements Serializable {
