@@ -26,7 +26,7 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class InvalidSchemaException extends KernelException {
 
-    public InvalidSchemaException(String message) {
-        super(message);
-    }
+  public InvalidSchemaException(String message) {
+    super(message);
+  }
 }

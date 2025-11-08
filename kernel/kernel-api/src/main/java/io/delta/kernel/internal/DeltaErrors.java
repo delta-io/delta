@@ -220,7 +220,8 @@ public final class DeltaErrors {
         format("Cannot use column name '%s' because it is reserved for internal use", columnName));
   }
 
-  public static InvalidSchemaException invalidColumnName(String columnName, String unsupportedChars) {
+  public static InvalidSchemaException invalidColumnName(
+      String columnName, String unsupportedChars) {
     return new InvalidSchemaException(
         format(
             "Column name '%s' contains one of the unsupported (%s) characters.",
