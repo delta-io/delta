@@ -2029,6 +2029,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val (protocolUpdate1, metadataUpdate1) =
       UniversalFormat.enforceInvariantsAndDependencies(
         spark,
+        catalogTable,
         // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
         snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
