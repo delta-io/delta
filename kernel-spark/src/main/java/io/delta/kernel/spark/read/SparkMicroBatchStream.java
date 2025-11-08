@@ -40,6 +40,7 @@ import org.apache.spark.sql.delta.DeltaStartingVersion;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -203,6 +204,37 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   ////////////////////
   // getFileChanges //
   ////////////////////
+
+  /**
+   * Get file changes with rate limiting applied. Mimics DeltaSource.getFileChangesWithRateLimit.
+   *
+   * @param fromVersion The starting version (exclusive with fromIndex)
+   * @param fromIndex The starting index within fromVersion (exclusive)
+   * @param isInitialSnapshot Whether this is the initial snapshot
+   * @param limits Rate limits to apply (Option.empty for no limits)
+   * @return An iterator of IndexedFile with rate limiting applied
+   */
+  CloseableIterator<IndexedFile> getFileChangesWithRateLimit(
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Option<DeltaSource.AdmissionLimits> limits) {
+    // TODO(#5319): getFileChangesForCDC if CDC is enabled.
+
+    CloseableIterator<IndexedFile> changes =
+        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, /*endOffset=*/ Option.empty());
+
+    // Take each change until we've seen the configured number of addFiles. Some changes don't
+    // represent file additions; we retain them for offset tracking, but they don't count toward
+    // the maxFilesPerTrigger conf.
+    if (limits.isDefined()) {
+      DeltaSource.AdmissionLimits admissionLimits = limits.get();
+      changes = changes.takeWhile(admissionLimits::admit);
+    }
+
+    // TODO(#5318): Stop at schema change barriers
+    return changes;
+  }
 
   /**
    * Get file changes between fromVersion/fromIndex and endOffset. This is the Kernel-based
