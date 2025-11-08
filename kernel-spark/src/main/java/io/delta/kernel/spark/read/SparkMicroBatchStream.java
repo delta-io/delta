@@ -15,7 +15,8 @@
  */
 package io.delta.kernel.spark.read;
 
-import io.delta.kernel.*;
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
@@ -24,6 +25,7 @@ import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.utils.StreamingHelper;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -55,14 +57,13 @@ public class SparkMicroBatchStream implements MicroBatchStream {
           new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE)));
 
   private final Engine engine;
-  private final String tablePath;
+  private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
-  private final StreamingHelper streamingHelper;
   private final SparkSession spark;
 
-  public SparkMicroBatchStream(String tablePath, Configuration hadoopConf) {
+  public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
     this(
-        tablePath,
+        snapshotManager,
         hadoopConf,
         SparkSession.active(),
         new DeltaOptions(
@@ -71,12 +72,14 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   }
 
   public SparkMicroBatchStream(
-      String tablePath, Configuration hadoopConf, SparkSession spark, DeltaOptions options) {
+      DeltaSnapshotManager snapshotManager,
+      Configuration hadoopConf,
+      SparkSession spark,
+      DeltaOptions options) {
     this.spark = spark;
-    this.tablePath = tablePath;
+    this.snapshotManager = snapshotManager;
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = options;
-    this.streamingHelper = new StreamingHelper(tablePath, hadoopConf);
   }
 
   ////////////
@@ -142,18 +145,18 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
       if (startingVersion instanceof StartingVersionLatest$) {
-        Snapshot latestSnapshot = streamingHelper.loadLatestSnapshot();
+        Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
         // "latest": start reading from the next commit
         return Optional.of(latestSnapshot.getVersion() + 1);
       } else if (startingVersion instanceof StartingVersion) {
         long version = ((StartingVersion) startingVersion).version();
-        if (!validateProtocolAt(spark, tablePath, engine, version)) {
+        if (!validateProtocolAt(spark, snapshotManager, engine, version)) {
           // When starting from a given version, we don't require that the snapshot of this
           // version can be reconstructed, even though the input table is technically in an
           // inconsistent state. If the snapshot cannot be reconstructed, then the protocol
           // check is skipped, so this is technically not safe, but we keep it this way for
           // historical reasons.
-          streamingHelper.checkVersionExists(
+          snapshotManager.checkVersionExists(
               version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
         }
         return Optional.of(version);
@@ -174,7 +177,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
    * <p>Returns true when the validation was performed and succeeded.
    */
   private static boolean validateProtocolAt(
-      SparkSession spark, String tablePath, Engine engine, long version) {
+      SparkSession spark, DeltaSnapshotManager snapshotManager, Engine engine, long version) {
     boolean alwaysValidateProtocol =
         (Boolean)
             spark
@@ -189,7 +192,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       // Attempt to construct a snapshot at the startingVersion to validate the protocol
       // If snapshot reconstruction fails, fall back to old behavior where the only
       // requirement was for the commit to exist
-      TableManager.loadSnapshot(tablePath).atVersion(version).build(engine);
+      snapshotManager.loadSnapshotAt(version);
       return true;
     } catch (UnsupportedTableFeatureException e) {
       // Re-throw fatal unsupported table feature exceptions
@@ -288,21 +291,12 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Option<DeltaSourceOffset> endOffset) {
     List<IndexedFile> allIndexedFiles = new ArrayList<>();
-    // StartBoundary (inclusive)
-    CommitRangeBuilder builder =
-        TableManager.loadCommitRange(tablePath)
-            .withStartBoundary(CommitRangeBuilder.CommitBoundary.atVersion(startVersion));
-    if (endOffset.isDefined()) {
-      // EndBoundary (inclusive)
-      builder =
-          builder.withEndBoundary(
-              CommitRangeBuilder.CommitBoundary.atVersion(endOffset.get().reservoirVersion()));
-    }
-    CommitRange commitRange = builder.build(engine);
+    Optional<Long> endVersionOpt =
+        endOffset.isDefined() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
+    CommitRange commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
-    // TODO(#5318): This is not working with ccv2 table
-    Snapshot startSnapshot =
-        TableManager.loadSnapshot(tablePath).atVersion(startVersion).build(engine);
+    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
+    String tablePath = startSnapshot.getPath();
     try (CloseableIterator<ColumnarBatch> actionsIter =
         commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
       // Each ColumnarBatch belongs to a single commit version,
@@ -330,7 +324,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
         // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
         // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
         // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-        validateCommit(batch, version, endOffset);
+        validateCommit(batch, version, tablePath, endOffset);
 
         currentVersion = version;
         currentIndex =
@@ -380,7 +374,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
    * @throws RuntimeException if the commit is invalid.
    */
   private void validateCommit(
-      ColumnarBatch batch, long version, Option<DeltaSourceOffset> endOffsetOpt) {
+      ColumnarBatch batch, long version, String tablePath, Option<DeltaSourceOffset> endOffsetOpt) {
     // If endOffset is at the beginning of this version, exit early.
     if (endOffsetOpt.isDefined()) {
       DeltaSourceOffset endOffset = endOffsetOpt.get();
