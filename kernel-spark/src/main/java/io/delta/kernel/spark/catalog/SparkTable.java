@@ -44,7 +44,9 @@ public class SparkTable implements Table, SupportsRead {
   private final Identifier identifier;
   private final Map<String, String> options;
   private final DeltaSnapshotManager snapshotManager;
-  private final Snapshot snapshot;
+  /** Snapshot created during connector setup */
+  private final Snapshot initialSnapshot;
+
   private final Configuration hadoopConf;
 
   private final StructType schema;
@@ -78,11 +80,11 @@ public class SparkTable implements Table, SupportsRead {
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
     // Load the initial snapshot through the manager
-    this.snapshot = snapshotManager.loadLatestSnapshot();
+    this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 
-    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
     this.partColNames =
-        Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
+        Collections.unmodifiableList(new ArrayList<>(initialSnapshot.getPartitionColumnNames()));
 
     final List<StructField> dataFields = new ArrayList<>();
     final List<StructField> partitionFields = new ArrayList<>();
@@ -153,7 +155,7 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public Map<String, String> properties() {
-    Map<String, String> props = new HashMap<>(snapshot.getTableProperties());
+    Map<String, String> props = new HashMap<>(initialSnapshot.getTableProperties());
     props.putAll(this.options);
     return Collections.unmodifiableMap(props);
   }
@@ -168,7 +170,8 @@ public class SparkTable implements Table, SupportsRead {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
-    return new SparkScanBuilder(name(), snapshotManager, dataSchema, partitionSchema, merged);
+    return new SparkScanBuilder(
+        name(), initialSnapshot, snapshotManager, dataSchema, partitionSchema, merged);
   }
 
   @Override

@@ -37,22 +37,6 @@ import org.apache.spark.annotation.Experimental;
 public interface DeltaSnapshotManager {
 
   /**
-   * Returns a cached snapshot without guaranteeing its freshness.
-   *
-   * <p><b>Expected Behavior:</b>
-   *
-   * <ul>
-   *   <li>Returns the currently cached snapshot if one exists
-   *   <li>If no cached snapshot exists, loads and returns the latest snapshot (equivalent to
-   *       calling {@link #loadLatestSnapshot()})
-   *   <li>The returned snapshot may be stale if the table has been modified since it was loaded
-   * </ul>
-   *
-   * @return the cached snapshot, or a newly loaded latest snapshot if no cached snapshot exists
-   */
-  Snapshot unsafeVolatileSnapshot();
-
-  /**
    * Loads and returns the latest snapshot of the Delta table.
    *
    * @return the latest snapshot of the Delta table

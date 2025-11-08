@@ -28,7 +28,6 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
 import java.util.ArrayList;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 
@@ -37,41 +36,21 @@ import org.apache.spark.annotation.Experimental;
 public class PathBasedSnapshotManager implements DeltaSnapshotManager {
 
   private final String tablePath;
-  private final AtomicReference<Snapshot> snapshotAtomicReference;
   private final Engine kernelEngine;
 
   public PathBasedSnapshotManager(String tablePath, Configuration hadoopConf) {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
-    this.snapshotAtomicReference = new AtomicReference<>();
     this.kernelEngine = DefaultEngine.create(requireNonNull(hadoopConf, "hadoopConf is null"));
   }
 
   /**
-   * Returns the cached snapshot without guaranteeing its freshness.
-   *
-   * <p>This method uses atomic operations to ensure thread safety when initializing the cached
-   * snapshot. If multiple threads call this method concurrently when the cache is empty, only one
-   * will load the snapshot and all others will use that loaded snapshot.
-   *
-   * @return the cached snapshot, or a newly loaded snapshot if none exists
-   */
-  @Override
-  public Snapshot unsafeVolatileSnapshot() {
-    return snapshotAtomicReference.updateAndGet(
-        current ->
-            current != null ? current : TableManager.loadSnapshot(tablePath).build(kernelEngine));
-  }
-
-  /**
-   * Loads and caches the latest snapshot of the Delta table.
+   * Loads the latest snapshot of the Delta table.
    *
    * @return the newly loaded snapshot
    */
   @Override
   public Snapshot loadLatestSnapshot() {
-    Snapshot snapshot = TableManager.loadSnapshot(tablePath).build(kernelEngine);
-    snapshotAtomicReference.set(snapshot);
-    return snapshot;
+    return TableManager.loadSnapshot(tablePath).build(kernelEngine);
   }
 
   /**

@@ -50,7 +50,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
         new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
-    Snapshot kernelSnapshot = snapshotManager.unsafeVolatileSnapshot();
+    Snapshot kernelSnapshot = snapshotManager.loadLatestSnapshot();
 
     spark.sql(String.format("INSERT INTO %s VALUES (4, 'David')", testTableName));
 
@@ -76,7 +76,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
         deltaLog.update(false, Option.empty(), Option.empty());
     Snapshot updatedSnapshot = snapshotManager.loadLatestSnapshot();
     org.apache.spark.sql.delta.Snapshot cachedSnapshot = deltaLog.unsafeVolatileSnapshot();
-    Snapshot kernelcachedSnapshot = snapshotManager.unsafeVolatileSnapshot();
+    Snapshot kernelcachedSnapshot = snapshotManager.loadLatestSnapshot();
 
     assertEquals(1L, updatedSnapshot.getVersion());
     assertEquals(deltaSnapshot.version(), updatedSnapshot.getVersion());

@@ -53,13 +53,25 @@ public class SparkScanBuilder
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
 
+  /**
+   * Creates a SparkScanBuilder with the given snapshot and configuration.
+   *
+   * @param tableName the name of the table
+   * @param initialSnapshot Snapshot created during connector setup
+   * @param snapshotManager the snapshot manager for this table
+   * @param dataSchema the data schema (non-partition columns)
+   * @param partitionSchema the partition schema
+   * @param options scan options
+   */
   public SparkScanBuilder(
       String tableName,
+      io.delta.kernel.Snapshot initialSnapshot,
       DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
       CaseInsensitiveStringMap options) {
-    this.kernelScanBuilder = snapshotManager.unsafeVolatileSnapshot().getScanBuilder();
+    this.kernelScanBuilder =
+        requireNonNull(initialSnapshot, "initialSnapshot is null").getScanBuilder();
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");

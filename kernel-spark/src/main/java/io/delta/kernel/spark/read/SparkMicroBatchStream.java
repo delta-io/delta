@@ -264,6 +264,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     CommitRange commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
+    String tablePath = startSnapshot.getPath();
     try (CloseableIterator<ColumnarBatch> actionsIter =
         commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
       // Each ColumnarBatch belongs to a single commit version,
@@ -291,7 +292,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
         // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
         // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
         // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-        validateCommit(batch, version, endOffset);
+        validateCommit(batch, version, tablePath, endOffset);
 
         currentVersion = version;
         currentIndex =
@@ -341,7 +342,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
    * @throws RuntimeException if the commit is invalid.
    */
   private void validateCommit(
-      ColumnarBatch batch, long version, Option<DeltaSourceOffset> endOffsetOpt) {
+      ColumnarBatch batch, long version, String tablePath, Option<DeltaSourceOffset> endOffsetOpt) {
     // If endOffset is at the beginning of this version, exit early.
     if (endOffsetOpt.isDefined()) {
       DeltaSourceOffset endOffset = endOffsetOpt.get();
@@ -359,8 +360,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       if (removeOpt.isPresent()) {
         RemoveFile removeFile = removeOpt.get();
         Throwable error =
-            DeltaErrors.deltaSourceIgnoreDeleteError(
-                version, removeFile.getPath(), snapshotManager.unsafeVolatileSnapshot().getPath());
+            DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFile.getPath(), tablePath);
         if (error instanceof RuntimeException) {
           throw (RuntimeException) error;
         } else {

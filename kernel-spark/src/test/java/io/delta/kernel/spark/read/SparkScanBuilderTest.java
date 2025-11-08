@@ -66,6 +66,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
+            snapshot,
             snapshotManager,
             dataSchema,
             partitionSchema,
@@ -109,6 +110,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
+            snapshot,
             snapshotManager,
             dataSchema,
             partitionSchema,
@@ -684,7 +686,12 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
     return new SparkScanBuilder(
-        tableName, snapshotManager, dataSchema, partitionSchema, CaseInsensitiveStringMap.empty());
+        tableName,
+        snapshot,
+        snapshotManager,
+        dataSchema,
+        partitionSchema,
+        CaseInsensitiveStringMap.empty());
   }
 
   private Predicate[] getPushedKernelPredicates(SparkScanBuilder builder) throws Exception {
