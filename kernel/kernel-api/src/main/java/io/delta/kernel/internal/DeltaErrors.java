@@ -193,8 +193,8 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException unsupportedDataType(DataType dataType) {
-    return new KernelException("Kernel doesn't support writing data of type: " + dataType);
+  public static InvalidSchemaException unsupportedDataType(DataType dataType) {
+    return new InvalidSchemaException("Kernel doesn't support writing data of type: " + dataType);
   }
 
   public static KernelException unsupportedStatsDataType(DataType dataType) {
@@ -206,13 +206,13 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, colName, dataType));
   }
 
-  public static KernelException duplicateColumnsInSchema(
+  public static InvalidSchemaException duplicateColumnsInSchema(
       StructType schema, List<String> duplicateColumns) {
     String msg =
         format(
             "Schema contains duplicate columns: %s.\nSchema: %s",
             String.join(", ", duplicateColumns), schema);
-    return new KernelException(msg);
+    return new InvalidSchemaException(msg);
   }
 
   public static KernelException conflictWithReservedInternalColumnName(String columnName) {
@@ -220,8 +220,8 @@ public final class DeltaErrors {
         format("Cannot use column name '%s' because it is reserved for internal use", columnName));
   }
 
-  public static KernelException invalidColumnName(String columnName, String unsupportedChars) {
-    return new KernelException(
+  public static InvalidSchemaException invalidColumnName(String columnName, String unsupportedChars) {
+    return new InvalidSchemaException(
         format(
             "Column name '%s' contains one of the unsupported (%s) characters.",
             columnName, unsupportedChars));
