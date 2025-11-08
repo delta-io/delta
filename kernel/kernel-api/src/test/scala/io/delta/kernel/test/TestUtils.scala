@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.test
 
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, ObjectOutputStream}
 import java.util.Optional
 
 import io.delta.kernel.expressions.{Column, Literal}
@@ -60,5 +61,30 @@ trait TestUtils {
   implicit class JavaOptionalOps[T](optional: Optional[T]) {
     def toScala: Option[T] =
       if (optional.isPresent) Some(optional.get()) else None
+  }
+
+  /**
+   * Helper to test Java serialization by performing a round-trip serialize/deserialize.
+   *
+   * @param obj The object to serialize (must be Serializable)
+   * @return The deserialized object
+   */
+  def roundTripSerialize[T](obj: T): T = {
+    val baos = new ByteArrayOutputStream()
+    val oos = new ObjectOutputStream(baos)
+    try {
+      oos.writeObject(obj)
+      oos.flush()
+    } finally {
+      oos.close()
+    }
+
+    val bais = new ByteArrayInputStream(baos.toByteArray)
+    val ois = new ObjectInputStream(bais)
+    try {
+      ois.readObject().asInstanceOf[T]
+    } finally {
+      ois.close()
+    }
   }
 }

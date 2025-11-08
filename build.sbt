@@ -538,7 +538,6 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 // ============================================================
 lazy val sparkV2 = (project in file("kernel-spark"))
   .dependsOn(sparkV1Filtered)
-  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(goldenTables % "test")
   .settings(
@@ -549,6 +548,15 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
     Test / javaOptions ++= Seq("-ea"),
+    // make sure shaded kernel-api jar exists before compiling/testing
+    Compile / compile := (Compile / compile)
+      .dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test := (Test / test)
+      .dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+    Compile / unmanagedJars ++= Seq(
+      (kernelApi / Compile / packageBin).value
+    ),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
@@ -820,6 +828,9 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+
+      // JSR-305 annotations for @Nullable
+      "com.google.code.findbugs" % "jsr305" % "3.0.2",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",

@@ -1186,6 +1186,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def readSourceSchemaConflictException: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_READ_SOURCE_SCHEMA_CONFLICT",
+      messageParameters = Array.empty
+    )
+  }
+
   def schemaNotProvidedException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_SCHEMA_NOT_PROVIDED",
@@ -3854,10 +3861,10 @@ class ConcurrentWriteException(message: String)
 case class VersionNotFoundException(
     userVersion: Long,
     earliest: Long,
-    latest: Long) extends AnalysisException(
-      s"Cannot time travel Delta table to version $userVersion. " +
-      s"Available versions: [$earliest, $latest]."
-    )
+    latest: Long) extends DeltaAnalysisException(
+  errorClass = "DELTA_VERSION_NOT_FOUND",
+  messageParameters = Array(userVersion.toString, earliest.toString, latest.toString)
+)
 
 /**
  * This class is kept for backward compatibility.

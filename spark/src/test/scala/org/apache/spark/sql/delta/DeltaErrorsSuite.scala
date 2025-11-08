@@ -1547,6 +1547,18 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_VERSION_INVALID", "42815", Map("version" -> version))
     }
     {
+      val version = 2
+      val earliest = 0
+      val latest = 1
+      val e = intercept[DeltaAnalysisException] {
+        throw VersionNotFoundException(version, earliest, latest)
+      }
+      checkError(e, "DELTA_VERSION_NOT_FOUND", "22003", Map(
+        "userVersion" -> version.toString,
+        "earliest" -> earliest.toString,
+        "latest" -> latest.toString))
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.notADeltaSourceException("sample")
       }
@@ -2163,6 +2175,12 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.specifySchemaAtReadTimeException
       }
       checkError(e, "DELTA_UNSUPPORTED_SCHEMA_DURING_READ", "0AKDC", Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.readSourceSchemaConflictException
+      }
+      checkError(e, "DELTA_READ_SOURCE_SCHEMA_CONFLICT", "42K07", Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {

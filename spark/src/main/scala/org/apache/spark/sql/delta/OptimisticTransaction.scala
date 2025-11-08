@@ -1933,7 +1933,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
-    deltaLog.checkpoint(currentSnapshot)
+    deltaLog.checkpoint(currentSnapshot, catalogTable)
     currentSnapshot
   }
 

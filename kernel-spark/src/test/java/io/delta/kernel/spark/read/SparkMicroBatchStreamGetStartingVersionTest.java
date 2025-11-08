@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
+import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -94,8 +95,10 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
     // dsv2
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
-        new SparkMicroBatchStream(testTablePath, new Configuration());
+        new SparkMicroBatchStream(snapshotManager, new Configuration());
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, Optional.empty(), "No options provided");
@@ -213,9 +216,11 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
     // dsv2
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            testTablePath, new Configuration(), spark, createDeltaOptions(startingVersion));
+            snapshotManager, new Configuration(), spark, createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(
@@ -250,9 +255,11 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
     // DSv2: Create SparkMicroBatchStream and get starting version
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            testTablePath, new Configuration(), spark, createDeltaOptions(startingVersion));
+            snapshotManager, new Configuration(), spark, createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);
