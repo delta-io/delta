@@ -466,8 +466,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           }
           logVacuumStart(
             spark,
-            deltaLog,
-            path,
+            table,
             diffFiles,
             sizeOfDataToDelete,
             retentionMillis,
@@ -479,7 +478,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
           } catch {
             case t: Throwable =>
-              logVacuumEnd(deltaLog, spark, path, commandMetrics = commandMetrics)
+              logVacuumEnd(spark, table, commandMetrics = commandMetrics)
               throw t
           }
           val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
@@ -503,9 +502,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             typeOfVacuum = vacuumType.toString)
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
           logVacuumEnd(
-            deltaLog,
             spark,
-            path,
+            table,
             commandMetrics = commandMetrics,
             Some(filesDeleted),
             Some(dirCounts))
@@ -703,8 +701,7 @@ trait VacuumCommandImpl extends DeltaCommand {
    * Record Vacuum specific metrics in the commit log at the START of vacuum.
    *
    * @param spark - spark session
-   * @param deltaLog - DeltaLog of the table
-   * @param path - the (data) path to the root of the table
+   * @param table - the delta table
    * @param diff - the list of paths (files, directories) that are safe to delete
    * @param sizeOfDataToDelete - the amount of data (bytes) to be deleted
    * @param specifiedRetentionMillis - the optional override retention period (millis) to keep
@@ -713,23 +710,23 @@ trait VacuumCommandImpl extends DeltaCommand {
    */
   protected def logVacuumStart(
       spark: SparkSession,
-      deltaLog: DeltaLog,
-      path: Path,
+      table: DeltaTableV2,
       diff: Dataset[String],
       sizeOfDataToDelete: Long,
       specifiedRetentionMillis: Option[Long],
       defaultRetentionMillis: Long): Unit = {
+    val deltaLog = table.deltaLog
     logInfo(
       log"Deleting untracked files and empty directories in " +
-      log"${MDC(DeltaLogKeys.PATH, path)}. The amount " +
+      log"${MDC(DeltaLogKeys.PATH, deltaLog.dataPath)}. The amount " +
       log"of data to be deleted is ${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} (in bytes)"
       )
 
     // We perform an empty commit in order to record information about the Vacuum
-    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), path)) {
+    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
-      val txn = deltaLog.startTransaction()
+      val txn = table.startTransaction()
       val metrics = Map[String, SQLMetric](
         "numFilesToDelete" -> createMetric(spark.sparkContext, "number of files to deleted"),
         "sizeOfDataToDelete" -> createMetric(spark.sparkContext,
@@ -750,23 +747,22 @@ trait VacuumCommandImpl extends DeltaCommand {
   /**
    * Record Vacuum specific metrics in the commit log at the END of vacuum.
    *
-   * @param deltaLog - DeltaLog of the table
    * @param spark - spark session
-   * @param path - the (data) path to the root of the table
+   * @param table - the delta table
    * @param filesDeleted - if the vacuum completed this will contain the number of files deleted.
    *                       if the vacuum failed, this will be None.
    * @param dirCounts - if the vacuum completed this will contain the number of directories
    *                    vacuumed. if the vacuum failed, this will be None.
    */
   protected def logVacuumEnd(
-      deltaLog: DeltaLog,
       spark: SparkSession,
-      path: Path,
+      table: DeltaTableV2,
       commandMetrics: Map[String, SQLMetric],
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
-    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), path)) {
-      val txn = deltaLog.startTransaction()
+    val deltaLog = table.deltaLog
+    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
+      val txn = table.startTransaction()
       val status = if (filesDeleted.isEmpty && dirCounts.isEmpty) { "FAILED" } else { "COMPLETED" }
       if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
         // Populate top level metrics.

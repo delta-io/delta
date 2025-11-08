@@ -61,6 +61,17 @@ public abstract class WorkloadRunner {
    */
   public abstract void executeAsBenchmark(Blackhole blackhole) throws Exception;
 
+  /**
+   * Cleans up any state created during benchmark execution. For write workloads, this removes added
+   * files and reverts table state. For read workloads, this is typically a no-op.
+   *
+   * <p>This method is called after each benchmark invocation to ensure a clean state for the next
+   * run.
+   *
+   * @throws Exception if any error occurs during cleanup.
+   */
+  public abstract void cleanup() throws Exception;
+
   // TODO: Add executeAsTest() method for correctness validation
   // public abstract void executeAsTest() throws Exception;
 }

@@ -17,6 +17,8 @@
 package io.delta.kernel.spark.utils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BinaryType;
@@ -26,6 +28,7 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DateType;
 import io.delta.kernel.types.DecimalType;
 import io.delta.kernel.types.DoubleType;
+import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.FloatType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
@@ -35,9 +38,15 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
+import java.util.stream.Stream;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.Metadata;
+import org.apache.spark.sql.types.MetadataBuilder;
 import org.apache.spark.sql.types.StructField;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /** Tests for {@link SchemaUtils}. */
 public class SchemaUtilsTest {
@@ -159,6 +168,70 @@ public class SchemaUtilsTest {
     assertEquals(expectedSparkSchema, actualSparkSchema);
   }
 
+  static Stream<Arguments> nullInPrimitiveArraysProvider() {
+    return Stream.of(
+        Arguments.of(
+            "Long",
+            FieldMetadata.builder().putLongArray("ids", new Long[] {1L, null, 3L}).build(),
+            1),
+        Arguments.of(
+            "Double",
+            FieldMetadata.builder().putDoubleArray("scores", new Double[] {1.1, 2.2, null}).build(),
+            2),
+        Arguments.of(
+            "Boolean",
+            FieldMetadata.builder()
+                .putBooleanArray("flags", new Boolean[] {true, null, false})
+                .build(),
+            1));
+  }
+
+  @ParameterizedTest(name = "{0} array with null at index {2}")
+  @MethodSource("nullInPrimitiveArraysProvider")
+  public void testNullInPrimitiveArrays(
+      String typeName, FieldMetadata kernelMetadata, int expectedNullIndex) {
+    Exception ex =
+        assertThrows(
+            Exception.class,
+            () -> SchemaUtils.convertKernelFieldMetadataToSparkMetadata(kernelMetadata));
+    assertTrue(ex.getMessage().contains("Null element at index " + expectedNullIndex));
+  }
+
+  @Test
+  public void testSchemaRoundTripWithFieldMetadata() {
+    // Schema with field metadata (e.g., column mapping)
+    org.apache.spark.sql.types.StructType sparkSchema =
+        new org.apache.spark.sql.types.StructType()
+            .add(
+                "user_id",
+                DataTypes.IntegerType,
+                true,
+                new MetadataBuilder()
+                    .putLong("delta.columnMapping.id", 123L)
+                    .putString("delta.columnMapping.physicalName", "col-abc-123")
+                    .build());
+
+    StructType expectedKernelSchema =
+        new StructType()
+            .add(
+                "user_id",
+                IntegerType.INTEGER,
+                true,
+                FieldMetadata.builder()
+                    .putLong("delta.columnMapping.id", 123L)
+                    .putString("delta.columnMapping.physicalName", "col-abc-123")
+                    .build());
+
+    // Verify Spark → Kernel conversion
+    StructType actualKernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(sparkSchema);
+    assertEquals(expectedKernelSchema, actualKernelSchema);
+
+    // Verify Kernel → Spark conversion
+    org.apache.spark.sql.types.StructType sparkSchema2 =
+        SchemaUtils.convertKernelSchemaToSparkSchema(actualKernelSchema);
+    assertEquals(sparkSchema, sparkSchema2);
+  }
+
   private void checkConversion(
       org.apache.spark.sql.types.DataType sparkDataType, DataType kernelDataType) {
     DataType toKernel = SchemaUtils.convertSparkDataTypeToKernelDataType(sparkDataType);
@@ -166,5 +239,133 @@ public class SchemaUtilsTest {
     org.apache.spark.sql.types.DataType toSpark =
         SchemaUtils.convertKernelDataTypeToSparkDataType(kernelDataType);
     assertEquals(sparkDataType, toSpark);
+  }
+
+  ////////////////////////////////
+  // Field Metadata Tests       //
+  ////////////////////////////////
+
+  static Stream<Arguments> metadataTypesProvider() {
+    return Stream.of(
+        // Empty
+        Arguments.of("Empty", Metadata.empty(), FieldMetadata.empty()),
+        // Primitives
+        Arguments.of(
+            "Long",
+            new MetadataBuilder().putLong("id", 123L).build(),
+            FieldMetadata.builder().putLong("id", 123L).build()),
+        Arguments.of(
+            "Double",
+            new MetadataBuilder().putDouble("score", 3.14).build(),
+            FieldMetadata.builder().putDouble("score", 3.14).build()),
+        Arguments.of(
+            "Boolean",
+            new MetadataBuilder().putBoolean("flag", true).build(),
+            FieldMetadata.builder().putBoolean("flag", true).build()),
+        Arguments.of(
+            "String",
+            new MetadataBuilder().putString("name", "test").build(),
+            FieldMetadata.builder().putString("name", "test").build()),
+        Arguments.of(
+            "Null",
+            new MetadataBuilder().putNull("empty").build(),
+            FieldMetadata.builder().putNull("empty").build()),
+        // Arrays
+        Arguments.of(
+            "LongArray",
+            new MetadataBuilder().putLongArray("ids", new long[] {1L, 2L, 3L}).build(),
+            FieldMetadata.builder().putLongArray("ids", new Long[] {1L, 2L, 3L}).build()),
+        Arguments.of(
+            "DoubleArray",
+            new MetadataBuilder().putDoubleArray("scores", new double[] {1.1, 2.2, 3.3}).build(),
+            FieldMetadata.builder().putDoubleArray("scores", new Double[] {1.1, 2.2, 3.3}).build()),
+        Arguments.of(
+            "BooleanArray",
+            new MetadataBuilder()
+                .putBooleanArray("flags", new boolean[] {true, false, true})
+                .build(),
+            FieldMetadata.builder()
+                .putBooleanArray("flags", new Boolean[] {true, false, true})
+                .build()),
+        Arguments.of(
+            "StringArray",
+            new MetadataBuilder().putStringArray("names", new String[] {"a", "b", "c"}).build(),
+            FieldMetadata.builder().putStringArray("names", new String[] {"a", "b", "c"}).build()),
+        // Nested
+        Arguments.of(
+            "NestedMetadata",
+            new MetadataBuilder()
+                .putMetadata("inner", new MetadataBuilder().putString("nested", "value").build())
+                .build(),
+            FieldMetadata.builder()
+                .putFieldMetadata(
+                    "inner", FieldMetadata.builder().putString("nested", "value").build())
+                .build()),
+        // Metadata Array
+        Arguments.of(
+            "MetadataArray",
+            new MetadataBuilder()
+                .putMetadataArray(
+                    "items",
+                    new Metadata[] {
+                      new MetadataBuilder().putString("name", "first").build(),
+                      new MetadataBuilder().putString("name", "second").build()
+                    })
+                .build(),
+            FieldMetadata.builder()
+                .putFieldMetadataArray(
+                    "items",
+                    new FieldMetadata[] {
+                      FieldMetadata.builder().putString("name", "first").build(),
+                      FieldMetadata.builder().putString("name", "second").build()
+                    })
+                .build()),
+        // Complex (multiple types mixed)
+        Arguments.of(
+            "ComplexMetadata",
+            new MetadataBuilder()
+                .putLong("id", 123L)
+                .putDouble("score", 3.14)
+                .putBoolean("active", true)
+                .putString("name", "test")
+                .putLongArray("versions", new long[] {1L, 2L})
+                .putDoubleArray("scores", new double[] {1.1, 2.2})
+                .putBooleanArray("flags", new boolean[] {true, false})
+                .putStringArray("tags", new String[] {"a", "b"})
+                .putMetadata(
+                    "nested",
+                    new MetadataBuilder()
+                        .putString("type", "nested")
+                        .putLongArray("ids", new long[] {1L, 2L, 3L})
+                        .build())
+                .putNull("empty")
+                .build(),
+            FieldMetadata.builder()
+                .putLong("id", 123L)
+                .putDouble("score", 3.14)
+                .putBoolean("active", true)
+                .putString("name", "test")
+                .putLongArray("versions", new Long[] {1L, 2L})
+                .putDoubleArray("scores", new Double[] {1.1, 2.2})
+                .putBooleanArray("flags", new Boolean[] {true, false})
+                .putStringArray("tags", new String[] {"a", "b"})
+                .putFieldMetadata(
+                    "nested",
+                    FieldMetadata.builder()
+                        .putString("type", "nested")
+                        .putLongArray("ids", new Long[] {1L, 2L, 3L})
+                        .build())
+                .putNull("empty")
+                .build()));
+  }
+
+  @ParameterizedTest(name = "Metadata type: {0}")
+  @MethodSource("metadataTypesProvider")
+  public void testMetadataConversion(
+      String typeName, Metadata sparkMetadata, FieldMetadata kernelMetadata) {
+    assertEquals(
+        kernelMetadata, SchemaUtils.convertSparkMetadataToKernelFieldMetadata(sparkMetadata));
+    assertEquals(
+        sparkMetadata, SchemaUtils.convertKernelFieldMetadataToSparkMetadata(kernelMetadata));
   }
 }

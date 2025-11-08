@@ -18,8 +18,10 @@ package io.delta.kernel.spark.table;
 import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
+import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -42,14 +44,11 @@ public class SparkTable implements Table, SupportsRead {
           EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
 
   private final Identifier identifier;
-  private final String tablePath;
-  /**
-   * Additional table level storage properties used to configure the Hadoop FileSystem for I/O
-   * operations.
-   */
   private final Map<String, String> options;
-  // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
-  private final SnapshotImpl snapshot;
+  private final DeltaSnapshotManager snapshotManager;
+  /** Snapshot created during connector setup */
+  private final Snapshot initialSnapshot;
+
   private final Configuration hadoopConf;
 
   private final StructType schema;
@@ -101,12 +100,12 @@ public class SparkTable implements Table, SupportsRead {
   }
 
   /**
-   * Creates a SparkTable backed by a Delta Kernel snapshot and initializes Spark-facing metadata
-   * (schemas, partitioning, capabilities).
+   * Creates a SparkTable backed by a Delta Kernel snapshot manager and initializes Spark-facing
+   * metadata (schemas, partitioning, capabilities).
    *
-   * <p>Side effects: - Loads the latest snapshot for the given tablePath. - Builds Hadoop
-   * configuration from options for subsequent I/O. - Derives data schema, partition schema, and
-   * full table schema from the snapshot.
+   * <p>Side effects: - Initializes a SnapshotManager for the given tablePath. - Loads the latest
+   * snapshot via the manager. - Builds Hadoop configuration from options for subsequent I/O. -
+   * Derives data schema, partition schema, and full table schema from the snapshot.
    *
    * <p>Notes: - Partition column order from the snapshot is preserved for partitioning and appended
    * after data columns in the public Spark schema, per Spark conventions. - Read-time scan options
@@ -118,9 +117,7 @@ public class SparkTable implements Table, SupportsRead {
       Map<String, String> userOptions,
       Optional<CatalogTable> catalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
-    this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
-
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
     Map<String, String> merged = new HashMap<>();
@@ -140,15 +137,13 @@ public class SparkTable implements Table, SupportsRead {
     this.options = Collections.unmodifiableMap(merged);
 
     this.hadoopConf =
-        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(this.options));
-    this.snapshot =
-        (SnapshotImpl)
-            io.delta.kernel.TableManager.loadSnapshot(tablePath)
-                .build(io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf));
-
-    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
+    this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    // Load the initial snapshot through the manager
+    this.initialSnapshot = snapshotManager.loadLatestSnapshot();
+    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
     this.partColNames =
-        Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
+        Collections.unmodifiableList(new ArrayList<>(initialSnapshot.getPartitionColumnNames()));
 
     final List<StructField> dataFields = new ArrayList<>();
     final List<StructField> partitionFields = new ArrayList<>();
@@ -224,7 +219,7 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public Map<String, String> properties() {
-    Map<String, String> props = new HashMap<>(snapshot.getMetadata().getConfiguration());
+    Map<String, String> props = new HashMap<>(initialSnapshot.getTableProperties());
     return Collections.unmodifiableMap(props);
   }
 
@@ -238,7 +233,8 @@ public class SparkTable implements Table, SupportsRead {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
-    return new SparkScanBuilder(name(), tablePath, dataSchema, partitionSchema, snapshot, merged);
+    return new SparkScanBuilder(
+        name(), initialSnapshot, snapshotManager, dataSchema, partitionSchema, merged);
   }
 
   @Override

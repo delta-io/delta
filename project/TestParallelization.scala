@@ -10,8 +10,12 @@ object TestParallelization {
   lazy val testParallelismOpt = sys.env.get("TEST_PARALLELISM_COUNT").map(_.toInt)
 
   lazy val settings = {
-    if (numShardsOpt.exists(_ > 1) && testParallelismOpt.exists(_ > 1) &&
-        shardIdOpt.exists(_ >= 0)) {
+    println(
+      s"Test parallelization settings: numShardsOpt=$numShardsOpt, " +
+          s"shardIdOpt=$shardIdOpt, testParallelismOpt=$testParallelismOpt"
+    )
+    if ((numShardsOpt.exists(_ > 1) && shardIdOpt.exists(_ >= 0)) ||
+          testParallelismOpt.exists(_ > 1)) {
       customTestGroupingSettings ++ simpleGroupingStrategySettings
     } else {
       Seq.empty[Setting[_]]
@@ -50,7 +54,7 @@ object TestParallelization {
     Test / forkTestJVMCount := {
       testParallelismOpt.getOrElse(java.lang.Runtime.getRuntime.availableProcessors)
     },
-    Test / shardId := { shardIdOpt.get },
+    Test / shardId := { shardIdOpt.getOrElse(0) },
     Test / testGroupingStrategy := {
       val groupsCount = (Test / forkTestJVMCount).value
       val shard = (Test / shardId).value
@@ -81,7 +85,9 @@ object TestParallelization {
       javaHome = javaHome.value,
       outputStrategy = outputStrategy.value,
       bootJars = Vector.empty,
-      workingDirectory = Some(baseDirectory.value),
+      // Use Test/baseDirectory instead of baseDirectory to support modules where these differ
+      // (e.g. spark-combined module where Test/baseDirectory points to spark/ source directory)
+      workingDirectory = Some((Test / baseDirectory).value),
       runJVMOptions = (Test / javaOptions).value.toVector,
       connectInput = connectInput.value,
       envVars = (Test / envVars).value
@@ -198,7 +204,7 @@ object TestParallelization {
 
   object MinShardGroupDurationStrategy {
 
-    val NUM_SHARDS = numShardsOpt.get
+    val NUM_SHARDS = numShardsOpt.getOrElse(1)
 
     val AVG_TEST_SUITE_DURATION_EXCLUDING_SLOWEST_50 = 0.71
 
@@ -371,9 +377,12 @@ object TestParallelization {
         forkOptionsTemplate: ForkOptions): GroupingStrategy = {
       val testGroups = scala.collection.mutable.Map((0 until groupCount).map {
         groupIdx =>
+          val tmpDir = s"$baseDir/target/tmp/$groupIdx"
+          java.nio.file.Files.createDirectories(java.nio.file.Paths.get(tmpDir))
+
           val forkOptions = forkOptionsTemplate.withRunJVMOptions(
             runJVMOptions = forkOptionsTemplate.runJVMOptions ++
-                Seq(s"-Djava.io.tmpdir=$baseDir/target/tmp/$groupIdx")
+                Seq(s"-Djava.io.tmpdir=$tmpDir")
           )
           val group = Tests.Group(
             name = s"Test group $groupIdx",
