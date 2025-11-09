@@ -162,8 +162,9 @@ def runTaskOnlyOnSparkMaster[T](
   } else {
     Def.task {
       // scalastyle:off println
+      val masterVersion = SparkVersionSpec.MASTER.map(_.fullVersion).getOrElse("(no master version configured)")
       println(s"Project $projectName: Skipping `$taskName` as Spark version " +
-        s"${CrossSparkVersions.getSparkVersion()} does not equal ${SparkVersionSpec.MASTER.fullVersion}.")
+        s"${CrossSparkVersions.getSparkVersion()} does not equal $masterVersion.")
       // scalastyle:on println
       emptyValue
     }

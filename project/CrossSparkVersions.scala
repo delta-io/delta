@@ -34,7 +34,7 @@ case class SparkVersionSpec(
   def isDefault: Boolean = this == SparkVersionSpec.DEFAULT
 
   /** Whether this is the master Spark version */
-  def isMaster: Boolean = this == SparkVersionSpec.MASTER
+  def isMaster: Boolean = SparkVersionSpec.MASTER.contains(this)
 
   /** Returns log4j config file based on source directory */
   def log4jConfig: String = {
@@ -85,8 +85,8 @@ object SparkVersionSpec {
   /** Default Spark version */
   val DEFAULT = spark35
 
-  /** Spark master branch version */
-  val MASTER = spark40
+  /** Spark master branch version (optional). Release branches should not build against master */
+  val MASTER: Option[SparkVersionSpec] = Some(spark40)
 
   /** All supported Spark versions */
   val ALL_SPECS = Seq(spark35, spark40)
@@ -133,7 +133,13 @@ object CrossSparkVersions extends AutoPlugin {
     // Resolve aliases first
     val resolvedInput = input match {
       case "default" => SparkVersionSpec.DEFAULT.fullVersion
-      case "master" => SparkVersionSpec.MASTER.fullVersion
+      case "master" => SparkVersionSpec.MASTER match {
+        case Some(masterSpec) => masterSpec.fullVersion
+        case None => throw new IllegalArgumentException(
+          "No master Spark version is configured. Available versions: " +
+          SparkVersionSpec.ALL_SPECS.map(_.fullVersion).mkString(", ")
+        )
+      }
       case other => other
     }
 
@@ -141,9 +147,10 @@ object CrossSparkVersions extends AutoPlugin {
     SparkVersionSpec.ALL_SPECS.find { spec =>
       spec.fullVersion == resolvedInput || spec.shortVersion == resolvedInput
     }.getOrElse {
+      val aliases = Seq("default") ++ SparkVersionSpec.MASTER.map(_ => "master").toSeq
       val validInputs = SparkVersionSpec.ALL_SPECS.flatMap { spec =>
         Seq(spec.fullVersion, spec.shortVersion)
-      } ++ Seq("default", "master")
+      } ++ aliases
       throw new IllegalArgumentException(
         s"Invalid sparkVersion: $input. Valid values: ${validInputs.mkString(", ")}"
       )
