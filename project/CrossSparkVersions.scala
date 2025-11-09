@@ -30,8 +30,8 @@ case class SparkVersionSpec(
     }
   }
 
-  /** Whether this is the latest released Spark version */
-  def isLatestReleased: Boolean = this == SparkVersionSpec.LATEST_RELEASED
+  /** Whether this is the default Spark version */
+  def isDefault: Boolean = this == SparkVersionSpec.DEFAULT
 
   /** Whether this is the master Spark version */
   def isMaster: Boolean = this == SparkVersionSpec.MASTER
@@ -46,11 +46,11 @@ case class SparkVersionSpec(
   def exportJars: Boolean = additionalSourceDir.exists(_.contains("master"))
 
   /** Whether to generate Javadoc/Scaladoc for this version */
-  def generateDocs: Boolean = isLatestReleased
+  def generateDocs: Boolean = isDefault
 }
 
 object SparkVersionSpec {
-  /** Spark 3.5.7 - latest released version */
+  /** Spark 3.5.7 - default version */
   val spark35 = SparkVersionSpec(
     fullVersion = "3.5.7",
     targetJvm = "11",
@@ -82,8 +82,8 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
-  /** Latest released Spark version */
-  val LATEST_RELEASED = spark35
+  /** Default Spark version */
+  val DEFAULT = spark35
 
   /** Spark master branch version */
   val MASTER = spark40
@@ -125,14 +125,14 @@ object CrossSparkVersions extends AutoPlugin {
 
   /**
    * Returns the current spark version spec.
-   * Supports inputs: full version (e.g., "3.5.7"), short version (e.g., "3.5"), or aliases ("latest", "master")
+   * Supports inputs: full version (e.g., "3.5.7"), short version (e.g., "3.5"), or aliases ("default", "master")
    */
   def getSparkVersionSpec(): SparkVersionSpec = {
-    val input = sys.props.getOrElse("sparkVersion", SparkVersionSpec.LATEST_RELEASED.fullVersion)
+    val input = sys.props.getOrElse("sparkVersion", SparkVersionSpec.DEFAULT.fullVersion)
 
     // Resolve aliases first
     val resolvedInput = input match {
-      case "latest" => SparkVersionSpec.LATEST_RELEASED.fullVersion
+      case "default" => SparkVersionSpec.DEFAULT.fullVersion
       case "master" => SparkVersionSpec.MASTER.fullVersion
       case other => other
     }
@@ -143,7 +143,7 @@ object CrossSparkVersions extends AutoPlugin {
     }.getOrElse {
       val validInputs = SparkVersionSpec.ALL_SPECS.flatMap { spec =>
         Seq(spec.fullVersion, spec.shortVersion)
-      } ++ Seq("latest", "master")
+      } ++ Seq("default", "master")
       throw new IllegalArgumentException(
         s"Invalid sparkVersion: $input. Valid values: ${validInputs.mkString(", ")}"
       )
@@ -152,7 +152,7 @@ object CrossSparkVersions extends AutoPlugin {
 
   /**
    * Returns the current spark version.
-   * Supports aliases: "latest"/"3.5" -> 3.5.7, "master"/"4.0" -> 4.0.2-SNAPSHOT
+   * Supports aliases: "default"/"3.5" -> 3.5.7, "master"/"4.0" -> 4.0.2-SNAPSHOT
    */
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
@@ -172,14 +172,14 @@ object CrossSparkVersions extends AutoPlugin {
 
   /**
    * Returns module name with optional Spark version suffix.
-   * Latest released Spark version: "module-name" (e.g., delta-spark)
+   * Default Spark version: "module-name" (e.g., delta-spark)
    * Other Spark versions: "module-name_X.Y" (e.g., delta-spark_4.0)
    */
   def moduleName(baseName: String, sparkVer: String): String = {
     val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
       .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
 
-    if (spec.isLatestReleased) {
+    if (spec.isDefault) {
       baseName
     } else {
       s"${baseName}_${spec.shortVersion}"
@@ -266,7 +266,7 @@ object CrossSparkVersions extends AutoPlugin {
    * Generates release steps for cross-Spark publishing.
    *
    * Returns a sequence of release steps that:
-   * 1. Publishes all modules for the latest Spark version (default)
+   * 1. Publishes all modules for the default Spark version
    * 2. Publishes only Spark-dependent modules for other Spark versions
    *
    * Usage in build.sbt:
@@ -280,12 +280,12 @@ object CrossSparkVersions extends AutoPlugin {
     import sbtrelease.ReleasePlugin.autoImport._
     import sbtrelease.ReleaseStateTransformations._
 
-    // Step 1: Publish all modules for latest Spark version (default)
-    val latestSparkStep: ReleaseStep = releaseStepCommand(task)
+    // Step 1: Publish all modules for default Spark version
+    val defaultSparkStep: ReleaseStep = releaseStepCommand(task)
 
     // Step 2: Publish only Spark-dependent modules for other Spark versions
     val otherSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
-      .filter(_ != SparkVersionSpec.LATEST_RELEASED)
+      .filter(_ != SparkVersionSpec.DEFAULT)
       .flatMap { spec =>
         Seq[ReleaseStep](
           // Custom release step that sets system property and runs command
@@ -299,7 +299,7 @@ object CrossSparkVersions extends AutoPlugin {
         )
       }
 
-    latestSparkStep +: otherSparkSteps
+    defaultSparkStep +: otherSparkSteps
   }
 
   override lazy val projectSettings = Seq(

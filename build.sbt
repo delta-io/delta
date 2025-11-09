@@ -65,7 +65,7 @@ val internalModuleNames = settingKey[Set[String]]("Internal module artifact name
 val sparkVersion = settingKey[String]("Spark version")
 
 // Dependent library versions
-val defaultSparkVersion = SparkVersionSpec.LATEST_RELEASED.fullVersion // Spark version to use for testing in non-delta-spark related modules
+val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
@@ -673,8 +673,8 @@ lazy val spark = (project in file("spark-unified"))
     TestParallelization.settings,
   )
   .configureUnidoc(
-    generatedJavaDoc = CrossSparkVersions.getSparkVersionSpec().isLatestReleased,
-    generateScalaDoc = CrossSparkVersions.getSparkVersionSpec().isLatestReleased,
+    generatedJavaDoc = CrossSparkVersions.getSparkVersionSpec().generateDocs,
+    generateScalaDoc = CrossSparkVersions.getSparkVersionSpec().generateDocs,
     // spark-connect has classes with the same name as spark-core, this causes compilation issues
     // with unidoc since it concatenates the classpaths from all modules
     // ==> thus we exclude such sources
