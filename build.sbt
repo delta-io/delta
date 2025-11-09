@@ -176,7 +176,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     name := "delta-connect-common",
     commonSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % CrossSparkVersions.jacksonVersionForSpark(sparkVersion).value,
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
@@ -218,6 +218,17 @@ lazy val connectClient = (project in file("spark-connect/client"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    // Override Jackson versions to match Spark version and avoid conflicts with kernel
+    dependencyOverrides ++= {
+      val jacksonVer = CrossSparkVersions.jacksonVersionForSpark(sparkVersion).value
+      Seq(
+        "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
+        "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
+        "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
+        "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
+        "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
+      )
+    },
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -280,6 +291,25 @@ lazy val connectServer = (project in file("spark-connect/server"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    // Override Jackson versions to match Spark version and avoid conflicts with kernel
+    dependencyOverrides ++= {
+      val jacksonVer = CrossSparkVersions.jacksonVersionForSpark(sparkVersion).value
+      Seq(
+        "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
+        "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
+        "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
+        "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
+        "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
+      )
+    },
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -521,6 +551,18 @@ lazy val spark = (project in file("spark-unified"))
 
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
+    // Override Jackson versions to match Spark version and avoid conflicts with kernel
+    dependencyOverrides ++= {
+      val jacksonVer = CrossSparkVersions.jacksonVersionForSpark(sparkVersion).value
+      Seq(
+        "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
+        "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
+        "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
+        "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
+        "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
+      )
+    },
+
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
     mimaCurrentClassfiles := (Compile / packageBin).value,
 
@@ -693,6 +735,17 @@ lazy val sharing = (project in file("sharing"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    // Override Jackson versions to match Spark version and avoid conflicts with kernel
+    dependencyOverrides ++= {
+      val jacksonVer = CrossSparkVersions.jacksonVersionForSpark(sparkVersion).value
+      Seq(
+        "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
+        "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
+        "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
+        "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
+        "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
+      )
+    },
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",

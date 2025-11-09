@@ -20,7 +20,8 @@ case class SparkVersionSpec(
   targetJvm: String,
   additionalSourceDir: Option[String],
   antlr4Version: String,
-  additionalJavaOptions: Seq[String] = Seq.empty
+  additionalJavaOptions: Seq[String] = Seq.empty,
+  jacksonVersion: String = "2.15.2"
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
   def shortVersion: String = {
@@ -77,7 +78,8 @@ object SparkVersionSpec {
       "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    )
+    ),
+    jacksonVersion = "2.18.2"
   )
 
   /** Latest released Spark version */
@@ -87,7 +89,7 @@ object SparkVersionSpec {
   val MASTER = spark40
 
   /** All supported Spark versions */
-  val allSpecs = Seq(spark35, spark40)
+  val ALL_SPECS = Seq(spark35, spark40)
 }
 
 /**
@@ -136,10 +138,10 @@ object CrossSparkVersions extends AutoPlugin {
     }
 
     // Find spec by full version or short version
-    SparkVersionSpec.allSpecs.find { spec =>
+    SparkVersionSpec.ALL_SPECS.find { spec =>
       spec.fullVersion == resolvedInput || spec.shortVersion == resolvedInput
     }.getOrElse {
-      val validInputs = SparkVersionSpec.allSpecs.flatMap { spec =>
+      val validInputs = SparkVersionSpec.ALL_SPECS.flatMap { spec =>
         Seq(spec.fullVersion, spec.shortVersion)
       } ++ Seq("latest", "master")
       throw new IllegalArgumentException(
@@ -155,12 +157,26 @@ object CrossSparkVersions extends AutoPlugin {
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
   /**
+   * Returns the Jackson version for a given Spark version.
+   * This is used to override Jackson dependencies to match what Spark expects.
+   *
+   * @param sparkVersionKey The sparkVersion setting key
+   * @return Def.Initialize[String] containing the Jackson version
+   */
+  def jacksonVersionForSpark(sparkVersionKey: SettingKey[String]): Def.Initialize[String] = Def.setting {
+    val sparkVer = sparkVersionKey.value
+    val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
+      .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
+    spec.jacksonVersion
+  }
+
+  /**
    * Returns module name with optional Spark version suffix.
    * Latest released Spark version: "module-name" (e.g., delta-spark)
    * Other Spark versions: "module-name_X.Y" (e.g., delta-spark_4.0)
    */
   def moduleName(baseName: String, sparkVer: String): String = {
-    val spec = SparkVersionSpec.allSpecs.find(_.fullVersion == sparkVer)
+    val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
       .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
 
     if (spec.isLatestReleased) {
@@ -268,7 +284,7 @@ object CrossSparkVersions extends AutoPlugin {
     val latestSparkStep: ReleaseStep = releaseStepCommand(task)
 
     // Step 2: Publish only Spark-dependent modules for other Spark versions
-    val otherSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.allSpecs
+    val otherSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
       .filter(_ != SparkVersionSpec.LATEST_RELEASED)
       .flatMap { spec =>
         Seq[ReleaseStep](
@@ -320,7 +336,7 @@ object CrossSparkVersions extends AutoPlugin {
     },
     commands += Command.command("showSparkVersions") { state =>
       // Used for testing the cross-Spark publish workflow
-      SparkVersionSpec.allSpecs.foreach { spec =>
+      SparkVersionSpec.ALL_SPECS.foreach { spec =>
         println(spec.fullVersion)
       }
       state
