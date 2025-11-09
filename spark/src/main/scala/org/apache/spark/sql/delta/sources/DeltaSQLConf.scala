@@ -1431,12 +1431,12 @@ trait DeltaSQLConfBase {
         "during schema evolution. This flag is guarded by the flag 'delta.enableTypeWidening'" +
         "All supported widenings are enabled with 'always' selected, which allows some " +
         "conversions between integer types and floating numbers. The value 'same_family_type' " +
-        "fallbacks to the default behavior of the guarding flag. 'never' allows no widenings.")
+        "was the historical behavior. 'never' allows no widenings.")
       .internal()
       .stringConf
       .transform(_.toUpperCase(Locale.ROOT))
       .checkValues(AllowAutomaticWideningMode.values.map(_.toString))
-      .createWithDefault(AllowAutomaticWideningMode.SAME_FAMILY_TYPE.toString)
+      .createWithDefault(AllowAutomaticWideningMode.ALWAYS.toString)
 
   val DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING =
     buildConf("typeWidening.enableStreamingSchemaTracking")
