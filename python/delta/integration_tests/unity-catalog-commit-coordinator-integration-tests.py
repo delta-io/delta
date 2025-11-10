@@ -475,12 +475,14 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
             assert("DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" in str(error))
 
     def test_restore(self) -> None:
+        # Intentionally add a new data change commit.
+        self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
         try:
             current_version = self.current_version(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
             # Restore is currently unsupported on catalog owned tables.
             spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO VERSION AS OF {current_version-1}")
-        except AnalysisException as error:
-            assert("Cannot time travel" in str(error))
+        except py4j.protocol.Py4JJavaError as error:
+            assert("UPDATE_DELTA_METADATA" in str(error))
 
 
 class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
@@ -521,14 +523,15 @@ class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
             assert("Path based access is not supported for Catalog-Owned table" in str(error))
 
     def test_change_data_feed_with_version(self) -> None:
+        # Intentionally add a new data change commit.
         self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
         try:
             current_version = self.current_version(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
             self.read_with_cdf_version(
                 current_version - 1,
                 MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).select("id", "_change_type")
-        except AnalysisException as error:
-            assert("Cannot time travel" in str(error))
+        except py4j.protocol.Py4JJavaError as error:
+            assert("UPDATE_DELTA_METADATA" in str(error))
 
     def test_delta_table_for_path(self) -> None:
         tbl_path = spark.sql(
