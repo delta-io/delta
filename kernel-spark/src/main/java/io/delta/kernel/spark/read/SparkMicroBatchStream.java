@@ -20,6 +20,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CommitRangeNotFoundException;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -47,7 +48,6 @@ import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import scala.Option;
 
 public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissionControl {
 
@@ -64,7 +64,6 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   private final boolean shouldValidateOffsets;
   private final SparkSession spark;
   private final StreamingHelper streamingHelper;
-  private final Snapshot snapshotAtSourceInit;
 
   public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
     this(
@@ -88,7 +87,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     this.streamingHelper = new StreamingHelper(snapshotManager.getTablePath(), hadoopConf);
 
     // Initialize snapshot at source init to get table ID, similar to DeltaSource.scala
-    this.snapshotAtSourceInit = snapshotManager.getLatestSnapshot();
+    Snapshot snapshotAtSourceInit = snapshotManager.getLatestSnapshot();
     this.tableId = ((SnapshotImpl) snapshotAtSourceInit).getMetadata().getId();
 
     this.shouldValidateOffsets =
@@ -108,7 +107,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   @Override
   public Offset latestOffset() {
     // TODO(#5318): Implement latestOffset with proper start offset and limit
-    throw new UnsupportedOperationException(
+    throw new IllegalStateException(
         "latestOffset() should not be called - use latestOffset(Offset, ReadLimit) instead");
   }
 
