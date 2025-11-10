@@ -48,13 +48,7 @@ public class DeltaCommitterTest {
     public void testCommitPendingFile() throws Exception {
         // GIVEN
         StubBucketWriter stubBucketWriter = new StubBucketWriter();
-        DeltaCommitter deltaCommitter = new DeltaCommitter(
-            stubBucketWriter,
-            new org.apache.hadoop.conf.Configuration(),
-            new org.apache.flink.core.fs.Path("/tmp/test-table"),
-            org.apache.flink.table.types.logical.RowType.of(),
-            false
-        );
+        DeltaCommitter deltaCommitter = new DeltaCommitter(stubBucketWriter);
 
         // WHEN
         DeltaCommittable deltaCommittable =
@@ -72,13 +66,7 @@ public class DeltaCommitterTest {
     public void testCommitMultiple() throws Exception {
         // GIVEN
         StubBucketWriter stubBucketWriter = new StubBucketWriter();
-        DeltaCommitter deltaCommitter = new DeltaCommitter(
-            stubBucketWriter,
-            new org.apache.hadoop.conf.Configuration(),
-            new org.apache.flink.core.fs.Path("/tmp/test-table"),
-            org.apache.flink.table.types.logical.RowType.of(),
-            false
-        );
+        DeltaCommitter deltaCommitter = new DeltaCommitter(stubBucketWriter);
 
         // WHEN
         List<DeltaCommittable> committables = Arrays.asList(

@@ -32,6 +32,10 @@ import org.apache.flink.api.connector.sink2.SinkWriter;
 import org.apache.flink.api.connector.sink2.SupportsCommitter;
 import org.apache.flink.api.connector.sink2.WriterInitContext;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
+import org.apache.flink.streaming.api.connector.sink2.CommittableMessage;
+import org.apache.flink.streaming.api.connector.sink2.StandardSinkTopologies;
+import org.apache.flink.streaming.api.connector.sink2.SupportsPostCommitTopology;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,7 +79,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * files to decouple DeltaLake's specific code from parts borrowed from FileSink.
  */
 public class DeltaSinkInternal<IN>
-    implements Sink<IN>, SupportsCommitter<DeltaCommittable> {
+    implements Sink<IN>,
+               SupportsCommitter<DeltaCommittable>,
+               SupportsPostCommitTopology<DeltaCommittable> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaSinkInternal.class);
 
@@ -173,6 +179,28 @@ public class DeltaSinkInternal<IN>
         } catch (IOException e) {
             throw new FlinkRuntimeException("Could not create committable serializer.", e);
         }
+    }
+
+    /**
+     * Flink 2.0: Global commit coordination via SupportsPostCommitTopology
+     *
+     * This method adds a post-commit topology that aggregates committables from all
+     * parallel Committer instances and performs the final Delta Log commit.
+     * This replaces the GlobalCommitter pattern from Flink 1.x.
+     *
+     * The post-commit topology:
+     * 1. Receives committables from all parallel DeltaCommitter instances
+     * 2. Uses StandardSinkTopologies.addGlobalCommitter to aggregate them
+     * 3. Performs the Delta Log commit with exactly-once semantics
+     */
+    @Override
+    public void addPostCommitTopology(DataStream<CommittableMessage<DeltaCommittable>>
+        committables) {
+        LOG.info("Adding post-commit topology for Delta Log global commits");
+        StandardSinkTopologies.addGlobalCommitter(
+            committables,
+            () -> sinkBuilder.createGlobalCommitter(),
+            this::getCommittableSerializer);
     }
 
     /**

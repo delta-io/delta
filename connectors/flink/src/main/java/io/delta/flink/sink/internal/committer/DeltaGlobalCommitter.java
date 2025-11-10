@@ -44,6 +44,7 @@ import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaGlobalCommittable;
 import io.delta.storage.CloseableIterator;
+import org.apache.flink.api.connector.sink2.Committer;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.DeltaPendingFile;
 import org.apache.flink.table.types.logical.RowType;
@@ -64,43 +65,30 @@ import io.delta.standalone.types.StructType;
 import io.delta.standalone.internal.KernelDeltaLogDelegator;
 
 /**
- * FLINK 2.0 MIGRATION STATUS: TEMPORARILY DISABLED
+ * Global Committer implementation for Delta Lake Sink (Flink 2.0).
  *
- * This class previously implemented GlobalCommitter for Flink &lt; 2.0.
- * In Flink 2.0, the GlobalCommitter interface was removed entirely.
+ * <p>This class implements the global commit phase for Delta Lake, where committables
+ * from all parallel DeltaCommitter instances are aggregated and committed atomically
+ * to the Delta Log. It is invoked through Flink 2.0's SupportsPostCommitTopology
+ * pattern via StandardSinkTopologies.addGlobalCommitter().
  *
  * <p>CRITICAL FUNCTIONALITY:
- * This class provides essential functionality that MUST be reimplemented for Flink 2.0:
- * - Commits written files to DeltaLog
- * - Provides exactly-once semantics through idempotent commits
- * - Uses appId + checkpointId for transaction identification
- * - Groups committables by checkpoint and processes them in order
+ * - Receives committables from all parallel DeltaCommitter instances
+ * - Groups committables by checkpoint ID
+ * - Commits written files to DeltaLog with exactly-once semantics
+ * - Uses appId + checkpointId for idempotent transaction identification
  * - Handles schema evolution and validation
  *
- * <p>FLINK 2.0 MIGRATION OPTIONS:
- * 1. Move global commit logic into DeltaCommitter (combines local + global commit)
- * 2. Implement CommittingSinkWriter pattern for two-phase commit
- * 3. Use post-commit hooks in Flink 2.0's checkpoint completion
+ * <p>FLINK 2.0 MIGRATION:
+ * This class has been migrated from the old GlobalCommitter<IN, OUT> interface
+ * to the new Committer<IN> interface. The aggregation of committables is now
+ * handled by StandardSinkTopologies, so this class receives all committables
+ * in a single commit() call.
  *
- * <p>RECOMMENDATION:
- * The preferred approach is to integrate the global commit logic (DeltaLog commits)
- * directly into the DeltaCommitter class, as Flink 2.0 no longer distinguishes
- * between local and global committers. The commit() method in DeltaCommitter should:
- * 1. Perform local file commits (rename temp files)
- * 2. Aggregate committables by checkpoint ID
- * 3. Commit to DeltaLog with exactly-once guarantees
- *
- * <p>ORIGINAL BEHAVIOR (Flink &lt; 2.0):
- * For reference, this class used to:
- * - Be instantiated once per global commit stage
- * - Process committables from multiple checkpoint intervals
- * - Guarantee no duplicate commits through transaction IDs
- *
- * @see DeltaCommitter for the current Flink 2.0 local committer
+ * @see DeltaCommitter for the local file committer
+ * @see DeltaSinkInternal#addPostCommitTopology for integration
  */
-public class DeltaGlobalCommitter
-    /* implements GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable> */ {
-    // Flink 2.0: GlobalCommitter interface removed - class kept for reference and future migration
+public class DeltaGlobalCommitter implements Committer<DeltaCommittable> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaGlobalCommitter.class);
 
@@ -149,49 +137,9 @@ public class DeltaGlobalCommitter
         }
     }
 
-    /**
-     * Filters committables that will be provided to {@link GlobalCommitter#commit} method.
-     * <p>
-     * We are always returning all the committables as we do not implement any retry behaviour
-     * in {@link GlobalCommitter#commit} method and always want to try to commit all the received
-     * committables.
-     * <p>
-     * If there will be any previous committables from checkpoint intervals other than the most
-     * recent one then we will try to commit them in an idempotent manner during
-     * {@link DeltaGlobalCommitter#commit} method and not by filtering them.
-     *
-     * @param globalCommittables list of combined committables objects
-     * @return same as input
-     */
-    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
-    public List<DeltaGlobalCommittable> filterRecoveredCommittables(
-            List<DeltaGlobalCommittable> globalCommittables) {
-        return globalCommittables;
-    }
-
-    /**
-     * Compute an aggregated committable from a list of committables.
-     * <p>
-     * We just wrap received list of committables inside a {@link DeltaGlobalCommitter} instance
-     * as we will do all of the processing in {@link GlobalCommitter#commit} method.
-     *
-     * @param committables list of committables object that may be coming from multiple checkpoint
-     *                     intervals
-     * @return {@link DeltaGlobalCommittable} serving as a wrapper class for received committables
-     */
-    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
-    public DeltaGlobalCommittable combine(List<DeltaCommittable> committables) {
-
-        if (LOG.isTraceEnabled()) {
-            for (DeltaCommittable committable : committables) {
-                LOG.trace("Creating global committable object with committable for: " +
-                    "appId=" + committable.getAppId() +
-                    " checkpointId=" + committable.getCheckpointId() +
-                    " deltaPendingFile=" + committable.getDeltaPendingFile()
-                );
-            }
-        }
-        return new DeltaGlobalCommittable(committables);
+    @Override
+    public void close() throws Exception {
+        // No resources to clean up
     }
 
     /**
@@ -200,11 +148,19 @@ public class DeltaGlobalCommitter
      * mean that there are no committables (aka no stream events were received) for given
      * checkpoint.
      *
-     * @param globalCommittables list of global committables objects
+     * @param committables list of committables
      * @return unique app identifier for given Flink job
      */
     @Nullable
-    private String resolveAppId(List<DeltaGlobalCommittable> globalCommittables) {
+    private String resolveAppId(List<DeltaCommittable> committables) {
+        if (!committables.isEmpty()) {
+            return committables.get(0).getAppId();
+        }
+        return null;
+    }
+
+    @Nullable
+    private String resolveAppIdFromGlobal(List<DeltaGlobalCommittable> globalCommittables) {
         for (DeltaGlobalCommittable globalCommittable : globalCommittables) {
             for (DeltaCommittable deltaCommittable : globalCommittable.getDeltaCommittables()) {
                 return deltaCommittable.getAppId();
@@ -219,6 +175,10 @@ public class DeltaGlobalCommitter
      * construct transactionId that will be used for verification whether given set of files has
      * already been committed to the Delta table.
      *
+     * <p>Flink 2.0 Implementation Notes:
+     * This method receives committables from all parallel DeltaCommitter instances,
+     * aggregated by the framework via StandardSinkTopologies.addGlobalCommitter().
+     *
      * <p>During commit preparation phase:
      *
      * <ol>
@@ -226,9 +186,8 @@ public class DeltaGlobalCommitter
      *       If no appId is resolved then it means that no committables were provided and no commit
      *       is performed. Such situations may happen when e.g. there were no stream events received
      *       within given checkpoint interval,
-     *   <li>If appId is successfully resolved then the provided set of committables needs to be
-     *       flattened (as one {@link DeltaGlobalCommittable} contains a list of
-     *       {@link DeltaCommittable}), mapped to {@link AddFile} objects and then grouped by
+     *   <li>If appId is successfully resolved then the provided set of committables is
+     *       mapped to {@link AddFile} objects and then grouped by
      *       checkpointId. The grouping part is necessary as committer object may receive
      *       committables from different checkpoint intervals,
      *   <li>We process each of the resolved checkpointId in increasing order,
@@ -247,14 +206,29 @@ public class DeltaGlobalCommitter
      *       proceed with the next checkpointId (if any).
      * </ol>
      *
-     * @param globalCommittables list of combined committables objects
-     * @return always empty collection as we do not want any retry behaviour
+     * @param commitRequests collection of commit requests from all parallel committers
      */
-    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
-    public List<DeltaGlobalCommittable> commit(List<DeltaGlobalCommittable> globalCommittables) {
+    @Override
+    public void commit(Collection<CommitRequest<DeltaCommittable>> commitRequests)
+            throws IOException {
         long start = System.nanoTime();
-        String appId = resolveAppId(globalCommittables);
+
+        // Extract committables from commit requests
+        List<DeltaCommittable> committables = new ArrayList<>();
+        for (CommitRequest<DeltaCommittable> request : commitRequests) {
+            committables.add(request.getCommittable());
+        }
+
+        LOG.info("DeltaGlobalCommitter committing {} committables to Delta Log",
+            committables.size());
+
+        String appId = resolveAppId(committables);
         if (appId != null) { // means there are committables to process
+            // Wrap committables in DeltaGlobalCommittable for compatibility
+            // with existing commit logic
+            DeltaGlobalCommittable globalCommittable = new DeltaGlobalCommittable(committables);
+            List<DeltaGlobalCommittable> globalCommittables =
+                Collections.singletonList(globalCommittable);
 
             SortedMap<Long, List<CheckpointData>> committablesPerCheckpoint =
                 getCommittablesPerCheckpoint(
@@ -270,10 +244,16 @@ public class DeltaGlobalCommitter
                     this.deltaLog.tableExists());
             }
         }
+
+        // Mark all requests as successfully committed
+        for (CommitRequest<DeltaCommittable> request : commitRequests) {
+            request.signalAlreadyCommitted();
+        }
+
         long timeElapsed = System.nanoTime() - start;
-        LOG.info("Commit finished in " + timeElapsed + ", was first: " + this.firstCommit);
+        LOG.info("Delta Log commit finished in {} ns, was first: {}",
+            timeElapsed, this.firstCommit);
         this.firstCommit = false;
-        return Collections.emptyList();
     }
 
     /**
@@ -707,14 +687,6 @@ public class DeltaGlobalCommitter
             }
         }
         return true;
-    }
-
-    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
-    public void endOfInput() {
-    }
-
-    // @Override // Removed: GlobalCommitter interface no longer exists in Flink 2.0
-    public void close() {
     }
 
     private static class CheckpointData {

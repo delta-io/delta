@@ -106,7 +106,7 @@ public class DeltaGlobalCommitterTest {
             DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(3, partitionSpec);
 
         // WHEN
-        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables)));
     }
 
     @Test
@@ -127,13 +127,13 @@ public class DeltaGlobalCommitterTest {
 
         // WHEN
         getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE)
-            .commit(globalCommittables);
+            .commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables));
         deltaLog.update();
         assertEquals(1, deltaLog.snapshot().getVersion());
 
         // create new GlobalCommitter as it would be during recovery
         getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE)
-            .commit(globalCommittables);
+            .commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables));
 
         // THEN
         // after trying to commit same committables nothing should change in DeltaLog
@@ -167,7 +167,7 @@ public class DeltaGlobalCommitterTest {
         );
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables));
 
         // THEN
         // schema before deltaLog.update() is in old format, but after update it equals to the new
@@ -193,7 +193,7 @@ public class DeltaGlobalCommitterTest {
         DeltaGlobalCommitter globalCommitter = getTestGlobalCommitter(updatedSchema);
 
         // WHEN
-        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables)));
     }
 
     @Test
@@ -222,7 +222,7 @@ public class DeltaGlobalCommitterTest {
             // WHEN
             String errorMessage = assertThrows(
                 IllegalStateException.class,
-                () -> globalCommitter.commit(globalCommittables)
+                () -> globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables))
             ).getMessage();
             assert(errorMessage.contains("Detected incompatible schema change"));
         }
@@ -240,11 +240,11 @@ public class DeltaGlobalCommitterTest {
             getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE);
 
         // WHEN
-        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables)));
     }
 
     @Test
-    public void testCommittablesFromDifferentCheckpointInterval() {
+    public void testCommittablesFromDifferentCheckpointInterval() throws Exception {
         //GIVEN
         int numAddedFiles1 = 3;
         int numAddedFiles2 = 5;
@@ -266,7 +266,7 @@ public class DeltaGlobalCommitterTest {
             getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE);
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables));
 
         // THEN
         // we should have committed both checkpoints intervals so current snapshot version should
@@ -279,7 +279,7 @@ public class DeltaGlobalCommitterTest {
     }
 
     @Test
-    public void testCommittablesFromDifferentCheckpointIntervalOneOutdated() {
+    public void testCommittablesFromDifferentCheckpointIntervalOneOutdated() throws Exception {
         // GIVEN
         // although it does not make any sense for real world scenarios that the retried set of
         // committables is different from the previous one however for this test it better to
@@ -312,11 +312,11 @@ public class DeltaGlobalCommitterTest {
         // we first commit committables from the former checkpoint interval, and then combined
         // committables from both checkpoint intervals
         getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE)
-            .commit(globalCommittables1FirstTrial);
+            .commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables1FirstTrial));
 
         // create new GlobalCommitter as it would be during recovery
         getTestGlobalCommitter(DeltaSinkTestUtils.TEST_ROW_TYPE)
-            .commit(globalCommittablesCombined);
+            .commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittablesCombined));
 
         // THEN
         // we should've committed only files from the first try for checkpointId == 1 and files
@@ -355,7 +355,7 @@ public class DeltaGlobalCommitterTest {
     }
 
     @Test
-    public void testAddCommittableWithAbsolutePath() {
+    public void testAddCommittableWithAbsolutePath() throws Exception {
 
         // GIVEN
         DeltaLog deltaLog = DeltaLog.forTable(
@@ -396,23 +396,23 @@ public class DeltaGlobalCommitterTest {
         // WHEN
         // commit AddFile with relative path.
         getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE)
-            .commit(Collections.singletonList(
+            .commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(Collections.singletonList(
                 new DeltaGlobalCommittable(
                     DeltaSinkTestUtils.committablesToAbstractCommittables(Collections.singletonList(
                         committableWithRelativePath
                     ))
                 )
-            ));
+            )));
 
         // commit AddFile with absolute path.
         getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE)
-            .commit(Collections.singletonList(
+            .commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(Collections.singletonList(
                 new DeltaGlobalCommittable(
                     DeltaSinkTestUtils.committablesToAbstractCommittables(Collections.singletonList(
                         committableWithAbsolutePath
                     ))
                 )
-            ));
+            )));
 
         // THEN
         assertThat(deltaLog.update().getVersion())
@@ -459,7 +459,7 @@ public class DeltaGlobalCommitterTest {
             getTestGlobalCommitter(DeltaSinkTestUtils.TEST_PARTITIONED_ROW_TYPE);
 
         // WHEN
-        assertThrows(RuntimeException.class, () -> globalCommitter.commit(globalCommittables));
+        assertThrows(RuntimeException.class, () -> globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables)));
 
         // the commit should raise an exception for incompatible committables for the second
         // checkpoint interval but correct committables for the first checkpoint interval should
@@ -555,7 +555,7 @@ public class DeltaGlobalCommitterTest {
         );
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables));
         deltaLog.update();
 
         // THEN

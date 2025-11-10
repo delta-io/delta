@@ -111,7 +111,7 @@ public class DeltaGlobalCommitterTestParametrized {
     }
 
     @Test
-    public void testCommitToDeltaTableInAppendMode() {
+    public void testCommitToDeltaTableInAppendMode() throws Exception {
         //GIVEN
         DeltaGlobalCommitter globalCommitter = new DeltaGlobalCommitter(
             DeltaTestUtils.getHadoopConf(),
@@ -123,7 +123,7 @@ public class DeltaGlobalCommitterTestParametrized {
                 DeltaSinkTestUtils.getListOfDeltaGlobalCommittables(numAddedFiles, partitionSpec);
 
         // WHEN
-        globalCommitter.commit(globalCommittables);
+        globalCommitter.commit(DeltaSinkTestUtils.globalCommittablesToCommitRequests(globalCommittables));
 
         // THEN
         validateCurrentSnapshotState(numAddedFiles);

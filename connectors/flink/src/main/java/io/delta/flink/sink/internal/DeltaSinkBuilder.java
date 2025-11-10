@@ -27,6 +27,7 @@ import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.committables.DeltaCommittableSerializer;
 import io.delta.flink.sink.internal.committer.DeltaCommitter;
+import io.delta.flink.sink.internal.committer.DeltaGlobalCommitter;
 import io.delta.flink.sink.internal.writer.DeltaWriter;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketState;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketStateSerializer;
@@ -263,25 +264,16 @@ public class DeltaSinkBuilder<IN> implements Serializable {
     }
 
     Committer<DeltaCommittable> createCommitter() throws IOException {
-        return new DeltaCommitter(
-            createBucketWriter(),
-            serializableConfiguration.conf(),
-            tableBasePath,
-            rowType,
-            mergeSchema
-        );
+        return new DeltaCommitter(createBucketWriter());
     }
 
-    // FLINK 2.0: GlobalCommitter was removed and replaced by DeltaGlobalCommitCoordinator
-    // Global commits are now handled via checkpoint-based coordination pattern
-    // See DeltaGlobalCommitCoordinator for the complete implementation
-    /*
-    GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>
-        createGlobalCommitter() {
+    // FLINK 2.0: GlobalCommitter restored via SupportsPostCommitTopology pattern
+    // DeltaGlobalCommitter is now invoked through post-commit topology
+    // See DeltaSinkInternal.addPostCommitTopology() for integration
+    DeltaGlobalCommitter createGlobalCommitter() {
         return new DeltaGlobalCommitter(
             serializableConfiguration.conf(), tableBasePath, rowType, mergeSchema);
     }
-    */
 
     protected Path getTableBasePath() {
         return tableBasePath;
@@ -352,17 +344,9 @@ public class DeltaSinkBuilder<IN> implements Serializable {
                        bucketWriter.getProperties().getPendingFileRecoverableSerializer());
     }
 
-    // FLINK 2.0: GlobalCommittable serializer no longer needed
-    // Global commit state is now managed by DeltaGlobalCommitCoordinator
-    /*
-    SimpleVersionedSerializer<DeltaGlobalCommittable> getGlobalCommittableSerializer()
-        throws IOException {
-        BucketWriter<IN, String> bucketWriter = createBucketWriter();
-
-        return new DeltaGlobalCommittableSerializer(
-            bucketWriter.getProperties().getPendingFileRecoverableSerializer());
-    }
-    */
+    // FLINK 2.0: Global committer uses DeltaCommittable directly
+    // No need for separate DeltaGlobalCommittable serializer
+    // The committable serializer is used for both local and global commits
 
     private DeltaBulkBucketWriter<IN, String> createBucketWriter() throws IOException {
         return new DeltaBulkBucketWriter<>(

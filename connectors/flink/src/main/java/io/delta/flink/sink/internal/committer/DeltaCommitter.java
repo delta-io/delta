@@ -19,19 +19,12 @@
 package io.delta.flink.sink.internal.committer;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 import io.delta.flink.sink.DeltaSink;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import org.apache.flink.api.connector.sink2.Committer;
-import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketWriter;
-import org.apache.flink.table.types.logical.RowType;
-import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -55,19 +48,18 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * </ol>
  *
  * <p><strong>FLINK 2.0 STATUS - PRODUCTION READY:</strong>
- * In Flink 2.0, the GlobalCommitter interface was removed. The two-phase commit is now handled by:
+ * In Flink 2.0, the two-phase commit is now handled by:
  * <ul>
  *   <li>✅ Local commits: {@link DeltaCommitter} (this class) - renames temp files</li>
- *   <li>✅ Global commits: {@link DeltaGlobalCommitCoordinator} - commits to DeltaLog</li>
+ *   <li>✅ Global commits: {@link DeltaGlobalCommitter} via SupportsPostCommitTopology</li>
  * </ul>
  *
- * <p>The {@link DeltaGlobalCommitCoordinator} provides exactly-once semantics with:
+ * <p>The {@link DeltaGlobalCommitter} provides exactly-once semantics with:
  * <ul>
- *   <li>Checkpoint-based aggregation of committables</li>
+ *   <li>Aggregates committables from all parallel committers</li>
+ *   <li>Groups by checkpoint for atomic Delta Log commits</li>
  *   <li>Idempotent commits using appId + checkpointId</li>
  *   <li>Schema evolution and validation</li>
- *   <li>Deduplication for recovery scenarios</li>
- *   <li>Operation metrics and comprehensive logging</li>
  * </ul>
  *
  * <p>IMPLEMENTATION NOTES:
@@ -84,55 +76,21 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaCommitter.class);
 
-    ///////////////////////////////////////////////////////////////////////////
-    // FileSink-specific
-    ///////////////////////////////////////////////////////////////////////////
-
     private final BucketWriter<?, ?> bucketWriter;
 
-    ///////////////////////////////////////////////////////////////////////////
-    // DeltaLake-specific (for Delta Log commits)
-    ///////////////////////////////////////////////////////////////////////////
-
-    private final Configuration hadoopConf;
-    private final Path tableBasePath;
-    private final RowType rowType;
-    private final boolean mergeSchema;
-    private final DeltaGlobalCommitCoordinator globalCommitCoordinator;
-
-    public DeltaCommitter(
-            BucketWriter<?, ?> bucketWriter,
-            Configuration hadoopConf,
-            Path tableBasePath,
-            RowType rowType,
-            boolean mergeSchema) {
+    public DeltaCommitter(BucketWriter<?, ?> bucketWriter) {
         this.bucketWriter = checkNotNull(bucketWriter);
-        this.hadoopConf = checkNotNull(hadoopConf);
-        this.tableBasePath = checkNotNull(tableBasePath);
-        this.rowType = checkNotNull(rowType);
-        this.mergeSchema = mergeSchema;
-
-        // Initialize the global commit coordinator for Delta Log commits
-        this.globalCommitCoordinator = new DeltaGlobalCommitCoordinator(
-            tableBasePath.toString(),
-            hadoopConf,
-            rowType,
-            mergeSchema
-        );
     }
 
     /**
-     * This method is responsible for committing files both locally and to the Delta Log.
+     * Commits files locally by renaming them to finalize the write.
      * <p>
-     * PHASE 1 - Local Commit:
      * "Local" commit means renaming the hidden file to make it visible and removing from the name
      * some 'in-progress file' marker. For details see internal interfaces in
      * {@link org.apache.flink.streaming.api.functions.sink.filesystem.BucketWriter}.
      * <p>
-     * PHASE 2 - Delta Log Commit:
-     * After local commits, committables are grouped by checkpoint and committed to the Delta Log
-     * through the {@link DeltaGlobalCommitCoordinator}. This ensures exactly-once semantics with
-     * idempotent commits using appId + checkpointId.
+     * Delta Log commits are handled separately by {@link DeltaGlobalCommitter} through
+     * the post-commit topology (see {@link DeltaSinkInternal#addPostCommitTopology}).
      * <p>
      * Flink 2.0 changed the commit signature to use Collection<CommitRequest<T>> instead of List<T>
      *
@@ -143,83 +101,28 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
     @Override
     public void commit(Collection<CommitRequest<DeltaCommittable>> commitRequests)
             throws IOException {
-        LOG.info("DeltaCommitter.commit() called with {} commit requests",
-            commitRequests.size());
+        LOG.info("DeltaCommitter committing {} files locally", commitRequests.size());
 
-        List<DeltaCommittable> successfulCommittables = new ArrayList<>();
-
-        // PHASE 1: Commit files locally (rename temp files)
         for (CommitRequest<DeltaCommittable> request : commitRequests) {
             DeltaCommittable committable = request.getCommittable();
-            LOG.info("Committing delta committable locally: " +
-                "appId=" + committable.getAppId() +
-                " checkpointId=" + committable.getCheckpointId() +
-                " deltaPendingFile=" + committable.getDeltaPendingFile()
-            );
+            LOG.debug("Committing file locally: appId={} checkpointId={} file={}",
+                committable.getAppId(),
+                committable.getCheckpointId(),
+                committable.getDeltaPendingFile());
             try {
                 bucketWriter.recoverPendingFile(committable.getDeltaPendingFile().getPendingFile())
                     .commitAfterRecovery();
 
-                // Track successful local commits
-                successfulCommittables.add(committable);
-
                 // Signal success for local commit
+                // Committable will be passed to DeltaGlobalCommitter via post-commit topology
                 request.signalAlreadyCommitted();
             } catch (Exception e) {
-                LOG.error("Failed to commit locally: " + committable, e);
+                LOG.error("Failed to commit file locally: {}", committable, e);
                 // Signal failure with retry
                 request.retryLater();
                 throw e;
             }
         }
-
-        // PHASE 2: Commit to Delta Log (group by checkpoint and commit)
-        if (!successfulCommittables.isEmpty()) {
-            commitToDeltaLog(successfulCommittables);
-        }
-    }
-
-    /**
-     * Commits the successfully committed files to the Delta Log.
-     * Groups committables by checkpoint ID and commits each checkpoint atomically.
-     *
-     * @param committables list of committables that were successfully committed locally
-     * @throws IOException if Delta Log commit fails
-     */
-    private void commitToDeltaLog(List<DeltaCommittable> committables) throws IOException {
-        // Group committables by checkpoint ID
-        Map<Long, List<DeltaCommittable>> byCheckpoint = new HashMap<>();
-        for (DeltaCommittable committable : committables) {
-            byCheckpoint
-                .computeIfAbsent(committable.getCheckpointId(), k -> new ArrayList<>())
-                .add(committable);
-        }
-
-        LOG.info("Committing {} committables to Delta Log across {} checkpoints",
-            committables.size(), byCheckpoint.size());
-
-        // Accumulate committables in the coordinator
-        for (Map.Entry<Long, List<DeltaCommittable>> entry : byCheckpoint.entrySet()) {
-            long checkpointId = entry.getKey();
-            List<DeltaCommittable> checkpointCommittables = entry.getValue();
-
-            LOG.info("Accumulating {} committables for checkpoint {}",
-                checkpointCommittables.size(), checkpointId);
-
-            globalCommitCoordinator.accumulateCommittables(checkpointId, checkpointCommittables);
-        }
-
-        // Commit all pending checkpoints to Delta Log
-        for (Long checkpointId : byCheckpoint.keySet()) {
-            LOG.info("Committing checkpoint {} to Delta Log", checkpointId);
-            try {
-                globalCommitCoordinator.commitCheckpoint(checkpointId);
-            } catch (RuntimeException e) {
-                throw new IOException("Delta Log commit failed for checkpoint " + checkpointId, e);
-            }
-        }
-
-        LOG.info("Successfully committed all checkpoints to Delta Log");
     }
 
     @Override

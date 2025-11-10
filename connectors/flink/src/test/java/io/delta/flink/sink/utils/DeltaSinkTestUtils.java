@@ -279,6 +279,19 @@ public class DeltaSinkTestUtils {
         return requests;
     }
 
+    /**
+     * Converts a list of DeltaGlobalCommittable to CommitRequest wrappers for Flink 2.0.
+     * Extracts all DeltaCommittable from the global committables and converts them.
+     */
+    public static Collection<org.apache.flink.api.connector.sink2.Committer.CommitRequest<DeltaCommittable>> 
+            globalCommittablesToCommitRequests(List<DeltaGlobalCommittable> globalCommittables) {
+        List<DeltaCommittable> allCommittables = new ArrayList<>();
+        for (DeltaGlobalCommittable globalCommittable : globalCommittables) {
+            allCommittables.addAll(globalCommittable.getDeltaCommittables());
+        }
+        return committablesToCommitRequests(allCommittables);
+    }
+
     public static List<DeltaCommittable> getListOfDeltaCommittables(int size, long checkpointId) {
         return getListOfDeltaCommittables(size, new LinkedHashMap<>(), checkpointId);
     }
