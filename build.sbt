@@ -936,7 +936,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
-// Separate project for benchmarks to avoid classpath conflicts between sparkV1 and goldenTables
 lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelDefaults % "test->test")
@@ -1560,7 +1559,7 @@ lazy val icebergGroup = project
   )
 
 lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefaults)
+  .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
