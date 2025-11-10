@@ -26,8 +26,10 @@ import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import io.delta.flink.sink.internal.writer.DeltaWriter;
 import io.delta.flink.sink.internal.writer.DeltaWriterBucketState;
 import org.apache.flink.api.connector.sink2.Committer;
+import org.apache.flink.api.connector.sink2.CommitterInitContext;
 import org.apache.flink.api.connector.sink2.Sink;
 import org.apache.flink.api.connector.sink2.SinkWriter;
+import org.apache.flink.api.connector.sink2.SupportsCommitter;
 import org.apache.flink.api.connector.sink2.WriterInitContext;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.util.FlinkRuntimeException;
@@ -73,7 +75,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * files to decouple DeltaLake's specific code from parts borrowed from FileSink.
  */
 public class DeltaSinkInternal<IN>
-    implements Sink<IN> {
+    implements Sink<IN>, SupportsCommitter<DeltaCommittable> {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaSinkInternal.class);
 
@@ -154,17 +156,20 @@ public class DeltaSinkInternal<IN>
         }
     }
 
-    // NOTE: These methods are NOT part of the Sink<IN> interface in Flink 2.0.
-    // However, they are called by the framework via reflection or a different mechanism.
-    // Keeping them public so they can be discovered.
-    public Optional<Committer<DeltaCommittable>> createCommitter() throws IOException {
-        return Optional.of(sinkBuilder.createCommitter());
+    // These methods are part of the SupportsCommitter<T> interface in Flink 2.0
+    @Override
+    public Committer<DeltaCommittable> createCommitter(CommitterInitContext context)
+            throws IOException {
+        LOG.info("Creating DeltaCommitter for subtask {}/{}",
+            context.getTaskInfo().getIndexOfThisSubtask(),
+            context.getTaskInfo().getNumberOfParallelSubtasks());
+        return sinkBuilder.createCommitter();
     }
 
-    public Optional<SimpleVersionedSerializer<DeltaCommittable>>
-        getCommittableSerializer() {
+    @Override
+    public SimpleVersionedSerializer<DeltaCommittable> getCommittableSerializer() {
         try {
-            return Optional.of(sinkBuilder.getCommittableSerializer());
+            return sinkBuilder.getCommittableSerializer();
         } catch (IOException e) {
             throw new FlinkRuntimeException("Could not create committable serializer.", e);
         }

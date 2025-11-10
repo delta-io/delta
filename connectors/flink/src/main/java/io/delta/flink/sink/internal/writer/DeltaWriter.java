@@ -29,7 +29,7 @@ import javax.annotation.Nullable;
 import io.delta.flink.sink.internal.DeltaBucketAssigner;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
 import org.apache.flink.annotation.VisibleForTesting;
-import org.apache.flink.api.connector.sink2.SinkWriter;
+import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
 import org.apache.flink.connector.file.sink.writer.FileWriter;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.metrics.Counter;
@@ -45,7 +45,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
- * A {@link SinkWriter} implementation for {@link io.delta.flink.sink.DeltaSink}.
+ * A {@link CommittingSinkWriter} implementation for {@link io.delta.flink.sink.DeltaSink}.
  *
  * <p>
  * It writes data to and manages the different active {@link DeltaWriterBucket buckets} in the
@@ -70,7 +70,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * @param <IN> The type of input elements.
  */
-public class DeltaWriter<IN> implements SinkWriter<IN> {
+public class DeltaWriter<IN> implements CommittingSinkWriter<IN, DeltaCommittable> {
     // Note: Flink 2.0 removed ProcessingTimeService - timing functionality needs refactoring
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaWriter.class);
@@ -292,6 +292,28 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
         final DeltaWriterBucket<IN> bucket = getOrCreateBucketForBucketId(bucketId);
         bucket.write(element, currentProcessingTime);
         recordsOutCounter.inc();
+
+        // Debug: Log every 1000th record
+        if (recordsOutCounter.getCount() % 1000 == 0) {
+            LOG.debug("Written {} records, active buckets: {}",
+                recordsOutCounter.getCount(), activeBuckets.size());
+        }
+    }
+
+    /**
+     * Flink 2.0: CommittingSinkWriter interface requires prepareCommit() without parameters.
+     * This method is called by the framework to prepare committables for the current checkpoint.
+     *
+     * This method flushes all buckets and generates committables to be committed by the framework.
+     */
+    @Override
+    public List<DeltaCommittable> prepareCommit() throws IOException {
+        LOG.info("DeltaWriter.prepareCommit() called (framework-invoked)");
+        // Flush buckets and generate committables
+        List<DeltaCommittable> committables = prepareCommit(true);
+        LOG.info("DeltaWriter.prepareCommit() returning {} committables",
+            committables.size());
+        return committables;
     }
 
     /**
@@ -305,8 +327,10 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
      * except that it uses custom {@link DeltaWriterBucket} implementation and
      * also increments the {@link DeltaWriter#nextCheckpointId} counter.
      */
-    // @Override // Removed: SinkWriter interface changed in Flink 2.0
     public List<DeltaCommittable> prepareCommit(boolean flush) throws IOException {
+        LOG.debug("prepareCommit(flush={}) - active buckets: {}",
+            flush, activeBuckets.size());
+
         List<DeltaCommittable> committables = new ArrayList<>();
 
         // Every time before we prepare commit, we first check and remove the inactive
@@ -317,25 +341,39 @@ public class DeltaWriter<IN> implements SinkWriter<IN> {
         while (activeBucketIter.hasNext()) {
             Map.Entry<String, DeltaWriterBucket<IN>> entry = activeBucketIter.next();
             if (!entry.getValue().isActive()) {
+                LOG.debug("Bucket {} is INACTIVE, removing", entry.getKey());
                 activeBucketIter.remove();
             } else {
-                committables.addAll(entry.getValue().prepareCommit(flush, appId, nextCheckpointId));
+                List<DeltaCommittable> bucketCommittables =
+                    entry.getValue().prepareCommit(flush, appId, nextCheckpointId);
+                LOG.debug("Bucket {} is ACTIVE, got {} committables",
+                    entry.getKey(), bucketCommittables.size());
+                committables.addAll(bucketCommittables);
             }
         }
 
         incrementNextCheckpointId();
+        LOG.debug("prepareCommit(flush={}) - returning {} total committables",
+            flush, committables.size());
         return committables;
     }
 
     /**
      * Flushes all buckets.
      * Flink 2.0: New flush(boolean) method in SinkWriter interface
-     * Implementation triggers prepareCommit to ensure all data is flushed
+     *
+     * IMPORTANT: This method should NOT call prepareCommit() because that would generate
+     * committables that are then discarded. The framework calls prepareCommit() separately
+     * after flush() to collect committables.
+     *
+     * For now, this is a no-op because buckets are flushed on prepareCommit().
      */
     @Override
     public void flush(boolean endOfInput) throws IOException {
-        // Trigger prepareCommit with flush=true to ensure all buckets are flushed
-        prepareCommit(true);
+        LOG.debug("flush(endOfInput={}) called", endOfInput);
+        // No-op: Buckets will be flushed when prepareCommit() is called
+        // Calling prepareCommit() here would cause buckets to become inactive,
+        // resulting in 0 committables when the framework calls prepareCommit()
     }
 
     /**

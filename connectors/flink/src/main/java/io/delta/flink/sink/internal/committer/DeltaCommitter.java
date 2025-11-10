@@ -143,8 +143,8 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
     @Override
     public void commit(Collection<CommitRequest<DeltaCommittable>> commitRequests)
             throws IOException {
-
-        LOG.info("DeltaCommitter.commit() called with {} commit requests", commitRequests.size());
+        LOG.info("DeltaCommitter.commit() called with {} commit requests",
+            commitRequests.size());
 
         List<DeltaCommittable> successfulCommittables = new ArrayList<>();
 
