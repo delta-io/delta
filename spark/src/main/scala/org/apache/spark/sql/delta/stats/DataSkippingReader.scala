@@ -1523,6 +1523,16 @@ trait DataSkippingReaderBase
     val withNumRecords = {
       getFilesAndNumRecords(df)
     }
+    pruneFilesWithIterator(withNumRecords, limit)
+  }
+
+  /**
+   * Helper method that performs the common file pruning logic for limit pushdown.
+   * Takes an iterator of files with record counts and prunes them based on the limit.
+   */
+  protected def pruneFilesWithIterator(
+      withNumRecords: Iterator[(AddFile, NumRecords)] with Closeable,
+      limit: Long): ScanAfterLimit = {
 
     var logicalRowsToScan = 0L
     var physicalRowsToScan = 0L
