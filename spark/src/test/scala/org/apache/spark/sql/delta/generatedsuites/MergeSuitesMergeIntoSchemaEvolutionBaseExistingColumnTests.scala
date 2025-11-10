@@ -32,13 +32,13 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
-class MergeIntoSchemaEvolutionBaseSQLNameBasedSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLNameBasedSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsNameBased
 
-class MergeIntoSchemaEvolutionBaseSQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLPathBasedCDCOnDVsPredPushOffSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
@@ -47,8 +47,8 @@ class MergeIntoSchemaEvolutionBaseSQLPathBasedCDCOnDVsPredPushOffSuite
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
-class MergeIntoSchemaEvolutionBaseSQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLPathBasedCDCOnDVsPredPushOnSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
@@ -57,46 +57,46 @@ class MergeIntoSchemaEvolutionBaseSQLPathBasedCDCOnDVsPredPushOnSuite
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
-class MergeIntoSchemaEvolutionBaseSQLPathBasedCDCOnSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLPathBasedCDCOnSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with MergeCDCMixin
 
-class MergeIntoSchemaEvolutionBaseSQLPathBasedColMapIdModeSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLPathBasedColMapIdModeSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
   with MergeIntoSQLColumnMappingOverrides
 
-class MergeIntoSchemaEvolutionBaseSQLPathBasedColMapNameModeSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLPathBasedColMapNameModeSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with MergeIntoSQLColumnMappingOverrides
 
-class MergeIntoSchemaEvolutionBaseSQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLPathBasedDVsPredPushOffSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with MergeIntoDVsMixin
   with PredicatePushdownDisabled
 
-class MergeIntoSchemaEvolutionBaseSQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLPathBasedDVsPredPushOnSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with MergeIntoDVsMixin
   with PredicatePushdownEnabled
 
-class MergeIntoSchemaEvolutionBaseSQLPathBasedSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnSQLPathBasedSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
 
-class MergeIntoSchemaEvolutionBaseScalaSuite
-  extends MergeIntoSchemaEvolutionBaseTests
+class MergeIntoSchemaEvolutionBaseExistingColumnScalaSuite
+  extends MergeIntoSchemaEvolutionBaseExistingColumnTests
   with MergeIntoScalaMixin

@@ -43,16 +43,6 @@ class UCCatalogManagedCommitterSuite
     with VectorTestUtils
     with MockFileSystemClientUtils {
 
-  private def catalogManagedWriteCommitMetadata(
-      version: Long,
-      logPath: String = baseTestLogPath): CommitMetadata = createCommitMetadata(
-    version = version,
-    logPath = logPath,
-    readPandMOpt = Optional.of(
-      new KernelTuple2[Protocol, Metadata](
-        protocolWithCatalogManagedSupport,
-        basicPartitionedMetadata)))
-
   // ============================================================
   // ===================== Misc. Unit Tests =====================
   // ============================================================

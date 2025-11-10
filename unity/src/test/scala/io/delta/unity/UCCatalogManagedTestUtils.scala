@@ -16,30 +16,74 @@
 
 package io.delta.unity
 
+import java.lang.{Long => JLong}
 import java.net.URI
 import java.util.Optional
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
+import scala.reflect.ClassTag
 
-import io.delta.kernel.commit.PublishMetadata
+import io.delta.kernel.commit.{CommitMetadata, PublishMetadata}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
-import io.delta.kernel.engine.Engine
+import io.delta.kernel.engine.{Engine, MetricsReporter}
 import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.files.ParsedCatalogCommitData
+import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.test.ActionUtils
+import io.delta.kernel.metrics.MetricsReport
+import io.delta.kernel.test.{ActionUtils, TestFixtures}
 import io.delta.kernel.utils.CloseableIterator
-import io.delta.storage.commit.Commit
+import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.unity.InMemoryUCClient.TableData
 
-import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, FileSystem, Path}
 
-trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUtils {
+trait UCCatalogManagedTestUtils
+    extends TestUtils
+    with ActionUtils
+    with TestFixtures
+    with WriteUtils {
+
   val fakeURI = new URI("s3://bucket/table")
   val baseTestTablePath = "/path/to/table"
   val baseTestLogPath = "/path/to/table/_delta_log"
   val emptyLongOpt = Optional.empty[java.lang.Long]()
+
+  /**
+   * Generic MetricsReporter that captures specific types of MetricsReport instances.
+   * This can be used for both UcCommitTelemetry.Report and UcPublishTelemetry.Report.
+   *
+   * @tparam T the type of MetricsReport to capture
+   */
+  class CapturingMetricsReporter[T <: MetricsReport: ClassTag] extends MetricsReporter {
+    val reports = ArrayBuffer[T]()
+
+    override def report(report: MetricsReport): Unit = {
+      report match {
+        case r: T => reports.append(r)
+        case _ => // Ignore other report types
+      }
+    }
+  }
+
+  /** Creates an Engine with a custom MetricsReporter for testing telemetry */
+  def createEngineWithMetricsCapture(reporter: MetricsReporter): Engine = {
+    val hadoopConf = new Configuration()
+    new DefaultEngine(
+      new io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO(hadoopConf)) {
+      override def getMetricsReporters: java.util.List[MetricsReporter] = {
+        val reporters = new java.util.ArrayList[MetricsReporter]()
+        reporters.add(reporter)
+        reporters
+      }
+    }
+  }
 
   /** Helper method with reasonable defaults */
   def loadSnapshot(
@@ -98,5 +142,94 @@ trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUti
     val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
     val simpleRow = DataBuilderUtils.row(schema, elem)
     singletonCloseableIterator(simpleRow)
+  }
+
+  /** Creates a UCCatalogManagedClient with an InMemoryUCClient for testing */
+  def createUCClientAndCatalogManagedClient(
+      metastoreId: String = "ucMetastoreId"): (InMemoryUCClient, UCCatalogManagedClient) = {
+    val ucClient = new InMemoryUCClient(metastoreId)
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+    (ucClient, ucCatalogManagedClient)
+  }
+
+  /**
+   * Initializes a UC table in the InMemoryUCClient after creation.
+   * This should be called after creating a table with buildCreateTableTransaction.
+   */
+  def initializeUCTable(ucClient: InMemoryUCClient, ucTableId: String): Unit = {
+    val tableData =
+      new InMemoryUCClient.TableData(-1, scala.collection.mutable.ArrayBuffer[Commit]())
+    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
+  }
+
+  /** Version TS for the test table used in [[withUCClientAndTestTable]] */
+  val v0Ts = 1749830855993L // published commit
+  val v1Ts = 1749830871085L // ratified staged commit
+  val v2Ts = 1749830881799L // ratified staged commit
+
+  /**
+   * @param textFx test function to run that takes input (ucClient, tablePath, maxRatifiedVersion)
+   */
+  def withUCClientAndTestTable(
+      textFx: (InMemoryUCClientWithMetrics, String, Long) => Unit): Unit = {
+    val maxRatifiedVersion = 2L
+    val tablePath = getTestResourceFilePath("catalog-owned-preview")
+    val ucClient = new InMemoryUCClientWithMetrics("ucMetastoreId")
+    val fs = FileSystem.get(new Configuration())
+    val catalogCommits = Seq(
+      // scalastyle:off line.size.limit
+      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000001.4cb9708e-b478-44de-b203-53f9ba9b2876.json"),
+      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json"))
+      // scalastyle:on line.size.limit
+      .map { path => fs.getFileStatus(new Path(path)) }
+      .map { fileStatus =>
+        new Commit(
+          FileNames.deltaVersion(fileStatus.getPath.toString),
+          fileStatus,
+          fileStatus.getModificationTime)
+      }
+    val tableData = new TableData(maxRatifiedVersion, ArrayBuffer(catalogCommits: _*))
+    ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+    textFx(ucClient, tablePath, maxRatifiedVersion)
+  }
+
+  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
+  /**
+   * When a new UC table is created, it will have Delta version 0 but the max ratified verison in
+   * UC is -1. This is a special edge case.
+   */
+  def createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne(
+      ucTableId: String = "ucTableId"): UCCatalogManagedClient = {
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val tableData = new TableData(-1, ArrayBuffer[Commit]())
+    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
+    new UCCatalogManagedClient(ucClient)
+  }
+
+  /** This should be used for WRITE operations (version >= 1), not for CREATE. */
+  def catalogManagedWriteCommitMetadata(
+      version: Long,
+      logPath: String = baseTestLogPath): CommitMetadata = createCommitMetadata(
+    version = version,
+    logPath = logPath,
+    readPandMOpt = Optional.of(
+      new KernelTuple2[Protocol, Metadata](
+        protocolWithCatalogManagedSupport,
+        basicPartitionedMetadata)))
+
+  /** Wrapper class around InMemoryUCClient that tracks number of getCommit calls made */
+  class InMemoryUCClientWithMetrics(ucMetastoreId: String) extends InMemoryUCClient(ucMetastoreId) {
+    private var numGetCommitsCalls: Long = 0
+
+    override def getCommits(
+        tableId: String,
+        tableUri: URI,
+        startVersion: Optional[JLong],
+        endVersion: Optional[JLong]): GetCommitsResponse = {
+      numGetCommitsCalls += 1
+      super.getCommits(tableId, tableUri, startVersion, endVersion)
+    }
+
+    def getNumGetCommitCalls: Long = numGetCommitsCalls
   }
 }

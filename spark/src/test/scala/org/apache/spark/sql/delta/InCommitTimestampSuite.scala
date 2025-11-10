@@ -28,12 +28,14 @@ import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordina
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DateTimeUtils, DeltaCommitFileProvider,
+  FileNames, JsonUtils, TimestampFormatter}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
@@ -717,6 +719,11 @@ class InCommitTimestampSuite
         val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         // Search for the commit immediately after the enablement commit.
         val searchTimestamp = getInCommitTimestamp(deltaLog, enablementCommit.version + 1)
+        val minTimestamp = getInCommitTimestamp(deltaLog, enablementCommit.version + 2)
+        val timestampFormatter = TimestampFormatter(
+          DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone))
+        val minTimestampString = DateTimeUtils.timestampToString(
+          timestampFormatter, DateTimeUtils.fromJavaTimestamp(new Timestamp(minTimestamp)))
         // Delete the first two ICT commits before performing the search.
         (enablementCommit.version to enablementCommit.version + 1).foreach { version =>
           fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version), false)
@@ -724,6 +731,15 @@ class InCommitTimestampSuite
         val e = intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
           deltaLog.history.getActiveCommitAtTime(searchTimestamp, false)
         }
+        checkError(
+          e,
+          "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION",
+          sqlState = "42816",
+          parameters = Map(
+            "userTimestamp" -> new Timestamp(searchTimestamp).toString,
+            "commitTs" -> new Timestamp(minTimestamp).toString,
+            "timestampString" -> minTimestampString)
+        )
         assert(
           e.getMessage.contains("The provided timestamp") && e.getMessage.contains("is before"))
 
@@ -732,9 +748,25 @@ class InCommitTimestampSuite
         (0L until numNonICTCommits).foreach { version =>
           fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version), false)
         }
-        intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
+        // The earliest available commit is at enablementCommit.version + 2 because we deleted
+        // the first two ICT commits earlier.
+        val earliestAvailableCommitTs = getInCommitTimestamp(
+          deltaLog, enablementCommit.version + 2)
+        val earliestAvailableCommitTimestampString = DateTimeUtils.timestampToString(
+          timestampFormatter, DateTimeUtils.fromJavaTimestamp(
+            new Timestamp(earliestAvailableCommitTs)))
+        val e2 = intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
           deltaLog.history.getActiveCommitAtTime(enablementCommit.timestamp-1, false)
         }
+        checkError(
+          e2,
+          "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION",
+          sqlState = "42816",
+          parameters = Map(
+            "userTimestamp" -> new Timestamp(enablementCommit.timestamp-1).toString,
+            "commitTs" -> new Timestamp(earliestAvailableCommitTs).toString,
+            "timestampString" -> earliestAvailableCommitTimestampString)
+        )
         // The same query should work when the earliest commit is allowed to be returned.
         // The returned commit will be the earliest available ICT commit.
         val commit = deltaLog.history.getActiveCommitAtTime(
