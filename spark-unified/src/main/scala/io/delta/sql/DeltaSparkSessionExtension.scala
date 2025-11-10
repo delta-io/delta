@@ -16,6 +16,7 @@
 
 package io.delta.sql
 
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 
@@ -68,6 +69,17 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * @since 0.4.0
  */
 class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
+
+  override def apply(extensions: SparkSessionExtensions): Unit = {
+    // First apply the base extensions from AbstractDeltaSparkSessionExtension
+    super.apply(extensions)
+    
+    // Register the analyzer rule for kernel-based streaming
+    // This rule replaces V1 (DeltaTableV2) with V2 (SparkTable) for streaming queries
+    extensions.injectResolutionRule { session =>
+      new UseKernelForStreamingRule(session)
+    }
+  }
 
   /**
    * NoOpRule for binary compatibility with Delta 3.3.0

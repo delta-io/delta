@@ -2856,6 +2856,22 @@ trait DeltaSQLConfBase {
           |When enabled, it's decided by a per-command flag.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  ///////////////////
+  // KERNEL STREAMING
+  ///////////////////
+  
+  val DELTA_KERNEL_STREAMING_ENABLED =
+    buildConf("kernel.streaming.enabled")
+      .internal()
+      .doc(
+        """When enabled, streaming queries will use the Kernel-based V2 (DSv2) implementation
+          |with MicroBatchStream support. Batch queries and write operations will continue to use
+          |the traditional V1 (DeltaLog-based) implementation. This allows gradual rollout of
+          |Kernel streaming while maintaining compatibility with existing operations.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
