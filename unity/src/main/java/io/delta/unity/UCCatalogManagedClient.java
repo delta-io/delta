@@ -59,7 +59,7 @@ public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
   /** Key for identifying Unity Catalog table ID. */
-  public static final String UC_TABLE_ID_KEY = "ucTableId";
+  public static final String UC_TABLE_ID_KEY = "catalogManaged.unityCatalog.tableId";
 
   protected final UCClient ucClient;
 
