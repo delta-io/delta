@@ -450,10 +450,10 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         .orElseGet(() => fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, isNewTable, enableIcebergWriterCompatV1)
-      assertColumnMapping(metadata.getSchema.get("b"), 2L, isNewTable, enableIcebergWriterCompatV1)
+      assertColumnMapping(metadata.getSchema.get("b"), 4L, isNewTable, enableIcebergWriterCompatV1)
       val innerStruct = metadata.getSchema.get("b").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(innerStruct.get("d"), 3L, isNewTable, enableIcebergWriterCompatV1)
-      assertColumnMapping(innerStruct.get("e"), 4L, isNewTable, enableIcebergWriterCompatV1)
+      assertColumnMapping(innerStruct.get("d"), 2L, isNewTable, enableIcebergWriterCompatV1)
+      assertColumnMapping(innerStruct.get("e"), 3L, isNewTable, enableIcebergWriterCompatV1)
       assertColumnMapping(metadata.getSchema.get("c"), 5L, isNewTable, enableIcebergWriterCompatV1)
 
       assertThat(metadata.getConfiguration)
@@ -639,7 +639,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
           assertThat(metadata.getConfiguration).containsEntry(
             ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY,
             (base + 8).toString)
-          val prefix = s"col-$base"
+          val prefix = "col-2"
           // Values are offset by base.  All Ids are assigned in depth first order to
           // StructField's first and then intermediate nested fields are added after.
           val nestedColumnMappingValues = FieldMetadata.builder()
@@ -654,7 +654,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
             COLUMN_MAPPING_NESTED_IDS_KEY,
             nestedColumnMappingValues)
             .putString("delta.columnMapping.physicalName", prefix)
-            .putLong("delta.columnMapping.id", base)
+            .putLong("delta.columnMapping.id", 2)
             .putBoolean("k2", true).build()
           val firstColumnMetadata = getter(metadata).getMetadata
           assertThat(firstColumnMetadata.getMetadata(
@@ -746,12 +746,12 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       assertColumnMapping(updatedMetadata2.getSchema.get("b"), nextFieldId, "b")
       assertColumnMapping(updatedMetadata2.getSchema.get("c"), nextFieldId, "c")
       assertColumnMapping(updatedMetadata2.getSchema.get("d"), nextFieldId, "d")
-      assertColumnMapping(updatedMetadata2.getSchema.get("e"), nextFieldId, "e")
       assertColumnMapping(
         updatedMetadata2.getSchema.get("e")
           .getDataType.asInstanceOf[StructType].get("h"),
         nextFieldId,
         "h")
+      assertColumnMapping(updatedMetadata2.getSchema.get("e"), nextFieldId, "e")
 
       if (icebergCompatV2Enabled) {
         // verify nested ids
