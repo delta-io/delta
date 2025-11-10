@@ -114,21 +114,24 @@ def setup_pyspark_scala213_compatibility():
         from pathlib import Path
 
         # Download Spark 3.5.3 with Scala 2.13
-        spark_url = "https://archive.apache.org/dist/spark/spark-3.5.3/spark-3.5.3-bin-hadoop3-scala2.13.tgz"
-        spark_dir = "spark-3.5.3-bin-hadoop3-scala2.13"
-        spark_tgz = f"{spark_dir}.tgz"
+        SPARK_VERSION = "3.5.3"
+        SCALA_SUFFIX = "2.13"
+        SPARK_DIR = f"spark-{SPARK_VERSION}-bin-hadoop3-scala{SCALA_SUFFIX}"
+        
+        spark_url = f"https://archive.apache.org/dist/spark/spark-{SPARK_VERSION}/{SPARK_DIR}.tgz"
+        spark_tgz = f"{SPARK_DIR}.tgz"
 
         # Download if not already present
-        if not os.path.exists(spark_dir):
+        if not os.path.exists(SPARK_DIR):
             print(f"Downloading Spark with Scala 2.13: {spark_url}")
             run_cmd(["curl", "-LO", spark_url], stream_output=True)
             print(f"Extracting {spark_tgz}")
             run_cmd(["tar", "-xzf", spark_tgz], stream_output=True)
         else:
-            print(f"Using existing Spark directory: {spark_dir}")
+            print(f"Using existing Spark directory: {SPARK_DIR}")
 
         # Set SPARK_HOME environment variable
-        new_spark_home = os.path.abspath(spark_dir)
+        new_spark_home = os.path.abspath(SPARK_DIR)
         os.environ["SPARK_HOME"] = new_spark_home
         print(f"Set SPARK_HOME to: {new_spark_home}")
 
