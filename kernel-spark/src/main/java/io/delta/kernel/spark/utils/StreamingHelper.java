@@ -24,11 +24,8 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.data.StructRow;
-import io.delta.kernel.spark.exception.VersionNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
-import java.sql.Timestamp;
-import java.util.ArrayList;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 

@@ -20,7 +20,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.CommitRangeNotFoundException;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -460,7 +459,10 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
    * @throws RuntimeException if the commit is invalid.
    */
   private void validateCommit(
-      ColumnarBatch batch, long version, String tablePath, Optional<DeltaSourceOffset> endOffsetOpt) {
+      ColumnarBatch batch,
+      long version,
+      String tablePath,
+      Optional<DeltaSourceOffset> endOffsetOpt) {
     // If endOffset is at the beginning of this version, exit early.
     if (endOffsetOpt.isPresent()) {
       DeltaSourceOffset endOffset = endOffsetOpt.get();
