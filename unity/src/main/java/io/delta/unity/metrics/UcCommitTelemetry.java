@@ -104,11 +104,11 @@ public class UcCommitTelemetry {
     public final long commitVersion = commitMetadata.getVersion();
     public final CommitMetadata.CommitType commitType = commitMetadata.getCommitType();
     public final MetricsResult metrics;
-    public final Optional<String> exception;
+    public final Optional<Exception> exception;
 
     public Report(MetricsResult metrics, Optional<Exception> exception) {
       this.metrics = metrics;
-      this.exception = exception.map(Exception::toString);
+      this.exception = exception;
     }
 
     @Override

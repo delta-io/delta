@@ -20,6 +20,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.internal.metrics.MetricsReportSerializer;
 import io.delta.kernel.internal.metrics.Timer;
+import io.delta.kernel.metrics.MetricsReport;
 import java.util.Optional;
 
 /**
@@ -109,7 +110,7 @@ public class UcPublishTelemetry {
     "metrics",
     "exception"
   })
-  public class Report implements io.delta.kernel.metrics.MetricsReport {
+  public class Report implements MetricsReport {
     public final String operationType = "UcPublish";
     public final String reportUUID = java.util.UUID.randomUUID().toString();
     public final String ucTableId = UcPublishTelemetry.this.ucTableId;
@@ -117,11 +118,11 @@ public class UcPublishTelemetry {
     public final long snapshotVersion = UcPublishTelemetry.this.snapshotVersion;
     public final int numCommitsToPublish = UcPublishTelemetry.this.numCommitsToPublish;
     public final MetricsResult metrics;
-    public final Optional<String> exception;
+    public final Optional<Exception> exception;
 
     public Report(MetricsResult metrics, Optional<Exception> exception) {
       this.metrics = metrics;
-      this.exception = exception.map(Exception::toString);
+      this.exception = exception;
     }
 
     @Override
