@@ -950,9 +950,6 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
     javafmtCheckSettings,
     scalafmtCheckSettings,
     
-    Test / javaOptions ++= Seq("-ea"),
-    Test / envVars += ("DELTA_TESTING", "1"),
-    
     libraryDependencies ++= Seq(
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
