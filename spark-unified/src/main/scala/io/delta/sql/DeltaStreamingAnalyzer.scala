@@ -20,13 +20,10 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, StreamingRelationV2}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import io.delta.kernel.spark.table.SparkTable
 
 /**
- * Analyzer rule that replaces V1 Delta tables with V2 Kernel-based tables for streaming reads only.
+ * Analyzer rule that wraps HybridDeltaTable with context hint for streaming reads only.
  *
  * This rule enables Delta to use:
  * - V2 (Kernel-based) implementation for streaming reads (sources with MicroBatchStream)
@@ -35,11 +32,11 @@ import io.delta.kernel.spark.table.SparkTable
  * The rule works by:
  * 1. Pattern matching on StreamingRelationV2 nodes (which only exist for streaming sources)
  * 2. Extracting the ResolvedTable from within StreamingRelationV2
- * 3. Replacing DeltaTableV2 with SparkTable (V2) only for those specific tables
+ * 3. Wrapping HybridDeltaTable with HybridDeltaTableWithContext(useV2=true)
  *
  * This precise matching ensures:
- * - Streaming writes (sinks) continue to use V1
- * - Batch operations continue to use V1
+ * - Streaming writes (sinks) continue to use V1 (no wrapper, defaults to V1)
+ * - Batch operations continue to use V1 (no wrapper, defaults to V1)
  * - Only streaming reads benefit from V2's MicroBatchStream implementation
  */
 class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
@@ -61,54 +58,33 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
       case streamingRel @ StreamingRelationV2(
           source,
           sourceName,
-          table @ ResolvedTable(catalog, identifier, deltaTable: DeltaTableV2, attrs),
+          table @ ResolvedTable(catalog, identifier, hybridTable: HybridDeltaTable, attrs),
           extraOptions,
           output,
           v1Relation) =>
 
         try {
-          logInfo(s"Replacing DeltaTableV2 with Kernel-based SparkTable for streaming source: $identifier")
+          logInfo(s"Wrapping HybridDeltaTable with V2 context for streaming source: $identifier")
 
-          // Create V2 table for streaming read
-          val v2Table = new SparkTable(
-            Identifier.of(identifier.namespace(), identifier.name()),
-            deltaTable.path.toString,
-            deltaTable.options.asJava
-          )
+          // Wrap the hybrid table with context indicating V2 should be used
+          val withContext = new HybridDeltaTableWithContext(hybridTable, useV2 = true)
+          val newResolvedTable = ResolvedTable(catalog, identifier, withContext, attrs)
 
-          val newResolvedTable = ResolvedTable(catalog, identifier, v2Table, attrs)
-
-          // Return updated StreamingRelationV2 with V2 table
+          // Return updated StreamingRelationV2 with wrapped table
           StreamingRelationV2(source, sourceName, newResolvedTable, extraOptions, output, v1Relation)
 
         } catch {
           case e: Exception =>
-            // If V2 table creation fails, log warning and fall back to V1
-            logWarning(s"Failed to create Kernel V2 table for streaming source $identifier, " +
+            // If wrapping fails, log warning and fall back to default (V1)
+            logWarning(s"Failed to wrap HybridDeltaTable with V2 context for streaming source $identifier, " +
               s"falling back to V1: ${e.getMessage}", e)
             streamingRel
         }
 
       // Don't transform anything else - this preserves:
-      // - Streaming writes (no StreamingRelationV2 wrapper)
-      // - Batch reads (no StreamingRelationV2 wrapper)
-      // - Batch writes (no StreamingRelationV2 wrapper)
+      // - Streaming writes (no StreamingRelationV2 wrapper) → defaults to V1
+      // - Batch reads (no StreamingRelationV2 wrapper) → defaults to V1
+      // - Batch writes (no StreamingRelationV2 wrapper) → defaults to V1
     }
   }
 }
-
-/**
- * Configuration for Delta Kernel streaming support.
- */
-object DeltaKernelStreamingConfig {
-
-  /**
-   * SQL configuration key to enable/disable Kernel-based streaming.
-   * When enabled, streaming read queries will use the Kernel V2 implementation.
-   * When disabled, all queries use the traditional V1 implementation.
-   *
-   * Default: false (disabled) for gradual rollout
-   */
-  val DELTA_KERNEL_STREAMING_ENABLED_KEY = "spark.databricks.delta.kernel.streaming.enabled"
-}
-

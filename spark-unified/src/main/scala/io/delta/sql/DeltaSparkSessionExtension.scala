@@ -21,9 +21,10 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 
 /**
- * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
+ * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar
+ * and enable hybrid V1/V2 connector behavior via analyzer rules.
  *
- * Scala example to create a `SparkSession` with the Delta SQL parser:
+ * Scala example to create a `SparkSession` with the Delta SQL parser and hybrid catalog:
  * {{{
  *    import org.apache.spark.sql.SparkSession
  *
@@ -32,38 +33,8 @@ import org.apache.spark.sql.catalyst.rules.Rule
  *       .appName("...")
  *       .master("...")
  *       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+ *       .config("spark.sql.catalog.spark_catalog", "io.delta.sql.DeltaHybridCatalog")
  *       .getOrCreate()
- * }}}
- *
- * Java example to create a `SparkSession` with the Delta SQL parser:
- * {{{
- *    import org.apache.spark.sql.SparkSession;
- *
- *    SparkSession spark = SparkSession
- *                 .builder()
- *                 .appName("...")
- *                 .master("...")
- *                 .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
- *                 .getOrCreate();
- * }}}
- *
- * Python example to create a `SparkSession` with the Delta SQL parser (PySpark doesn't pick up the
- * SQL conf "spark.sql.extensions" in Apache Spark 2.4.x, hence we need to activate it manually in
- * 2.4.x. However, because `SparkSession` has been created and everything has been materialized, we
- * need to clone a new session to trigger the initialization. See SPARK-25003):
- * {{{
- *    from pyspark.sql import SparkSession
- *
- *    spark = SparkSession \
- *        .builder \
- *        .appName("...") \
- *        .master("...") \
- *        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
- *        .getOrCreate()
- *    if spark.sparkContext().version < "3.":
- *        spark.sparkContext()._jvm.io.delta.sql.DeltaSparkSessionExtension() \
- *            .apply(spark._jsparkSession.extensions())
- *        spark = SparkSession(spark.sparkContext(), spark._jsparkSession.cloneSession())
  * }}}
  *
  * @since 0.4.0
@@ -75,7 +46,7 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     super.apply(extensions)
     
     // Register the analyzer rule for kernel-based streaming
-    // This rule replaces V1 (DeltaTableV2) with V2 (SparkTable) for streaming queries
+    // This rule wraps HybridDeltaTable with context hint for streaming queries
     extensions.injectResolutionRule { session =>
       new UseKernelForStreamingRule(session)
     }
