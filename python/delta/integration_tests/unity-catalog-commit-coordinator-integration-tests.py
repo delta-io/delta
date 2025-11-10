@@ -480,7 +480,8 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
         try:
             current_version = self.current_version(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
             # Restore is currently unsupported on catalog owned tables.
-            spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO VERSION AS OF {current_version-1}")
+            spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO "
+                      f"VERSION AS OF {current_version-1}")
         except py4j.protocol.Py4JJavaError as error:
             assert("UPDATE_DELTA_METADATA" in str(error))
 
