@@ -7,20 +7,17 @@ import org.apache.spark.sql.connector.catalog.Table;
 
 /**
  * Unity Catalog persists Unity-specific metadata onto Spark {@link Table} instances when they are
- * resolved through `UCSingleCatalog`. This helper centralises the logic for interpreting those
+ * resolved through UCSingleCatalog. This helper centralises the logic for interpreting those
  * properties so the Kernel connector can decide when to use catalog-owned (CCv2) behaviour.
  *
- * <p>The constants below mirror the property keys written by the UC → Spark connector:
- *
+ * <p> These constants mirror the property keys by the UC <> Spark connector
  * <ul>
- *   <li>`delta.unityCatalog.tableId` (and other `delta.unityCatalog.*` keys) flag a table as
- *       catalog-managed.
- *   <li>`delta.feature.catalogOwned` (plus its `-preview` variant) signal that catalog-owned commit
- *       coordination is enabled; both map to the value {@code supported} when active.
+ *  <li>delta.unityCatalog.* (e.g., tableId) flags a table as catalog-managed
+ *  <li>delta.feature.catalogOwned[-preview] signals that CCv2 (catalog-owned commit coordination)
+ *    is enabled. Both map to the value "supported" when active
  * </ul>
  *
- * <p>See {@code connectors/spark/.../UCSingleCatalog.scala} for the producer side of these
- * properties.
+ * <p> See {@code connectors/spark/.../UCSingleCatalog.scala} for the producer side of these props
  */
 public final class CatalogTableUtils {
   static final String UNITY_CATALOG_PROPERTY_PREFIX = "delta.unityCatalog.";
