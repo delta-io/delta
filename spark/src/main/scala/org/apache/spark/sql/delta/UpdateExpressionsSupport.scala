@@ -542,7 +542,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
             targetCol.dataType,
             castingBehavior = MergeOrUpdateCastingBehavior(allowSchemaEvolution),
             targetCol.name,
-            originalTargetExprOpt = originalTargetExprOpt))
+            originalTargetExprOpt))
         } else {
           // So there are prefix-matched update operations, but none of them is a full match. Then
           // that means targetCol is a complex data type, so we recursively pass along the update
