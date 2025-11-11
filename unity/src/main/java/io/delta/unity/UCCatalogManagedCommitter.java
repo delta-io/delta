@@ -151,9 +151,12 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
           });
 
       logger.info(
-          "[{}] Successfully published all catalog commits up to version {}",
+          "[{}] Successfully published all catalog commits up to version {}. {} were published by "
+              + "this process, {} were already published by another process.",
+          ucTableId,
           snapshotVersion,
-          ucTableId);
+          metricsCollector.getCommitsPublished(),
+          metricsCollector.getCommitsAlreadyPublished());
 
       final UcPublishTelemetry.Report successfulReport = telemetry.createSuccessReport();
       engine.getMetricsReporters().forEach(r -> r.report(successfulReport));

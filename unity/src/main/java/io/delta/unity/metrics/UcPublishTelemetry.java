@@ -76,6 +76,16 @@ public class UcPublishTelemetry {
       commitsAlreadyPublished++;
     }
 
+    /** @return number of commits published */
+    public int getCommitsPublished() {
+      return commitsPublished;
+    }
+
+    /** @return number of commits already published by another process */
+    public int getCommitsAlreadyPublished() {
+      return commitsAlreadyPublished;
+    }
+
     public MetricsResult capture() {
       return new MetricsResult(this);
     }
