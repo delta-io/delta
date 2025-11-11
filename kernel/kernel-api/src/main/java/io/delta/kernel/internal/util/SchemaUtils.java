@@ -389,13 +389,8 @@ public class SchemaUtils {
           Optional<SchemaIterable.ParentStructFieldInfo> newParent =
               newElement.getParentStructFieldAndPath();
           Optional<SchemaElementId> currentParentId =
-              currentParent.map(
-                  parent ->
-                      getSchemaElementId(parent.getParentField(), parent.getPathFromParent()));
-          Optional<SchemaElementId> newParentId =
-              newParent.map(
-                  parent ->
-                      getSchemaElementId(parent.getParentField(), parent.getPathFromParent()));
+              currentParent.map(SchemaUtils::getSchemaElementId);
+          Optional<SchemaElementId> newParentId = newParent.map(SchemaUtils::getSchemaElementId);
           if (!Objects.equals(currentParentId, newParentId)) {
             throw DeltaErrors.invalidFieldMove(columnId, currentParent, newParent);
           }
@@ -515,9 +510,10 @@ public class SchemaUtils {
     return new SchemaElementId(element.getPathFromNearestStructFieldAncestor(""), columnId);
   }
 
-  private static SchemaElementId getSchemaElementId(StructField field, String path) {
-    int columnId = getColumnId(field);
-    return new SchemaElementId(path, columnId);
+  private static SchemaElementId getSchemaElementId(
+      SchemaIterable.ParentStructFieldInfo parentInfo) {
+    int columnId = getColumnId(parentInfo.getParentField());
+    return new SchemaElementId(parentInfo.getPathFromParent(), columnId);
   }
 
   private static void findAndAddRemovedFields(
