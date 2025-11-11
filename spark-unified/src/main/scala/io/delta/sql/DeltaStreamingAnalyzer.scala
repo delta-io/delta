@@ -21,6 +21,7 @@ import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, StreamingRelationV2}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
  * Analyzer rule that manages HybridDeltaTable behavior based on query type.
@@ -31,7 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  *
  * The rule has two transformation cases:
  * 1. StreamingRelationV2 with HybridDeltaTable → Wrap with V2 context
- * 2. ResolvedTable with HybridDeltaTable (batch/write) → Unwrap to DeltaTableV2
+ * 2. DataSourceV2Relation with HybridDeltaTable (batch/write) → Unwrap to DeltaTableV2
  *
  * Case 2 is critical: It ensures that batch operations get plain DeltaTableV2,
  * which allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert to V1.
@@ -85,24 +86,24 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
         }
 
       // Case 2: Batch/write operations → Unwrap HybridDeltaTable to DeltaTableV2
-      // This ensures Delta's FallbackToV1DeltaRelation can match and convert to V1
-      case resolvedTable @ ResolvedTable(catalog, identifier, hybridTable: HybridDeltaTable, attrs) =>
+      // This matches DataSourceV2Relation which is what batch reads create
+      case dsv2 @ DataSourceV2Relation(hybridTable: HybridDeltaTable, output, catalog, identifier, options) =>
         try {
           logInfo(s"Unwrapping HybridDeltaTable to DeltaTableV2 for batch/write operation: $identifier")
 
           // Extract the underlying DeltaTableV2
           val v1Table = hybridTable.getUnderlyingDeltaTableV2()
 
-          // Return ResolvedTable with plain DeltaTableV2
-          // This allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert to V1
-          ResolvedTable(catalog, identifier, v1Table, attrs)
+          // Return DataSourceV2Relation with plain DeltaTableV2
+          // This allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert to LogicalRelation (V1)
+          DataSourceV2Relation(v1Table, output, catalog, identifier, options)
 
         } catch {
           case e: Exception =>
             // If unwrapping fails, log warning and keep hybrid (will default to V1)
             logWarning(s"Failed to unwrap HybridDeltaTable to DeltaTableV2 for $identifier, " +
               s"keeping hybrid: ${e.getMessage}", e)
-            resolvedTable
+            dsv2
         }
 
       // Don't transform anything else - all other node types pass through unchanged
