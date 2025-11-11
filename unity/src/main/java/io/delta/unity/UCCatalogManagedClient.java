@@ -417,6 +417,43 @@ public class UCCatalogManagedClient {
         TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.getTableFeatureSupportKey(),
         TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
     requiredProperties.put(UC_TABLE_ID_KEY, ucTableId);
+    // Somehow this is required to make Delta Spark work with tables created by Kernel
+    // Without this property Delta Spark would fail with this error when access the table:
+    // spark-sql (default)> select * from ccv2table6;
+    // [DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH] Unable to operate on this table because the
+    // following table features are enabled in metadata but not listed in protocol:
+    // vacuumProtocolCheck.
+    // org.apache.spark.sql.delta.DeltaTableFeatureException:
+    // [DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH] Unable to operate on this table because the
+    // following table features are enabled in metadata but not listed in protocol:
+    // vacuumProtocolCheck.
+    //  at org.apache.spark.sql.delta.DeltaErrorsBase.tableFeatureMismatchException
+    //  (DeltaErrors.scala:2432)
+    //  at org.apache.spark.sql.delta.DeltaErrorsBase.tableFeatureMismatchException$
+    //  (DeltaErrors.scala:2429)
+    //  at org.apache.spark.sql.delta.DeltaErrors$.tableFeatureMismatchException
+    //  (DeltaErrors.scala:3759)
+    //  at org.apache.spark.sql.delta.DeltaLog.assertTableFeaturesMatchMetadata(DeltaLog.scala:464)
+    //  at org.apache.spark.sql.delta.Snapshot.init(Snapshot.scala:353)
+    //  at org.apache.spark.sql.delta.Snapshot.<init>(Snapshot.scala:706)
+    //  at org.apache.spark.sql.delta.SnapshotManagement.$anonfun$createSnapshot$2
+    //  (SnapshotManagement.scala:754)
+    //  at org.apache.spark.sql.delta.SnapshotManagement.
+    //  createSnapshotFromGivenOrEquivalentLogSegment(SnapshotManagement.scala:938)
+    //  at org.apache.spark.sql.delta.SnapshotManagement.
+    //  createSnapshotFromGivenOrEquivalentLogSegment$(SnapshotManagement.scala:923)
+    //  at org.apache.spark.sql.delta.DeltaLog.createSnapshotFromGivenOrEquivalentLogSegment
+    //  (DeltaLog.scala:79)
+    //  at org.apache.spark.sql.delta.SnapshotManagement.createSnapshot
+    //  (SnapshotManagement.scala:747)
+    //  at org.apache.spark.sql.delta.SnapshotManagement.createSnapshot$
+    //  (SnapshotManagement.scala:736)
+    //  at org.apache.spark.sql.delta.DeltaLog.createSnapshot(DeltaLog.scala:79)
+    //  at org.apache.spark.sql.delta.SnapshotManagement.$anonfun$getSnapshotForLogSegmentInternal$1
+    //  (SnapshotManagement.scala:1231)
+    requiredProperties.put(
+        TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE.getTableFeatureSupportKey(),
+        TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
 
     return requiredProperties;
   }

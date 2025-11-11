@@ -102,13 +102,35 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
 
                 throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
               });
+      // Disable telemetry because of error:
+      //   Exception in thread "main" java.lang.NoSuchFieldError: Class
+      // io.delta.kernel.internal.metrics.MetricsReportSerializer does not have member field
+      // 'com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER'
+      //    at io.delta.unity.metrics.UcCommitTelemetry$Report.toJson(UcCommitTelemetry.java:116)
+      //    at
+      // io.delta.kernel.defaults.engine.LoggingMetricsReporter.report
+      // (LoggingMetricsReporter.java:35)
+      //    at
+      // io.delta.unity.UCCatalogManagedCommitter.lambda$commit$1
+      // (UCCatalogManagedCommitter.java:107)
+      //    at java.base/java.util.Collections$SingletonList.forEach(Collections.java:5187)
+      //    at io.delta.unity.UCCatalogManagedCommitter.commit(UCCatalogManagedCommitter.java:107)
+      //    at io.delta.kernel.internal.TransactionImpl.doCommit(TransactionImpl.java:581)
+      //    at io.delta.kernel.internal.TransactionImpl.commitWithRetry(TransactionImpl.java:441)
+      //    at io.delta.kernel.internal.TransactionImpl.lambda$commit$3(TransactionImpl.java:284)
+      //    at io.delta.kernel.internal.metrics.Timer.time(Timer.java:79)
+      //    at io.delta.kernel.internal.TransactionImpl.commit(TransactionImpl.java:284)
+      //    at io.unitycatalog.cli.delta.DeltaKernelUtils.createDeltaTable(DeltaKernelUtils.java:68)
+      //    at io.unitycatalog.cli.TableCli.createTable(TableCli.java:155)
+      //    at io.unitycatalog.cli.TableCli.handle(TableCli.java:49)
+      //    at io.unitycatalog.cli.UnityCatalogCli.main(UnityCatalogCli.java:140)
 
-      final UcCommitTelemetry.Report successfulReport = telemetry.createSuccessReport();
-      engine.getMetricsReporters().forEach(r -> r.report(successfulReport));
+      // final UcCommitTelemetry.Report successfulReport = telemetry.createSuccessReport();
+      // engine.getMetricsReporters().forEach(r -> r.report(successfulReport));
       return response;
     } catch (CommitFailedException | RuntimeException e) {
-      final UcCommitTelemetry.Report failureReport = telemetry.createFailureReport(e);
-      engine.getMetricsReporters().forEach(r -> r.report(failureReport));
+      // final UcCommitTelemetry.Report failureReport = telemetry.createFailureReport(e);
+      // engine.getMetricsReporters().forEach(r -> r.report(failureReport));
       throw e;
     }
   }
