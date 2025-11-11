@@ -263,27 +263,9 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
         expectedErrorMessageContains)
     }
 
-    test(s"$testDescription - nested within a struct, without struct fieldIdReuse") {
-      val initialSchema = nestedStructSchema(initialFieldComplete, withCmMetadata = false)
-      val replaceSchema = nestedStructSchema(replaceFieldComplete, withCmMetadata = false)
-      checkReplaceThrowsException[T](
-        initialSchema,
-        replaceSchema,
-        expectedErrorMessageContains)
-    }
-
     test(s"$testDescription - nested within a struct in an array, with array fieldIdReuse") {
       val initialSchema = nestedArraySchema(initialFieldComplete, true)
       val replaceSchema = nestedArraySchema(replaceFieldComplete, true)
-      checkReplaceThrowsException[T](
-        initialSchema,
-        replaceSchema,
-        expectedErrorMessageContains)
-    }
-
-    test(s"$testDescription - nested within a struct in an array, without array fieldIdReuse") {
-      val initialSchema = nestedArraySchema(initialFieldComplete, false)
-      val replaceSchema = nestedArraySchema(replaceFieldComplete, false)
       checkReplaceThrowsException[T](
         initialSchema,
         replaceSchema,
@@ -299,28 +281,9 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
         expectedErrorMessageContains)
     }
 
-    test(s"$testDescription - nested within a struct in a map (key), without array fieldIdReuse") {
-      val initialSchema = nestedMapKeySchema(initialFieldComplete, false)
-      val replaceSchema = nestedMapKeySchema(replaceFieldComplete, false)
-      checkReplaceThrowsException[T](
-        initialSchema,
-        replaceSchema,
-        expectedErrorMessageContains)
-    }
-
     test(s"$testDescription - nested within a struct in a map (value), with array fieldIdReuse") {
       val initialSchema = nestedMapKeySchema(initialFieldComplete, true)
       val replaceSchema = nestedMapKeySchema(replaceFieldComplete, true)
-      checkReplaceThrowsException[T](
-        initialSchema,
-        replaceSchema,
-        expectedErrorMessageContains)
-    }
-
-    test(
-      s"$testDescription - nested within a struct in a map (value), without array fieldIdReuse") {
-      val initialSchema = nestedMapValueSchema(initialFieldComplete, false)
-      val replaceSchema = nestedMapValueSchema(replaceFieldComplete, false)
       checkReplaceThrowsException[T](
         initialSchema,
         replaceSchema,
@@ -600,5 +563,48 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
         engine,
         tablePath)) == 200)
     }
+  }
+
+  // E2E tests that we disallow fieldId reuse when fields are moved out of their prior parent.
+  // This validation is thoroughly unit tested in SchemaUtilsSuite.
+
+  test("Cannot reuse fieldId when moving field out of parent struct to top-level") {
+    val initialSchema = new StructType()
+      .add(new StructField(
+        "parent-struct",
+        new StructType()
+          .add(new StructField("nested-col", StringType.STRING, true)
+            .withCMMetadata("nested-col-physical", 100)),
+        true).withCMMetadata("parent-struct-physical", 1))
+    val replaceSchema = new StructType()
+      .add(new StructField("nested-col", StringType.STRING, true)
+        .withCMMetadata("nested-col-physical", 100))
+    checkReplaceThrowsException[KernelException](
+      initialSchema,
+      replaceSchema,
+      "Cannot move fields between different levels of nesting")
+  }
+
+  test("Cannot reuse fieldId when moving field from one parent struct to another") {
+    // Initial: nested_struct (fieldId=0) with col1 (fieldId=1) inside
+    val initialSchema = new StructType()
+      .add(new StructField(
+        "nested_struct",
+        new StructType()
+          .add(new StructField("col1", StringType.STRING, true)
+            .withCMMetadata("col1-physical", 1)),
+        true).withCMMetadata("nested_struct-physical", 0))
+    // Replace: nested_struct_new (fieldId=2) with col1 (fieldId=1) inside
+    val replaceSchema = new StructType()
+      .add(new StructField(
+        "nested_struct_new",
+        new StructType()
+          .add(new StructField("col1", StringType.STRING, true)
+            .withCMMetadata("col1-physical", 1)),
+        true).withCMMetadata("nested_struct_new-physical", 2))
+    checkReplaceThrowsException[KernelException](
+      initialSchema,
+      replaceSchema,
+      "Cannot move fields between different levels of nesting")
   }
 }
