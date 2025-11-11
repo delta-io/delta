@@ -23,21 +23,22 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
- * Analyzer rule that wraps HybridDeltaTable with context hint for streaming reads only.
+ * Analyzer rule that manages HybridDeltaTable behavior based on query type.
  *
  * This rule enables Delta to use:
  * - V2 (Kernel-based) implementation for streaming reads (sources with MicroBatchStream)
  * - V1 (DeltaLog-based) implementation for streaming writes, batch reads, and all writes
  *
- * The rule works by:
- * 1. Pattern matching on StreamingRelationV2 nodes (which only exist for streaming sources)
- * 2. Extracting the ResolvedTable from within StreamingRelationV2
- * 3. Wrapping HybridDeltaTable with HybridDeltaTableWithContext(useV2=true)
+ * The rule has two transformation cases:
+ * 1. StreamingRelationV2 with HybridDeltaTable → Wrap with V2 context
+ * 2. ResolvedTable with HybridDeltaTable (batch/write) → Unwrap to DeltaTableV2
  *
- * This precise matching ensures:
- * - Streaming writes (sinks) continue to use V1 (no wrapper, defaults to V1)
- * - Batch operations continue to use V1 (no wrapper, defaults to V1)
- * - Only streaming reads benefit from V2's MicroBatchStream implementation
+ * Case 2 is critical: It ensures that batch operations get plain DeltaTableV2,
+ * which allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert to V1.
+ * Without this unwrapping, batch queries would stay on V2 paths.
+ *
+ * IMPORTANT: This rule must be registered BEFORE DeltaAnalysis in the analyzer pipeline
+ * to ensure batch unwrapping happens before FallbackToV1DeltaRelation runs.
  */
 class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
 
@@ -51,10 +52,12 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
       return plan
     }
 
-    // Transform only StreamingRelationV2 nodes (streaming sources)
-    // This pattern match is precise: it only matches tables used as streaming sources,
-    // not streaming sinks, batch reads, or batch writes
+    // Transform the plan with two cases:
+    // Case 1: Streaming reads → Wrap with V2 context
+    // Case 2: Batch/write operations → Unwrap to DeltaTableV2
     plan.transformUp {
+      // Case 1: Streaming read source → Wrap HybridDeltaTable with V2 context
+      // This pattern matches ONLY streaming sources (readStream), not sinks (writeStream)
       case streamingRel @ StreamingRelationV2(
           source,
           sourceName,
@@ -81,10 +84,28 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
             streamingRel
         }
 
-      // Don't transform anything else - this preserves:
-      // - Streaming writes (no StreamingRelationV2 wrapper) → defaults to V1
-      // - Batch reads (no StreamingRelationV2 wrapper) → defaults to V1
-      // - Batch writes (no StreamingRelationV2 wrapper) → defaults to V1
+      // Case 2: Batch/write operations → Unwrap HybridDeltaTable to DeltaTableV2
+      // This ensures Delta's FallbackToV1DeltaRelation can match and convert to V1
+      case resolvedTable @ ResolvedTable(catalog, identifier, hybridTable: HybridDeltaTable, attrs) =>
+        try {
+          logInfo(s"Unwrapping HybridDeltaTable to DeltaTableV2 for batch/write operation: $identifier")
+
+          // Extract the underlying DeltaTableV2
+          val v1Table = hybridTable.getUnderlyingDeltaTableV2()
+
+          // Return ResolvedTable with plain DeltaTableV2
+          // This allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert to V1
+          ResolvedTable(catalog, identifier, v1Table, attrs)
+
+        } catch {
+          case e: Exception =>
+            // If unwrapping fails, log warning and keep hybrid (will default to V1)
+            logWarning(s"Failed to unwrap HybridDeltaTable to DeltaTableV2 for $identifier, " +
+              s"keeping hybrid: ${e.getMessage}", e)
+            resolvedTable
+        }
+
+      // Don't transform anything else - all other node types pass through unchanged
     }
   }
 }
