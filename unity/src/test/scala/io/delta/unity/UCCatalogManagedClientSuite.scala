@@ -218,6 +218,21 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       "after the latest available version 2"))
   }
 
+  test("loadTable does not throw on negative timestamp in validation") {
+    // This specifically tests that the validation logic in UCCatalogManagedClient.loadTable
+    // does not reject negative timestamps
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+    // Should not throw IllegalArgumentException for negative timestamp
+    // (it will fail later when trying to find the table, but that's expected)
+    val ex = intercept[RuntimeException] {
+      loadSnapshot(ucCatalogManagedClient, timestampToLoad = Optional.of(-1L))
+    }
+    // Verify it fails because the table doesn't exist, NOT because of timestamp validation
+    assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
+  }
+
   /* ---- end time-travel-by-timestamp tests ---- */
 
   test("converts UC Commit into Kernel ParsedLogData.RATIFIED_STAGED_COMMIT") {
