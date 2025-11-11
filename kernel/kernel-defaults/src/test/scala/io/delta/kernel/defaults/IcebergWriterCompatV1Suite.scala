@@ -22,7 +22,7 @@ import io.delta.kernel.{Operation, Table, TableManager}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, UnsupportedTableFeatureException}
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}

@@ -73,7 +73,7 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
         cmd += ["+ %s" % test_cmd]  # build/sbt ... "+ project/test" ...
     else:
         # when no scala version is specified, run test with only the specified scala version
-        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.13" "project/test" ...
+        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.16" "project/test" ...
 
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]
@@ -86,8 +86,76 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     cmd += ["-J-Xmx6G"]
     run_cmd(cmd, stream_output=True)
 
+def setup_pyspark_scala213_compatibility():
+    """
+    Setup PySpark with Scala 2.13 compatibility when SCALA_VERSION is set to 2.13.x.
+    This downloads Spark with Scala 2.13 and sets up the environment variables.
+
+    Download and setup Spark 3.5.3 with Scala 2.13 for compatibility with Delta Scala 2.13
+    Future note for Spark 4.0 upgrade: PySpark 3.5.3 from pip includes Scala 2.12 JARs, but
+    because of the upgrade to Scala 2.13, it was causing binary incompatibility errors.
+    For now (before Spark 4.0), we install PySpark without dependencies and use Spark 3.5.3 compiled
+    for Scala 2.13 to ensure compatibility. Remove the four steps below for Spark 4.0 upgrade.
+    """
+    scala_version = os.getenv("SCALA_VERSION")
+    if not scala_version or not scala_version.startswith("2.13"):
+        return False
+
+    print("##### Setting up PySpark Scala 2.13 compatibility #####")
+
+    # Check if Scala 2.13 Spark is already set up
+    spark_home = os.getenv("SPARK_HOME")
+    if spark_home and "scala2.13" in spark_home:
+        print(f"PySpark Scala 2.13 already configured: {spark_home}")
+        return True
+
+    try:
+        import subprocess
+        from pathlib import Path
+
+        # Download Spark 3.5.3 with Scala 2.13
+        SPARK_VERSION = "3.5.3"
+        SCALA_SUFFIX = "2.13"
+        SPARK_DIR = f"spark-{SPARK_VERSION}-bin-hadoop3-scala{SCALA_SUFFIX}"
+        
+        spark_url = f"https://archive.apache.org/dist/spark/spark-{SPARK_VERSION}/{SPARK_DIR}.tgz"
+        spark_tgz = f"{SPARK_DIR}.tgz"
+
+        # Download if not already present
+        if not os.path.exists(SPARK_DIR):
+            print(f"Downloading Spark with Scala 2.13: {spark_url}")
+            run_cmd(["curl", "-LO", spark_url], stream_output=True)
+            print(f"Extracting {spark_tgz}")
+            run_cmd(["tar", "-xzf", spark_tgz], stream_output=True)
+        else:
+            print(f"Using existing Spark directory: {SPARK_DIR}")
+
+        # Set SPARK_HOME environment variable
+        new_spark_home = os.path.abspath(SPARK_DIR)
+        os.environ["SPARK_HOME"] = new_spark_home
+        print(f"Set SPARK_HOME to: {new_spark_home}")
+
+        # Add Spark bin to PATH
+        spark_bin = os.path.join(new_spark_home, "bin")
+        current_path = os.environ.get("PATH", "")
+        if spark_bin not in current_path:
+            os.environ["PATH"] = f"{spark_bin}:{current_path}"
+            print(f"Added to PATH: {spark_bin}")
+
+        print("PySpark Scala 2.13 compatibility setup completed successfully")
+        return True
+
+    except Exception as e:
+        print(f"Warning: Failed to setup PySpark Scala 2.13 compatibility: {e}")
+        print("Continuing with existing PySpark installation...")
+        return False
+
+
+
 def run_python_tests(root_dir):
     print("##### Running Python tests #####")
+    # Setup PySpark Scala 2.13 compatibility if needed
+    setup_pyspark_scala213_compatibility()
     python_test_script = path.join(root_dir, path.join("python", "run-tests.py"))
     print("Calling script %s", python_test_script)
     run_cmd(["python3", python_test_script], env={'DELTA_TESTING': '1'}, stream_output=True)

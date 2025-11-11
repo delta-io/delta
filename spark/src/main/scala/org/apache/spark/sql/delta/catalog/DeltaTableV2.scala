@@ -291,6 +291,14 @@ class DeltaTableV2 private(
   }
 
   /**
+   * Creates a checkpoint for this table.
+   * @param snapshotToCheckpoint The snapshot to checkpoint.
+   */
+  def checkpoint(snapshotToCheckpoint: Snapshot): Unit = {
+    deltaLog.checkpoint(snapshotToCheckpoint, catalogTable)
+  }
+
+  /**
    * Creates a V1 BaseRelation from this Table to allow read APIs to go through V1 DataSource code
    * paths.
    */

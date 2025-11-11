@@ -25,7 +25,8 @@ import scala.jdk.CollectionConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
-import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException, UnsupportedProtocolVersionException}
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
@@ -178,6 +179,97 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     checkTable(
       goldenTablePath("kernel-timestamp-partition-col-ISO8601"),
       ISO8601PartitionColTableExpectedResult)
+  }
+
+  test(s"end-to-end usage: table with partition column in ISO8601 timestamp format with " +
+    s"partition pruning") {
+    /*
+    str: string         | ts: timestamp (partition col)
+    ------------------------------------------------------------------------
+    2024-01-01 10:00:00 | 2024-01-01T10:00:00.000000Z
+    2024-01-02 12:30:00 | 2024-01-02T12:30:00.000000Z
+     */
+    def row00: TestRow = TestRow(
+      "2024-01-01 10:00:00",
+      1704103200000000L // 2024-01-01 10:00:00 UTC to micros since the epoch
+    )
+    val filter = new Predicate("=", new Column("ts"), Literal.ofTimestamp(1704103200000000L))
+    def ISO8601PartitionColTableExpectedResult: Seq[TestRow] =
+      Seq(row00)
+    checkTable(
+      goldenTablePath("kernel-timestamp-partition-col-ISO8601"),
+      ISO8601PartitionColTableExpectedResult,
+      filter = filter)
+  }
+
+  test(s"end-to-end usage: spark-created table with partition column in ISO8601 timestamp " +
+    s"format with microsecond precision and partition pruning") {
+    // Set timezone to UTC so timestamps are interpreted consistently
+    withTimeZone("UTC") {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getCanonicalPath
+
+        // Create table with Spark - timestamp partition with microsecond precision
+        // Using spark.databricks.delta.write.utcTimestampPartitionValues=true
+        /*
+        str: string         | ts: timestamp (partition col)
+        ------------------------------------------------------------------------
+        2024-01-01 10:00:00.123456 | 2024-01-01T10:00:00.123456Z
+        2024-01-02 12:30:00.654321 | 2024-01-02T12:30:00.654321Z
+         */
+        withSQLConf("spark.databricks.delta.write.utcTimestampPartitionValues" -> "true") {
+          spark.sql(s"""CREATE TABLE delta.`$tablePath` (
+              str string,
+              ts timestamp
+            ) USING delta PARTITIONED BY (ts)""")
+
+          // Insert data with microsecond precision
+          spark.sql(s"""INSERT INTO delta.`$tablePath` VALUES
+              ('2024-01-01 10:00:00.123456', TIMESTAMP '2024-01-01 10:00:00.123456'),
+              ('2024-01-02 12:30:00.654321', TIMESTAMP '2024-01-02 12:30:00.654321')""")
+        }
+
+        // Verify partition format is ISO8601 by checking the Delta log's partitionValues
+        // (not the physical directory names, which may use a different format)
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        val snapshot = deltaLog.update()
+        val addFiles = snapshot.allFiles.collect()
+
+        assert(addFiles.length == 2, s"Expected 2 AddFile entries, but found ${addFiles.length}")
+
+        // Check that partitionValues in the Delta log use ISO8601 format
+        val partitionValues = addFiles.map(_.partitionValues("ts")).toSeq
+        assert(
+          partitionValues.forall(_.contains("T")),
+          s"Expected ISO8601 format with 'T' separator in partitionValues, but found: " +
+            s"${partitionValues.mkString(", ")}")
+
+        // Now verify reading with Kernel
+        def row00: TestRow = TestRow(
+          "2024-01-01 10:00:00.123456",
+          1704103200123456L // 2024-01-01 10:00:00.123456 UTC to micros since the epoch
+        )
+
+        def row11: TestRow = TestRow(
+          "2024-01-02 12:30:00.654321",
+          1704198600654321L // 2024-01-02 12:30:00.654321 UTC to micros since the epoch
+        )
+
+        // Test reading all data
+        checkTable(tablePath, Seq(row00, row11))
+
+        // Test partition pruning
+        val filter = new Predicate(
+          "=",
+          new Column("ts"),
+          Literal.ofTimestamp(1704103200123456L)
+        ) // Only read row00
+        checkTable(
+          tablePath,
+          Seq(row00),
+          filter = filter)
+      }
+    }
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -826,7 +918,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
   }
 
   test("table protocol version greater than reader protocol version") {
-    val e = intercept[Exception] {
+    val e = intercept[UnsupportedProtocolVersionException] {
       latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
         .getScanBuilder()
         .build()
