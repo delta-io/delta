@@ -19,29 +19,38 @@ package io.delta.sql
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCapability}
+import org.apache.spark.sql.connector.catalog.{Identifier, SupportsRead, SupportsWrite, Table, TableCapability}
+import org.apache.spark.sql.connector.read.ScanBuilder
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, WriteBuilder}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import io.delta.kernel.spark.table.SparkTable
 
 /**
  * A hybrid Delta table implementation that declares MICRO_BATCH_READ capability
- * to enable Spark to create StreamingRelationV2 for streaming reads.
+ * and implements SupportsRead to enable Spark to create StreamingRelationV2.
  *
  * This table is returned by the catalog for all operations. An analyzer rule then
  * replaces it with the appropriate concrete implementation:
  * - SparkTable (V2/Kernel) for streaming reads
  * - DeltaTableV2 (V1/DeltaLog) for batch reads/writes
  *
- * This class itself is never used for actual read/write operations - it only serves
- * as a placeholder during catalog resolution to signal the MICRO_BATCH_READ capability.
+ * IMPORTANT: Spark's ResolveDataSource requires BOTH:
+ * 1. SupportsRead interface (checked via pattern match)
+ * 2. MICRO_BATCH_READ capability (checked via supportsAny())
+ * Without both, Spark will create StreamingRelation (V1) instead of StreamingRelationV2.
+ *
+ * The newScanBuilder() and newWriteBuilder() methods should never be called in practice
+ * because the analyzer rule replaces this table before physical planning, but they must
+ * be implemented to satisfy the interface contracts.
  */
 class HybridDeltaTable(
     spark: SparkSession,
     identifier: Identifier,
     tablePath: String,
     options: Map[String, String])
-  extends Table {
+  extends Table with SupportsRead with SupportsWrite {
 
   // Lazily initialize V1 table
   private lazy val v1Table: DeltaTableV2 = {
@@ -57,6 +66,23 @@ class HybridDeltaTable(
   // Lazily initialize V2 table
   private lazy val v2Table: SparkTable = {
     new SparkTable(identifier, tablePath, options.asJava)
+  }
+
+  // SupportsRead implementation
+  // NOTE: This should never be called in practice because the analyzer rule replaces
+  // HybridDeltaTable with SparkTable (for streaming) or DeltaTableV2 (for batch) before
+  // physical planning. However, we must implement it to satisfy the SupportsRead interface
+  // requirement for StreamingRelationV2 creation.
+  override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
+    // Default to V1 implementation if somehow called
+    v1Table.asInstanceOf[SupportsRead].newScanBuilder(options)
+  }
+
+  // SupportsWrite implementation
+  // NOTE: Like newScanBuilder, this should never be called because the analyzer replaces
+  // this table with DeltaTableV2 before physical planning for write operations.
+  override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
+    v1Table.asInstanceOf[SupportsWrite].newWriteBuilder(info)
   }
 
   override def name(): String = identifier.toString
