@@ -17,12 +17,15 @@ package io.delta.kernel.spark.read;
 
 import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.data.ScanStateRow;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -39,6 +42,7 @@ import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
+import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -50,7 +54,7 @@ import scala.collection.JavaConverters;
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
-  private final String tablePath;
+  private final DeltaSnapshotManager snapshotManager;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -69,7 +73,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private volatile boolean planned = false;
 
   public SparkScan(
-      String tablePath,
+      DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -78,9 +82,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       io.delta.kernel.Scan kernelScan,
       CaseInsensitiveStringMap options) {
 
-    final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
-    this.tablePath =
-        normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
+    this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -112,7 +114,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public Batch toBatch() {
     ensurePlanned();
     return new SparkBatch(
-        tablePath,
+        getTablePath(),
         dataSchema,
         partitionSchema,
         readDataSchema,
@@ -126,7 +128,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    return new SparkMicroBatchStream(tablePath, hadoopConf);
+    DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
+    return new SparkMicroBatchStream(
+        snapshotManager, hadoopConf, SparkSession.active(), deltaOptions);
   }
 
   @Override
@@ -155,6 +159,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         return OptionalLong.empty();
       }
     };
+  }
+
+  /**
+   * Get the table path from the scan state.
+   *
+   * @return the table path with trailing slash
+   */
+  private String getTablePath() {
+    final Engine tableEngine = DefaultEngine.create(hadoopConf);
+    final Row scanState = kernelScan.getScanState(tableEngine);
+    final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
+    return tableRoot.endsWith("/") ? tableRoot : tableRoot + "/";
   }
 
   /**
@@ -202,15 +218,15 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    */
   private void planScanFiles() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
-    final Iterator<io.delta.kernel.data.FilteredColumnarBatch> scanFileBatches =
-        kernelScan.getScanFiles(tableEngine);
+    final String tablePath = getTablePath();
+    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
 
     final String[] locations = new String[0];
     final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
         scala.collection.immutable.Map$.MODULE$.empty();
 
     while (scanFileBatches.hasNext()) {
-      final io.delta.kernel.data.FilteredColumnarBatch batch = scanFileBatches.next();
+      final FilteredColumnarBatch batch = scanFileBatches.next();
 
       try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
         while (addFileRowIter.hasNext()) {

@@ -629,9 +629,14 @@ class DeltaRetentionSuite extends QueryTest
               val ex = intercept[org.apache.spark.sql.delta.VersionNotFoundException] {
                 spark.sql(sqlCommand).collect()
               }
-              assert(ex.userVersion === version)
-              assert(ex.earliest === earliestExpectedChkVersion)
-              assert(ex.latest === 25)
+              checkError(
+                ex,
+                "DELTA_VERSION_NOT_FOUND",
+                sqlState = "22003",
+                parameters = Map(
+                  "userVersion" -> version.toString,
+                  "earliest" -> earliestExpectedChkVersion.toString,
+                  "latest" -> "25"))
             } else {
               spark.sql(sqlCommand).collect()
             }

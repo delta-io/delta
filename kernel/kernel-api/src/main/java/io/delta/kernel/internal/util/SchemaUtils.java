@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static io.delta.kernel.internal.util.ColumnMapping.*;
 import static io.delta.kernel.internal.util.ColumnMapping.getColumnId;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -27,6 +28,8 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
@@ -43,15 +46,20 @@ public class SchemaUtils {
 
   /**
    * Validate the schema. This method checks if the schema has no duplicate columns, the names
-   * contain only valid characters and the data types are supported.
+   * contain only valid characters, the data types are supported, and the column metadata is valid.
    *
    * @param schema the schema to validate
    * @param isColumnMappingEnabled whether column mapping is enabled. When column mapping is
    *     enabled, the column names in the schema can contain special characters that are allowed as
    *     column names in the Parquet file
+   * @param isColumnDefaultEnabled whether column defaults is enabled
    * @throws IllegalArgumentException if the schema is invalid
    */
-  public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
+  public static void validateSchema(
+      StructType schema,
+      boolean isColumnMappingEnabled,
+      boolean isColumnDefaultEnabled,
+      boolean isIcebergCompatV3Enabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
 
     List<String> flattenColNames =
@@ -92,6 +100,7 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
+    ColumnDefaults.validateSchema(schema, isColumnDefaultEnabled, isIcebergCompatV3Enabled);
   }
 
   /**
@@ -116,13 +125,18 @@ public class SchemaUtils {
   public static Optional<StructType> validateUpdatedSchemaAndGetUpdatedSchema(
       Metadata currentMetadata,
       Metadata newMetadata,
+      Protocol newProtocol,
       Set<String> clusteringColumnPhysicalNames,
       boolean allowNewRequiredFields) {
     checkArgument(
         isColumnMappingModeEnabled(
             ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
         "Cannot validate updated schema when column mapping is disabled");
-    validateSchema(newMetadata.getSchema(), true /*columnMappingEnabled*/);
+    validateSchema(
+        newMetadata.getSchema(),
+        true /*columnMappingEnabled*/,
+        newProtocol.supportsFeature(ALLOW_COLUMN_DEFAULTS_W_FEATURE),
+        TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(newMetadata));
     validatePartitionColumns(
         newMetadata.getSchema(), new ArrayList<>(newMetadata.getPartitionColNames()));
     int currentMaxFieldId =

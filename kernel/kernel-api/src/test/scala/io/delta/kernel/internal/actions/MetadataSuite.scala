@@ -22,11 +22,12 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.buildColumnVector
+import io.delta.kernel.test.TestUtils
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class MetadataSuite extends AnyFunSuite {
+class MetadataSuite extends AnyFunSuite with TestUtils {
 
   test("withMergedConfig upserts values") {
     val metadata = testMetadata(Map("a" -> "b", "f" -> "g"))
@@ -68,6 +69,27 @@ class MetadataSuite extends AnyFunSuite {
         override def getValues: ColumnVector =
           buildColumnVector(tblProps.toSeq.map(_._2).asJava, StringType.STRING)
       })
+  }
+  test("Metadata serialization round trip") {
+    val source = testMetadata(Map("key1" -> "value1", "key2" -> "value2"))
+    val deserialized = roundTripSerialize(source)
+
+    // Verify all public methods return the same values
+    assert(deserialized.getId === source.getId)
+    assert(deserialized.getName === source.getName)
+    assert(deserialized.getDescription === source.getDescription)
+    assert(deserialized.getFormat === source.getFormat)
+    assert(deserialized.getSchemaString === source.getSchemaString)
+    assert(deserialized.getSchema === source.getSchema)
+    assert(deserialized.getCreatedTime === source.getCreatedTime)
+    assert(deserialized.getConfiguration === source.getConfiguration)
+    assert(deserialized.getPartitionColNames === source.getPartitionColNames)
+    assert(deserialized.getDataSchema === source.getDataSchema)
+    assert(deserialized.getPhysicalSchema === source.getPhysicalSchema)
+
+    // Verify equals and hashCode
+    assert(deserialized === source)
+    assert(deserialized.hashCode() === source.hashCode())
   }
 
 }
