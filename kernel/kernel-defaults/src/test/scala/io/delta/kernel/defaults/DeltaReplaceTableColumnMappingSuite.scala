@@ -121,37 +121,32 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
     }
   }
 
-  def singletonSchema(colName: String, dataType: DataType, withCmMetadata: Boolean): StructType = {
-    var topLevelCol = new StructField(colName, dataType, true)
-    if (withCmMetadata) {
-      topLevelCol = topLevelCol.withCMMetadata(colName + "-physicalName", 4)
-    }
+  def singletonSchema(colName: String, dataType: DataType): StructType = {
+    val topLevelCol = new StructField(colName, dataType, true)
+      .withCMMetadata(colName + "-physicalName", 4)
     new StructType().add(topLevelCol)
   }
 
-  def nestedStructSchema(nestedField: StructField, withCmMetadata: Boolean): StructType = {
-    singletonSchema("top-struct", new StructType().add(nestedField), withCmMetadata)
+  def nestedStructSchema(nestedField: StructField): StructType = {
+    singletonSchema("top-struct", new StructType().add(nestedField))
   }
 
-  def nestedArraySchema(nestedField: StructField, withCmMetadata: Boolean): StructType = {
+  def nestedArraySchema(nestedField: StructField): StructType = {
     singletonSchema(
       "array-col",
-      new ArrayType(new StructType().add(nestedField), true),
-      withCmMetadata)
+      new ArrayType(new StructType().add(nestedField), true))
   }
 
-  def nestedMapKeySchema(nestedField: StructField, withCmMetadata: Boolean): StructType = {
+  def nestedMapKeySchema(nestedField: StructField): StructType = {
     singletonSchema(
       "map-col",
-      new MapType(new StructType().add(nestedField), StringType.STRING, true),
-      true)
+      new MapType(new StructType().add(nestedField), StringType.STRING, true))
   }
 
-  def nestedMapValueSchema(nestedField: StructField, withCmMetadata: Boolean): StructType = {
+  def nestedMapValueSchema(nestedField: StructField): StructType = {
     singletonSchema(
       "map-col",
-      new MapType(StringType.STRING, new StructType().add(nestedField), true),
-      true)
+      new MapType(StringType.STRING, new StructType().add(nestedField), true))
   }
 
   implicit val exceptionType = ClassTag(classOf[KernelException])
@@ -211,26 +206,26 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
     }
 
     test(s"$testDescription - nested within a struct, with struct fieldIdReuse") {
-      val initialSchema = nestedStructSchema(initialFieldComplete, withCmMetadata = true)
-      val replaceSchema = nestedStructSchema(replaceFieldComplete, withCmMetadata = true)
+      val initialSchema = nestedStructSchema(initialFieldComplete)
+      val replaceSchema = nestedStructSchema(replaceFieldComplete)
       checkReplaceSucceeds(initialSchema, replaceSchema)
     }
 
     test(s"$testDescription - nested within a struct in an array, with array fieldIdReuse") {
-      val initialSchema = nestedArraySchema(initialFieldComplete, withCmMetadata = true)
-      val replaceSchema = nestedArraySchema(replaceFieldComplete, withCmMetadata = true)
+      val initialSchema = nestedArraySchema(initialFieldComplete)
+      val replaceSchema = nestedArraySchema(replaceFieldComplete)
       checkReplaceSucceeds(initialSchema, replaceSchema)
     }
 
     test(s"$testDescription - nested within a struct in an map (key), with array fieldIdReuse") {
-      val initialSchema = nestedMapKeySchema(initialFieldComplete, withCmMetadata = true)
-      val replaceSchema = nestedMapKeySchema(replaceFieldComplete, withCmMetadata = true)
+      val initialSchema = nestedMapKeySchema(initialFieldComplete)
+      val replaceSchema = nestedMapKeySchema(replaceFieldComplete)
       checkReplaceSucceeds(initialSchema, replaceSchema)
     }
 
     test(s"$testDescription - nested within a struct in an map (value), with array fieldIdReuse") {
-      val initialSchema = nestedMapValueSchema(initialFieldComplete, withCmMetadata = true)
-      val replaceSchema = nestedMapValueSchema(replaceFieldComplete, withCmMetadata = true)
+      val initialSchema = nestedMapValueSchema(initialFieldComplete)
+      val replaceSchema = nestedMapValueSchema(replaceFieldComplete)
       checkReplaceSucceeds(initialSchema, replaceSchema)
     }
   }
@@ -255,8 +250,8 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
     }
 
     test(s"$testDescription - nested within a struct, with struct fieldIdReuse") {
-      val initialSchema = nestedStructSchema(initialFieldComplete, withCmMetadata = true)
-      val replaceSchema = nestedStructSchema(replaceFieldComplete, withCmMetadata = true)
+      val initialSchema = nestedStructSchema(initialFieldComplete)
+      val replaceSchema = nestedStructSchema(replaceFieldComplete)
       checkReplaceThrowsException[T](
         initialSchema,
         replaceSchema,
@@ -264,8 +259,8 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
     }
 
     test(s"$testDescription - nested within a struct in an array, with array fieldIdReuse") {
-      val initialSchema = nestedArraySchema(initialFieldComplete, true)
-      val replaceSchema = nestedArraySchema(replaceFieldComplete, true)
+      val initialSchema = nestedArraySchema(initialFieldComplete)
+      val replaceSchema = nestedArraySchema(replaceFieldComplete)
       checkReplaceThrowsException[T](
         initialSchema,
         replaceSchema,
@@ -273,8 +268,8 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
     }
 
     test(s"$testDescription - nested within a struct in a map (key), with array fieldIdReuse") {
-      val initialSchema = nestedMapKeySchema(initialFieldComplete, true)
-      val replaceSchema = nestedMapKeySchema(replaceFieldComplete, true)
+      val initialSchema = nestedMapKeySchema(initialFieldComplete)
+      val replaceSchema = nestedMapKeySchema(replaceFieldComplete)
       checkReplaceThrowsException[T](
         initialSchema,
         replaceSchema,
@@ -282,8 +277,8 @@ trait DeltaReplaceTableColumnMappingSuiteBase extends DeltaReplaceTableSuiteBase
     }
 
     test(s"$testDescription - nested within a struct in a map (value), with array fieldIdReuse") {
-      val initialSchema = nestedMapKeySchema(initialFieldComplete, true)
-      val replaceSchema = nestedMapKeySchema(replaceFieldComplete, true)
+      val initialSchema = nestedMapKeySchema(initialFieldComplete)
+      val replaceSchema = nestedMapKeySchema(replaceFieldComplete)
       checkReplaceThrowsException[T](
         initialSchema,
         replaceSchema,
