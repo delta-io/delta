@@ -1,23 +1,28 @@
 package io.delta.kernel.spark.utils;
 
 import static java.util.Objects.requireNonNull;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
-import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import scala.jdk.javaapi.CollectionConverters;
 
 /**
- * Unity Catalog persists Unity-specific metadata onto Spark {@link Table} instances when they are
- * resolved through UCSingleCatalog. This helper centralises the logic for interpreting those
- * properties so the Kernel connector can decide when to use catalog-owned (CCv2) behaviour.
+ * Unity Catalog persists Unity-specific metadata onto Spark {@link CatalogTable} instances when
+ * they are resolved through UCSingleCatalog. This helper centralises the logic for interpreting
+ * those properties so the Kernel connector can decide when to use catalog-owned (CCv2) behaviour.
  *
- * <p> These constants mirror the property keys by the UC <> Spark connector
+ * <p>The constants below mirror the property keys written by the UC <-> Spark connector:
+ *
  * <ul>
- *  <li>delta.unityCatalog.* (e.g., tableId) flags a table as catalog-managed
- *  <li>delta.feature.catalogOwned[-preview] signals that CCv2 (catalog-owned commit coordination)
- *    is enabled. Both map to the value "supported" when active
+ *   <li>{@code delta.unityCatalog.*} (for example {@code tableId}) flags a table as
+ *       catalog-managed.
+ *   <li>{@code delta.feature.catalogOwned[-preview]} signals that CCv2 (catalog-owned commit
+ *       coordination) is enabled. Both variants use the value {@code supported} when active.
  * </ul>
  *
- * <p> See {@code connectors/spark/.../UCSingleCatalog.scala} for the producer side of these props
+ * <p>See {@code connectors/spark/.../UCSingleCatalog.scala} for the producer side of these
+ * properties.
  */
 public final class CatalogTableUtils {
   static final String UNITY_CATALOG_PROPERTY_PREFIX = "delta.unityCatalog.";
@@ -28,20 +33,18 @@ public final class CatalogTableUtils {
 
   private CatalogTableUtils() {}
 
-  public static boolean isCCv2Table(Table table) {
+  public static boolean isCCv2Table(CatalogTable table) {
     requireNonNull(table, "table is null");
-    Map<String, String> tableProperties = table.properties();
-    if (!isCatalogManagedTable(tableProperties)) {
-      return false;
-    }
-
-    return isCatalogOwnedFeatureSupported(tableProperties, FEATURE_CATALOG_OWNED)
-        || isCatalogOwnedFeatureSupported(tableProperties, FEATURE_CATALOG_OWNED_PREVIEW);
+    Map<String, String> tableProperties = toJavaMap(table.properties());
+    
+    return isCatalogManagedTable(tableProperties)
+        && (isCatalogOwnedFeatureSupported(tableProperties, FEATURE_CATALOG_OWNED)
+            || isCatalogOwnedFeatureSupported(tableProperties, FEATURE_CATALOG_OWNED_PREVIEW));
   }
 
-  public static boolean isCatalogManagedTable(Table table) {
+  public static boolean isCatalogManagedTable(CatalogTable table) {
     requireNonNull(table, "table is null");
-    return isCatalogManagedTable(table.properties());
+    return isCatalogManagedTable(toJavaMap(table.properties()));
   }
 
   static boolean isCatalogManagedTable(Map<String, String> tableProperties) {
@@ -69,5 +72,12 @@ public final class CatalogTableUtils {
       return false;
     }
     return SUPPORTED.equalsIgnoreCase(value.trim());
+  }
+
+  private static Map<String, String> toJavaMap(scala.collection.immutable.Map<String, String> scalaMap) {
+    if (scalaMap == null || scalaMap.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    return CollectionConverters.asJava(scalaMap);
   }
 }
