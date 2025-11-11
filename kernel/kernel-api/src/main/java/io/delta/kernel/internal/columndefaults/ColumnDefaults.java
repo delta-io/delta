@@ -100,7 +100,7 @@ public class ColumnDefaults {
                 validateLiteral(field.getDataType(), defaultValue);
               } catch (IllegalArgumentException e) {
                 throw DeltaErrors.icebergCompatRequiresLiteralDefaultValue(
-                    compatVersion, defaultValue);
+                    compatVersion, field.getDataType(), defaultValue);
               }
             });
   }
@@ -126,7 +126,7 @@ public class ColumnDefaults {
    *   <li>'2022-01-01' is a valid Date literal, '09/01/2022' is not.
    * </ul>
    *
-   * @throws IllegalArgumentException if the value is not a literal value
+   * @throws IllegalArgumentException if the value is not a literal value matching the data type
    * @throws UnsupportedOperationException when kernel does not support column defaults for the data
    *     type
    */

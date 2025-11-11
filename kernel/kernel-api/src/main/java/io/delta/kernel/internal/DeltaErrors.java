@@ -316,12 +316,12 @@ public final class DeltaErrors {
   }
 
   public static KernelException icebergCompatRequiresLiteralDefaultValue(
-      String compatVersion, String value) {
+      String compatVersion, DataType dataType, String value) {
     throw new KernelException(
         format(
-            "%s requires the default value '%s' to be literal "
-                + "with correct data types for the column.",
-            compatVersion, value));
+            "%s requires the default value to be literal with correct data types for "
+                + "a column. '%s: %s' is invalid.",
+            compatVersion, dataType, value));
   }
 
   public static KernelException icebergCompatIncompatibleTableFeatures(

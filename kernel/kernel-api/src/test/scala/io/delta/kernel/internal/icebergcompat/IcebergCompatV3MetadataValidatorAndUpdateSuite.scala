@@ -174,8 +174,8 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       val ex = intercept[KernelException] {
         validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
       }
-      assert(ex.getMessage.contains("icebergCompatV3 requires the default value " +
-        "'CURRENT_TIMESTAMP()' to be literal with correct data types for the column."))
+      assert(ex.getMessage.contains("icebergCompatV3 requires the default value to be literal " +
+        "with correct data types for a column. 'integer: CURRENT_TIMESTAMP()' is invalid."))
     }
   }
 }
