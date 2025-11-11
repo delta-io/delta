@@ -365,7 +365,7 @@ public class SchemaUtils {
     // Using the earlier example, this map would contain:
     // {1: Optional.empty(),
     //  2: Optional.of(StructField("a", MapType), "value"))}
-    Map<Integer, Optional<Tuple2<StructField, String>>> currentFieldIdToParent =
+    Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>> currentFieldIdToParent =
         mapStructFieldsToParent(currentSchema);
     Set<Integer> addedFieldIds = new HashSet<>();
     SchemaIterable newSchemaIterable = new SchemaIterable(newSchema);
@@ -383,14 +383,19 @@ public class SchemaUtils {
       if (newElement.isStructField()) {
         int columnId = getColumnId(newElement.getField());
         if (currentFieldIdToParent.containsKey(columnId)) { // If it's an existing field
-          Optional<Tuple2<StructField, String>> currentParent =
+          // We need both the parent struct field and the path to it in case of nested arrays/maps
+          Optional<SchemaIterable.ParentStructFieldInfo> currentParent =
               currentFieldIdToParent.get(columnId);
-          Optional<Tuple2<StructField, String>> newParent =
+          Optional<SchemaIterable.ParentStructFieldInfo> newParent =
               newElement.getParentStructFieldAndPath();
           Optional<SchemaElementId> currentParentId =
-              currentParent.map(parent -> getSchemaElementId(parent._1, parent._2));
+              currentParent.map(
+                  parent ->
+                      getSchemaElementId(parent.getParentField(), parent.getPathFromParent()));
           Optional<SchemaElementId> newParentId =
-              newParent.map(parent -> getSchemaElementId(parent._1, parent._2));
+              newParent.map(
+                  parent ->
+                      getSchemaElementId(parent.getParentField(), parent.getPathFromParent()));
           if (!Objects.equals(currentParentId, newParentId)) {
             throw DeltaErrors.invalidFieldMove(columnId, currentParent, newParent);
           }
@@ -490,14 +495,15 @@ public class SchemaUtils {
     return fieldIdToField;
   }
 
-  private static Map<Integer, Optional<Tuple2<StructField, String>>> mapStructFieldsToParent(
-      StructType schema) {
-    Map<Integer, Optional<Tuple2<StructField, String>>> fieldIdToParent = new HashMap<>();
+  private static Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>>
+      mapStructFieldsToParent(StructType schema) {
+    Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>> fieldIdToParent = new HashMap<>();
     for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
       if (element.isStructField()) {
         StructField elementField = element.getField();
         int columnId = getColumnId(elementField);
-        Optional<Tuple2<StructField, String>> parentInfo = element.getParentStructFieldAndPath();
+        Optional<SchemaIterable.ParentStructFieldInfo> parentInfo =
+            element.getParentStructFieldAndPath();
         fieldIdToParent.put(columnId, parentInfo);
       }
     }

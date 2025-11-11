@@ -22,7 +22,7 @@ import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -510,8 +510,8 @@ public final class DeltaErrors {
 
   public static KernelException invalidFieldMove(
       int columnId,
-      Optional<Tuple2<StructField, String>> currentParent,
-      Optional<Tuple2<StructField, String>> newParent) {
+      Optional<SchemaIterable.ParentStructFieldInfo> currentParent,
+      Optional<SchemaIterable.ParentStructFieldInfo> newParent) {
     return new KernelException(
         String.format(
             "Cannot move fields between different levels of nesting: "
@@ -522,12 +522,12 @@ public final class DeltaErrors {
 
   /* ------------------------ HELPER METHODS ----------------------------- */
 
-  private static String formatParentField(Optional<Tuple2<StructField, String>> parent) {
+  private static String formatParentField(Optional<SchemaIterable.ParentStructFieldInfo> parent) {
     if (!parent.isPresent()) {
       return "ROOT";
     }
-    StructField parentField = parent.get()._1;
-    String pathToParentField = parent.get()._2;
+    StructField parentField = parent.get().getParentField();
+    String pathToParentField = parent.get().getPathFromParent();
     if (pathToParentField.isEmpty()) {
       // Example: "StructField(name=c1, ...)"
       return parentField.toString();
