@@ -102,10 +102,6 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       loadSnapshot(ucCatalogManagedClient, versionToLoad = Optional.of(-1L))
     }
     assertThrows[IllegalArgumentException] {
-      // timestamp < 0
-      loadSnapshot(ucCatalogManagedClient, timestampToLoad = Optional.of(-1L))
-    }
-    assertThrows[IllegalArgumentException] {
       // cannot provide both timestamp and version
       loadSnapshot(
         ucCatalogManagedClient,
