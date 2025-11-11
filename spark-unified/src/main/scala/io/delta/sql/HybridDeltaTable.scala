@@ -95,37 +95,14 @@ class HybridDeltaTable(
   }
   
   /**
-   * Returns the underlying DeltaTableV2 for cases where we need to unwrap
-   * the hybrid table back to pure V1 (e.g., for batch operations before DeltaAnalysis).
+   * Returns the underlying DeltaTableV2 for cases where we need to use V1
+   * (e.g., for batch operations before DeltaAnalysis).
    */
   def getUnderlyingDeltaTableV2(): DeltaTableV2 = v1Table
+  
+  /**
+   * Returns the SparkTable for cases where we want to use V2
+   * (e.g., for streaming reads).
+   */
+  def getSparkTable(): SparkTable = v2Table
 }
-
-/**
- * Immutable wrapper around HybridDeltaTable that carries the context hint
- * indicating whether to use V2 or V1.
- *
- * This wrapper is created by the analyzer rule for streaming read sources
- * to indicate that V2 (Kernel) should be used.
- */
-class HybridDeltaTableWithContext(
-    underlying: HybridDeltaTable,
-    useV2: Boolean)
-  extends Table with SupportsRead with SupportsWrite {
-
-  override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
-    underlying.createScanBuilder(useV2, options)
-  }
-
-  override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
-    // Writes always use V1
-    underlying.newWriteBuilder(info)
-  }
-
-  override def name(): String = underlying.name()
-
-  override def schema(): StructType = underlying.schema()
-
-  override def capabilities(): java.util.Set[TableCapability] = underlying.capabilities()
-}
-
