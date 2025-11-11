@@ -62,7 +62,6 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   private final String tableId;
   private final boolean shouldValidateOffsets;
   private final SparkSession spark;
-  private final StreamingHelper streamingHelper;
 
   public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
     this(
@@ -83,10 +82,9 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     this.snapshotManager = snapshotManager;
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = options;
-    this.streamingHelper = new StreamingHelper(snapshotManager.getTablePath(), hadoopConf);
 
     // Initialize snapshot at source init to get table ID, similar to DeltaSource.scala
-    Snapshot snapshotAtSourceInit = snapshotManager.getLatestSnapshot();
+    Snapshot snapshotAtSourceInit = snapshotManager.loadLatestSnapshot();
     this.tableId = ((SnapshotImpl) snapshotAtSourceInit).getMetadata().getId();
 
     this.shouldValidateOffsets =
@@ -105,7 +103,6 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public Offset latestOffset() {
-    // TODO(#5318): Implement latestOffset with proper start offset and limit
     throw new IllegalStateException(
         "latestOffset() should not be called - use latestOffset(Offset, ReadLimit) instead");
   }
@@ -378,7 +375,16 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     List<IndexedFile> allIndexedFiles = new ArrayList<>();
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
-    CommitRange commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
+
+    CommitRange commitRange;
+    try {
+      commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
+    } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
+      // If the requested version range doesn't exist (e.g., we're asking for version 6 when
+      // the table only has versions 0-5).
+      return Utils.toCloseableIterator(allIndexedFiles.iterator());
+    }
+
     // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
     String tablePath = startSnapshot.getPath();
