@@ -132,8 +132,9 @@ class UcCommitTelemetrySuite
       assert(report.commitVersion === 0)
       assert(report.commitType === CommitMetadata.CommitType.CATALOG_CREATE)
       assert(report.exception.isPresent)
-      assert(report.exception.get().contains("CommitFailedException"))
-      assert(report.exception.get().contains("Simulated network failure"))
+      val exceptionString = report.exception.get().toString
+      assert(exceptionString.contains("CommitFailedException"))
+      assert(exceptionString.contains("Simulated network failure"))
     }
   }
 
