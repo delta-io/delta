@@ -16,33 +16,32 @@
 
 package io.delta.sql
 
-import java.util.{Map => JMap}
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connector.catalog.{Identifier, SupportsRead, SupportsWrite, Table, TableCapability}
-import org.apache.spark.sql.connector.read.ScanBuilder
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, WriteBuilder}
+import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCapability}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import io.delta.kernel.spark.table.SparkTable
 
 /**
- * A hybrid Delta table implementation that can delegate to either V1 (DeltaLog-based)
- * or V2 (Kernel-based) implementations based on the query context.
+ * A hybrid Delta table implementation that declares MICRO_BATCH_READ capability
+ * to enable Spark to create StreamingRelationV2 for streaming reads.
  *
  * This table is returned by the catalog for all operations. An analyzer rule then
- * wraps it with HybridDeltaTableWithContext to indicate whether V2 should be used.
+ * replaces it with the appropriate concrete implementation:
+ * - SparkTable (V2/Kernel) for streaming reads
+ * - DeltaTableV2 (V1/DeltaLog) for batch reads/writes
  *
- * By default (without wrapper), this table uses V1 for all operations.
+ * This class itself is never used for actual read/write operations - it only serves
+ * as a placeholder during catalog resolution to signal the MICRO_BATCH_READ capability.
  */
 class HybridDeltaTable(
     spark: SparkSession,
     identifier: Identifier,
     tablePath: String,
     options: Map[String, String])
-  extends Table with SupportsRead with SupportsWrite {
+  extends Table {
 
   // Lazily initialize V1 table
   private lazy val v1Table: DeltaTableV2 = {
@@ -58,28 +57,6 @@ class HybridDeltaTable(
   // Lazily initialize V2 table
   private lazy val v2Table: SparkTable = {
     new SparkTable(identifier, tablePath, options.asJava)
-  }
-
-  /**
-   * Creates a scan builder, delegating to V1 or V2 based on the useV2 flag.
-   * This method is called by HybridDeltaTableWithContext wrapper.
-   */
-  def createScanBuilder(useV2: Boolean, caseInsensitiveStringMap: CaseInsensitiveStringMap): ScanBuilder = {
-    if (useV2) {
-      v2Table.newScanBuilder(caseInsensitiveStringMap)
-    } else {
-      v1Table.asInstanceOf[SupportsRead].newScanBuilder(caseInsensitiveStringMap)
-    }
-  }
-
-  // Default implementation uses V1
-  override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
-    createScanBuilder(useV2 = false, options)
-  }
-
-  // Write operations always use V1 (V2 doesn't support writes yet)
-  override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
-    v1Table.asInstanceOf[SupportsWrite].newWriteBuilder(info)
   }
 
   override def name(): String = identifier.toString
