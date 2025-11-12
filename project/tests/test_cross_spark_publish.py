@@ -25,8 +25,8 @@ from typing import List, Set, Dict
 
 # Spark-related modules (requiresCrossSparkBuild := true)
 # These modules get a Spark version suffix (e.g., _4.0) for non-default versions
-# Template format: {suffix} = Spark version suffix (e.g., "", "_4.0")
-#                  {version} = Delta version (e.g., "3.4.0-SNAPSHOT")
+# Template format: {suffix} = short Spark version suffix (e.g., "", "_4.0")
+#                  {version} = full Delta version (e.g., "3.4.0-SNAPSHOT")
 SPARK_RELATED_JAR_TEMPLATES = [
     "delta-spark{suffix}_2.13-{version}.jar",
     "delta-connect-common{suffix}_2.13-{version}.jar",
@@ -57,7 +57,7 @@ NON_SPARK_RELATED_JAR_TEMPLATES = [
 @dataclass
 class SparkVersionSpec:
     """Configuration for a specific Spark version."""
-    suffix: str  # e.g., "" for default, "_4.0" for Spark 4.0
+    suffix: str  # e.g., "" for default, "_X.Y" for other versions
 
     def __post_init__(self):
         """Generate JAR templates with the suffix applied."""
@@ -78,8 +78,8 @@ class SparkVersionSpec:
 
 # Spark versions to test (key = full version string, value = spec with suffix)
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "3.5.7": SparkVersionSpec(""),      # Default - no suffix
-    "4.0.2-SNAPSHOT": SparkVersionSpec("_4.0")  # Spark 4.0 - with _4.0 suffix
+    "3.5.7": SparkVersionSpec(""),      # Default Spark version without suffix
+    "4.0.2-SNAPSHOT": SparkVersionSpec("_4.0") # Other Spark versions with suffix
 }
 
 # The default Spark version (no suffix in artifact names)
@@ -202,7 +202,7 @@ class CrossSparkPublishTest:
 
     def test_run_only_for_spark_modules(self) -> bool:
         """runOnlyForSparkModules should publish only Spark-dependent modules."""
-        spark_version = "4.0.2-SNAPSHOT"  # Test with Spark 4.0
+        spark_version = "4.0.2-SNAPSHOT"
         spark_spec = SPARK_VERSIONS[spark_version]
 
         print("\n" + "="*70)

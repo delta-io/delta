@@ -6,6 +6,151 @@ import com.simplytyped.Antlr4Plugin.autoImport._
 import sbtrelease.ReleasePlugin.autoImport.ReleaseStep
 import Unidoc._
 
+/** 
+ * ========================================================
+ * Cross-Spark Build and Publish System
+ * ========================================================
+ * 
+ * This SBT plugin enables Delta Lake to be built and published for multiple Spark versions.
+ * It provides version-specific configurations, artifact naming, and publishing workflows.
+ *
+ * ========================================================
+ * Spark Version Definitions
+ * ========================================================
+ * 
+ * The Spark versions used for Delta is defined in the SparkVersionSpec object, and controlled by the sparkVersion property.
+ * There are 2 keys labels assigned to the Spark versions: DEFAULT and MASTER.
+ * - DEFAULT VERSION: This is the default when no sparkVersion property is specified
+ *   Artifacts for this version have NO Spark version suffix (e.g., delta-spark_2.13).
+ *
+ * - MASTER VERSION: The Spark master/development branch version
+ *   This is optional and typically 
+ *   - set in the Delta master branch to a Spark released or snapshot version .
+ *   - not set in the Delta release branches as we want to avoid building against Spark unreleased version.
+ *   If MASTER is defined, then it can be selected by setting the sparkVersion property to "master".
+ *   Artifacts for this version HAVE a Spark version suffix (e.g., delta-spark_4.0_2.13).
+ *
+ * - OTHER VERSIONS: Any non-default Spark version specified in ALL_SPECS.
+ *   All non-default versions get a Spark version suffix in their artifact names.
+ *
+ * To configure versions, update the SparkVersionSpec values (spark35, spark40, etc.) below.
+ *
+ * ========================================================
+ * The sparkVersion Property
+ * ========================================================
+ * 
+ * The sparkVersion system property controls which Spark version to build against.
+ * It accepts the following formats:
+ *
+ * 1. Full version string (e.g., "3.5.7", "4.0.2-SNAPSHOT")
+ * 2. Short version string (e.g., "3.5", "4.0")
+ * 3. Aliases:
+ *    - "default" -> maps to DEFAULT version (spark35)
+ *    - "master" -> maps to MASTER version (spark40), if configured
+ *
+ * If not specified, it defaults to the DEFAULT version.
+ *
+ * Examples:
+ *   build/sbt                                    # Uses default version (3.5.7)
+ *   build/sbt -DsparkVersion=3.5                 # Uses 3.5.7
+ *   build/sbt -DsparkVersion=3.5.7               # Uses 3.5.7
+ *   build/sbt -DsparkVersion=4.0                 # Uses 4.0.2-SNAPSHOT
+ *   build/sbt -DsparkVersion=4.0.2-SNAPSHOT      # Uses 4.0.2-SNAPSHOT
+ *   build/sbt -DsparkVersion=default             # Uses 3.5.7
+ *   build/sbt -DsparkVersion=master              # Uses 4.0.2-SNAPSHOT
+ *
+ * ========================================================
+ * Cross-Building for Development and Testing
+ * ========================================================
+ * 
+ * To build/test against a specific Spark version:
+ *   build/sbt -DsparkVersion=<version> compile
+ *   build/sbt -DsparkVersion=<version> test
+ *   build/sbt -DsparkVersion=master compile test
+ *
+ * To publish to local Maven for testing:
+ *   # Publish all modules for default Spark version
+ *   build/sbt publishM2
+ *
+ *   # Publish only Spark-dependent modules for other versions
+ *   build/sbt -DsparkVersion=master "runOnlyForSparkModules publishM2"
+ *
+ * ========================================================
+ * Module Types
+ * ========================================================
+ * 
+ * Modules are classified into two types:
+ *
+ * 1. Spark-Dependent Modules (requiresCrossSparkBuild := true):
+ *    - These depend on Spark and need to be built for each Spark version
+ *    - Examples: delta-spark, delta-connect-*, delta-sharing-spark, delta-iceberg
+ *    - These modules get version-specific artifact names for non-default Spark versions
+ *
+ * 2. Spark-Independent Modules (requiresCrossSparkBuild := false, default):
+ *    - These don't depend on Spark or are Spark-version agnostic
+ *    - Examples: delta-storage, delta-kernel-*, delta-standalone
+ *    - These modules are built once and work with all Spark versions
+ *
+ * ========================================================
+ * Artifact Naming Convention
+ * ========================================================
+ * 
+ * Default Spark version artifacts (no suffix):
+ *   io.delta:delta-spark_2.13:3.4.0
+ *   io.delta:delta-connect-server_2.13:3.4.0
+ *   io.delta:delta-storage:3.4.0
+ *
+ * Other Spark version artifacts (with suffix):
+ *   io.delta:delta-spark_4.0_2.13:3.4.0
+ *   io.delta:delta-connect-server_4.0_2.13:3.4.0
+ *   io.delta:delta-storage:3.4.0  (no change, Spark-independent)
+ *
+ * ========================================================
+ * Cross-Release Workflow
+ * ========================================================
+ * 
+ * The cross-release workflow publishes artifacts for all Spark versions in two steps:
+ *
+ * Step 1: Publish ALL modules for the default Spark version
+ *   build/sbt publishSigned  (or publishM2 for local testing)
+ *
+ * Step 2: Publish ONLY Spark-dependent modules for each non-default Spark version
+ *   build/sbt -DsparkVersion=4.0 "runOnlyForSparkModules publishSigned"
+ *
+ * This workflow is automated in the release process via crossSparkReleaseSteps().
+ * See releaseProcess in build.sbt for integration.
+ *
+ * Why this approach?
+ * - Spark-independent modules (kernel, storage) are built once with default Spark
+ * - Spark-dependent modules are built multiple times, once per Spark version
+ * - This avoids redundant builds and conflicting artifacts
+ *
+ * For manual release testing:
+ *   build/sbt publishM2
+ *   build/sbt -DsparkVersion=4.0 "runOnlyForSparkModules publishM2"
+ *   # Verify JARs in ~/.m2/repository/io/delta/
+ *
+ * ========================================================
+ * Commands Provided
+ * ========================================================
+ * 
+ * runOnlyForSparkModules <task>
+ *   Runs the specified task only on modules with requiresCrossSparkBuild := true.
+ *   Used for publishing Spark-dependent modules for non-default Spark versions.
+ *
+ *   Example:
+ *     build/sbt -DsparkVersion=4.0 "runOnlyForSparkModules publishM2"
+ *
+ * showSparkVersions
+ *   Lists all configured Spark versions (for testing/debugging).
+ *
+ *   Example:
+ *     build/sbt showSparkVersions
+ *
+ * ========================================================
+ */
+
+
 /**
  * Specification for a Spark version with all its build configuration.
  *
@@ -50,8 +195,8 @@ case class SparkVersionSpec(
 }
 
 object SparkVersionSpec {
-  /** Spark 3.5.7 - default version */
-  val spark35 = SparkVersionSpec(
+
+  private val spark35 = SparkVersionSpec(
     fullVersion = "3.5.7",
     targetJvm = "11",
     additionalSourceDir = Some("scala-spark-3.5"),
@@ -59,8 +204,7 @@ object SparkVersionSpec {
     additionalJavaOptions = Seq.empty
   )
 
-  /** Spark 4.0.2-SNAPSHOT - master branch */
-  val spark40 = SparkVersionSpec(
+  private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.2-SNAPSHOT",
     targetJvm = "17",
     additionalSourceDir = Some("scala-spark-master"),
@@ -88,31 +232,11 @@ object SparkVersionSpec {
   /** Spark master branch version (optional). Release branches should not build against master */
   val MASTER: Option[SparkVersionSpec] = Some(spark40)
 
-  /** All supported Spark versions */
+  /** All supported Spark versions - internal use only */
   val ALL_SPECS = Seq(spark35, spark40)
 }
 
-/**
- * SBT plugin to support cross-building for multiple Spark versions.
- *
- * Provides the `runOnlyForSparkModules` command to run a task only for Spark-dependent modules.
- *
- * Artifact Naming:
- * - Latest Spark version (3.5.x): delta-spark_2.13 (no version suffix)
- * - Other Spark versions (e.g., 4.0.x): delta-spark_4.0_2.13 (includes binary version)
- *
- * Usage:
- *   # Publish all modules for Spark 3.5.7 (latest)
- *   build/sbt publishM2
- *
- *   # Publish only Spark-dependent modules for Spark 4.0
- *   build/sbt -DsparkVersion=4.0.2-SNAPSHOT "runOnlyForSparkModules publishM2"
- *
- *   # Or use aliases
- *   build/sbt -DsparkVersion=master "runOnlyForSparkModules publishM2"
- *
- * To publish for all Spark versions, run both commands sequentially.
- */
+/** See docs on top of this file */
 object CrossSparkVersions extends AutoPlugin {
 
   override def trigger = allRequirements
@@ -124,8 +248,7 @@ object CrossSparkVersions extends AutoPlugin {
   import autoImport._
 
   /**
-   * Returns the current spark version spec.
-   * Supports inputs: full version (e.g., "3.5.7"), short version (e.g., "3.5"), or aliases ("default", "master")
+   * Returns the current configured Spark version spec based on the `sparkVersion` property.
    */
   def getSparkVersionSpec(): SparkVersionSpec = {
     val input = sys.props.getOrElse("sparkVersion", SparkVersionSpec.DEFAULT.fullVersion)
@@ -158,8 +281,7 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   /**
-   * Returns the current spark version.
-   * Supports aliases: "default"/"3.5" -> 3.5.7, "master"/"4.0" -> 4.0.2-SNAPSHOT
+   * Returns the current configured Spark version based on the `sparkVersion` property.
    */
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
@@ -179,10 +301,10 @@ object CrossSparkVersions extends AutoPlugin {
 
   /**
    * Returns module name with optional Spark version suffix.
-   * Default Spark version: "module-name" (e.g., delta-spark)
-   * Other Spark versions: "module-name_X.Y" (e.g., delta-spark_4.0)
+   * Default Spark version: "module-name" (e.g., delta-spark_2.13)
+   * Other Spark versions: "module-name_X.Y" (e.g., delta-spark_4.0_2.13)
    */
-  def moduleName(baseName: String, sparkVer: String): String = {
+  private def moduleName(baseName: String, sparkVer: String): String = {
     val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
       .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
 
@@ -313,7 +435,7 @@ object CrossSparkVersions extends AutoPlugin {
     commands += Command.args("runOnlyForSparkModules", "<task>") { (state, args) =>
       // Used mainly for cross-Spark publishing of the Spark-dependent modules
       if (args.isEmpty) {
-        sys.error("Usage: runOnlyForSparkModules <task>\nExample: build/sbt -DsparkVersion=4.0.2-SNAPSHOT \"runOnlyForSparkModules publishM2\"")
+        sys.error("Usage: runOnlyForSparkModules <task>\nExample: build/sbt -DsparkVersion=<version> \"runOnlyForSparkModules publishM2\"")
       }
 
       val task = args.mkString(" ")
