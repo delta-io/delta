@@ -1,7 +1,0 @@
-{
-    "settings": {
-        "files.watcherExclude": {
-            "**/target": true
-        }
-    }
-}
