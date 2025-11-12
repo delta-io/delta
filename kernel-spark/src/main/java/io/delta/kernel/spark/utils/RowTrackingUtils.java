@@ -26,14 +26,13 @@ import org.apache.spark.sql.types.MetadataBuilder;
 import org.apache.spark.sql.types.StructField;
 
 /**
- * Utility methods for row tracking in Kernel-Spark connector.
- *
- * <p>This class provides row tracking functionality with Spark-specific metadata attributes for
+ * Utility methods for row tracking in Kernel based connector.
+ * This class provides row tracking functionality with Spark-specific metadata attributes for
  * marking metadata columns as constant or generated fields.
  */
 public class RowTrackingUtils {
 
-  // Metadata keys for row tracking fields (Spark-specific implementation)
+  // Metadata keys for row tracking metadata fields
   private static final String ROW_TRACKING_METADATA_TYPE_KEY = "__metadata_type";
   private static final String METADATA_TYPE_CONSTANT = "constant";
   private static final String METADATA_TYPE_GENERATED = "generated";
