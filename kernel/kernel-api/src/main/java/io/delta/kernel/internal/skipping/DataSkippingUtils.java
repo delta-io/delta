@@ -261,11 +261,18 @@ public class DataSkippingUtils {
         Expression left = getLeft(dataFilters);
         Expression right = getRight(dataFilters);
         Optional<CollationIdentifier> collationIdentifier = dataFilters.getCollationIdentifier();
+        if (collationIdentifier
+            .filter(ci -> !ci.isSparkUTF8BinaryCollation() && ci.getVersion().isEmpty())
+            .isPresent()) {
+          // Each collated statistics is stored with a specific version, so collation must specify a
+          // version to be used for data skipping.
+          return Optional.empty();
+        }
 
         if (left instanceof Column && right instanceof Literal) {
           Column leftCol = (Column) left;
           Literal rightLit = (Literal) right;
-          if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol, collationIdentifier.isPresent())
+          if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
               && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
             return constructComparatorDataSkippingFilters(
                 dataFilters.getName(), leftCol, rightLit, collationIdentifier, schemaHelper);
@@ -604,7 +611,7 @@ public class DataSkippingUtils {
     if (leftChild instanceof Column && rightChild instanceof Literal) {
       Column leftCol = (Column) leftChild;
       Literal rightLit = (Literal) rightChild;
-      if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol, collationIdentifier.isPresent())
+      if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
           && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
         return buildDataSkippingPredicateFunc.apply(leftCol, rightLit);
       }

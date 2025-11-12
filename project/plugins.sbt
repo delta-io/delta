@@ -32,7 +32,7 @@ addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.8.3")
 
 addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.9.15")
 
-addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.11")
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.4.0")
 //Upgrade sbt-scoverage to 2.0.3+ because 2.0.0 is not compatible to Scala 2.12.17:
 //sbt.librarymanagement.ResolveException: Error downloading org.scoverage:scalac-scoverage-plugin_2.12.17:2.0.0
 
