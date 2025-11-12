@@ -168,4 +168,19 @@ class CatalogTableUtilsTest {
         false /* nullStorage */,
         true /* nullStorageProperties */);
   }
+
+  @SuppressWarnings("unchecked")
+  private static <T> scala.Option<T> scalaNone() {
+    return (scala.Option<T>) Option$.MODULE$.empty();
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T> scala.collection.immutable.Seq<T> scalaEmptySeq() {
+    return (scala.collection.immutable.Seq<T>) scala.collection.immutable.Seq$.MODULE$.empty();
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <K, V> scala.collection.immutable.Map<K, V> scalaEmptyMap() {
+    return (scala.collection.immutable.Map<K, V>) Map$.MODULE$.empty();
+  }
 }
