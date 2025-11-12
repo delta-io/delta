@@ -36,11 +36,9 @@ class CatalogTableUtilsTest {
 
   @Test
   void catalogManagedFlagEnablesDetection() {
-    // Arrange: table with catalogManaged flag set to "supported"
     CatalogTable table =
         catalogTableWithProperties(Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
-    // Act & Assert
     assertTrue(
         CatalogTableUtils.isCatalogManaged(table), "Should detect catalog management with flag");
     assertFalse(
@@ -49,12 +47,10 @@ class CatalogTableUtilsTest {
 
   @Test
   void previewFlagEnablesDetectionIgnoringCase() {
-    // Arrange: table with preview flag set to mixed case
     CatalogTable table =
         catalogTableWithProperties(
             Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "SuPpOrTeD"));
 
-    // Act & Assert
     assertTrue(
         CatalogTableUtils.isCatalogManaged(table), "Should detect via preview flag ignoring case");
     assertFalse(
@@ -63,10 +59,8 @@ class CatalogTableUtilsTest {
 
   @Test
   void noFlagsMeansNotManaged() {
-    // Arrange: empty properties
     CatalogTable table = catalogTableWithProperties(Collections.emptyMap());
 
-    // Act & Assert
     assertFalse(
         CatalogTableUtils.isCatalogManaged(table), "Should not detect management without flags");
     assertFalse(
@@ -76,7 +70,6 @@ class CatalogTableUtilsTest {
 
   @Test
   void unityManagementRequiresFlagAndId() {
-    // Arrange: table with both flag and UC ID
     CatalogTable table =
         catalogTableWithProperties(
             Map.of(
@@ -85,7 +78,6 @@ class CatalogTableUtilsTest {
                         .UC_TABLE_ID_KEY,
                     "abc-123"));
 
-    // Act & Assert
     assertTrue(
         CatalogTableUtils.isCatalogManaged(table), "Should detect general catalog management");
     assertTrue(
@@ -94,11 +86,9 @@ class CatalogTableUtilsTest {
 
   @Test
   void unityManagementFailsWithoutId() {
-    // Arrange: table with flag but no UC ID
     CatalogTable table =
         catalogTableWithProperties(Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
-    // Act & Assert
     assertTrue(
         CatalogTableUtils.isCatalogManaged(table), "Should detect general catalog management");
     assertFalse(
@@ -106,6 +96,13 @@ class CatalogTableUtilsTest {
         "Should fail Unity detection without ID");
   }
 
+  /**
+   * Creates a CatalogTable with the given properties. This is a helper method to create a
+   * CatalogTable for testing purposes - see interface {@link CatalogTable} for more details.
+   *
+   * @param properties the properties to set on the CatalogTable
+   * @return a CatalogTable with the given properties
+   */
   private static CatalogTable catalogTableWithProperties(Map<String, String> properties) {
     scala.collection.immutable.Map<String, String> scalaProps =
         properties.isEmpty()
@@ -113,31 +110,42 @@ class CatalogTableUtilsTest {
             : scala.collection.immutable.Map$.MODULE$.from(
                 CollectionConverters.asScala(properties).toSeq());
 
-    @SuppressWarnings("unchecked")
-    scala.collection.immutable.Seq<String> emptySeq =
-        (scala.collection.immutable.Seq<String>) scala.collection.immutable.Seq$.MODULE$.empty();
-
     return CatalogTable$.MODULE$.apply(
         new TableIdentifier("tbl", Option$.MODULE$.empty(), Option$.MODULE$.empty()),
         CatalogTableType$.MODULE$.MANAGED(),
         CatalogStorageFormat$.MODULE$.empty(),
         new StructType(),
-        Option$.MODULE$.empty(), // provider: Option[String]
-        emptySeq, // partitionColumnNames: Seq[String]
-        Option$.MODULE$.empty(), // bucketSpec: Option[BucketSpec]
+        scalaNone(), // provider: Option[String]
+        scalaEmptySeq(), // partitionColumnNames: Seq[String]
+        scalaNone(), // bucketSpec: Option[BucketSpec]
         "", // owner: String
         0L, // createTime: Long
         -1L, // lastAccessTime: Long
         "", // createVersion: String
         scalaProps, // properties: Map[String, String]
-        Option$.MODULE$.empty(), // stats: Option[CatalogStatistics]
-        Option$.MODULE$.empty(), // viewText: Option[String]
-        Option$.MODULE$.empty(), // comment: Option[String]
-        emptySeq, // unsupportedFeatures: Seq[String]
+        scalaNone(), // stats: Option[CatalogStatistics]
+        scalaNone(), // viewText: Option[String]
+        scalaNone(), // comment: Option[String]
+        scalaEmptySeq(), // unsupportedFeatures: Seq[String]
         false, // tracksPartitionsInCatalog: Boolean
         false, // schemaPreservesCase: Boolean
-        Map$.MODULE$.empty(), // ignoredProperties: Map[String, String]
-        Option$.MODULE$.empty() // viewOriginalText: Option[String]
+        scalaEmptyMap(), // ignoredProperties: Map[String, String]
+        scalaNone() // viewOriginalText: Option[String]
         );
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T> scala.Option<T> scalaNone() {
+    return (scala.Option<T>) Option$.MODULE$.empty();
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T> scala.collection.immutable.Seq<T> scalaEmptySeq() {
+    return (scala.collection.immutable.Seq<T>) scala.collection.immutable.Seq$.MODULE$.empty();
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <K, V> scala.collection.immutable.Map<K, V> scalaEmptyMap() {
+    return (scala.collection.immutable.Map<K, V>) Map$.MODULE$.empty();
   }
 }
