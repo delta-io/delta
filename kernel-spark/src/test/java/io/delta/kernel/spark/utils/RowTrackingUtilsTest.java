@@ -19,13 +19,18 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Format;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import java.util.stream.Stream;
+import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
+import org.apache.spark.sql.delta.RowTracking;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.MetadataBuilder;
 import org.apache.spark.sql.types.StructField;
@@ -33,6 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import scala.collection.JavaConverters;
 
 public class RowTrackingUtilsTest {
 
@@ -55,7 +61,7 @@ public class RowTrackingUtilsTest {
 
           @Override
           public ColumnVector getElements() {
-            throw new UnsupportedOperationException("Empty array has no elements");
+            return null;
           }
         };
     return new Metadata(
@@ -96,7 +102,10 @@ public class RowTrackingUtilsTest {
     IllegalStateException exception =
         assertThrows(
             IllegalStateException.class, () -> RowTrackingUtils.isEnabled(protocol, metadata));
-    assertTrue(exception.getMessage().contains("doesn't support the 'rowTracking' table feature"));
+    assertTrue(
+        exception
+            .getMessage()
+            .contains("doesn't support table feature 'delta.feature.rowTracking'"));
   }
 
   @Test
@@ -108,63 +117,112 @@ public class RowTrackingUtilsTest {
     assertTrue(fields.isEmpty());
   }
 
-  private static Stream<Arguments> nullableFieldConfigProvider() {
+  private static Stream<Arguments> createMetadataStructFieldsTestProvider() {
     return Stream.of(
-        Arguments.of(false, false),
-        Arguments.of(false, true),
-        Arguments.of(true, false),
-        Arguments.of(true, true));
+        // nullableConstant, nullableGenerated, withMaterializedColumns
+        Arguments.of(false, false, false),
+        Arguments.of(false, true, false),
+        Arguments.of(true, false, false),
+        Arguments.of(true, true, false),
+        Arguments.of(false, false, true),
+        Arguments.of(false, true, true),
+        Arguments.of(true, false, true),
+        Arguments.of(true, true, true));
   }
 
   @ParameterizedTest
-  @MethodSource("nullableFieldConfigProvider")
-  public void testCreateMetadataStructFields_VariousNullableConfigs_CreatesCorrectFields(
-      boolean nullableConstant, boolean nullableGenerated) {
-    Protocol protocol = createProtocol(3, 7, Set.of("rowTracking"), Set.of("rowTracking"));
+  @MethodSource("createMetadataStructFieldsTestProvider")
+  public void testCreateMetadataStructFields_VariousConfigurations_MatchesExpectedAndSparkV1(
+      boolean nullableConstant, boolean nullableGenerated, boolean withMaterializedColumns) {
+    // Create Kernel Protocol and Metadata
+    Protocol kernelProtocol = createProtocol(3, 7, Set.of("rowTracking"), Set.of("rowTracking"));
     Map<String, String> config = new HashMap<>();
     config.put("delta.enableRowTracking", "true");
-    Metadata metadata = createMetadata(config);
+    if (withMaterializedColumns) {
+      config.put(TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME.getKey(), "__row_id");
+      config.put(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey(), "__row_version");
+    }
+    Metadata kernelMetadata = createMetadata(config);
 
+    // Get actual result from Kernel-Spark API
     List<StructField> actualFields =
         RowTrackingUtils.createMetadataStructFields(
-            protocol, metadata, nullableConstant, nullableGenerated);
+            kernelProtocol, kernelMetadata, nullableConstant, nullableGenerated);
 
-    // Construct expected fields
-    List<StructField> expectedFields =
-        Arrays.asList(
-            new StructField(
-                "base_row_id",
-                DataTypes.LongType,
-                nullableConstant,
-                new MetadataBuilder()
-                    .putString("__metadata_type", "constant")
-                    .putBoolean("__base_row_id_metadata_col", true)
-                    .build()),
-            new StructField(
-                "default_row_commit_version",
-                DataTypes.LongType,
-                nullableConstant,
-                new MetadataBuilder()
-                    .putString("__metadata_type", "constant")
-                    .putBoolean("__default_row_version_metadata_col", true)
-                    .build()),
-            new StructField(
-                "row_id",
-                DataTypes.LongType,
-                nullableGenerated,
-                new MetadataBuilder()
-                    .putString("__metadata_type", "generated")
-                    .putBoolean("__row_id_metadata_col", true)
-                    .build()),
-            new StructField(
-                "row_commit_version",
-                DataTypes.LongType,
-                nullableGenerated,
-                new MetadataBuilder()
-                    .putString("__metadata_type", "generated")
-                    .putBoolean("__row_commit_version_metadata_col", true)
-                    .build()));
+    // Build expected fields
+    List<StructField> expectedFields = new ArrayList<>();
+    if (withMaterializedColumns) {
+      // row_id (generated field)
+      expectedFields.add(
+          new StructField(
+              "row_id",
+              DataTypes.LongType,
+              nullableGenerated,
+              new MetadataBuilder()
+                  .withMetadata(
+                      org.apache.spark.sql.catalyst.expressions
+                          .FileSourceGeneratedMetadataStructField.metadata("row_id", "__row_id"))
+                  .putBoolean("__row_id_metadata_col", true)
+                  .build()));
+    }
+    // base_row_id (constant field)
+    expectedFields.add(
+        new StructField(
+            "base_row_id",
+            DataTypes.LongType,
+            nullableConstant,
+            new MetadataBuilder()
+                .withMetadata(FileSourceConstantMetadataStructField.metadata("base_row_id"))
+                .putBoolean("__base_row_id_metadata_col", true)
+                .build()));
+    // default_row_commit_version (constant field)
+    expectedFields.add(
+        new StructField(
+            "default_row_commit_version",
+            DataTypes.LongType,
+            nullableConstant,
+            new MetadataBuilder()
+                .withMetadata(
+                    FileSourceConstantMetadataStructField.metadata("default_row_commit_version"))
+                .putBoolean("__default_row_version_metadata_col", true)
+                .build()));
+    if (withMaterializedColumns) {
+      // row_commit_version (generated field)
+      expectedFields.add(
+          new StructField(
+              "row_commit_version",
+              DataTypes.LongType,
+              nullableGenerated,
+              new MetadataBuilder()
+                  .withMetadata(
+                      org.apache.spark.sql.catalyst.expressions
+                          .FileSourceGeneratedMetadataStructField.metadata(
+                          "row_commit_version", "__row_version"))
+                  .putBoolean("__row_commit_version_metadata_col", true)
+                  .build()));
+    }
 
+    // Get Spark V1 result via JSON conversion
+    String protocolJson =
+        JsonUtils.rowToJson(SingleAction.createProtocolSingleAction(kernelProtocol.toRow()));
+    org.apache.spark.sql.delta.actions.Protocol sparkV1Protocol =
+        org.apache.spark.sql.delta.actions.Action.fromJson(protocolJson).wrap().protocol();
+
+    String metadataJson =
+        JsonUtils.rowToJson(SingleAction.createMetadataSingleAction(kernelMetadata.toRow()));
+    org.apache.spark.sql.delta.actions.Metadata sparkV1Metadata =
+        org.apache.spark.sql.delta.actions.Action.fromJson(metadataJson).wrap().metaData();
+
+    scala.collection.Iterable<StructField> sparkV1FieldsIterable =
+        RowTracking.createMetadataStructFields(
+            sparkV1Protocol, sparkV1Metadata, nullableConstant, nullableGenerated);
+    List<StructField> v1Fields =
+        new ArrayList<>(JavaConverters.asJavaCollection(sparkV1FieldsIterable));
+
+    // Assert: actualFields matches expectedFields
     assertEquals(expectedFields, actualFields);
+
+    // Assert: actualFields matches Spark V1
+    assertEquals(v1Fields, actualFields);
   }
 }

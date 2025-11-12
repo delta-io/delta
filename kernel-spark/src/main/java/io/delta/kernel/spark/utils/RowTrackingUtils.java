@@ -21,21 +21,20 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
+import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.MetadataBuilder;
 import org.apache.spark.sql.types.StructField;
 
 /**
- * Utility methods for row tracking in Kernel based connector.
- * This class provides row tracking functionality with Spark-specific metadata attributes for
- * marking metadata columns as constant or generated fields.
+ * Utility methods for row tracking in Kernel based connector. This class provides row tracking
+ * functionality with Spark-specific metadata attributes for marking metadata columns as constant or
+ * generated fields.
  */
 public class RowTrackingUtils {
 
   // Metadata keys for row tracking metadata fields
-  private static final String ROW_TRACKING_METADATA_TYPE_KEY = "__metadata_type";
-  private static final String METADATA_TYPE_CONSTANT = "constant";
-  private static final String METADATA_TYPE_GENERATED = "generated";
   private static final String BASE_ROW_ID_METADATA_COL_ATTR_KEY = "__base_row_id_metadata_col";
   private static final String DEFAULT_ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY =
       "__default_row_version_metadata_col";
@@ -57,7 +56,7 @@ public class RowTrackingUtils {
     if (isEnabled && !TableFeatures.isRowTrackingSupported(protocol)) {
       throw new IllegalStateException(
           "Table property 'delta.enableRowTracking' is set on the table but this table version "
-              + "doesn't support the 'rowTracking' table feature.");
+              + "doesn't support table feature 'delta.feature.rowTracking'.");
     }
     return isEnabled;
   }
@@ -66,13 +65,13 @@ public class RowTrackingUtils {
    * Create the row tracking metadata struct fields for reading. This combines all row tracking
    * fields (both constant and generated) with Spark-specific metadata attributes.
    *
-   * <p>Returns a list containing four fields:
+   * <p>The order and presence of fields matches Spark V1 implementation:
    *
    * <ul>
-   *   <li>base_row_id (constant field)
-   *   <li>default_row_commit_version (constant field)
-   *   <li>row_id (generated field)
-   *   <li>row_commit_version (generated field)
+   *   <li>row_id (generated field, only if materialized column name is configured)
+   *   <li>base_row_id (constant field, always present when row tracking is enabled)
+   *   <li>default_row_commit_version (constant field, always present when row tracking is enabled)
+   *   <li>row_commit_version (generated field, only if materialized column name is configured)
    * </ul>
    *
    * <p>Each field includes Spark-specific metadata attributes marking it as constant or generated.
@@ -95,13 +94,26 @@ public class RowTrackingUtils {
 
     List<StructField> fields = new ArrayList<>();
 
+    // Add row_id (generated field) if materialized column name is configured
+    String materializedRowIdColumnName =
+        metadata.getConfiguration().get(TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME.getKey());
+    if (materializedRowIdColumnName != null) {
+      fields.add(
+          new StructField(
+              "row_id",
+              DataTypes.LongType,
+              nullableGeneratedFields,
+              createGeneratedFieldMetadata(
+                  "row_id", materializedRowIdColumnName, ROW_ID_METADATA_COL_ATTR_KEY)));
+    }
+
     // Add base_row_id (constant field)
     fields.add(
         new StructField(
             "base_row_id",
             DataTypes.LongType,
             nullableConstantFields,
-            createConstantFieldMetadata(BASE_ROW_ID_METADATA_COL_ATTR_KEY)));
+            createConstantFieldMetadata("base_row_id", BASE_ROW_ID_METADATA_COL_ATTR_KEY)));
 
     // Add default_row_commit_version (constant field)
     fields.add(
@@ -109,23 +121,25 @@ public class RowTrackingUtils {
             "default_row_commit_version",
             DataTypes.LongType,
             nullableConstantFields,
-            createConstantFieldMetadata(DEFAULT_ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY)));
+            createConstantFieldMetadata(
+                "default_row_commit_version", DEFAULT_ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY)));
 
-    // Add row_id (generated field)
-    fields.add(
-        new StructField(
-            "row_id",
-            DataTypes.LongType,
-            nullableGeneratedFields,
-            createGeneratedFieldMetadata(ROW_ID_METADATA_COL_ATTR_KEY)));
-
-    // Add row_commit_version (generated field)
-    fields.add(
-        new StructField(
-            "row_commit_version",
-            DataTypes.LongType,
-            nullableGeneratedFields,
-            createGeneratedFieldMetadata(ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY)));
+    // Add row_commit_version (generated field) if materialized column name is configured
+    String materializedRowCommitVersionColumnName =
+        metadata
+            .getConfiguration()
+            .get(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey());
+    if (materializedRowCommitVersionColumnName != null) {
+      fields.add(
+          new StructField(
+              "row_commit_version",
+              DataTypes.LongType,
+              nullableGeneratedFields,
+              createGeneratedFieldMetadata(
+                  "row_commit_version",
+                  materializedRowCommitVersionColumnName,
+                  ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY)));
+    }
 
     return fields;
   }
@@ -133,12 +147,14 @@ public class RowTrackingUtils {
   /**
    * Create metadata for constant row tracking fields (physically stored in files).
    *
+   * @param columnName the name of the metadata column
    * @param attrKey the specific attribute key for this field
    * @return Spark Metadata marking this as a constant field
    */
-  private static org.apache.spark.sql.types.Metadata createConstantFieldMetadata(String attrKey) {
+  private static org.apache.spark.sql.types.Metadata createConstantFieldMetadata(
+      String columnName, String attrKey) {
     return new MetadataBuilder()
-        .putString(ROW_TRACKING_METADATA_TYPE_KEY, METADATA_TYPE_CONSTANT)
+        .withMetadata(FileSourceConstantMetadataStructField.metadata(columnName))
         .putBoolean(attrKey, true)
         .build();
   }
@@ -146,12 +162,16 @@ public class RowTrackingUtils {
   /**
    * Create metadata for generated row tracking fields (computed at read time).
    *
+   * @param readColumnName the name of the metadata column for reading
+   * @param writeColumnName the name of the physical column for writing
    * @param attrKey the specific attribute key for this field
    * @return Spark Metadata marking this as a generated field
    */
-  private static org.apache.spark.sql.types.Metadata createGeneratedFieldMetadata(String attrKey) {
+  private static org.apache.spark.sql.types.Metadata createGeneratedFieldMetadata(
+      String readColumnName, String writeColumnName, String attrKey) {
     return new MetadataBuilder()
-        .putString(ROW_TRACKING_METADATA_TYPE_KEY, METADATA_TYPE_GENERATED)
+        .withMetadata(
+            FileSourceGeneratedMetadataStructField.metadata(readColumnName, writeColumnName))
         .putBoolean(attrKey, true)
         .build();
   }
