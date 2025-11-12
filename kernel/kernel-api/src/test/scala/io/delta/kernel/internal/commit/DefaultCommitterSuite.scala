@@ -59,6 +59,7 @@ class DefaultCommitterSuite extends AnyFunSuite
       val committer = TableManager.loadSnapshot(dataPath.toString)
         .asInstanceOf[SnapshotBuilderImpl]
         .withProtocolAndMetadata(readProtocol, metadata)
+        .withMaxCatalogVersion(1)
         .atVersion(1)
         .build(emptyMockEngine)
         .getCommitter
