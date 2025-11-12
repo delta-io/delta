@@ -291,7 +291,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
   test("withMaxCatalogVersion: zero is valid") {
     // Should not throw
     TableManager.loadSnapshot(dataPath.toString)
-      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(0)
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withMaxCatalogVersion(0)
@@ -301,7 +300,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
   test("withMaxCatalogVersion: positive version is valid") {
     // Should not throw
     TableManager.loadSnapshot(dataPath.toString)
-      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(10)
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withMaxCatalogVersion(10)
@@ -322,7 +320,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
   test("withMaxCatalogVersion: version time-travel equal to maxCatalogVersion is valid") {
     // Should not throw
     TableManager.loadSnapshot(dataPath.toString)
-      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(10)
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withMaxCatalogVersion(10)
@@ -332,7 +329,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
   test("withMaxCatalogVersion: version time-travel less than maxCatalogVersion is valid") {
     // Should not throw
     TableManager.loadSnapshot(dataPath.toString)
-      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(5)
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withMaxCatalogVersion(10)
@@ -346,7 +342,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
 
     val exMsg = intercept[IllegalArgumentException] {
       TableManager.loadSnapshot(dataPath.toString)
-        .atTimestamp(500L, mockSnapshotAtVersion5)
+        .atTimestamp(0L, mockSnapshotAtVersion5)
         .withMaxCatalogVersion(10)
         .build(emptyMockEngine)
     }.getMessage
@@ -360,8 +356,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
     val mockSnapshotAtVersion10 =
       getMockSnapshot(dataPath, latestVersion = 10L, timestamp = 1000L)
 
-    // Should not throw - though will fail trying to load log segment
-    // We're just testing validation here
+    // Input validation should not throw (but will throw later when trying to construct log segment)
     val exMsg = intercept[Exception] {
       TableManager.loadSnapshot(dataPath.toString)
         .atTimestamp(500L, mockSnapshotAtVersion10)
@@ -385,19 +380,21 @@ class SnapshotBuilderSuite extends AnyFunSuite
   }
 
   test("withMaxCatalogVersion: without version, logData ending with maxCatalogVersion is valid") {
-    // Should not throw - validation passes
-    TableManager.loadSnapshot(dataPath.toString)
-      .asInstanceOf[SnapshotBuilderImpl]
-      .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
-      .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5)).toList.asJava)
-      .withMaxCatalogVersion(5)
-      .build(emptyMockEngine)
+    // Input validation should not throw (but will throw later when trying to construct log segment)
+    val exMsg = intercept[Exception] {
+      TableManager.loadSnapshot(dataPath.toString)
+        .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5)).toList.asJava)
+        .withMaxCatalogVersion(5)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    // Should fail on log segment loading, not on validation
+    assert(!exMsg.contains("Provided catalog commits must end with max catalog version"))
   }
 
   test("withMaxCatalogVersion: empty logData with maxCatalogVersion is valid") {
     // Should not throw - empty logData is allowed
     TableManager.loadSnapshot(dataPath.toString)
-      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(5)
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withLogData(Collections.emptyList())
@@ -420,7 +417,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
   test("withMaxCatalogVersion: version time-travel with logData ending at version is valid") {
     // Should not throw - logData ends exactly at requested version
     TableManager.loadSnapshot(dataPath.toString)
-      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(5)
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5)).toList.asJava)
@@ -431,7 +427,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
   test("withMaxCatalogVersion: version time-travel with logData beyond version is valid") {
     // Should not throw - logData extends beyond requested version
     TableManager.loadSnapshot(dataPath.toString)
-      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(5)
       .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)).toList.asJava)
@@ -442,7 +437,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
   test("validateMaxCatalogVersionPresence: catalogManaged table requires maxCatalogVersion") {
     val exMsg = intercept[IllegalArgumentException] {
       TableManager.loadSnapshot(dataPath.toString)
-        .asInstanceOf[SnapshotBuilderImpl]
         .atVersion(1)
         .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
         .build(emptyMockEngine)
@@ -455,13 +449,12 @@ class SnapshotBuilderSuite extends AnyFunSuite
     "validateMaxCatalogVersionPresence: non-catalogManaged table cannot have maxCatalogVersion") {
     val exMsg = intercept[IllegalArgumentException] {
       TableManager.loadSnapshot(dataPath.toString)
-        .asInstanceOf[SnapshotBuilderImpl]
         .atVersion(1)
         .withProtocolAndMetadata(protocol, metadata) // protocol without catalogManaged
         .withMaxCatalogVersion(1)
         .build(emptyMockEngine)
     }.getMessage
 
-    assert(exMsg === "Should not provide maxCatalogVersion for non-catalogManaged tables")
+    assert(exMsg === "Should not provide maxCatalogVersion for file-system managed tables")
   }
 }

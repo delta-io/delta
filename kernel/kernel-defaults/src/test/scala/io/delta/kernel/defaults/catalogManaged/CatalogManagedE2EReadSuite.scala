@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.{SnapshotBuilder, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
-import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.DeltaHistoryManager
 import io.delta.kernel.internal.commitrange.CommitRangeImpl
@@ -46,7 +46,8 @@ import org.scalatest.funsuite.AnyFunSuite
  * [[ParsedLogData]] and inject them into the [[SnapshotBuilder]]. This is,
  * in essence, doing exactly what we would expect a "Catalog-Managed-Client" to do.
  */
-class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs {
+class CatalogManagedE2EReadSuite extends AnyFunSuite
+    with TestUtilsWithTableManagerAPIs with WriteUtilsWithV2Builders {
 
   def withCatalogOwnedPreviewTestTable(testFx: (String, List[ParsedLogData]) => Unit): Unit = {
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
@@ -324,7 +325,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
   test("reading a file-system managed table and providing maxCatalogVersion fails") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create a basic file-system managed table
-      spark.range(10).write.format("delta").save(tablePath)
+      createEmptyTable(tablePath = tablePath, schema = testSchema)
       // Try to read it and provide the maxCatalogVersion
       intercept[IllegalArgumentException] {
         TableManager
@@ -337,14 +338,14 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
 
   test("for latest queries we do not load past the maxRatifiedVersion even if " +
     "later versions exist on the file-system") {
-    withTempDir { file =>
+    withTempDir { tempDir =>
       withCatalogOwnedPreviewTestTable { (resourceTablePath, resourceLogData) =>
         // Copy the catalog-owned-preview test resource table to the temp directory
         org.apache.commons.io.FileUtils.copyDirectory(
           new java.io.File(resourceTablePath),
-          file)
+          tempDir)
         // "Publish" v1 and v2 (we do both to maintain ordered backfill)
-        val deltaLogPath = new Path(file.getPath, "_delta_log")
+        val deltaLogPath = new Path(tempDir.getPath, "_delta_log")
         val stagedCommitPath = new Path(deltaLogPath, "_staged_commits")
         resourceLogData.foreach { stagedCommit =>
           val stagedCommitFile = new java.io.File(
@@ -358,7 +359,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
         // Try to read the table with maxCatalogVersion = 1 (no parsedLogData)
         {
           val snapshot = TableManager
-            .loadSnapshot(file.getPath)
+            .loadSnapshot(tempDir.getPath)
             .withMaxCatalogVersion(1)
             .build(defaultEngine)
           assert(snapshot.getVersion == 1)
@@ -372,7 +373,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
               defaultEngine.getFileSystemClient.resolvePath(path.toString)))
           }
           val snapshot = TableManager
-            .loadSnapshot(file.getPath)
+            .loadSnapshot(tempDir.getPath)
             .withMaxCatalogVersion(1)
             .withLogData(resourceLogData
               .filter(_.getVersion == 1)

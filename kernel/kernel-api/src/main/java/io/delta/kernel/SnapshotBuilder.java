@@ -121,12 +121,12 @@ public interface SnapshotBuilder {
    * Specifies the maximum table version known by the catalog.
    *
    * <p>This method is used by catalog implementations for catalog-managed Delta tables to indicate
-   * the highest version of the table that the catalog is aware of. This ensures that any snapshot
-   * resolution operations respect the catalog's view of the table state.
+   * the latest ratified version of the table. This ensures that any snapshot resolution operations
+   * respect the catalog's view of the table state.
    *
-   * <p><b>Important:</b> This method is <b>required</b> for catalog-managed tables and <b>must not
-   * be used</b> for file-system managed tables. An {@link IllegalArgumentException} will be thrown
-   * at build time if this constraint is violated.
+   * <p>Important: This method is required for catalog-managed tables and must not be used for
+   * file-system managed tables. An {@link IllegalArgumentException} will be thrown at build time if
+   * this constraint is violated.
    *
    * <p>When specified, the following additional constraints are enforced:
    *
@@ -146,7 +146,6 @@ public interface SnapshotBuilder {
    * @return a new builder instance with the specified max catalog version
    * @throws IllegalArgumentException if version is negative
    */
-  // TODO revisit specific naming
   SnapshotBuilder withMaxCatalogVersion(long version);
 
   /**
