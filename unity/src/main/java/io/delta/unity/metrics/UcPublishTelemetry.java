@@ -18,29 +18,31 @@ package io.delta.unity.metrics;
 
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.internal.metrics.MetricsReportSerializer;
 import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.metrics.MetricsReport;
 import java.util.Optional;
 
 /**
- * Telemetry framework for Unity Catalog commit operations.
+ * Telemetry framework for Unity Catalog publish operations.
  *
- * <p>Collects timing metrics for commit operations and generates reports for successful and failed
- * commits.
+ * <p>Collects timing and counter metrics for publish operations and generates reports for
+ * successful and failed publishes.
  */
-public class UcCommitTelemetry {
+public class UcPublishTelemetry {
 
   private final String ucTableId;
   private final String ucTablePath;
-  private final CommitMetadata commitMetadata;
+  private final long snapshotVersion;
+  private final int numCommitsToPublish;
   private final MetricsCollector metricsCollector;
 
-  public UcCommitTelemetry(String ucTableId, String ucTablePath, CommitMetadata commitMetadata) {
+  public UcPublishTelemetry(
+      String ucTableId, String ucTablePath, long snapshotVersion, int numCommitsToPublish) {
     this.ucTableId = ucTableId;
     this.ucTablePath = ucTablePath;
-    this.commitMetadata = commitMetadata;
+    this.snapshotVersion = snapshotVersion;
+    this.numCommitsToPublish = numCommitsToPublish;
     this.metricsCollector = new MetricsCollector();
   }
 
@@ -56,11 +58,33 @@ public class UcCommitTelemetry {
     return new Report(metricsCollector.capture(), Optional.of(error));
   }
 
-  /** Mutable collector for gathering metrics during commit. */
+  /** Mutable collector for gathering metrics during publish. */
   public static class MetricsCollector {
-    public final Timer totalCommitTimer = new Timer();
-    public final Timer writeCommitFileTimer = new Timer();
-    public final Timer commitToUcServerTimer = new Timer();
+    public final Timer totalPublishTimer = new Timer();
+    private int commitsPublished = 0;
+    private int commitsAlreadyPublished = 0;
+
+    public void incrementCommitsPublished() {
+      commitsPublished++;
+    }
+
+    /**
+     * Increments the counter for commits already published by another process. Called when
+     * FileAlreadyExistsException indicates the commit was previously published.
+     */
+    public void incrementCommitsAlreadyPublished() {
+      commitsAlreadyPublished++;
+    }
+
+    /** @return number of commits published */
+    public int getCommitsPublished() {
+      return commitsPublished;
+    }
+
+    /** @return number of commits already published by another process */
+    public int getCommitsAlreadyPublished() {
+      return commitsAlreadyPublished;
+    }
 
     public MetricsResult capture() {
       return new MetricsResult(this);
@@ -69,40 +93,40 @@ public class UcCommitTelemetry {
 
   /** Immutable snapshot of collected metric results. */
   @JsonPropertyOrder({
-    "totalCommitDurationNs",
-    "writeCommitFileDurationNs",
-    "commitToUcServerDurationNs"
+    "totalPublishDurationNs",
+    "numCommitsPublished",
+    "numCommitsAlreadyPublished"
   })
   public static class MetricsResult {
-    public final long totalCommitDurationNs;
-    public final long writeCommitFileDurationNs;
-    public final long commitToUcServerDurationNs;
+    public final long totalPublishDurationNs;
+    public final int numCommitsPublished;
+    public final int numCommitsAlreadyPublished;
 
     MetricsResult(MetricsCollector collector) {
-      this.totalCommitDurationNs = collector.totalCommitTimer.totalDurationNs();
-      this.writeCommitFileDurationNs = collector.writeCommitFileTimer.totalDurationNs();
-      this.commitToUcServerDurationNs = collector.commitToUcServerTimer.totalDurationNs();
+      this.totalPublishDurationNs = collector.totalPublishTimer.totalDurationNs();
+      this.numCommitsPublished = collector.commitsPublished;
+      this.numCommitsAlreadyPublished = collector.commitsAlreadyPublished;
     }
   }
 
-  /** Complete UC commit report with metadata and metrics. */
+  /** Complete UC publish report with metadata and metrics. */
   @JsonPropertyOrder({
     "operationType",
     "reportUUID",
     "ucTableId",
     "ucTablePath",
-    "commitVersion",
-    "commitType",
+    "snapshotVersion",
+    "numCommitsToPublish",
     "metrics",
     "exception"
   })
   public class Report implements MetricsReport {
-    public final String operationType = "UcCommit";
+    public final String operationType = "UcPublish";
     public final String reportUUID = java.util.UUID.randomUUID().toString();
-    public final String ucTableId = UcCommitTelemetry.this.ucTableId;
-    public final String ucTablePath = UcCommitTelemetry.this.ucTablePath;
-    public final long commitVersion = commitMetadata.getVersion();
-    public final CommitMetadata.CommitType commitType = commitMetadata.getCommitType();
+    public final String ucTableId = UcPublishTelemetry.this.ucTableId;
+    public final String ucTablePath = UcPublishTelemetry.this.ucTablePath;
+    public final long snapshotVersion = UcPublishTelemetry.this.snapshotVersion;
+    public final int numCommitsToPublish = UcPublishTelemetry.this.numCommitsToPublish;
     public final MetricsResult metrics;
     public final Optional<Exception> exception;
 

@@ -119,52 +119,6 @@ class ColumnDefaultsSuite extends AnyFunSuite with WriteUtils {
     }
 
     Seq(
-      ("remove col", new StructType().add("a", StringType.STRING, true, fieldMeta(1, null))),
-      (
-        "add col",
-        new StructType()
-          .add("a", StringType.STRING, true, fieldMeta(1, null))
-          .add("add1", StringType.STRING, true, fieldMeta(7, "'Tom'"))
-          .add("add2", DateType.DATE, true, fieldMeta(4, "2025-01-01"))
-          .add("add3", DoubleType.DOUBLE, true, fieldMeta(5, "'3.21'"))
-          .add("b", IntegerType.INTEGER, true, fieldMeta(6, "127"))),
-      (
-        "update value",
-        new StructType()
-          .add("a", StringType.STRING, true, fieldMeta(1, null))
-          .add("b", IntegerType.INTEGER, true, fieldMeta(2, "350"))),
-      (
-        "rename column",
-        new StructType()
-          .add("a", StringType.STRING, true, fieldMeta(1, null))
-          .add("xxx", IntegerType.INTEGER, true, fieldMeta(2, "350"))),
-      (
-        "add renamed column",
-        new StructType()
-          .add("a", StringType.STRING, true, fieldMeta(1, null))
-          .add("b", LongType.LONG, true, fieldMeta(220, "350")))).foreach { case (name, schema) =>
-      test(s"allow valid default values - ($schemaName, $name)") {
-        // Create tables
-        withTempDirAndEngine { (tablePath, engine) =>
-          createEmptyTable(
-            engine,
-            tablePath,
-            schema,
-            tableProperties = goodTblProperties)
-        }
-        // Schema Evolutions
-        withTempDirAndEngine { (tablePath, engine) =>
-          createEmptyTable(
-            engine,
-            tablePath,
-            schemaWithDefault,
-            tableProperties = goodTblProperties)
-          updateTableMetadata(engine, tablePath, schema)
-        }
-      }
-    }
-
-    Seq(
       (StringType.STRING, "CURRENT_TIMESTAMP()"),
       (IntegerType.INTEGER, "313.55"),
       (DoubleType.DOUBLE, "Good boy"),
@@ -205,6 +159,57 @@ class ColumnDefaultsSuite extends AnyFunSuite with WriteUtils {
             }
           }
         }
+    }
+  }
+
+  Seq(
+    ("remove col", new StructType().add("a", StringType.STRING, true, fieldMeta(1, null))),
+    (
+      "add col",
+      new StructType()
+        .add("a", StringType.STRING, true, fieldMeta(1, null))
+        .add("add1", StringType.STRING, true, fieldMeta(7, "'Tom'"))
+        .add("add2", DateType.DATE, true, fieldMeta(4, "2025-01-01"))
+        .add("add3", DoubleType.DOUBLE, true, fieldMeta(5, "'3.21'"))
+        .add("b", IntegerType.INTEGER, true, fieldMeta(6, "127"))),
+    (
+      "update value",
+      new StructType()
+        .add("a", StringType.STRING, true, fieldMeta(1, null))
+        .add("b", IntegerType.INTEGER, true, fieldMeta(2, "350"))),
+    (
+      "rename column",
+      new StructType()
+        .add("a", StringType.STRING, true, fieldMeta(1, null))
+        .add("xxx", IntegerType.INTEGER, true, fieldMeta(2, "350"))),
+    (
+      "add renamed column",
+      new StructType()
+        .add("a", StringType.STRING, true, fieldMeta(1, null))
+        .add("b", LongType.LONG, true, fieldMeta(220, "350")))).foreach { case (name, schema) =>
+    test(s"allow valid default values - for new table & $name schema evolve") {
+      // Create tables
+      // TODO: reconsider removing this part, not sure what exactly the point of this test is...
+      //  (schema evolve?)
+      withTempDirAndEngine { (tablePath, engine) =>
+        createEmptyTable(
+          engine,
+          tablePath,
+          schema,
+          tableProperties = goodTblProperties)
+      }
+      // Schema Evolutions
+      withTempDirAndEngine { (tablePath, engine) =>
+        createEmptyTable(
+          engine,
+          tablePath,
+          // Test this with just the plain unnested schema
+          // TODO: in the future reconsider the point of running all the above tests with both these
+          //  schemas
+          schemasWithDefaults(0)._2,
+          tableProperties = goodTblProperties)
+        updateTableMetadata(engine, tablePath, schema)
+      }
     }
   }
 }

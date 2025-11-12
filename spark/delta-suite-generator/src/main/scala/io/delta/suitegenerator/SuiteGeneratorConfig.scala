@@ -151,6 +151,9 @@ object SuiteGeneratorConfig {
     val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE = DimensionWithMultipleValues(
       "StructEvolutionPreserveNullSource",
       List("Disabled", "Enabled"), alias = Some("PreserveNullSource"))
+    val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE_UPDATE_STAR = DimensionWithMultipleValues(
+      "StructEvolutionPreserveNullSourceUpdateStar",
+      List("Disabled", "Enabled"), alias = Some("PreserveNullSourceUpdateStar"))
   }
 
   private object Tests {
@@ -260,7 +263,11 @@ object SuiteGeneratorConfig {
             "MergeIntoTopLevelMapStructEvolutionNullnessTests" ::
             "MergeIntoNestedMapStructEvolutionNullnessTests" :: Nil,
           List(
-            List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional, Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE)
+            List(
+              Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional,
+              Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE,
+              Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE_UPDATE_STAR
+            )
           )
         )
       )

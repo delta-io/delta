@@ -542,6 +542,476 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaUpdate.after == fieldMappingAfter.get("id"))
   }
 
+  test("Compute schema changes fails for invalid field moves - basic") {
+    val map_field_type = new MapType(
+      new StructType()
+        .add("c2", StringType.STRING, fieldMetadata(1))
+        .add(
+          "c3",
+          new StructType()
+            .add("c4", IntegerType.INTEGER, fieldMetadata(3)),
+          fieldMetadata(2)),
+      new StructType()
+        .add("c5", IntegerType.INTEGER, fieldMetadata(4)),
+      true /* valueContainsNull */
+    )
+    val array_field_type = new ArrayType(
+      new ArrayType(
+        new StructType()
+          .add("c6", IntegerType.INTEGER, fieldMetadata(6))
+          .add("c7", IntegerType.INTEGER, fieldMetadata(7)),
+        true /* containsNull */
+      ),
+      true /* containsNull */
+    )
+    val beforeSchema = new StructType()
+      .add("nested_map", map_field_type, fieldMetadata(0))
+      .add("nested_array", array_field_type, fieldMetadata(5))
+      .add("c8", StringType.STRING, fieldMetadata(8))
+
+    Seq(
+      // New struct column with existing field under it
+      new StructType()
+        .add(
+          "nested_struct",
+          new StructType()
+            .add("c8", StringType.STRING, fieldMetadata(8)),
+          fieldMetadata(100)),
+      // Un-nest a nested struct all within a Map key
+      new StructType()
+        .add(
+          "nested_map",
+          new MapType(
+            new StructType()
+              .add("c2", StringType.STRING, fieldMetadata(1))
+              .add("c4", IntegerType.INTEGER, fieldMetadata(3)),
+            map_field_type.getValueType,
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0)),
+      // Nested column within Map key moved to top-level
+      new StructType()
+        .add("c2", StringType.STRING, fieldMetadata(1)),
+      // Move struct field from key to value within map type
+      new StructType()
+        .add(
+          "nested_map",
+          new MapType(
+            new StructType()
+              .add(
+                "c3",
+                new StructType()
+                  .add("c4", IntegerType.INTEGER, fieldMetadata(3)),
+                fieldMetadata(2)),
+            new StructType()
+              .add("c5", IntegerType.INTEGER, fieldMetadata(4))
+              .add("c2", StringType.STRING, fieldMetadata(1)),
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0)),
+      // Move existing field into double-nested array
+      new StructType()
+        .add(
+          "nested_array",
+          new ArrayType(
+            new ArrayType(
+              new StructType()
+                .add("c8", StringType.STRING, fieldMetadata(8))
+                .add("c6", IntegerType.INTEGER, fieldMetadata(6))
+                .add("c7", IntegerType.INTEGER, fieldMetadata(7)),
+              true /* containsNull */
+            ),
+            true /* containsNull */
+          ),
+          fieldMetadata(5)),
+      // Move field out of double-nested array
+      new StructType()
+        .add(
+          "nested_array",
+          new ArrayType(
+            new ArrayType(
+              new StructType()
+                .add("c7", IntegerType.INTEGER, fieldMetadata(7)),
+              true /* containsNull */
+            ),
+            true /* containsNull */
+          ),
+          fieldMetadata(5)).add("c6", IntegerType.INTEGER, fieldMetadata(6))).foreach {
+      afterSchema =>
+        val e = intercept[KernelException] {
+          computeSchemaChangesById(beforeSchema, afterSchema)
+        }
+        assert(e.getMessage.contains("Cannot move fields between different levels of nesting"))
+    }
+  }
+
+  test("Compute schema changes fails for invalid field moves - map value operations") {
+    val map_field_type = new MapType(
+      new StructType()
+        .add("k1", StringType.STRING, fieldMetadata(1)),
+      new StructType()
+        .add("v1", IntegerType.INTEGER, fieldMetadata(2))
+        .add(
+          "v2",
+          new StructType()
+            .add("v3", StringType.STRING, fieldMetadata(4)),
+          fieldMetadata(3)),
+      true /* valueContainsNull */
+    )
+    val beforeSchema = new StructType()
+      .add("mymap", map_field_type, fieldMetadata(0))
+      .add("c1", StringType.STRING, fieldMetadata(5))
+
+    Seq(
+      // Move field from Map value to top-level
+      new StructType()
+        .add(
+          "mymap",
+          new MapType(
+            map_field_type.getKeyType,
+            new StructType()
+              .add(
+                "v2",
+                new StructType()
+                  .add("v3", StringType.STRING, fieldMetadata(4)),
+                fieldMetadata(3)),
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0))
+        .add("v1", IntegerType.INTEGER, fieldMetadata(2))
+        .add("c1", StringType.STRING, fieldMetadata(5)),
+      // Move field from Map value to Map key
+      new StructType()
+        .add(
+          "mymap",
+          new MapType(
+            new StructType()
+              .add("k1", StringType.STRING, fieldMetadata(1))
+              .add("v1", IntegerType.INTEGER, fieldMetadata(2)),
+            new StructType()
+              .add(
+                "v2",
+                new StructType()
+                  .add("v3", StringType.STRING, fieldMetadata(4)),
+                fieldMetadata(3)),
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0))
+        .add("c1", StringType.STRING, fieldMetadata(5)),
+      // Un-nest a nested struct within Map value
+      new StructType()
+        .add(
+          "mymap",
+          new MapType(
+            map_field_type.getKeyType,
+            new StructType()
+              .add("v1", IntegerType.INTEGER, fieldMetadata(2))
+              .add("v3", StringType.STRING, fieldMetadata(4)),
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0))
+        .add("c1", StringType.STRING, fieldMetadata(5)),
+      // Move deeply nested field from Map value to top-level
+      new StructType()
+        .add(
+          "mymap",
+          new MapType(
+            map_field_type.getKeyType,
+            new StructType()
+              .add("v1", IntegerType.INTEGER, fieldMetadata(2))
+              .add(
+                "v2",
+                new StructType(),
+                fieldMetadata(3)),
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0))
+        .add("c1", StringType.STRING, fieldMetadata(5))
+        .add("v3", StringType.STRING, fieldMetadata(4))).foreach { afterSchema =>
+      val e = intercept[KernelException] {
+        computeSchemaChangesById(beforeSchema, afterSchema)
+      }
+      assert(e.getMessage.contains("Cannot move fields between different levels of nesting"))
+    }
+  }
+
+  test("Compute schema changes fails for invalid field moves - between sibling structs") {
+    val beforeSchema = new StructType()
+      .add(
+        "struct1",
+        new StructType()
+          .add("a", IntegerType.INTEGER, fieldMetadata(1))
+          .add("b", StringType.STRING, fieldMetadata(2)),
+        fieldMetadata(0))
+      .add(
+        "struct2",
+        new StructType()
+          .add("c", IntegerType.INTEGER, fieldMetadata(4))
+          .add("d", StringType.STRING, fieldMetadata(5)),
+        fieldMetadata(3))
+      .add("e", IntegerType.INTEGER, fieldMetadata(6))
+
+    Seq(
+      // Move field from struct1 to struct2
+      new StructType()
+        .add(
+          "struct1",
+          new StructType()
+            .add("b", StringType.STRING, fieldMetadata(2)),
+          fieldMetadata(0))
+        .add(
+          "struct2",
+          new StructType()
+            .add("a", IntegerType.INTEGER, fieldMetadata(1))
+            .add("c", IntegerType.INTEGER, fieldMetadata(4))
+            .add("d", StringType.STRING, fieldMetadata(5)),
+          fieldMetadata(3))
+        .add("e", IntegerType.INTEGER, fieldMetadata(6)),
+      // Move top-level field into a struct
+      new StructType()
+        .add(
+          "struct1",
+          new StructType()
+            .add("a", IntegerType.INTEGER, fieldMetadata(1))
+            .add("b", StringType.STRING, fieldMetadata(2))
+            .add("e", IntegerType.INTEGER, fieldMetadata(6)),
+          fieldMetadata(0))
+        .add(
+          "struct2",
+          new StructType()
+            .add("c", IntegerType.INTEGER, fieldMetadata(4))
+            .add("d", StringType.STRING, fieldMetadata(5)),
+          fieldMetadata(3))).foreach { afterSchema =>
+      val e = intercept[KernelException] {
+        computeSchemaChangesById(beforeSchema, afterSchema)
+      }
+      assert(e.getMessage.contains("Cannot move fields between different levels of nesting"))
+    }
+  }
+
+  test("Compute schema changes fails for invalid field moves - deeply nested structures") {
+    val beforeSchema = new StructType()
+      .add(
+        "level1",
+        new StructType()
+          .add(
+            "level2",
+            new StructType()
+              .add(
+                "level3",
+                new StructType()
+                  .add("deep_field", StringType.STRING, fieldMetadata(3)),
+                fieldMetadata(2)),
+            fieldMetadata(1)),
+        fieldMetadata(0))
+      .add("top_field", IntegerType.INTEGER, fieldMetadata(4))
+
+    Seq(
+      // Move deeply nested field to top-level
+      new StructType()
+        .add(
+          "level1",
+          new StructType()
+            .add(
+              "level2",
+              new StructType()
+                .add(
+                  "level3",
+                  new StructType(),
+                  fieldMetadata(2)),
+              fieldMetadata(1)),
+          fieldMetadata(0))
+        .add("top_field", IntegerType.INTEGER, fieldMetadata(4))
+        .add("deep_field", StringType.STRING, fieldMetadata(3)),
+      // Move deeply nested field to level2
+      new StructType()
+        .add(
+          "level1",
+          new StructType()
+            .add(
+              "level2",
+              new StructType()
+                .add(
+                  "level3",
+                  new StructType(),
+                  fieldMetadata(2))
+                .add("deep_field", StringType.STRING, fieldMetadata(3)),
+              fieldMetadata(1)),
+          fieldMetadata(0))
+        .add("top_field", IntegerType.INTEGER, fieldMetadata(4)),
+      // Move deeply nested field to level1
+      new StructType()
+        .add(
+          "level1",
+          new StructType()
+            .add(
+              "level2",
+              new StructType()
+                .add(
+                  "level3",
+                  new StructType(),
+                  fieldMetadata(2)),
+              fieldMetadata(1))
+            .add("deep_field", StringType.STRING, fieldMetadata(3)),
+          fieldMetadata(0))
+        .add("top_field", IntegerType.INTEGER, fieldMetadata(4)),
+      // Move top-level field deep into structure
+      new StructType()
+        .add(
+          "level1",
+          new StructType()
+            .add(
+              "level2",
+              new StructType()
+                .add(
+                  "level3",
+                  new StructType()
+                    .add("deep_field", StringType.STRING, fieldMetadata(3))
+                    .add("top_field", IntegerType.INTEGER, fieldMetadata(4)),
+                  fieldMetadata(2)),
+              fieldMetadata(1)),
+          fieldMetadata(0))).foreach { afterSchema =>
+      val e = intercept[KernelException] {
+        computeSchemaChangesById(beforeSchema, afterSchema)
+      }
+      assert(e.getMessage.contains("Cannot move fields between different levels of nesting"))
+    }
+  }
+
+  test("Compute schema changes fails for invalid field moves - array and struct combinations") {
+    val beforeSchema = new StructType()
+      .add(
+        "my_array",
+        new ArrayType(
+          new StructType()
+            .add("arr_field1", IntegerType.INTEGER, fieldMetadata(1))
+            .add("arr_field2", StringType.STRING, fieldMetadata(2)),
+          true /* containsNull */
+        ),
+        fieldMetadata(0))
+      .add(
+        "my_struct",
+        new StructType()
+          .add("struct_field", IntegerType.INTEGER, fieldMetadata(4)),
+        fieldMetadata(3))
+      .add("top_field", StringType.STRING, fieldMetadata(5))
+
+    Seq(
+      // Move field from array element to regular struct
+      new StructType()
+        .add(
+          "my_array",
+          new ArrayType(
+            new StructType()
+              .add("arr_field2", StringType.STRING, fieldMetadata(2)),
+            true /* containsNull */
+          ),
+          fieldMetadata(0))
+        .add(
+          "my_struct",
+          new StructType()
+            .add("struct_field", IntegerType.INTEGER, fieldMetadata(4))
+            .add("arr_field1", IntegerType.INTEGER, fieldMetadata(1)),
+          fieldMetadata(3))
+        .add("top_field", StringType.STRING, fieldMetadata(5)),
+      // Move field from regular struct to array element
+      new StructType()
+        .add(
+          "my_array",
+          new ArrayType(
+            new StructType()
+              .add("arr_field1", IntegerType.INTEGER, fieldMetadata(1))
+              .add("arr_field2", StringType.STRING, fieldMetadata(2))
+              .add("struct_field", IntegerType.INTEGER, fieldMetadata(4)),
+            true /* containsNull */
+          ),
+          fieldMetadata(0))
+        .add(
+          "my_struct",
+          new StructType(),
+          fieldMetadata(3))
+        .add("top_field", StringType.STRING, fieldMetadata(5)),
+      // Move field from array element to top-level
+      new StructType()
+        .add(
+          "my_array",
+          new ArrayType(
+            new StructType()
+              .add("arr_field2", StringType.STRING, fieldMetadata(2)),
+            true /* containsNull */
+          ),
+          fieldMetadata(0))
+        .add(
+          "my_struct",
+          new StructType()
+            .add("struct_field", IntegerType.INTEGER, fieldMetadata(4)),
+          fieldMetadata(3))
+        .add("top_field", StringType.STRING, fieldMetadata(5))
+        .add("arr_field1", IntegerType.INTEGER, fieldMetadata(1))).foreach { afterSchema =>
+      val e = intercept[KernelException] {
+        computeSchemaChangesById(beforeSchema, afterSchema)
+      }
+      assert(e.getMessage.contains("Cannot move fields between different levels of nesting"))
+    }
+  }
+
+  test("Compute schema changes fails for invalid field moves - complex nested maps") {
+    val beforeSchema = new StructType()
+      .add(
+        "outer_map",
+        new MapType(
+          StringType.STRING,
+          new MapType(
+            StringType.STRING,
+            new StructType()
+              .add("inner_field", IntegerType.INTEGER, fieldMetadata(2)),
+            true /* valueContainsNull */
+          ),
+          true /* valueContainsNull */
+        ),
+        fieldMetadata(0))
+      .add("other_field", StringType.STRING, fieldMetadata(3))
+
+    Seq(
+      // Move field from nested map value to outer map value
+      new StructType()
+        .add(
+          "outer_map",
+          new MapType(
+            StringType.STRING,
+            new MapType(
+              StringType.STRING,
+              new StructType(),
+              true /* valueContainsNull */
+            ),
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0))
+        .add("other_field", StringType.STRING, fieldMetadata(3))
+        .add("inner_field", IntegerType.INTEGER, fieldMetadata(2)),
+      // Move top-level field into nested map value
+      new StructType()
+        .add(
+          "outer_map",
+          new MapType(
+            StringType.STRING,
+            new MapType(
+              StringType.STRING,
+              new StructType()
+                .add("inner_field", IntegerType.INTEGER, fieldMetadata(2))
+                .add("other_field", StringType.STRING, fieldMetadata(3)),
+              true /* valueContainsNull */
+            ),
+            true /* valueContainsNull */
+          ),
+          fieldMetadata(0))).foreach { afterSchema =>
+      val e = intercept[KernelException] {
+        computeSchemaChangesById(beforeSchema, afterSchema)
+      }
+      assert(e.getMessage.contains("Cannot move fields between different levels of nesting"))
+    }
+  }
+
   ///////////////////////////////////////////////////////////////////////////
   // validateUpdatedSchema
   ///////////////////////////////////////////////////////////////////////////
@@ -1277,6 +1747,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
       Optional.empty(), // createdTime
       stringStringMapValue(tblProperties.asJava) // configurationMap
     )
+  }
+
+  private def fieldMetadata(id: Integer): FieldMetadata = {
+    fieldMetadata(id, s"col-$id")
   }
 
   private def fieldMetadata(id: Integer, physicalName: String): FieldMetadata = {
