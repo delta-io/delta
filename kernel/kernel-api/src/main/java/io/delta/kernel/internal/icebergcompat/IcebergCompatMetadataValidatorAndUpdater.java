@@ -70,17 +70,6 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   }
 
   /**
-   * Returns whether any version of Iceberg compatibility is enabled for the given table metadata.
-   * This is an alias for {@link #isIcebergCompatEnabled(Metadata)}.
-   *
-   * @param metadata The table metadata to check.
-   * @return true if any version of Iceberg compatibility is enabled; false otherwise.
-   */
-  public static Boolean isAnyVersionEnabled(Metadata metadata) {
-    return isIcebergCompatEnabled(metadata);
-  }
-
-  /**
    * Returns whether an Iceberg compatibility version greater than or equal to the required version
    * is enabled. This method follows the same logic as Spark V1's IcebergCompat.isGeqEnabled: it
    * finds the enabled version (if any) and checks if it is >= requiredVersion.
