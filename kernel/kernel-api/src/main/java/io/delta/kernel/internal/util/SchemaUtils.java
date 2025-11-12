@@ -358,7 +358,12 @@ public class SchemaUtils {
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
-  /* Compute the SchemaChanges using field IDs */
+  /**
+   * Compute the SchemaChanges using field IDs
+   *
+   * @throws KernelException if any existing fields have been illegally moved outside their parent
+   *     struct
+   */
   static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
     SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
     findAndAddRemovedFields(currentSchema, newSchema, schemaDiff);
@@ -370,6 +375,12 @@ public class SchemaUtils {
     // <"value", 1> : StructField("value", StructType),
     // <"", 2>: StructField("b", IntegerType)}
     Map<SchemaElementId, StructField> currentFieldIdToField = fieldsByElementId(currentSchema);
+    // This map only contains struct field keys (does not include complex type elements).
+    // Using the earlier example, this map would contain:
+    // {1: Optional.empty(),
+    //  2: Optional.of(StructField("a", MapType), "value"))}
+    Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>> currentFieldIdToParent =
+        mapStructFieldsToParent(currentSchema);
     Set<Integer> addedFieldIds = new HashSet<>();
     SchemaIterable newSchemaIterable = new SchemaIterable(newSchema);
     Iterator<SchemaIterable.MutableSchemaElement> newSchemaIterator =
@@ -379,6 +390,27 @@ public class SchemaUtils {
     while (newSchemaIterator.hasNext()) {
       SchemaIterable.MutableSchemaElement newElement = newSchemaIterator.next();
       SchemaElementId id = getSchemaElementId(newElement);
+
+      // If the element is a struct field we need to validate that it has not been moved out of
+      // its parent struct. To do this, we check that in the old schema and the new schema
+      // its parent struct field (and the path to it) is unchanged.
+      if (newElement.isStructField()) {
+        int columnId = getColumnId(newElement.getField());
+        if (currentFieldIdToParent.containsKey(columnId)) { // If it's an existing field
+          // We need both the parent struct field and the path to it in case of nested arrays/maps
+          Optional<SchemaIterable.ParentStructFieldInfo> currentParent =
+              currentFieldIdToParent.get(columnId);
+          Optional<SchemaIterable.ParentStructFieldInfo> newParent =
+              newElement.getParentStructFieldAndPath();
+          Optional<SchemaElementId> currentParentId =
+              currentParent.map(SchemaUtils::getSchemaElementId);
+          Optional<SchemaElementId> newParentId = newParent.map(SchemaUtils::getSchemaElementId);
+          if (!Objects.equals(currentParentId, newParentId)) {
+            throw DeltaErrors.invalidFieldMove(columnId, currentParent, newParent);
+          }
+        }
+      }
+
       if (addedFieldIds.contains(id.getId())) {
         // Skip early if this is a descendant of an added field.
         continue;
@@ -472,9 +504,30 @@ public class SchemaUtils {
     return fieldIdToField;
   }
 
+  private static Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>>
+      mapStructFieldsToParent(StructType schema) {
+    Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>> fieldIdToParent = new HashMap<>();
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+      if (element.isStructField()) {
+        StructField elementField = element.getField();
+        int columnId = getColumnId(elementField);
+        Optional<SchemaIterable.ParentStructFieldInfo> parentInfo =
+            element.getParentStructFieldAndPath();
+        fieldIdToParent.put(columnId, parentInfo);
+      }
+    }
+    return fieldIdToParent;
+  }
+
   private static SchemaElementId getSchemaElementId(SchemaIterable.SchemaElement element) {
     int columnId = getColumnId(element.getNearestStructFieldAncestor());
     return new SchemaElementId(element.getPathFromNearestStructFieldAncestor(""), columnId);
+  }
+
+  private static SchemaElementId getSchemaElementId(
+      SchemaIterable.ParentStructFieldInfo parentInfo) {
+    int columnId = getColumnId(parentInfo.getParentField());
+    return new SchemaElementId(parentInfo.getPathFromParent(), columnId);
   }
 
   private static void findAndAddRemovedFields(
