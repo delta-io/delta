@@ -26,6 +26,7 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{FileNames, Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{ActionUtils, BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
@@ -56,12 +57,15 @@ class DefaultCommitterSuite extends AnyFunSuite
       val emptyMockEngine = createMockFSListFromEngine(Nil)
       val schema = new StructType().add("col1", IntegerType.INTEGER)
       val metadata = testMetadata(schema, Seq[String]())
-      val committer = TableManager.loadSnapshot(dataPath.toString)
+
+      var snapshotBuilder = TableManager.loadSnapshot(dataPath.toString)
         .asInstanceOf[SnapshotBuilderImpl]
         .withProtocolAndMetadata(readProtocol, metadata)
-        .withMaxCatalogVersion(1)
         .atVersion(1)
-        .build(emptyMockEngine)
+      if (readProtocol.supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+        snapshotBuilder = snapshotBuilder.withMaxCatalogVersion(1)
+      }
+      val committer = snapshotBuilder.build(emptyMockEngine)
         .getCommitter
 
       assert(committer.isInstanceOf[DefaultFileSystemManagedTableOnlyCommitter])
