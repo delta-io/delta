@@ -31,6 +31,7 @@ import java.util.*;
 import java.util.stream.Stream;
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
 import org.apache.spark.sql.delta.RowTracking;
+import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.MetadataBuilder;
 import org.apache.spark.sql.types.StructField;
@@ -41,40 +42,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import scala.collection.JavaConverters;
 
 public class RowTrackingUtilsTest {
-
-  private Protocol createProtocol(
-      int minReaderVersion,
-      int minWriterVersion,
-      Set<String> readerFeatures,
-      Set<String> writerFeatures) {
-    return new Protocol(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures);
-  }
-
-  private Metadata createMetadata(Map<String, String> configuration) {
-    StructType schema = new StructType().add("id", IntegerType.INTEGER);
-    ArrayValue emptyPartitionColumns =
-        new ArrayValue() {
-          @Override
-          public int getSize() {
-            return 0;
-          }
-
-          @Override
-          public ColumnVector getElements() {
-            return null;
-          }
-        };
-    return new Metadata(
-        "id",
-        Optional.empty() /* name */,
-        Optional.empty() /* description */,
-        new Format(),
-        schema.toJson(),
-        schema,
-        emptyPartitionColumns,
-        Optional.empty() /* createdTime */,
-        io.delta.kernel.internal.util.VectorUtils.stringStringMapValue(configuration));
-  }
 
   @Test
   public void testIsEnabled_NotEnabledInMetadata_ReturnsFalse() {
@@ -132,7 +99,7 @@ public class RowTrackingUtilsTest {
 
   @ParameterizedTest
   @MethodSource("createMetadataStructFieldsTestProvider")
-  public void testCreateMetadataStructFields_VariousConfigurations_MatchesExpectedAndSparkV1(
+  public void testCreateMetadataStructFields(
       boolean nullableConstant, boolean nullableGenerated, boolean withMaterializedColumns) {
     // Create Kernel Protocol and Metadata
     Protocol kernelProtocol = createProtocol(3, 7, Set.of("rowTracking"), Set.of("rowTracking"));
@@ -202,27 +169,56 @@ public class RowTrackingUtilsTest {
                   .build()));
     }
 
-    // Get Spark V1 result via JSON conversion
     String protocolJson =
         JsonUtils.rowToJson(SingleAction.createProtocolSingleAction(kernelProtocol.toRow()));
     org.apache.spark.sql.delta.actions.Protocol sparkV1Protocol =
-        org.apache.spark.sql.delta.actions.Action.fromJson(protocolJson).wrap().protocol();
-
+        Action.fromJson(protocolJson).wrap().protocol();
     String metadataJson =
         JsonUtils.rowToJson(SingleAction.createMetadataSingleAction(kernelMetadata.toRow()));
     org.apache.spark.sql.delta.actions.Metadata sparkV1Metadata =
-        org.apache.spark.sql.delta.actions.Action.fromJson(metadataJson).wrap().metaData();
-
+        Action.fromJson(metadataJson).wrap().metaData();
     scala.collection.Iterable<StructField> sparkV1FieldsIterable =
         RowTracking.createMetadataStructFields(
             sparkV1Protocol, sparkV1Metadata, nullableConstant, nullableGenerated);
     List<StructField> v1Fields =
         new ArrayList<>(JavaConverters.asJavaCollection(sparkV1FieldsIterable));
 
-    // Assert: actualFields matches expectedFields
     assertEquals(expectedFields, actualFields);
-
-    // Assert: actualFields matches Spark V1
+    // Ensure both delta implementation return same result.
     assertEquals(v1Fields, actualFields);
+  }
+
+  private Protocol createProtocol(
+      int minReaderVersion,
+      int minWriterVersion,
+      Set<String> readerFeatures,
+      Set<String> writerFeatures) {
+    return new Protocol(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures);
+  }
+
+  private Metadata createMetadata(Map<String, String> configuration) {
+    StructType schema = new StructType().add("id", IntegerType.INTEGER);
+    ArrayValue emptyPartitionColumns =
+        new ArrayValue() {
+          @Override
+          public int getSize() {
+            return 0;
+          }
+
+          @Override
+          public ColumnVector getElements() {
+            return null;
+          }
+        };
+    return new Metadata(
+        "id",
+        Optional.empty() /* name */,
+        Optional.empty() /* description */,
+        new Format(),
+        schema.toJson(),
+        schema,
+        emptyPartitionColumns,
+        Optional.empty() /* createdTime */,
+        io.delta.kernel.internal.util.VectorUtils.stringStringMapValue(configuration));
   }
 }
