@@ -23,6 +23,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.utils.CloseableIterable;
@@ -38,6 +39,17 @@ public class RowTracking {
   private RowTracking() {
     // Empty constructor to prevent instantiation of this class
   }
+
+  // Metadata keys for row tracking fields (following Delta protocol specification)
+  private static final String ROW_TRACKING_METADATA_TYPE_KEY = "__metadata_type";
+  private static final String METADATA_TYPE_CONSTANT = "constant";
+  private static final String METADATA_TYPE_GENERATED = "generated";
+  private static final String BASE_ROW_ID_METADATA_COL_ATTR_KEY = "__base_row_id_metadata_col";
+  private static final String DEFAULT_ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY =
+      "__default_row_version_metadata_col";
+  private static final String ROW_ID_METADATA_COL_ATTR_KEY = "__row_id_metadata_col";
+  private static final String ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY =
+      "__row_commit_version_metadata_col";
 
   /**
    * Checks if the provided field is a row tracking column, i.e., either the row ID or the row
@@ -268,5 +280,168 @@ public class RowTracking {
    */
   private static long getNumRecordsOrThrow(AddFile addFile) {
     return addFile.getNumRecords().orElseThrow(DeltaErrors::missingNumRecordsStatsForRowTracking);
+  }
+
+  /**
+   * Check if row tracking is enabled for reading.
+   *
+   * @param protocol the protocol to check
+   * @param metadata the metadata to check
+   * @return true if row tracking is enabled
+   */
+  public static boolean isEnabled(Protocol protocol, Metadata metadata) {
+    boolean isEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+    if (isEnabled && !TableFeatures.isRowTrackingSupported(protocol)) {
+      throw new IllegalStateException(
+          "Table property 'delta.enableRowTracking' is set on the table but this table version "
+              + "doesn't support the 'rowTracking' table feature.");
+    }
+    return isEnabled;
+  }
+
+  /**
+   * Create the base_row_id field for reading. This is a constant field physically stored in Parquet
+   * files.
+   *
+   * @param protocol the protocol
+   * @param metadata the metadata
+   * @param nullable whether the field should be nullable
+   * @return Optional containing the StructField if row tracking is enabled, empty otherwise
+   */
+  public static Optional<StructField> createBaseRowIdField(
+      Protocol protocol, Metadata metadata, boolean nullable) {
+    if (!isEnabled(protocol, metadata)) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new StructField(
+            "base_row_id",
+            io.delta.kernel.types.LongType.LONG,
+            nullable,
+            createConstantFieldMetadata(BASE_ROW_ID_METADATA_COL_ATTR_KEY)));
+  }
+
+  /**
+   * Create the default_row_commit_version field for reading. This is a constant field physically
+   * stored in Parquet files.
+   *
+   * @param protocol the protocol
+   * @param metadata the metadata
+   * @param nullable whether the field should be nullable
+   * @return Optional containing the StructField if row tracking is enabled, empty otherwise
+   */
+  public static Optional<StructField> createDefaultRowCommitVersionField(
+      Protocol protocol, Metadata metadata, boolean nullable) {
+    if (!isEnabled(protocol, metadata)) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new StructField(
+            "default_row_commit_version",
+            io.delta.kernel.types.LongType.LONG,
+            nullable,
+            createConstantFieldMetadata(DEFAULT_ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY)));
+  }
+
+  /**
+   * Create the row_id field for reading. This is a generated field computed at read time.
+   *
+   * @param protocol the protocol
+   * @param metadata the metadata
+   * @param nullable whether the field should be nullable
+   * @return Optional containing the StructField if row tracking is enabled, empty otherwise
+   */
+  public static Optional<StructField> createRowIdField(
+      Protocol protocol, Metadata metadata, boolean nullable) {
+    if (!isEnabled(protocol, metadata)) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new StructField(
+            "row_id",
+            io.delta.kernel.types.LongType.LONG,
+            nullable,
+            createGeneratedFieldMetadata(ROW_ID_METADATA_COL_ATTR_KEY)));
+  }
+
+  /**
+   * Create the row_commit_version field for reading. This is a generated field computed at read
+   * time.
+   *
+   * @param protocol the protocol
+   * @param metadata the metadata
+   * @param nullable whether the field should be nullable
+   * @return Optional containing the StructField if row tracking is enabled, empty otherwise
+   */
+  public static Optional<StructField> createRowCommitVersionField(
+      Protocol protocol, Metadata metadata, boolean nullable) {
+    if (!isEnabled(protocol, metadata)) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new StructField(
+            "row_commit_version",
+            io.delta.kernel.types.LongType.LONG,
+            nullable,
+            createGeneratedFieldMetadata(ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY)));
+  }
+
+  /**
+   * Create the row tracking metadata struct fields for reading. This combines all row tracking
+   * fields (both constant and generated) with proper Delta protocol metadata attributes.
+   *
+   * @param protocol the protocol
+   * @param metadata the metadata
+   * @param nullableConstantFields whether constant fields should be nullable
+   * @param nullableGeneratedFields whether generated fields should be nullable
+   * @return list of struct fields for row tracking metadata
+   */
+  public static List<StructField> createMetadataStructFields(
+      Protocol protocol,
+      Metadata metadata,
+      boolean nullableConstantFields,
+      boolean nullableGeneratedFields) {
+    List<StructField> fields = new java.util.ArrayList<>();
+
+    // Add base_row_id (constant field)
+    createBaseRowIdField(protocol, metadata, nullableConstantFields).ifPresent(fields::add);
+
+    // Add default_row_commit_version (constant field)
+    createDefaultRowCommitVersionField(protocol, metadata, nullableConstantFields)
+        .ifPresent(fields::add);
+
+    // Add row_id (generated field)
+    createRowIdField(protocol, metadata, nullableGeneratedFields).ifPresent(fields::add);
+
+    // Add row_commit_version (generated field)
+    createRowCommitVersionField(protocol, metadata, nullableGeneratedFields).ifPresent(fields::add);
+
+    return fields;
+  }
+
+  /**
+   * Create metadata for constant row tracking fields (physically stored in files).
+   *
+   * @param attrKey the specific attribute key for this field
+   * @return FieldMetadata marking this as a constant field
+   */
+  private static FieldMetadata createConstantFieldMetadata(String attrKey) {
+    return new FieldMetadata.Builder()
+        .putString(ROW_TRACKING_METADATA_TYPE_KEY, METADATA_TYPE_CONSTANT)
+        .putBoolean(attrKey, true)
+        .build();
+  }
+
+  /**
+   * Create metadata for generated row tracking fields (computed at read time).
+   *
+   * @param attrKey the specific attribute key for this field
+   * @return FieldMetadata marking this as a generated field
+   */
+  private static FieldMetadata createGeneratedFieldMetadata(String attrKey) {
+    return new FieldMetadata.Builder()
+        .putString(ROW_TRACKING_METADATA_TYPE_KEY, METADATA_TYPE_GENERATED)
+        .putBoolean(attrKey, true)
+        .build();
   }
 }
