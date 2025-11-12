@@ -20,7 +20,7 @@ import java.util.{Collections, Optional}
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, Row}
-import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
+import io.delta.kernel.engine._
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.test.MockEngineUtils
 import io.delta.kernel.types.StructType
@@ -42,36 +42,42 @@ class ActionsIteratorSuite extends AnyFunSuite with MockEngineUtils {
   test("ActionsIterator readCommitOrCompactionFile resource cleanup") {
     var iteratorClosed = false
 
-    val engine = mockEngine(jsonHandler = new JsonHandler {
-      override def readJsonFiles(
-          fileIter: CloseableIterator[FileStatus],
-          physicalSchema: StructType,
-          predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-
-        // Return an empty iterator that tracks closure
-        new CloseableIterator[ColumnarBatch] {
-          override def hasNext(): Boolean =
-            throw new NoSuchElementException("This is a test exception")
-          override def next(): ColumnarBatch =
-            throw new UnsupportedOperationException("Not needed for this test")
-          override def close(): Unit = iteratorClosed = true
+    class TestEngine extends Engine {
+      override def getExpressionHandler: ExpressionHandler =
+        throw new UnsupportedOperationException("Not needed for this test")
+      override def getParquetHandler: ParquetHandler =
+        throw new UnsupportedOperationException("Not needed for this test")
+      override def getFileSystemClient: FileSystemClient =
+        throw new UnsupportedOperationException("Not needed for this test")
+      override def getJsonHandler: JsonHandler = new JsonHandler {
+        override def readJsonFiles(
+            fileIter: CloseableIterator[FileStatus],
+            physicalSchema: StructType,
+            predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+          // Return an empty iterator that tracks closure
+          new CloseableIterator[ColumnarBatch] {
+            override def hasNext(): Boolean =
+              throw new NoSuchElementException("This is a test exception")
+            override def next(): ColumnarBatch =
+              throw new UnsupportedOperationException("Not needed for this test")
+            override def close(): Unit = iteratorClosed = true
+          }
+        }
+        override def parseJson(
+            jsonStringVector: ColumnVector,
+            outputSchema: StructType,
+            selectionVector: Optional[ColumnVector]): ColumnarBatch = {
+          throw new UnsupportedOperationException("Not needed for this test")
+        }
+        override def writeJsonFileAtomically(
+            filePath: String,
+            dataIter: CloseableIterator[Row],
+            overwrite: Boolean): Unit = {
+          throw new UnsupportedOperationException("Not needed for this test")
         }
       }
-
-      override def parseJson(
-          jsonStringVector: ColumnVector,
-          outputSchema: StructType,
-          selectionVector: Optional[ColumnVector]): ColumnarBatch = {
-        throw new UnsupportedOperationException("Not needed for this test")
-      }
-
-      override def writeJsonFileAtomically(
-          filePath: String,
-          dataIter: CloseableIterator[Row],
-          overwrite: Boolean): Unit = {
-        throw new UnsupportedOperationException("Not needed for this test")
-      }
-    })
+    }
+    val engine = new TestEngine()
 
     val testFile = FileStatus.of(
       "/path/to/00000000000000000000.json",
