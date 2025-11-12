@@ -69,6 +69,38 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
         || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
   }
 
+  /**
+   * Returns whether any version of Iceberg compatibility is enabled for the given table metadata.
+   * This is an alias for {@link #isIcebergCompatEnabled(Metadata)}.
+   *
+   * @param metadata The table metadata to check.
+   * @return true if any version of Iceberg compatibility is enabled; false otherwise.
+   */
+  public static Boolean isAnyVersionEnabled(Metadata metadata) {
+    return isIcebergCompatEnabled(metadata);
+  }
+
+  /**
+   * Returns whether an Iceberg compatibility version greater than or equal to the required version
+   * is enabled.
+   *
+   * @param metadata The table metadata to check.
+   * @param requiredVersion The minimum required Iceberg compatibility version (2 or 3).
+   * @return true if an Iceberg compatibility version >= requiredVersion is enabled; false
+   *     otherwise.
+   */
+  public static Boolean isVersionGeqEnabled(Metadata metadata, int requiredVersion) {
+    if (requiredVersion <= 2) {
+      // V2 or higher: check if V2 or V3 is enabled
+      return isIcebergCompatEnabled(metadata);
+    } else if (requiredVersion == 3) {
+      // V3 only: check if V3 is enabled
+      return TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    }
+    // Unknown version
+    return false;
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Interfaces for defining checks for the compat validation and updating     ///
   /////////////////////////////////////////////////////////////////////////////////

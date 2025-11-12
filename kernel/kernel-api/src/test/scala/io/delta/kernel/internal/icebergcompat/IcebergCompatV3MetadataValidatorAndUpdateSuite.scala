@@ -159,4 +159,20 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
           "Incompatible version enabled: delta.enableIcebergCompatV2"))
     }
   }
+
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  // V3-specific tests for utility methods
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+
+  test("isVersionGeqEnabled with requiredVersion=2 returns true when V3 is enabled") {
+    val metadata = testMetadata(new StructType().add("col", BooleanType.BOOLEAN))
+      .withIcebergCompatV3AndCMEnabled("name")
+    assert(IcebergCompatMetadataValidatorAndUpdater.isVersionGeqEnabled(metadata, 2))
+  }
+
+  test("isVersionGeqEnabled with requiredVersion=3 returns true when V3 is enabled") {
+    val metadata = testMetadata(new StructType().add("col", BooleanType.BOOLEAN))
+      .withIcebergCompatV3AndCMEnabled("name")
+    assert(IcebergCompatMetadataValidatorAndUpdater.isVersionGeqEnabled(metadata, 3))
+  }
 }
