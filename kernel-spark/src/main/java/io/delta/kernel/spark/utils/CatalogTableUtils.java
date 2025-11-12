@@ -1,6 +1,7 @@
 package io.delta.kernel.spark.utils;
 
 import static java.util.Objects.requireNonNull;
+
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -36,7 +37,7 @@ public final class CatalogTableUtils {
   public static boolean isCCv2Table(CatalogTable table) {
     requireNonNull(table, "table is null");
     Map<String, String> tableProperties = toJavaMap(table.properties());
-    
+
     return isCatalogManagedTable(tableProperties)
         && (isCatalogOwnedFeatureSupported(tableProperties, FEATURE_CATALOG_OWNED)
             || isCatalogOwnedFeatureSupported(tableProperties, FEATURE_CATALOG_OWNED_PREVIEW));
@@ -51,7 +52,6 @@ public final class CatalogTableUtils {
     if (tableProperties == null) {
       return false;
     }
-
     String tableId = tableProperties.get(UNITY_CATALOG_TABLE_ID_PROP);
     if (tableId != null && !tableId.trim().isEmpty()) {
       return true;
@@ -71,10 +71,12 @@ public final class CatalogTableUtils {
     if (value == null) {
       return false;
     }
+
     return SUPPORTED.equalsIgnoreCase(value.trim());
   }
 
-  private static Map<String, String> toJavaMap(scala.collection.immutable.Map<String, String> scalaMap) {
+  private static Map<String, String> toJavaMap(
+      scala.collection.immutable.Map<String, String> scalaMap) {
     if (scalaMap == null || scalaMap.isEmpty()) {
       return Collections.emptyMap();
     }
