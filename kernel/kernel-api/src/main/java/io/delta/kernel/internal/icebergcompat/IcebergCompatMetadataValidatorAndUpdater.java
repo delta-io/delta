@@ -82,23 +82,32 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
 
   /**
    * Returns whether an Iceberg compatibility version greater than or equal to the required version
-   * is enabled.
+   * is enabled. This method follows the same logic as Spark V1's IcebergCompat.isGeqEnabled: it
+   * finds the enabled version (if any) and checks if it is >= requiredVersion.
    *
    * @param metadata The table metadata to check.
-   * @param requiredVersion The minimum required Iceberg compatibility version (2 or 3).
+   * @param requiredVersion The minimum required Iceberg compatibility version.
    * @return true if an Iceberg compatibility version >= requiredVersion is enabled; false
    *     otherwise.
    */
   public static Boolean isVersionGeqEnabled(Metadata metadata, int requiredVersion) {
-    if (requiredVersion <= 2) {
-      // V2 or higher: check if V2 or V3 is enabled
-      return isIcebergCompatEnabled(metadata);
-    } else if (requiredVersion == 3) {
-      // V3 only: check if V3 is enabled
-      return TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    return getEnabledVersion(metadata).map(version -> version >= requiredVersion).orElse(false);
+  }
+
+  /**
+   * Helper method to get the enabled Iceberg compatibility version.
+   *
+   * @param metadata The table metadata to check.
+   * @return Optional containing the enabled version number (2 or 3), or empty if no version is
+   *     enabled.
+   */
+  private static Optional<Integer> getEnabledVersion(Metadata metadata) {
+    if (TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata)) {
+      return Optional.of(3);
+    } else if (TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)) {
+      return Optional.of(2);
     }
-    // Unknown version
-    return false;
+    return Optional.empty();
   }
 
   /////////////////////////////////////////////////////////////////////////////////
