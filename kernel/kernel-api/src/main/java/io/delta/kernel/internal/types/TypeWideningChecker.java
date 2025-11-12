@@ -16,6 +16,10 @@
 
 package io.delta.kernel.internal.types;
 
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 
 /**
@@ -188,5 +192,85 @@ public class TypeWideningChecker {
     }
 
     return false;
+  }
+
+  /**
+   * Checks if the table schema contains any type widening metadata.
+   *
+   * @param schema The schema to check
+   * @return true if any field in the schema contains type changes
+   */
+  public static boolean containsTypeWideningMetadata(StructType schema) {
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+      if (!element.getField().getTypeChanges().isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Asserts that the given table doesn't contain any unsupported type changes. This should never
+   * happen unless a non-compliant writer applied a type change that is not part of the feature
+   * specification.
+   *
+   * @param protocol The table protocol
+   * @param metadata The table metadata
+   * @throws IllegalStateException if the table contains unsupported type changes
+   */
+  public static void assertTableReadable(Protocol protocol, Metadata metadata) {
+    // Check if type widening is supported in the protocol
+    if (!TableFeatures.isTypeWideningSupported(protocol)) {
+      return;
+    }
+
+    // Check if the schema contains any type widening metadata
+    if (!containsTypeWideningMetadata(metadata.getSchema())) {
+      return;
+    }
+
+    // Validate all type changes are supported
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(metadata.getSchema())) {
+      StructField field = element.getField();
+      for (TypeChange typeChange : field.getTypeChanges()) {
+        DataType fromType = typeChange.getFrom();
+        DataType toType = typeChange.getTo();
+
+        // Check if this is a supported type change
+        if (isWideningSupported(fromType, toType)) {
+          continue; // Supported, check next change
+        }
+
+        // String type changes are allowed and independent from type widening.
+        // Implementations shouldn't record these type changes in the table metadata per the Delta
+        // spec, but in case that happens we shouldn't block reading the table.
+        if (isStringTypeChange(fromType, toType)) {
+          continue; // String type changes are allowed
+        }
+
+        // Unsupported type change found - throw error
+        throw new IllegalStateException(
+            String.format(
+                "The table contains an unsupported type change in field '%s' from '%s' to '%s'. "
+                    + "This type widening change is not supported for reading.",
+                element.getNamePath(), fromType, toType));
+      }
+    }
+  }
+
+  /**
+   * Checks if the type change is between string-like types (String, Char, Varchar). These type
+   * changes are allowed independently from type widening.
+   */
+  private static boolean isStringTypeChange(DataType fromType, DataType toType) {
+    return isStringLikeType(fromType) && isStringLikeType(toType);
+  }
+
+  /**
+   * Checks if a type is a string-like type (String). Note: Kernel doesn't have CharType or
+   * VarcharType, so we only check for StringType.
+   */
+  private static boolean isStringLikeType(DataType type) {
+    return type instanceof StringType;
   }
 }

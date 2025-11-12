@@ -733,6 +733,11 @@ public class TableFeatures {
     return protocol.supportsFeature(ROW_TRACKING_W_FEATURE);
   }
 
+  public static boolean isTypeWideningSupported(Protocol protocol) {
+    return protocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)
+        || protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE);
+  }
+
   public static boolean isDomainMetadataSupported(Protocol protocol) {
     return protocol.supportsFeature(DOMAIN_METADATA_W_FEATURE);
   }
