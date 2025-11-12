@@ -15,160 +15,129 @@
  */
 package io.delta.kernel.spark.utils;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
-import java.util.stream.Stream;
 import org.apache.spark.sql.catalyst.TableIdentifier;
-import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat;
 import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat$;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable$;
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType$;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.params.provider.ValueSource;
-import scala.Option;
 import scala.Option$;
 import scala.collection.immutable.Map$;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** Tests for {@link CatalogTableUtils}. */
-public class CatalogTableUtilsTest {
+class CatalogTableUtilsTest {
 
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("catalogManagedMapCases")
-  void mapBasedDetection(String name, Map<String, String> properties, boolean expected) {
-    assertEquals(expected, CatalogTableUtils.isCatalogManagedTable(properties));
-  }
+  @Test
+  void catalogManagedFlagEnablesDetection() {
+    // Arrange: table with catalogManaged flag set to "supported"
+    CatalogTable table =
+        catalogTableWithProperties(Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
-  static Stream<Arguments> catalogManagedMapCases() {
-    return Stream.of(
-        Arguments.of("null map", null, false),
-        Arguments.of("empty map", Collections.emptyMap(), false),
-        Arguments.of(
-            "table id present",
-            javaMap(CatalogTableUtils.UNITY_CATALOG_TABLE_ID_PROP, "123"),
-            true),
-        Arguments.of(
-            "unity catalog prefix fallback", javaMap("delta.unityCatalog.random", "enabled"), true),
-        Arguments.of(
-            "blank table id still catalog managed",
-            javaMap(CatalogTableUtils.UNITY_CATALOG_TABLE_ID_PROP, "   "),
-            true),
-        Arguments.of("irrelevant properties only", javaMap("delta.feature.other", "true"), false));
+    // Act & Assert
+    assertTrue(
+        CatalogTableUtils.isCatalogManaged(table), "Should detect catalog management with flag");
+    assertFalse(
+        CatalogTableUtils.isUnityCatalogManagedTable(table), "Should not detect Unity without ID");
   }
 
   @Test
-  void catalogTableOverloadMatchesMapDetection() {
-    Map<String, String> managed = javaMap(CatalogTableUtils.UNITY_CATALOG_TABLE_ID_PROP, "abc-123");
-    Map<String, String> unmanaged = Collections.emptyMap();
-
-    assertTrue(CatalogTableUtils.isCatalogManagedTable(catalogTableWithProperties(managed)));
-    assertFalse(CatalogTableUtils.isCatalogManagedTable(catalogTableWithProperties(unmanaged)));
-  }
-
-  @ParameterizedTest(name = "feature {0} enables CCv2 when catalog managed")
-  @ValueSource(
-      strings = {
-        CatalogTableUtils.FEATURE_CATALOG_OWNED,
-        CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW
-      })
-  void isCCv2TableRecognisesSupportedFeatures(String featureKey) {
+  void previewFlagEnablesDetectionIgnoringCase() {
+    // Arrange: table with preview flag set to mixed case
     CatalogTable table =
         catalogTableWithProperties(
-            javaMap(
-                CatalogTableUtils.UNITY_CATALOG_TABLE_ID_PROP,
-                "table-id",
-                featureKey,
-                " supported "));
+            Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "SuPpOrTeD"));
 
-    assertTrue(CatalogTableUtils.isCatalogManagedTable(table));
-    assertTrue(CatalogTableUtils.isCCv2Table(table));
+    // Act & Assert
+    assertTrue(
+        CatalogTableUtils.isCatalogManaged(table), "Should detect via preview flag ignoring case");
+    assertFalse(
+        CatalogTableUtils.isUnityCatalogManagedTable(table), "Should not detect Unity without ID");
   }
 
   @Test
-  void isCCv2TableRequiresFeatureFlag() {
+  void noFlagsMeansNotManaged() {
+    // Arrange: empty properties
+    CatalogTable table = catalogTableWithProperties(Collections.emptyMap());
+
+    // Act & Assert
+    assertFalse(
+        CatalogTableUtils.isCatalogManaged(table), "Should not detect management without flags");
+    assertFalse(
+        CatalogTableUtils.isUnityCatalogManagedTable(table),
+        "Should not detect Unity without ID or flags");
+  }
+
+  @Test
+  void unityManagementRequiresFlagAndId() {
+    // Arrange: table with both flag and UC ID
     CatalogTable table =
         catalogTableWithProperties(
-            javaMap(CatalogTableUtils.UNITY_CATALOG_TABLE_ID_PROP, "table-id"));
+            Map.of(
+                CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported",
+                io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+                        .UC_TABLE_ID_KEY,
+                    "abc-123"));
 
-    assertTrue(CatalogTableUtils.isCatalogManagedTable(table));
-    assertFalse(CatalogTableUtils.isCCv2Table(table));
+    // Act & Assert
+    assertTrue(
+        CatalogTableUtils.isCatalogManaged(table), "Should detect general catalog management");
+    assertTrue(
+        CatalogTableUtils.isUnityCatalogManagedTable(table), "Should detect Unity with ID present");
   }
 
   @Test
-  void isCCv2TableRejectsUnsupportedValues() {
+  void unityManagementFailsWithoutId() {
+    // Arrange: table with flag but no UC ID
     CatalogTable table =
-        catalogTableWithProperties(
-            javaMap(
-                CatalogTableUtils.UNITY_CATALOG_TABLE_ID_PROP,
-                "table-id",
-                CatalogTableUtils.FEATURE_CATALOG_OWNED,
-                "disabled"));
+        catalogTableWithProperties(Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
-    assertTrue(CatalogTableUtils.isCatalogManagedTable(table));
-    assertFalse(CatalogTableUtils.isCCv2Table(table));
-  }
-
-  @Test
-  void isCCv2TableIgnoresFeatureWithoutCatalogManagement() {
-    CatalogTable table =
-        catalogTableWithProperties(javaMap(CatalogTableUtils.FEATURE_CATALOG_OWNED, "supported"));
-
-    assertFalse(CatalogTableUtils.isCatalogManagedTable(table));
-    assertFalse(CatalogTableUtils.isCCv2Table(table));
-  }
-
-  private static Map<String, String> javaMap(String... keyValues) {
-    if (keyValues.length % 2 != 0) {
-      throw new IllegalArgumentException("keyValues length must be even");
-    }
-    Map<String, String> map = new HashMap<>();
-    for (int i = 0; i < keyValues.length; i += 2) {
-      map.put(keyValues[i], keyValues[i + 1]);
-    }
-    return map;
+    // Act & Assert
+    assertTrue(
+        CatalogTableUtils.isCatalogManaged(table), "Should detect general catalog management");
+    assertFalse(
+        CatalogTableUtils.isUnityCatalogManagedTable(table),
+        "Should fail Unity detection without ID");
   }
 
   private static CatalogTable catalogTableWithProperties(Map<String, String> properties) {
-    Option<String> none = Option$.MODULE$.empty();
-    TableIdentifier identifier = new TableIdentifier("test_table", none, none);
-    CatalogStorageFormat storage = CatalogStorageFormat$.MODULE$.empty();
-
     scala.collection.immutable.Map<String, String> scalaProps =
-        properties == null || properties.isEmpty()
-            ? Map$.MODULE$.<String, String>empty()
-            : scala.collection.immutable.Map$.MODULE$.<String, String>from(
+        properties.isEmpty()
+            ? Map$.MODULE$.empty()
+            : scala.collection.immutable.Map$.MODULE$.from(
                 CollectionConverters.asScala(properties).toSeq());
 
+    @SuppressWarnings("unchecked")
+    scala.collection.immutable.Seq<String> emptySeq =
+        (scala.collection.immutable.Seq<String>) scala.collection.immutable.Seq$.MODULE$.empty();
+
     return CatalogTable$.MODULE$.apply(
-        identifier,
+        new TableIdentifier("tbl", Option$.MODULE$.empty(), Option$.MODULE$.empty()),
         CatalogTableType$.MODULE$.MANAGED(),
-        storage,
+        CatalogStorageFormat$.MODULE$.empty(),
         new StructType(),
-        CatalogTable$.MODULE$.apply$default$5(),
-        CatalogTable$.MODULE$.apply$default$6(),
-        CatalogTable$.MODULE$.apply$default$7(),
-        CatalogTable$.MODULE$.apply$default$8(),
-        CatalogTable$.MODULE$.apply$default$9(),
-        CatalogTable$.MODULE$.apply$default$10(),
-        CatalogTable$.MODULE$.apply$default$11(),
-        scalaProps,
-        CatalogTable$.MODULE$.apply$default$13(),
-        CatalogTable$.MODULE$.apply$default$14(),
-        CatalogTable$.MODULE$.apply$default$15(),
-        CatalogTable$.MODULE$.apply$default$16(),
-        CatalogTable$.MODULE$.apply$default$17(),
-        CatalogTable$.MODULE$.apply$default$18(),
-        CatalogTable$.MODULE$.apply$default$19(),
-        CatalogTable$.MODULE$.apply$default$20());
+        Option$.MODULE$.empty(), // provider: Option[String]
+        emptySeq, // partitionColumnNames: Seq[String]
+        Option$.MODULE$.empty(), // bucketSpec: Option[BucketSpec]
+        "", // owner: String
+        0L, // createTime: Long
+        -1L, // lastAccessTime: Long
+        "", // createVersion: String
+        scalaProps, // properties: Map[String, String]
+        Option$.MODULE$.empty(), // stats: Option[CatalogStatistics]
+        Option$.MODULE$.empty(), // viewText: Option[String]
+        Option$.MODULE$.empty(), // comment: Option[String]
+        emptySeq, // unsupportedFeatures: Seq[String]
+        false, // tracksPartitionsInCatalog: Boolean
+        false, // schemaPreservesCase: Boolean
+        Map$.MODULE$.empty(), // ignoredProperties: Map[String, String]
+        Option$.MODULE$.empty() // viewOriginalText: Option[String]
+        );
   }
 }
