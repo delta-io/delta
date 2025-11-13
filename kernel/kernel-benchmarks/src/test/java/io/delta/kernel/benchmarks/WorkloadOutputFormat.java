@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.benchmarks;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.benchmarks.models.WorkloadSpec;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.HashMap;
