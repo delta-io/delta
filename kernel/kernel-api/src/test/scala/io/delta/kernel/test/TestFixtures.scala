@@ -22,9 +22,11 @@ import java.util.function.Supplier
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.SnapshotBuilder
 import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.internal.actions.{CommitInfo, DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.files.ParsedCatalogCommitData
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.util.{FileNames, Tuple2}
 import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
 import io.delta.kernel.utils.FileStatus
@@ -88,4 +90,17 @@ trait TestFixtures extends ActionUtils {
     ParsedCatalogCommitData.forFileStatus(fileStatus)
   }
 
+  implicit class SnapshotBuilderCatalogVersionOps[T <: SnapshotBuilder](snapshotBuilder: T) {
+    def withMaxCatalogVersionIfApplicable(
+        isCatalogManaged: Boolean,
+        maxCatalogVersion: Long): T = {
+      if (isCatalogManaged) {
+        snapshotBuilder
+          .withMaxCatalogVersion(maxCatalogVersion)
+          .asInstanceOf[T]
+      } else {
+        snapshotBuilder
+      }
+    }
+  }
 }
