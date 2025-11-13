@@ -651,8 +651,8 @@ public class SnapshotManager {
                 maxCatalogVersionOpt.orElseThrow(
                     () ->
                         new IllegalStateException(
-                            "Impossible state: If timeTravelToVersionOpt and maxCatalogVersion is empty we "
-                                + "should always have returned earlier")));
+                            "Impossible state: If timeTravelToVersionOpt and maxCatalogVersion "
+                                + "is empty we should always have returned earlier")));
     logger.info("Finding last complete checkpoint at or before version {}", versionToLoad);
     final long startTimeMillis = System.currentTimeMillis();
     return Checkpointer.findLastCompleteCheckpointBefore(engine, logPath, versionToLoad + 1)
