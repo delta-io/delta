@@ -22,6 +22,7 @@ import static io.delta.kernel.internal.util.ColumnMapping.getColumnId;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
+import io.delta.kernel.exceptions.InvalidSchemaException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
@@ -461,7 +462,7 @@ public class SchemaUtils {
       // Ensure the schemas are equal now, updating type changes from clients is not supported
       // so they should be.
       if (!existingTypeChanges.equals(newField.getTypeChanges())) {
-        throw new KernelException(
+        throw new InvalidSchemaException(
             String.format(
                 "Detected a modified type changes field at '%s' %s != %s",
                 newElement.getNamePath(), existingTypeChanges, newField.getTypeChanges()));
@@ -557,7 +558,7 @@ public class SchemaUtils {
       StructField currentField = updatedField.before();
       StructField newField = updatedField.after();
       if (!getPhysicalName(currentField).equals(getPhysicalName(newField))) {
-        throw new IllegalArgumentException(
+        throw new InvalidSchemaException(
             String.format(
                 "Existing field with id %s in current schema has "
                     + "physical name %s which is different from %s",
@@ -609,7 +610,7 @@ public class SchemaUtils {
       // ToDo: At some point plumb through mapping of ID to full name, so we get better error
       // messages
       if (clusteringColumnPhysicalNames.contains(getPhysicalName(droppedField))) {
-        throw new KernelException(
+        throw new InvalidSchemaException(
             String.format("Cannot drop clustering column %s", droppedField.getName()));
       }
     }
@@ -629,12 +630,12 @@ public class SchemaUtils {
       boolean typeWideningEnabled) {
     for (StructField addedField : schemaChanges.addedFields()) {
       if (!allowNewRequiredFields && !addedField.isNullable()) {
-        throw new KernelException(
+        throw new InvalidSchemaException(
             String.format("Cannot add non-nullable field %s", addedField.getName()));
       }
       int colId = getColumnId(addedField);
       if (colId <= oldMaxFieldId) {
-        throw new IllegalArgumentException(
+        throw new InvalidSchemaException(
             String.format(
                 "Cannot add a new column with a fieldId <= maxFieldId. Found field: %s with"
                     + "fieldId=%s. Current maxFieldId in the table is: %s",
@@ -659,7 +660,7 @@ public class SchemaUtils {
     StructField existingField = update.before();
     StructField newField = update.after();
     if (existingField.isNullable() && !newField.isNullable()) {
-      throw new KernelException(
+      throw new InvalidSchemaException(
           String.format(
               "Cannot tighten the nullability of existing field %s", update.getPathToAfterField()));
     }
@@ -677,7 +678,7 @@ public class SchemaUtils {
         StructType currentKeyType = (StructType) existingMapType.getKeyType();
         StructType newKeyType = (StructType) newMapType.getKeyType();
         if (!currentKeyType.equals(newKeyType)) {
-          throw new KernelException(
+          throw new InvalidSchemaException(
               String.format(
                   "Cannot change the type key of Map field %s from %s to %s",
                   newField.getName(), currentKeyType, newKeyType));
@@ -718,7 +719,7 @@ public class SchemaUtils {
             return;
           }
         }
-        throw new KernelException(
+        throw new InvalidSchemaException(
             String.format(
                 "Cannot change the type of existing field %s from %s to %s",
                 existingField.getName(), existingField.getDataType(), newField.getDataType()));
