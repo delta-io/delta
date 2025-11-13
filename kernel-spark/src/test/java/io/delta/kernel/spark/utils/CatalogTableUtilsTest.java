@@ -128,6 +128,7 @@ class CatalogTableUtilsTest {
         noneCatalogStatistics(), // stats: Option[CatalogStatistics]
         noneString(), // viewText: Option[String]
         noneString(), // comment: Option[String]
+        noneString(), // viewDefaultDatabase: Option[String]
         emptyStringSeq(), // unsupportedFeatures: Seq[String]
         false, // tracksPartitionsInCatalog: Boolean
         false, // schemaPreservesCase: Boolean
