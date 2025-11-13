@@ -21,8 +21,10 @@ import scala.reflect.ClassTag
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.xml._
 
-/** This class defines the list of expressions that can be used in a generated column. */
-object SupportedGenerationExpressions {
+/** This class defines the list of expressions that can be used when providing custom expressions.
+ * e.g. in a generated column or a check constraint.
+ * */
+object AllowedUserProvidedExpressions {
 
   /**
    * This method has the same signature as `FunctionRegistry.expression` so that we can define the
@@ -332,5 +334,12 @@ object SupportedGenerationExpressions {
     // Special expressions that are not built-in expressions.
     expression[AttributeReference]("col"),
     expression[Literal]("lit")
+  )
+
+  val checkConstraintExpressions: Set[Class[_]] = Set(
+    expression[Contains]("contains"),
+    expression[StartsWith]("startswith"),
+    expression[EndsWith]("endswith"),
+    expression[InSet]("inset")
   )
 }

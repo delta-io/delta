@@ -1802,6 +1802,26 @@ trait DeltaSQLConfBase {
       .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
       .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
 
+  object ValidateCheckConstraintsMode extends Enumeration {
+    val OFF, LOG_ONLY, ASSERT = Value
+
+    def fromConf(conf: SQLConf): Value =
+      withName(conf.getConf(VALIDATE_CHECK_CONSTRAINTS))
+
+    def default: Value =
+      withName(VALIDATE_CHECK_CONSTRAINTS.defaultValueString)
+  }
+
+  val VALIDATE_CHECK_CONSTRAINTS =
+    buildConf("checkConstraints.validation.enabled")
+      .internal()
+      .doc("When enabled, validates check constraints expressions during both creation and write" +
+        " paths to protect against disallowed expressions.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(ValidateCheckConstraintsMode.values.map(_.toString))
+      .createWithDefault(ValidateCheckConstraintsMode.LOG_ONLY.toString)
+
   val DELTA_CONVERT_ICEBERG_ENABLED =
     buildConf("convert.iceberg.enabled")
       .internal()
