@@ -169,18 +169,23 @@ class CatalogTableUtilsTest {
         true /* nullStorageProperties */);
   }
 
-  @SuppressWarnings("unchecked")
-  private static <T> scala.Option<T> scalaNone() {
-    return (scala.Option<T>) Option$.MODULE$.empty();
+  private static scala.Option<String> noneString() {
+    return Option$.MODULE$.<String>empty();
   }
 
-  @SuppressWarnings("unchecked")
-  private static <T> scala.collection.immutable.Seq<T> scalaEmptySeq() {
-    return (scala.collection.immutable.Seq<T>) scala.collection.immutable.Seq$.MODULE$.empty();
+  private static scala.Option<BucketSpec> noneBucketSpec() {
+    return Option$.MODULE$.<BucketSpec>empty();
   }
 
-  @SuppressWarnings("unchecked")
-  private static <K, V> scala.collection.immutable.Map<K, V> scalaEmptyMap() {
-    return (scala.collection.immutable.Map<K, V>) Map$.MODULE$.empty();
+  private static scala.Option<CatalogStatistics> noneCatalogStatistics() {
+    return Option$.MODULE$.<CatalogStatistics>empty();
+  }
+
+  private static scala.collection.immutable.Seq<String> emptyStringSeq() {
+    return scala.collection.immutable.Seq$.MODULE$.<String>empty();
+  }
+
+  private static scala.collection.immutable.Map<String, String> emptyStringMap() {
+    return Map$.MODULE$.<String, String>empty();
   }
 }
