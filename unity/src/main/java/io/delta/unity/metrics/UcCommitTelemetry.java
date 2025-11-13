@@ -16,12 +16,12 @@
 
 package io.delta.unity.metrics;
 
-import com.fasterxml.jackson.annotation.JsonPropertyOrder;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.internal.metrics.MetricsReportSerializer;
 import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.metrics.MetricsReport;
+import io.delta.kernel.shaded.com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.delta.kernel.shaded.com.fasterxml.jackson.core.JsonProcessingException;
 import java.util.Optional;
 
 /**

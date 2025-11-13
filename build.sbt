@@ -963,7 +963,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelApi % "compile->compile;test->test")
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(storage)
   .settings (
@@ -974,6 +973,16 @@ lazy val unity = (project in file("unity"))
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     scalaStyleSettings,
     scalafmtCheckSettings,
+
+    // Put the shaded kernel-api JAR on the classpath (compile & test)
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
