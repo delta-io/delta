@@ -268,9 +268,6 @@ public class SnapshotFactory {
               ctx.logDatas));
     } else if (ctx.versionOpt.isPresent()) {
       return ctx.versionOpt;
-    } else if (ctx.maxCatalogVersion.isPresent()) {
-      // For latest queries for catalogManaged tables we want to load the maxCatalogVersion
-      return ctx.maxCatalogVersion;
     }
     return Optional.empty();
   }
