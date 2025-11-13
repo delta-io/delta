@@ -21,6 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.Collections;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.TableIdentifier;
+import org.apache.spark.sql.catalyst.catalog.BucketSpec;
+import org.apache.spark.sql.catalyst.catalog.CatalogStatistics;
 import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat$;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable$;
@@ -115,37 +117,42 @@ class CatalogTableUtilsTest {
         CatalogTableType$.MODULE$.MANAGED(),
         CatalogStorageFormat$.MODULE$.empty(),
         new StructType(),
-        scalaNone(), // provider: Option[String]
-        scalaEmptySeq(), // partitionColumnNames: Seq[String]
-        scalaNone(), // bucketSpec: Option[BucketSpec]
+        noneString(), // provider: Option[String]
+        emptyStringSeq(), // partitionColumnNames: Seq[String]
+        noneBucketSpec(), // bucketSpec: Option[BucketSpec]
         "", // owner: String
         0L, // createTime: Long
         -1L, // lastAccessTime: Long
         "", // createVersion: String
         scalaProps, // properties: Map[String, String]
-        scalaNone(), // stats: Option[CatalogStatistics]
-        scalaNone(), // viewText: Option[String]
-        scalaNone(), // comment: Option[String]
-        scalaEmptySeq(), // unsupportedFeatures: Seq[String]
+        noneCatalogStatistics(), // stats: Option[CatalogStatistics]
+        noneString(), // viewText: Option[String]
+        noneString(), // comment: Option[String]
+        emptyStringSeq(), // unsupportedFeatures: Seq[String]
         false, // tracksPartitionsInCatalog: Boolean
         false, // schemaPreservesCase: Boolean
-        scalaEmptyMap(), // ignoredProperties: Map[String, String]
-        scalaNone() // viewOriginalText: Option[String]
+        emptyStringMap(), // ignoredProperties: Map[String, String]
+        noneString() // viewOriginalText: Option[String]
         );
   }
 
-  @SuppressWarnings("unchecked")
-  private static <T> scala.Option<T> scalaNone() {
-    return (scala.Option<T>) Option$.MODULE$.empty();
+  private static scala.Option<String> noneString() {
+    return Option$.MODULE$.<String>empty();
   }
 
-  @SuppressWarnings("unchecked")
-  private static <T> scala.collection.immutable.Seq<T> scalaEmptySeq() {
-    return (scala.collection.immutable.Seq<T>) scala.collection.immutable.Seq$.MODULE$.empty();
+  private static scala.Option<BucketSpec> noneBucketSpec() {
+    return Option$.MODULE$.<BucketSpec>empty();
   }
 
-  @SuppressWarnings("unchecked")
-  private static <K, V> scala.collection.immutable.Map<K, V> scalaEmptyMap() {
-    return (scala.collection.immutable.Map<K, V>) Map$.MODULE$.empty();
+  private static scala.Option<CatalogStatistics> noneCatalogStatistics() {
+    return Option$.MODULE$.<CatalogStatistics>empty();
+  }
+
+  private static scala.collection.immutable.Seq<String> emptyStringSeq() {
+    return scala.collection.immutable.Seq$.MODULE$.<String>empty();
+  }
+
+  private static scala.collection.immutable.Map<String, String> emptyStringMap() {
+    return Map$.MODULE$.<String, String>empty();
   }
 }
