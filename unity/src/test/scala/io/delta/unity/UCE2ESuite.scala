@@ -32,6 +32,8 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
+  private val testUcTableId = "testUcTableId"
+
   /** Commits some data. Verifies UC is updated as expected. Returns the post-commit snapshot. */
   private def writeDataAndVerify(
       engine: Engine,
@@ -43,7 +45,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
       .build(engine)
     val result = commitAppendData(engine, txn, seqOfUnpartitionedDataBatch1)
-    val tableData = ucClient.getTableDataElseThrow("ucTableId")
+    val tableData = ucClient.getTableDataElseThrow(testUcTableId)
     assert(tableData.getMaxRatifiedVersion === expCommitVersion)
     assert(tableData.getCommits.size === expNumCatalogCommits)
     result.getPostCommitSnapshot.get()
@@ -57,11 +59,11 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
       // Step 1: CREATE -- v0.json
       val result0 = ucCatalogManagedClient
-        .buildCreateTableTransaction("ucTableId", tablePath, testSchema, "test-engine")
+        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable() /* dataActions */ )
       val tableData0 = new TableData(-1, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData0)
+      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData0)
       result0.getPostCommitSnapshot.get().publish(engine) // Should be no-op!
 
       // Step 2: WRITE -- v1.uuid.json
@@ -84,7 +86,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       postCommitSnapshot2.publish(engine)
 
       // Step 4b: VERIFY UC is unchanged by the publish operation
-      val tableData2 = ucClient.getTableDataElseThrow("ucTableId")
+      val tableData2 = ucClient.getTableDataElseThrow(testUcTableId)
       assert(tableData2.getMaxRatifiedVersion === 2)
       assert(tableData2.getCommits.size === 2)
       postCommitSnapshot2.publish(engine) // idempotent! shouldn't throw
@@ -94,7 +96,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       // v2.uuid.json in its LogSegment (since catalog commits take priority). Nonetheless, it will
       // see that v2 is the maxKnownPublishedDeltaVersion. It will include this information in its
       // next commit, and UC will then clean up catalog commits v1.uuid.json and v2.uuid.json.
-      val snapshotV2 = loadSnapshot(ucCatalogManagedClient, engine, "ucTableId", tablePath)
+      val snapshotV2 = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
       val logSegmentV2 = snapshotV2.getLogSegment
       assert(logSegmentV2.getAllCatalogCommits.asScala.map(x => x.getVersion) === Seq(1, 2))
       assert(logSegmentV2.getMaxPublishedDeltaVersion.get() === 2)
@@ -107,7 +109,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       )
 
       // Step 6: LOAD -- should read v0.json, v1.json, v2.json, and v3.uuid.json
-      val snapshotV3 = loadSnapshot(ucCatalogManagedClient, engine, "ucTableId", tablePath)
+      val snapshotV3 = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
       val logSegmentV3 = snapshotV3.getLogSegment
       assert(snapshotV3.getVersion === 3)
       assert(logSegmentV3.getAllCatalogCommits.asScala.map(x => x.getVersion) === Seq(3))
@@ -124,11 +126,11 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
       // CREATE -- v0.json
       val result0 = ucCatalogManagedClient
-        .buildCreateTableTransaction("ucTableId", tablePath, testSchema, "test-engine")
+        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable())
       val tableData0 = new TableData(-1, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData0)
+      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData0)
 
       var currentSnapshot = result0.getPostCommitSnapshot.get()
 
@@ -143,7 +145,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       }
 
       // ===== WHEN =====
-      val freshSnapshot = loadSnapshot(ucCatalogManagedClient, engine, "ucTableId", tablePath)
+      val freshSnapshot = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
 
       // ===== THEN =====
       val logSegment = freshSnapshot.getLogSegment

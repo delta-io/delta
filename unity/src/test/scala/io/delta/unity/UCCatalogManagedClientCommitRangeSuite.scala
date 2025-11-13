@@ -29,8 +29,8 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
   private def loadCommitRange(
       ucCatalogManagedClient: UCCatalogManagedClient,
       engine: Engine = defaultEngine,
-      ucTableId: String = "ucTableId",
-      tablePath: String = "tablePath",
+      ucTableId: String = "testUcTableId",
+      tablePath: String = "testUcTablePath",
       startVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
       startTimestampOpt: Optional[java.lang.Long] = emptyLongOpt,
       endVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
