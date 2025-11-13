@@ -256,7 +256,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
               .withCommitter(customCatalogCommitter)
 
           case "UPDATE" =>
-            var snapshotBuilder = TableManager
+            val updateBuilder = TableManager
               .loadSnapshot(tablePath)
               .withCommitter(customCatalogCommitter)
               .withMaxCatalogVersionIfApplicable(
@@ -264,10 +264,10 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
                   testCase.initialTableProperties.asJava,
                   TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
                 0)
-            val updateBuilder = snapshotBuilder
               .build(defaultEngine)
               .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
               .withTablePropertiesAdded(testCase.transactionProperties.asJava)
+
             if (testCase.removedPropertyKeys.nonEmpty) {
               updateBuilder.withTablePropertiesRemoved(testCase.removedPropertyKeys.asJava)
             } else {
@@ -304,7 +304,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
             }
 
           // Verify the results
-          var snapshot = TableManager
+          val snapshot = TableManager
             .loadSnapshot(tablePath)
             .withMaxCatalogVersionIfApplicable(
               testCase.expectedCatalogManagedSupported,
