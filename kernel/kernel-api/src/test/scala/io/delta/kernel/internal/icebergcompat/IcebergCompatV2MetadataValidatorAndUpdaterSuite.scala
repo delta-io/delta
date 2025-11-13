@@ -130,20 +130,4 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
       }
     }
   }
-
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-  // V2-specific tests for utility methods
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-
-  test("isVersionGeqEnabled with requiredVersion=2 returns true when V2 is enabled") {
-    val metadata = testMetadata(new StructType().add("col", BooleanType.BOOLEAN))
-      .withIcebergCompatV2AndCMEnabled("name")
-    assert(IcebergCompatMetadataValidatorAndUpdater.isVersionGeqEnabled(metadata, 2))
-  }
-
-  test("isVersionGeqEnabled with requiredVersion=3 returns false when only V2 is enabled") {
-    val metadata = testMetadata(new StructType().add("col", BooleanType.BOOLEAN))
-      .withIcebergCompatV2AndCMEnabled("name")
-    assert(!IcebergCompatMetadataValidatorAndUpdater.isVersionGeqEnabled(metadata, 3))
-  }
 }

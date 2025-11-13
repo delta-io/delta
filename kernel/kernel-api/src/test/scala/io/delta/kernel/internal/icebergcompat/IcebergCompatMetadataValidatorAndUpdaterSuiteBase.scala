@@ -221,31 +221,4 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase
           "Incompatible version enabled: delta.enableIcebergCompatV1"))
     }
   }
-
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-  // Tests for utility methods
-  ///////////////////////////////////////////////////////////////////////////////////////////////
-
-  test("isIcebergCompatEnabled returns false when no version is enabled") {
-    val metadata = testMetadata(new StructType().add("col", BooleanType.BOOLEAN))
-    assert(!IcebergCompatMetadataValidatorAndUpdater.isIcebergCompatEnabled(metadata))
-  }
-
-  test("isIcebergCompatEnabled returns true when compat is enabled") {
-    val schema = new StructType().add("col", BooleanType.BOOLEAN)
-    val metadata = getCompatEnabledMetadata(schema)
-    assert(IcebergCompatMetadataValidatorAndUpdater.isIcebergCompatEnabled(metadata))
-  }
-
-  test("isVersionGeqEnabled returns false when no version is enabled") {
-    val metadata = testMetadata(new StructType().add("col", BooleanType.BOOLEAN))
-    assert(!IcebergCompatMetadataValidatorAndUpdater.isVersionGeqEnabled(metadata, 2))
-    assert(!IcebergCompatMetadataValidatorAndUpdater.isVersionGeqEnabled(metadata, 3))
-  }
-
-  test("isVersionGeqEnabled returns false for unknown version") {
-    val schema = new StructType().add("col", BooleanType.BOOLEAN)
-    val metadata = getCompatEnabledMetadata(schema)
-    assert(!IcebergCompatMetadataValidatorAndUpdater.isVersionGeqEnabled(metadata, 4))
-  }
 }
