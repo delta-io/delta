@@ -839,14 +839,6 @@ trait CDCReaderImpl extends CDCReaderBase {
     new CDCDataSpec(fileVersion, addFiles.toSeq, commitInfo)
   }.toSeq
 
-  /**
-   * Represents the changes between some start and end version of a Delta table
-   * @param fileChangeDf contains all of the file changes (AddFile, RemoveFile, AddCDCFile)
-   * @param numFiles the number of AddFile + RemoveFile + AddCDCFiles that are in the df
-   * @param numBytes the total size of the AddFile + RemoveFile + AddCDCFiles that are in the df
-   */
-  case class CDCVersionDiffInfo(fileChangeDf: DataFrame, numFiles: Long, numBytes: Long)
-
   override def getConstructedCDCRelation(
     snapshotWithSchema: SnapshotWithSchemaMode,
     sqlContext: SQLContext,
