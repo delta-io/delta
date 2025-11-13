@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, Row}
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.test.BaseMockJsonHandler
 import io.delta.kernel.test.MockEngineUtils
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
@@ -42,42 +43,22 @@ class ActionsIteratorSuite extends AnyFunSuite with MockEngineUtils {
   test("ActionsIterator readCommitOrCompactionFile resource cleanup") {
     var iteratorClosed = false
 
-    class TestEngine extends Engine {
-      override def getExpressionHandler: ExpressionHandler =
-        throw new UnsupportedOperationException("Not needed for this test")
-      override def getParquetHandler: ParquetHandler =
-        throw new UnsupportedOperationException("Not needed for this test")
-      override def getFileSystemClient: FileSystemClient =
-        throw new UnsupportedOperationException("Not needed for this test")
-      override def getJsonHandler: JsonHandler = new JsonHandler {
-        override def readJsonFiles(
-            fileIter: CloseableIterator[FileStatus],
-            physicalSchema: StructType,
-            predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-          // Return an empty iterator that tracks closure
-          new CloseableIterator[ColumnarBatch] {
-            override def hasNext(): Boolean =
-              throw new NoSuchElementException("This is a test exception")
-            override def next(): ColumnarBatch =
-              throw new UnsupportedOperationException("Not needed for this test")
-            override def close(): Unit = iteratorClosed = true
-          }
-        }
-        override def parseJson(
-            jsonStringVector: ColumnVector,
-            outputSchema: StructType,
-            selectionVector: Optional[ColumnVector]): ColumnarBatch = {
-          throw new UnsupportedOperationException("Not needed for this test")
-        }
-        override def writeJsonFileAtomically(
-            filePath: String,
-            dataIter: CloseableIterator[Row],
-            overwrite: Boolean): Unit = {
-          throw new UnsupportedOperationException("Not needed for this test")
+    val engine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+      override def readJsonFiles(
+          fileIter: CloseableIterator[FileStatus],
+          physicalSchema: StructType,
+          predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+
+        // Return an empty iterator that tracks closure
+        new CloseableIterator[ColumnarBatch] {
+          override def hasNext(): Boolean =
+            throw new NoSuchElementException("This is a test exception")
+          override def next(): ColumnarBatch =
+            throw new UnsupportedOperationException("Not needed for this test")
+          override def close(): Unit = iteratorClosed = true
         }
       }
-    }
-    val engine = new TestEngine()
+    })
 
     val testFile = FileStatus.of(
       "/path/to/00000000000000000000.json",
@@ -89,16 +70,9 @@ class ActionsIteratorSuite extends AnyFunSuite with MockEngineUtils {
     val actionsIterator =
       new ActionsIterator(engine, files, schema, Optional.empty[Predicate]())
 
-    try {
+    assertThrows[NoSuchElementException] {
       actionsIterator.hasNext()
-      fail("Expected NoSuchElementException was not thrown")
-    } catch {
-      case _: NoSuchElementException =>
     }
-
-    // Closing the ActionsIterator does not close the internal iterator
-    // Because of the exception the internal iterator is lost
-    actionsIterator.close()
 
     // Verify that resources were cleaned up
     assert(iteratorClosed, "Internal iterator should be closed after exception in ActionsIterator")
