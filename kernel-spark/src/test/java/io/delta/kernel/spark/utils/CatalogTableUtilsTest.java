@@ -19,21 +19,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.net.URI;
 import java.util.Collections;
 import java.util.Map;
-import org.apache.spark.sql.catalyst.TableIdentifier;
-import org.apache.spark.sql.catalyst.catalog.BucketSpec;
-import org.apache.spark.sql.catalyst.catalog.CatalogStatistics;
-import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat$;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.catalyst.catalog.CatalogTable$;
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType$;
-import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
-import scala.Option$;
-import scala.collection.immutable.Map$;
-import scala.jdk.javaapi.CollectionConverters;
 
 /** Tests for {@link CatalogTableUtils}. */
 class CatalogTableUtilsTest {
@@ -128,69 +117,6 @@ class CatalogTableUtilsTest {
 
   private static CatalogTable catalogTableWithProperties(
       Map<String, String> properties, Map<String, String> storageProperties) {
-    scala.collection.immutable.Map<String, String> scalaProps =
-        properties.isEmpty()
-            ? Map$.MODULE$.empty()
-            : scala.collection.immutable.Map$.MODULE$.from(
-                CollectionConverters.asScala(properties).toSeq());
-    scala.collection.immutable.Map<String, String> scalaStorageProps =
-        storageProperties.isEmpty()
-            ? Map$.MODULE$.empty()
-            : scala.collection.immutable.Map$.MODULE$.from(
-                CollectionConverters.asScala(storageProperties).toSeq());
-
-    return CatalogTable$.MODULE$.apply(
-        new TableIdentifier(
-            "tbl", Option$.MODULE$.empty(), Option$.MODULE$.empty()), // id: TableIdentifier
-        CatalogTableType$.MODULE$.MANAGED(), // tableType: CatalogTableType
-        CatalogStorageFormat$.MODULE$.apply(
-            noneUri(),
-            noneString(),
-            noneString(),
-            noneString(),
-            false,
-            scalaStorageProps), // storage: CatalogStorageFormat
-        new StructType(), // schema: StructType
-        noneString(), // provider: Option[String] = None
-        emptyStringSeq(), // partitionColumnNames: Seq[String] = Seq.empty
-        noneBucketSpec(), // bucketSpec: Option[BucketSpec] = None
-        "", // owner: String = ""
-        0L, // createTime: Long = System.currentTimeMillis
-        -1L, // lastAccessTime: Long = -1
-        "", // createVersion: String = ""
-        scalaProps, // properties: Map[String, String] = Map.empty
-        noneCatalogStatistics(), // stats: Option[CatalogStatistics] = None
-        noneString(), // viewText: Option[String] = None
-        noneString(), // comment: Option[String] = None
-        emptyStringSeq(), // unsupportedFeatures: Seq[String]
-        false, // tracksPartitionsInCatalog: Boolean
-        false, // schemaPreservesCase: Boolean
-        emptyStringMap(), // ignoredProperties: Map[String, String]
-        noneString() // viewOriginalText: Option[String]
-        );
-  }
-
-  private static scala.Option<String> noneString() {
-    return Option$.MODULE$.<String>empty();
-  }
-
-  private static scala.Option<URI> noneUri() {
-    return Option$.MODULE$.<URI>empty();
-  }
-
-  private static scala.Option<BucketSpec> noneBucketSpec() {
-    return Option$.MODULE$.<BucketSpec>empty();
-  }
-
-  private static scala.Option<CatalogStatistics> noneCatalogStatistics() {
-    return Option$.MODULE$.<CatalogStatistics>empty();
-  }
-
-  private static scala.collection.immutable.Seq<String> emptyStringSeq() {
-    return scala.collection.immutable.Seq$.MODULE$.<String>empty();
-  }
-
-  private static scala.collection.immutable.Map<String, String> emptyStringMap() {
-    return Map$.MODULE$.<String, String>empty();
+    return CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(properties, storageProperties);
   }
 }
