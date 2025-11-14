@@ -28,6 +28,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
+import org.apache.spark.sql.catalyst.plans.logical.TargetOnlyStructFieldBehavior
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -42,8 +43,17 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    * Specifies an operation that updates a target column with the given expression.
    * The target column may or may not be a nested field and it is specified as a full quoted name
    * or as a sequence of split into parts.
+   *
+   * @param targetColNameParts The name parts of the target column
+   * @param updateExpr The expression to update the column with
+   * @param targetOnlyStructFieldBehavior Determines the nullness of target-only struct fields.
+   *                                      Note: This parameter only takes effect when schema
+   *                                      evolution is enabled; otherwise it is ignored.
    */
-  case class UpdateOperation(targetColNameParts: Seq[String], updateExpr: Expression)
+  case class UpdateOperation(
+      targetColNameParts: Seq[String],
+      updateExpr: Expression,
+      targetOnlyStructFieldBehavior: TargetOnlyStructFieldBehavior.Value)
 
   /**
    * The following trait and classes define casting behaviors to use in `castIfNeeded()`.
@@ -99,12 +109,18 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    * @param dataType The data type to cast to.
    * @param castingBehavior Configures the casting behavior to use, see [[CastingBehavior]].
    * @param columnName The name of the column written to. It is used for the error message.
+   * @param originalTargetExprOpt Optional expression representing the original target column before
+   *                              the update. It is only relevant in MERGE ... UPDATE * with schema
+   *                              evolution to preserve the original values of target-only struct
+   *                              fields. In other cases, it is None and the target-only fields will
+   *                              be overwritten with null.
    */
   protected def castIfNeeded(
       fromExpression: Expression,
       dataType: DataType,
       castingBehavior: CastingBehavior,
-      columnName: String): Expression = {
+      columnName: String,
+      originalTargetExprOpt: Option[Expression] = None): Expression = {
 
     fromExpression match {
       // Need to deal with NullType here, as some types cannot be casted from NullType, e.g.,
@@ -221,8 +237,20 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
               throw DeltaErrors.updateSchemaMismatchExpression(from, to)
             }
 
+            val originalTargetChildExprsOpt: Option[Map[String, Expression]] =
+              if (UpdateExpressionsSupport.isUpdateStarPreserveNullSourceStructsEnabled(conf)) {
+                extractOriginalTargetChildExprs(originalTargetExprOpt, to)
+              } else {
+                None
+              }
+
             val nameMappedStruct = CreateNamedStruct(to.flatMap { field =>
               val fieldNameLit = Literal(field.name)
+              // flatMap returns None if (1) originalTargetChildExprsOpt is None, or
+              // (2) originalTargetChildExprsOpt.get.get(field.name) is None, which happens when
+              // the field doesn't exist in the original target (newly added via schema evolution).
+              val targetFieldExprOpt: Option[Expression] =
+                originalTargetChildExprsOpt.flatMap(_.get(field.name))
               val extractedField = from
                 .find { f => SchemaUtils.DELTA_COL_RESOLVER(f.name, field.name) }
                 .map { _ =>
@@ -234,10 +262,17 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                     throw DeltaErrors.extractReferencesFieldNotFound(s"$field",
                       DeltaErrors.updateSchemaMismatchExpression(from, to))
                   }
-                  Literal(null)
+                  // If the expression of the original target column is not provided or there is no
+                  // such field in the target column, fill the field with null.
+                  targetFieldExprOpt.getOrElse(Literal(null))
                 }
               Seq(fieldNameLit,
-                castIfNeeded(extractedField, field.dataType, castingBehavior, field.name))
+                castIfNeeded(
+                  extractedField,
+                  field.dataType,
+                  castingBehavior,
+                  field.name,
+                  targetFieldExprOpt))
             })
 
             // Fix for null expansion caused by struct type cast by preserving NULL source structs.
@@ -252,8 +287,27 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
             //
             // Solution: Wrap the named_struct expression in an IF expression that preserves NULL:
             //   IF(source_struct IS NULL, NULL, named_struct(...))
+            //
+            // Additional behavior when originalTargetExpr is provided (MERGE ... UPDATE * with
+            // schema evolution):
+            // For target-only fields (fields in target but not in source), we need to preserve
+            // their original values from the target. The null check becomes more sophisticated:
+            //   IF(source_struct IS NULL AND all_target_only_fields_are_null,
+            //      NULL,
+            //      named_struct(
+            //        source_fields...,
+            //        target_only_field1: original_target_value1,
+            //        target_only_field2: original_target_value2
+            //      ))
+            // This is to match the behavior of UPDATE * that target-only fields retain their
+            // values.
             val wrappedWithNullPreservation =
-              wrapWithNullPreservation(fromExpression, to.asNullable, nameMappedStruct)
+              maybeWrapWithNullPreservation(
+                sourceExpr = fromExpression,
+                sourceType = from,
+                targetType = to.asNullable,
+                targetNamedStructExpr = nameMappedStruct,
+                originalTargetChildExprsOpt = originalTargetChildExprsOpt)
             cast(wrappedWithNullPreservation, to.asNullable, castingBehavior, columnName)
 
           case (from, to) if from != to =>
@@ -264,23 +318,88 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
   }
 
   /**
-   * Wraps an expression with an IF expression to fix the null expansion issue by preserving
-   * NULL source struct values:
+   * Extracts child expressions from the original target struct for fields that exist in both
+   * the original target and the evolved target schemas.
+   *
+   * This is used during MERGE UPDATE * with schema evolution to preserve target-only field values.
+   *
+   * @param originalTargetExprOpt The original target column expression (before schema evolution)
+   * @param evolvedTargetStruct The evolved target struct type (after schema evolution)
+   * @return A map from evolved field names that exist in the original target schema to extraction
+   *         expressions from the original target, or None if no original target expression is
+   *         provided.
+   */
+  private def extractOriginalTargetChildExprs(
+      originalTargetExprOpt: Option[Expression],
+      evolvedTargetStruct: StructType): Option[Map[String, Expression]] = {
+    originalTargetExprOpt.map { e =>
+      require(e.dataType.isInstanceOf[StructType],
+        s"originalTargetExprOpt dataType must be StructType but got ${e.dataType}")
+      val originalTargetStruct = e.dataType.asInstanceOf[StructType]
+      evolvedTargetStruct.flatMap { field =>
+        originalTargetStruct.find(f => SchemaUtils.DELTA_COL_RESOLVER(f.name, field.name))
+          .map { matchedField =>
+            // `field` is present in the target struct before schema evolution.
+            // Use matchedField.name to extract from the original target expression.
+            field.name -> ExtractValue(
+              e, Literal(matchedField.name), SchemaUtils.DELTA_COL_RESOLVER)
+          }
+      }.toMap
+    }
+  }
+
+  /**
+   * Conditionally wraps an expression with an IF expression to preserve NULL source values, when
+   * `DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS` is enabled:
    *   IF(sourceExpr IS NULL, NULL, targetNamedStructExpr)
    *
-   * Without this fix, NULL source structs are incorrectly expanded to structs with NULL fields.
+   * When originalTargetChildExprsOpt is defined (MERGE ... UPDATE * with schema evolution), the
+   * null condition is extended to check both the source expression and target-only struct
+   * fields:
+   *   IF(sourceExpr IS NULL AND all_target_only_fields_are_null, NULL, targetNamedStructExpr)
+   * This prevents data loss when the source is null but the target has non-null values in
+   * target-only fields.
+   * This is to match the behavior of UPDATE * that target-only fields retain their values.
    *
    * @param sourceExpr The expression of the source field
-   * @param targetType The target data type for the null literal
+   * @param sourceType The source struct type
+   * @param targetType The target struct type
    * @param targetNamedStructExpr The generated target named struct expression
+   * @param originalTargetChildExprsOpt Pre-computed map of field name to extracted expression
+   *                                    from the original target column. None when the fix is
+   *                                    disabled or no original target expression is provided.
    */
-  private def wrapWithNullPreservation(
+  private def maybeWrapWithNullPreservation(
       sourceExpr: Expression,
-      targetType: DataType,
-      targetNamedStructExpr: Expression): Expression = {
+      sourceType: StructType,
+      targetType: StructType,
+      targetNamedStructExpr: Expression,
+      originalTargetChildExprsOpt: Option[Map[String, Expression]]): Expression = {
     if (conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)) {
+      val sourceNullCondition = IsNull(sourceExpr)
+      val fullNullCondition = originalTargetChildExprsOpt match {
+        case Some(fieldExtractions) =>
+          // Find fields that are in target but not in source (target-only fields)
+          val targetOnlyFieldNames = targetType.fields.filterNot { targetField =>
+            sourceType.fields.exists(sourceField =>
+              SchemaUtils.DELTA_COL_RESOLVER(sourceField.name, targetField.name))
+          }.map(_.name).toSet
+
+          // For each target-only field, check if it's null using pre-computed extractions
+          val targetOnlyNullChecks = fieldExtractions.collect {
+            case (fieldName, extractedExpr) if targetOnlyFieldNames.contains(fieldName) =>
+              IsNull(extractedExpr)
+          }
+
+          // Combine: source is null AND all target-only fields are null
+          targetOnlyNullChecks.foldLeft[Expression](sourceNullCondition)(
+            (acc, check) => And(acc, check))
+
+        case None =>
+          sourceNullCondition
+      }
       If(
-        IsNull(sourceExpr),
+        fullNullCondition,
         Literal.create(null, targetType),
         targetNamedStructExpr
       )
@@ -405,12 +524,25 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
             throw DeltaErrors.updateSetConflictException(
               prefixMatchedOps.map(op => (pathPrefix ++ op.targetColNameParts).mkString(".")))
           }
+          val preserveTargetOnlyFields =
+            UpdateExpressionsSupport.isUpdateStarPreserveNullSourceStructsEnabled(conf) &&
+            allowSchemaEvolution &&
+            fullyMatchedOp.get.targetOnlyStructFieldBehavior ==
+              TargetOnlyStructFieldBehavior.PRESERVE
+          val originalTargetExprOpt =
+            if (preserveTargetOnlyFields) {
+              // Expression corresponding to the original target column before the update.
+              defaultExpr
+            } else {
+              None
+            }
           // For an exact match, return the updateExpr from the update operation.
           Some(castIfNeeded(
             fullyMatchedOp.get.updateExpr,
             targetCol.dataType,
             castingBehavior = MergeOrUpdateCastingBehavior(allowSchemaEvolution),
-            targetCol.name))
+            targetCol.name,
+            originalTargetExprOpt))
         } else {
           // So there are prefix-matched update operations, but none of them is a full match. Then
           // that means targetCol is a complex data type, so we recursively pass along the update
@@ -463,7 +595,13 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       generatedColumns: Seq[StructField]): Seq[Option[Expression]] = {
     assert(nameParts.size == updateExprs.size)
     val updateOps = nameParts.zip(updateExprs).map {
-      case (nameParts, expr) => UpdateOperation(nameParts, expr)
+      case (nameParts, expr) =>
+        UpdateOperation(
+          targetColNameParts = nameParts,
+          updateExpr = expr,
+          // This method is called from regular UPDATE statements, where schema
+          // evolution is not allowed.
+          targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.TARGET_ALIGNED)
     }
     generateUpdateExpressions(
       targetSchema = targetSchema,
@@ -666,4 +804,16 @@ case class CheckOverflowInTableWrite(child: Expression, columnName: String)
   override def sql: String = child.sql
 
   override def toString: String = child.toString
+}
+
+object UpdateExpressionsSupport {
+  /**
+   * Returns true if preserving null source structs for UPDATE * is enabled.
+   * This fix addresses the issue where a null source struct is incorrectly expanded into
+   * a non-null struct with all fields set to null in UPDATE * operations.
+   */
+  def isUpdateStarPreserveNullSourceStructsEnabled(conf: SQLConf): Boolean = {
+    conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS) &&
+      conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS_UPDATE_STAR)
+  }
 }

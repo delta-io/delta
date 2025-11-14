@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types._
 
 /**
@@ -124,6 +125,7 @@ case class IcebergCompatBase(
    */
   def enforceInvariantsAndDependencies(
       spark: SparkSession,
+      catalogTable: Option[CatalogTable],
       prevSnapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -204,6 +206,7 @@ case class IcebergCompatBase(
         // Apply additional checks
         val context = IcebergCompatContext(
           spark,
+          catalogTable,
           prevSnapshot,
           protocolResult.getOrElse(newestProtocol),
           metadataResult.getOrElse(newestMetadata),
@@ -355,6 +358,7 @@ object RequireColumnMapping extends RequireColumnMapping(Seq(NameMapping, IdMapp
 
 case class IcebergCompatContext(
     spark: SparkSession,
+    catalogTable: Option[CatalogTable],
     prevSnapshot: Snapshot,
     newestProtocol: Protocol,
     newestMetadata: Metadata,

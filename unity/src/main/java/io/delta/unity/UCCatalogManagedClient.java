@@ -98,7 +98,6 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(versionOpt, "versionOpt is null");
     Objects.requireNonNull(timestampOpt, "timestampOpt is null");
     versionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
-    timestampOpt.ifPresent(t -> checkArgument(t >= 0, "timestamp must be non-negative"));
     checkArgument(
         !timestampOpt.isPresent() || !versionOpt.isPresent(),
         "cannot provide both timestamp and version");

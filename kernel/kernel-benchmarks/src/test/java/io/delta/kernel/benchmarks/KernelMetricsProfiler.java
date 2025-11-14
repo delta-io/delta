@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.benchmarks;
 
 import io.delta.kernel.engine.*;
 import io.delta.kernel.metrics.MetricsReport;
