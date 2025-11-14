@@ -63,6 +63,9 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   private final boolean shouldValidateOffsets;
   private final SparkSession spark;
 
+  // Tracks whether this is the initial batch for this stream (no checkpointed offset).
+  private boolean isInitialBatch = false;
+
   public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
     this(
         snapshotManager,
@@ -95,10 +98,34 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   // offset //
   ////////////
 
+  /**
+   * Returns the initial offset for a streaming query to start reading from (if there's no
+   * checkpointed offset). Returns null if there's no data to read.
+   */
   @Override
   public Offset initialOffset() {
-    // TODO(#5318): Implement initialOffset
-    throw new UnsupportedOperationException("initialOffset is not supported");
+    Optional<Long> startingVersionOpt = getStartingVersion();
+    long version;
+    boolean isInitialSnapshot;
+
+    if (startingVersionOpt.isPresent()) {
+      version = startingVersionOpt.get();
+      isInitialSnapshot = false;
+    } else {
+      // TODO(#5318): Support initial snapshot case (isInitialSnapshot == true)
+      throw new UnsupportedOperationException(
+          "initialOffset with initial snapshot is not supported yet");
+    }
+
+    if (version < 0) {
+      // This shouldn't happen; defensively return null.
+      return null;
+    }
+
+    isInitialBatch = true;
+
+    return DeltaSourceOffset.apply(
+        tableId, version, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
   }
 
   @Override
@@ -133,6 +160,8 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
       DeltaSourceOffset.validateOffsets(deltaStartOffset, endOffset.get());
     }
 
+    isInitialBatch = false;
+
     // endOffset is null: no data is available to read for this batch.
     return endOffset.orElse(null);
   }
@@ -153,7 +182,9 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
    *
    * @param previousOffset The previous offset
    * @param limits Rate limits for this batch (Optional.empty() for no limits)
-   * @return The next offset, or the previous offset if no new data is available
+   * @return The next offset, or the previous offset if no new data is available (except on the
+   *     initial batch where we return empty to match DSv1's
+   *     getStartingOffsetFromSpecificDeltaVersion behavior)
    */
   private Optional<DeltaSourceOffset> getNextOffsetFromPreviousOffset(
       DeltaSourceOffset previousOffset, Optional<DeltaSource.AdmissionLimits> limits) {
@@ -169,6 +200,11 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     Optional<IndexedFile> lastFileChange = StreamingHelper.iteratorLast(changes);
 
     if (!lastFileChange.isPresent()) {
+      // On the initial batch, return empty to match DSv1's
+      // getStartingOffsetFromSpecificDeltaVersion
+      if (isInitialBatch) {
+        return Optional.empty();
+      }
       return Optional.of(previousOffset);
     }
     // TODO(#5318): Check read-incompatible schema changes during stream start
@@ -217,6 +253,8 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   /**
    * Extracts whether users provided the option to time travel a relation. If a query restarts from
    * a checkpoint and the checkpoint has recorded the offset, this method should never be called.
+   *
+   * <p>Returns Optional.empty() if no starting version is provided.
    *
    * <p>This is the DSv2 Kernel-based implementation of DeltaSource.getStartingVersion.
    */
