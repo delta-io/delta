@@ -731,6 +731,22 @@ trait DeltaSourceBase extends Source
           forbidTightenNullability = shouldForbidTightenNullability,
           typeWideningMode = typeWideningMode
         )
+
+        recordDeltaEvent(
+          deltaLog,
+          "delta.streaming.source.schemaChanged",
+          data = Map(
+            "currentVersion" -> snapshotAtSourceInit.version,
+            "newVersion" -> version,
+            "retryable" -> retryable,
+            "backfilling" -> backfilling,
+            "readChangeDataFeed" -> options.readChangeFeed,
+            "typeWideningEnabled" -> typeWideningEnabled,
+            "containsWideningTypeChanges" ->
+              TypeWidening.containsWideningTypeChanges(schema, schemaChange)
+          )
+        )
+
         throw DeltaErrors.schemaChangedException(
           schema,
           schemaChange,
