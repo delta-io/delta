@@ -3,10 +3,8 @@ package io.delta.kernel.spark.utils;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
-import java.util.Collections;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * Utility helpers for inspecting Delta-related metadata persisted on Spark {@link CatalogTable}
@@ -36,18 +34,28 @@ public final class CatalogTableUtils {
   // if the catalogManaged/catalogOwned-preview flags are 'supported'
   public static boolean isCatalogManaged(CatalogTable table) {
     requireNonNull(table, "table is null");
-    Map<String, String> tableProperties = toJavaMap(table.properties());
-    return isCatalogManagedFeatureEnabled(tableProperties, FEATURE_CATALOG_MANAGED)
-        || isCatalogManagedFeatureEnabled(tableProperties, FEATURE_CATALOG_OWNED_PREVIEW);
+    Map<String, String> storageProperties = getStorageProperties(table);
+    return isCatalogManagedFeatureEnabled(storageProperties, FEATURE_CATALOG_MANAGED)
+        || isCatalogManagedFeatureEnabled(storageProperties, FEATURE_CATALOG_OWNED_PREVIEW);
   }
 
-  // Checks if table is *Unity Catalog* managed - meaning it isCatalogManaged and it contains
+  // Checks if table is *Unity Catalog* managed - meaning it isCatalogManaged, and it contains
   // a UC identifier (UC_TABLE_ID_KEY)
   public static boolean isUnityCatalogManagedTable(CatalogTable table) {
     requireNonNull(table, "table is null");
-    Map<String, String> tableProperties = toJavaMap(table.properties());
-    boolean isUCBacked = tableProperties.containsKey(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    Map<String, String> storageProperties = getStorageProperties(table);
+    boolean isUCBacked = storageProperties.containsKey(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     return isUCBacked && isCatalogManaged(table);
+  }
+
+  /**
+   * Returns storage-layer metadata published with a {@link CatalogTable}. Unity Catalog and other
+   * Spark connectors propagate connection credentials and format-specific options through the
+   * storage properties map rather than the logical table properties map.
+   */
+  public static Map<String, String> getStorageProperties(CatalogTable table) {
+    requireNonNull(table, "table is null");
+    return ScalaUtils.toJavaMap(table.storage().properties());
   }
 
   public static boolean isCatalogManagedFeatureEnabled(
@@ -59,13 +67,5 @@ public final class CatalogTableUtils {
       return false;
     }
     return featureValue.equalsIgnoreCase(SUPPORTED);
-  }
-
-  private static Map<String, String> toJavaMap(
-      scala.collection.immutable.Map<String, String> scalaMap) {
-    if (scalaMap == null || scalaMap.isEmpty()) {
-      return Collections.emptyMap();
-    }
-    return CollectionConverters.asJava(scalaMap);
   }
 }

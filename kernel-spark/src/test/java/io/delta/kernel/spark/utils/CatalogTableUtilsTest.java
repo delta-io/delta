@@ -15,9 +15,11 @@
  */
 package io.delta.kernel.spark.utils;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.net.URI;
 import java.util.Collections;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.TableIdentifier;
@@ -39,7 +41,8 @@ class CatalogTableUtilsTest {
   @Test
   void catalogManagedFlagEnablesDetection() {
     CatalogTable table =
-        catalogTableWithProperties(Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
+        catalogTableWithProperties(
+            Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
     assertTrue(
         CatalogTableUtils.isCatalogManaged(table), "Should detect catalog management with flag");
@@ -51,6 +54,7 @@ class CatalogTableUtilsTest {
   void previewFlagEnablesDetectionIgnoringCase() {
     CatalogTable table =
         catalogTableWithProperties(
+            Collections.emptyMap(),
             Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "SuPpOrTeD"));
 
     assertTrue(
@@ -74,6 +78,7 @@ class CatalogTableUtilsTest {
   void unityManagementRequiresFlagAndId() {
     CatalogTable table =
         catalogTableWithProperties(
+            Collections.emptyMap(),
             Map.of(
                 CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported",
                 io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
@@ -89,13 +94,25 @@ class CatalogTableUtilsTest {
   @Test
   void unityManagementFailsWithoutId() {
     CatalogTable table =
-        catalogTableWithProperties(Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
+        catalogTableWithProperties(
+            Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
     assertTrue(
         CatalogTableUtils.isCatalogManaged(table), "Should detect general catalog management");
     assertFalse(
         CatalogTableUtils.isUnityCatalogManagedTable(table),
         "Should fail Unity detection without ID");
+  }
+
+  @Test
+  void storagePropertiesExposeStorageMetadata() {
+    Map<String, String> storageProps = Map.of("fs.test.option", "value", "dfs.conf.key", "abc");
+    CatalogTable table = catalogTableWithProperties(Collections.emptyMap(), storageProps);
+
+    assertEquals(
+        storageProps,
+        CatalogTableUtils.getStorageProperties(table),
+        "Should surface storage properties published by the catalog");
   }
 
   /**
@@ -106,29 +123,45 @@ class CatalogTableUtilsTest {
    * @return a CatalogTable with the given properties
    */
   private static CatalogTable catalogTableWithProperties(Map<String, String> properties) {
+    return catalogTableWithProperties(properties, Collections.emptyMap());
+  }
+
+  private static CatalogTable catalogTableWithProperties(
+      Map<String, String> properties, Map<String, String> storageProperties) {
     scala.collection.immutable.Map<String, String> scalaProps =
         properties.isEmpty()
             ? Map$.MODULE$.empty()
             : scala.collection.immutable.Map$.MODULE$.from(
                 CollectionConverters.asScala(properties).toSeq());
+    scala.collection.immutable.Map<String, String> scalaStorageProps =
+        storageProperties.isEmpty()
+            ? Map$.MODULE$.empty()
+            : scala.collection.immutable.Map$.MODULE$.from(
+                CollectionConverters.asScala(storageProperties).toSeq());
 
     return CatalogTable$.MODULE$.apply(
-        new TableIdentifier("tbl", Option$.MODULE$.empty(), Option$.MODULE$.empty()),
-        CatalogTableType$.MODULE$.MANAGED(),
-        CatalogStorageFormat$.MODULE$.empty(),
-        new StructType(),
-        noneString(), // provider: Option[String]
-        emptyStringSeq(), // partitionColumnNames: Seq[String]
-        noneBucketSpec(), // bucketSpec: Option[BucketSpec]
-        "", // owner: String
-        0L, // createTime: Long
-        -1L, // lastAccessTime: Long
-        "", // createVersion: String
-        scalaProps, // properties: Map[String, String]
-        noneCatalogStatistics(), // stats: Option[CatalogStatistics]
-        noneString(), // viewText: Option[String]
-        noneString(), // comment: Option[String]
-        noneString(), // viewDefaultDatabase: Option[String]
+        new TableIdentifier(
+            "tbl", Option$.MODULE$.empty(), Option$.MODULE$.empty()), // id: TableIdentifier
+        CatalogTableType$.MODULE$.MANAGED(), // tableType: CatalogTableType
+        CatalogStorageFormat$.MODULE$.apply(
+            noneUri(),
+            noneString(),
+            noneString(),
+            noneString(),
+            false,
+            scalaStorageProps), // storage: CatalogStorageFormat
+        new StructType(), // schema: StructType
+        noneString(), // provider: Option[String] = None
+        emptyStringSeq(), // partitionColumnNames: Seq[String] = Seq.empty
+        noneBucketSpec(), // bucketSpec: Option[BucketSpec] = None
+        "", // owner: String = ""
+        0L, // createTime: Long = System.currentTimeMillis
+        -1L, // lastAccessTime: Long = -1
+        "", // createVersion: String = ""
+        scalaProps, // properties: Map[String, String] = Map.empty
+        noneCatalogStatistics(), // stats: Option[CatalogStatistics] = None
+        noneString(), // viewText: Option[String] = None
+        noneString(), // comment: Option[String] = None
         emptyStringSeq(), // unsupportedFeatures: Seq[String]
         false, // tracksPartitionsInCatalog: Boolean
         false, // schemaPreservesCase: Boolean
@@ -139,6 +172,10 @@ class CatalogTableUtilsTest {
 
   private static scala.Option<String> noneString() {
     return Option$.MODULE$.<String>empty();
+  }
+
+  private static scala.Option<URI> noneUri() {
+    return Option$.MODULE$.<URI>empty();
   }
 
   private static scala.Option<BucketSpec> noneBucketSpec() {
