@@ -1953,12 +1953,12 @@ When `delta.identity.allowExplicitInsert` is false, writers should meet the foll
 
 ## Materialize Partition Columns
 
-Delta supports materializing partition columns in data files. When this feature is enabled, partition columns are physically written to Parquet files alongside the data columns, which can improve query performance for certain workloads, and improve compatibility with external readers, and make these data files easier to interpret for readers unfamiliar with partition values. To support this feature:
+Delta supports materializing partition columns in data files. When this feature is enabled, partition columns are physically written to Parquet files alongside the data columns, which can improve query performance for certain workloads, improve compatibility with external readers, and make these data files easier to interpret for readers unfamiliar with partition values. To support this feature:
  - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
 
 When supported:
- - The table respect metadata property `delta.enableMaterializePartitionColumnsFeature` for enablement of this feature. The writer feature `materializePartitionColumns` is auto-enabled when this property is set to `true`.
- - When the writer feature `materializePartitionColumns` is set in the protocol, writers must write partition column values to all newly created parquet data files.
+ - The table respects metadata property `delta.enableMaterializePartitionColumnsFeature` for enablement of this feature. The writer feature `materializePartitionColumns` is auto-enabled when this property is set to `true`.
+ - When the writer feature `materializePartitionColumns` is set in the protocol, writers must require that partition column values are materialized into any newly created data file, placed after the data columns in the parquet schema.
  - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [Iceberg Compatibility V1](#iceberg-compatibility-v1)
 
 This feature does not impose any requirements on readers. All Delta readers must be able to read the table regardless of whether partition columns are materialized in the data files.
