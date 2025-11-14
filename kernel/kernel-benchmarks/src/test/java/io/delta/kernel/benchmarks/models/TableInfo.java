@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.Optional;
 
 /**
  * Represents metadata about a Delta table used in benchmark workloads.
@@ -67,6 +68,19 @@ public class TableInfo {
   private String tableInfoPath;
 
   /**
+   * Whether this table is a Unity Catalog managed table. If true, the UC Catalog info is loaded
+   * from a fixed path: catalog_managed_info.json in the same directory as table_info.json.
+   */
+  @JsonProperty("is_catalog_managed")
+  private boolean isCatalogManaged;
+
+  /**
+   * Lazily loaded Unity Catalog information. This is populated when {@link #getUcCatalogInfo()} is
+   * called for the first time.
+   */
+  @JsonIgnore private Optional<UcCatalogInfo> ucCatalogInfo = Optional.empty();
+
+  /**
    * Default constructor for Jackson deserialization.
    *
    * <p>This constructor is required for Jackson to deserialize JSON into TableInfo objects. All
@@ -86,6 +100,46 @@ public class TableInfo {
 
   public void setTableInfoPath(String tableInfoDirectory) {
     this.tableInfoPath = tableInfoDirectory;
+  }
+
+  /**
+   * Checks if this table is a Unity Catalog managed table.
+   *
+   * @return true if is_catalog_managed is true, false otherwise
+   */
+  @JsonIgnore
+  public boolean isCatalogManaged() {
+    return isCatalogManaged;
+  }
+
+  /**
+   * Gets the Unity Catalog information for this table. Lazily loads the UcCatalogInfo from
+   * catalog_managed_info.json in the same directory as table_info.json if not already loaded.
+   *
+   * @return the UcCatalogInfo for this table
+   * @throws IllegalStateException if this is not a Unity Catalog managed table
+   * @throws RuntimeException if there is an error loading the UcCatalogInfo
+   */
+  @JsonIgnore
+  public UcCatalogInfo getUcCatalogInfo() {
+    if (!isCatalogManaged()) {
+      throw new IllegalStateException(
+          "This is not a Unity Catalog managed table. is_catalog_managed is not set to true in table_info.json");
+    }
+
+    // If ucCatalogInfo is not cached, load it from catalog_managed_info.json
+    if (!ucCatalogInfo.isPresent()) {
+      String catalogManagedInfoFullPath =
+          Paths.get(tableInfoPath, "catalog_managed_info.json").toString();
+      try {
+        ucCatalogInfo = Optional.of(UcCatalogInfo.fromJsonPath(catalogManagedInfoFullPath));
+      } catch (java.io.IOException e) {
+        throw new RuntimeException(
+            "Failed to load UcCatalogInfo from: " + catalogManagedInfoFullPath, e);
+      }
+    }
+
+    return ucCatalogInfo.get();
   }
 
   /**
