@@ -674,7 +674,7 @@ trait VacuumCommandImpl extends DeltaCommand {
    */
   private def shouldLogVacuum(
       spark: SparkSession,
-      deltaLog: DeltaLog,
+      table: DeltaTableV2,
       hadoopConf: Configuration,
       path: Path): Boolean = {
     val logVacuumConf = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED)
@@ -683,6 +683,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       return logVacuumConf.get
     }
 
+    val deltaLog = table.deltaLog
     val logStore = deltaLog.store
 
     try {
@@ -723,7 +724,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       )
 
     // We perform an empty commit in order to record information about the Vacuum
-    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
+    if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
       val txn = table.startTransaction()
@@ -761,7 +762,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
     val deltaLog = table.deltaLog
-    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
+    if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val txn = table.startTransaction()
       val status = if (filesDeleted.isEmpty && dirCounts.isEmpty) { "FAILED" } else { "COMPLETED" }
       if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
