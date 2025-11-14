@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.spark.utils;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -171,6 +172,10 @@ class CatalogTableUtilsTest {
 
   private static scala.Option<String> noneString() {
     return Option$.MODULE$.<String>empty();
+  }
+
+  private static scala.Option<URI> noneUri() {
+    return Option$.MODULE$.<URI>empty();
   }
 
   private static scala.Option<BucketSpec> noneBucketSpec() {
