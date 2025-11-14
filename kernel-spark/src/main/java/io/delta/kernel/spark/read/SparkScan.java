@@ -23,7 +23,10 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.utils.ScalaUtils;
@@ -61,6 +64,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   private final io.delta.kernel.Scan kernelScan;
+  private final io.delta.kernel.Snapshot initialSnapshot;
   private final Configuration hadoopConf;
   private final CaseInsensitiveStringMap options;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
@@ -80,6 +84,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
+      io.delta.kernel.Snapshot initialSnapshot,
       CaseInsensitiveStringMap options) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
@@ -90,6 +95,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
+    this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.options = Objects.requireNonNull(options, "options is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
@@ -113,6 +119,10 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public Batch toBatch() {
     ensurePlanned();
+    // Get Protocol and Metadata from the kernel scan for Delta-aware reading
+    Protocol protocol = getProtocolFromScan();
+    Metadata metadata = getMetadataFromScan();
+
     return new SparkBatch(
         getTablePath(),
         dataSchema,
@@ -123,7 +133,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataFilters,
         totalBytes,
         scalaOptions,
-        hadoopConf);
+        hadoopConf,
+        protocol,
+        metadata);
   }
 
   @Override
@@ -324,5 +336,15 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       this.partitionedFiles = runtimeFilteredPartitionedFiles;
       this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
     }
+  }
+
+  /** Get Protocol from the initial snapshot for Delta-aware reading. */
+  private Protocol getProtocolFromScan() {
+    return ((SnapshotImpl) initialSnapshot).getProtocol();
+  }
+
+  /** Get Metadata from the initial snapshot for Delta-aware reading. */
+  private Metadata getMetadataFromScan() {
+    return ((SnapshotImpl) initialSnapshot).getMetadata();
   }
 }
