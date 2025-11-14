@@ -286,20 +286,6 @@ object CrossSparkVersions extends AutoPlugin {
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
   /**
-   * Returns the Jackson version for a given Spark version.
-   * This is used to override Jackson dependencies to match what Spark expects.
-   *
-   * @param sparkVersionKey The sparkVersion setting key
-   * @return Def.Initialize[String] containing the Jackson version
-   */
-  def jacksonVersionForSpark(sparkVersionKey: SettingKey[String]): Def.Initialize[String] = Def.setting {
-    val sparkVer = sparkVersionKey.value
-    val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-      .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-    spec.jacksonVersion
-  }
-
-  /**
    * Returns module name with optional Spark version suffix.
    * Default Spark version: "module-name" (e.g., delta-spark_2.13)
    * Other Spark versions: "module-name_X.Y" (e.g., delta-spark_4.0_2.13)
@@ -322,7 +308,7 @@ object CrossSparkVersions extends AutoPlugin {
    * Common Spark version-specific settings used by all Spark-aware modules.
    * Returns Scala version, source directories, ANTLR version, JVM options, etc.
    */
-  private def sparkVersionAwareSettings(): Seq[Setting[_]] = {
+  private def sparkVersionAwareSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
     val spec = getSparkVersionSpec()
 
     val baseSettings = Seq(
@@ -348,7 +334,24 @@ object CrossSparkVersions extends AutoPlugin {
       else Nil
     ).flatten
 
-    baseSettings ++ additionalSourceDirSettings ++ conditionalSettings
+    // Jackson dependency overrides to match Spark version and avoid conflicts
+    val jacksonOverrides = Seq(
+      dependencyOverrides ++= {
+        val sparkVer = sparkVersionKey.value
+        val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
+          .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
+          .jacksonVersion
+        Seq(
+          "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
+          "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
+          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
+          "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
+          "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
+        )
+      }
+    )
+
+    baseSettings ++ additionalSourceDirSettings ++ conditionalSettings ++ jacksonOverrides
   }
 
   /**
@@ -373,7 +376,7 @@ object CrossSparkVersions extends AutoPlugin {
    * @param sparkVersionKey The sparkVersion setting key for this project
    */
   def sparkDependentSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
-    sparkDependentModuleName(sparkVersionKey) ++ sparkVersionAwareSettings()
+    sparkDependentModuleName(sparkVersionKey) ++ sparkVersionAwareSettings(sparkVersionKey)
   }
 
   /**
@@ -388,7 +391,7 @@ object CrossSparkVersions extends AutoPlugin {
       sparkVersionKey := getSparkVersion(),
       // Dynamically modify moduleName to add Spark version suffix
       Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value),
-    ) ++ sparkVersionAwareSettings()
+    ) ++ sparkVersionAwareSettings(sparkVersionKey)
   }
 
   /**
