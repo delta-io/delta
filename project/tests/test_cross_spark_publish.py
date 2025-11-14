@@ -4,14 +4,14 @@ Cross-Spark Version Build Testing
 
 Tests the Delta Lake build system by validating JAR file names for:
 1. Default publish (publishM2) - should publish ALL modules
-2. Spark-specific publish (runOnlyForSparkModules) - should publish only Spark-dependent modules
+2. Spark-specific publish (runOnlyForReleasableSparkModules) - should publish only Spark-dependent modules
 
 Usage:
     python project/tests/test_cross_spark_publish.py
 
 The script will:
 1. Test default publishM2 command publishes all modules for default Spark version
-2. Test runOnlyForSparkModules command publishes only Spark-dependent modules
+2. Test runOnlyForReleasableSparkModules command publishes only Spark-dependent modules
 3. Test full cross-version build workflow
 4. Exit with status 0 on success, 1 on failure
 """
@@ -201,27 +201,27 @@ class CrossSparkPublishTest:
         return self.validate_jars(expected, "Default publishM2")
 
     def test_run_only_for_spark_modules(self) -> bool:
-        """runOnlyForSparkModules should publish only Spark-dependent modules."""
+        """runOnlyForReleasableSparkModules should publish only Spark-dependent modules."""
         spark_version = "4.0.2-SNAPSHOT"
         spark_spec = SPARK_VERSIONS[spark_version]
 
         print("\n" + "="*70)
-        print(f"TEST: runOnlyForSparkModules (should publish only Spark-dependent modules for Spark {spark_version})")
+        print(f"TEST: runOnlyForReleasableSparkModules (should publish only Spark-dependent modules for Spark {spark_version})")
         print("="*70)
 
         self.clean_maven_cache()
 
         if not self.run_sbt_command(
-            f"Running: build/sbt -DsparkVersion={spark_version} \"runOnlyForSparkModules publishM2\"",
-            ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForSparkModules publishM2"]
+            f"Running: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\"",
+            ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForReleasableSparkModules publishM2"]
         ):
             return False
 
         expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version)
-        return self.validate_jars(expected, "runOnlyForSparkModules")
+        return self.validate_jars(expected, "runOnlyForReleasableSparkModules")
 
     def test_cross_spark_workflow(self) -> bool:
-        """Full cross-Spark workflow (publishM2 + runOnlyForSparkModules)."""
+        """Full cross-Spark workflow (publishM2 + runOnlyForReleasableSparkModules)."""
         default_spec = SPARK_VERSIONS[DEFAULT_SPARK]
 
         print("\n" + "="*70)
@@ -243,8 +243,8 @@ class CrossSparkPublishTest:
                 continue  # Skip default, already published
 
             if not self.run_sbt_command(
-                f"Step 2: build/sbt -DsparkVersion={spark_version} \"runOnlyForSparkModules publishM2\" (Spark {spark_version} - Spark-dependent only)",
-                ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForSparkModules publishM2"]
+                f"Step 2: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\" (Spark {spark_version} - Spark-dependent only)",
+                ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForReleasableSparkModules publishM2"]
             ):
                 return False
 
@@ -318,38 +318,45 @@ class CrossSparkPublishTest:
 
 def main():
     """Main entry point."""
-    delta_root = Path(__file__).parent.parent.parent
-    if not (delta_root / "build.sbt").exists():
-        sys.exit("Error: build.sbt not found. Run from Delta repository root.")
+    try:
+        delta_root = Path(__file__).parent.parent.parent
+        if not (delta_root / "build.sbt").exists():
+            print("Error: build.sbt not found. Run from Delta repository root.")
+            sys.exit(1)
 
-    print("="*70)
-    print("Cross-Spark Build Test Suite")
-    print("="*70)
-    print()
+        print("="*70)
+        print("Cross-Spark Build Test Suite")
+        print("="*70)
+        print()
 
-    # Create test object and validate Spark versions
-    test = CrossSparkPublishTest(delta_root)
-    test.validate_spark_versions()
+        # Create test object and validate Spark versions
+        test = CrossSparkPublishTest(delta_root)
+        test.validate_spark_versions()
 
-    # Run all tests
-    test1_passed = test.test_default_publish()
-    test2_passed = test.test_run_only_for_spark_modules()
-    test3_passed = test.test_cross_spark_workflow()
+        # Run all tests
+        test1_passed = test.test_default_publish()
+        test2_passed = test.test_run_only_for_spark_modules()
+        test3_passed = test.test_cross_spark_workflow()
 
-    # Summary
-    print("\n" + "="*70)
-    print("TEST SUMMARY")
-    print("="*70)
-    print(f"Default publishM2:              {'✓ PASSED' if test1_passed else '✗ FAILED'}")
-    print(f"runOnlyForSparkModules:         {'✓ PASSED' if test2_passed else '✗ FAILED'}")
-    print(f"Cross-Spark Workflow:           {'✓ PASSED' if test3_passed else '✗ FAILED'}")
-    print("="*70)
+        # Summary
+        print("\n" + "="*70)
+        print("TEST SUMMARY")
+        print("="*70)
+        print(f"Default publishM2:                      {'✓ PASSED' if test1_passed else '✗ FAILED'}")
+        print(f"runOnlyForReleasableSparkModules:       {'✓ PASSED' if test2_passed else '✗ FAILED'}")
+        print(f"Cross-Spark Workflow:                   {'✓ PASSED' if test3_passed else '✗ FAILED'}")
+        print("="*70)
 
-    if test1_passed and test2_passed and test3_passed:
-        print("\n✓ ALL TESTS PASSED")
-        sys.exit(0)
-    else:
-        print("\n✗ SOME TESTS FAILED")
+        if test1_passed and test2_passed and test3_passed:
+            print("\n✓ ALL TESTS PASSED")
+            sys.exit(0)
+        else:
+            print("\n✗ SOME TESTS FAILED")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\n✗ TEST EXECUTION FAILED WITH ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 

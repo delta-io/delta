@@ -123,9 +123,6 @@ lazy val commonSettings = Seq(
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
-
-  // Cross-Spark building: default to false (opt-in required)
-  requiresCrossSparkBuild := false,
 )
 
 ////////////////////////////
@@ -363,7 +360,7 @@ lazy val sparkV1 = (project in file("spark"))
     commonSettings,
     scalaStyleSettings,
     skipReleaseSettings, // Internal module - not published to Maven
-    CrossSparkVersions.sparkInternalSettings(sparkVersion),
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
     // Export as JAR instead of classes directory. This prevents dependent projects
     // (e.g., connectServer) from seeing multiple 'classes' directories with the same
@@ -471,7 +468,7 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     commonSettings,
     javafmtCheckSettings,
     skipReleaseSettings, // Internal module - not published to Maven
-    CrossSparkVersions.sparkInternalSettings(sparkVersion),
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
     Test / javaOptions ++= Seq("-ea"),

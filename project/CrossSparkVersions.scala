@@ -73,21 +73,30 @@ import Unidoc._
  *   build/sbt publishM2
  *
  *   # Publish only Spark-dependent modules for other versions
- *   build/sbt -DsparkVersion=master "runOnlyForSparkModules publishM2"
+ *   build/sbt -DsparkVersion=master "runOnlyForReleasableSparkModules publishM2"
  *
  * ========================================================
  * Module Types
  * ========================================================
  * 
- * Modules are classified into two types:
+ * Modules are automatically classified based on their settings:
  *
- * 1. Spark-Dependent Modules (requiresCrossSparkBuild := true):
- *    - These depend on Spark and need to be built for each Spark version
+ * 1. Spark-Dependent Published Modules:
+ *    - Use CrossSparkVersions.sparkDependentSettings(sparkVersion)
+ *    - Include releaseSettings (publishable)
  *    - Examples: delta-spark, delta-connect-*, delta-sharing-spark, delta-iceberg
  *    - These modules get version-specific artifact names for non-default Spark versions
+ *    - Automatically included in cross-Spark publishing
  *
- * 2. Spark-Independent Modules (requiresCrossSparkBuild := false, default):
- *    - These don't depend on Spark or are Spark-version agnostic
+ * 2. Spark-Dependent Internal Modules:
+ *    - Use CrossSparkVersions.sparkDependentSettings(sparkVersion)
+ *    - Include skipReleaseSettings (not published)
+ *    - Examples: sparkV1, sparkV2
+ *    - These modules are built for each Spark version but not published
+ *    - Automatically excluded from cross-Spark publishing
+ *
+ * 3. Spark-Independent Modules:
+ *    - Do not use CrossSparkVersions settings
  *    - Examples: delta-storage, delta-kernel-*, delta-standalone
  *    - These modules are built once and work with all Spark versions
  *
@@ -115,7 +124,7 @@ import Unidoc._
  *   build/sbt publishSigned  (or publishM2 for local testing)
  *
  * Step 2: Publish ONLY Spark-dependent modules for each non-default Spark version
- *   build/sbt -DsparkVersion=4.0 "runOnlyForSparkModules publishSigned"
+ *   build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishSigned"
  *
  * This workflow is automated in the release process via crossSparkReleaseSteps().
  * See releaseProcess in build.sbt for integration.
@@ -127,19 +136,23 @@ import Unidoc._
  *
  * For manual release testing:
  *   build/sbt publishM2
- *   build/sbt -DsparkVersion=4.0 "runOnlyForSparkModules publishM2"
+ *   build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishM2"
  *   # Verify JARs in ~/.m2/repository/io/delta/
  *
  * ========================================================
  * Commands Provided
  * ========================================================
  * 
- * runOnlyForSparkModules <task>
- *   Runs the specified task only on modules with requiresCrossSparkBuild := true.
+ * runOnlyForReleasableSparkModules <task>
+ *   Runs the specified task only on publishable Spark-dependent modules.
+ *   Automatically detects modules that:
+ *   1. Have the sparkVersion setting (use Spark-aware configuration)
+ *   2. Are publishable (publish/skip is not true)
+ *
  *   Used for publishing Spark-dependent modules for non-default Spark versions.
  *
  *   Example:
- *     build/sbt -DsparkVersion=4.0 "runOnlyForSparkModules publishM2"
+ *     build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishM2"
  *
  * showSparkVersions
  *   Lists all configured Spark versions (for testing/debugging).
@@ -204,7 +217,7 @@ object SparkVersionSpec {
     additionalJavaOptions = Seq.empty
   )
 
-  private val spark40 = SparkVersionSpec(
+  private val spark40Snapshot = SparkVersionSpec(
     fullVersion = "4.0.2-SNAPSHOT",
     targetJvm = "17",
     additionalSourceDir = Some("scala-spark-master"),
@@ -230,22 +243,16 @@ object SparkVersionSpec {
   val DEFAULT = spark35
 
   /** Spark master branch version (optional). Release branches should not build against master */
-  val MASTER: Option[SparkVersionSpec] = Some(spark40)
+  val MASTER: Option[SparkVersionSpec] = Some(spark40Snapshot)
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark35, spark40)
+  val ALL_SPECS = Seq(spark35, spark40Snapshot)
 }
 
 /** See docs on top of this file */
 object CrossSparkVersions extends AutoPlugin {
 
   override def trigger = allRequirements
-
-  // Settings keys
-  object autoImport {
-    val requiresCrossSparkBuild = settingKey[Boolean]("Whether this module requires cross-Spark version building")
-  }
-  import autoImport._
 
   /**
    * Returns the current configured Spark version spec based on the `sparkVersion` property.
@@ -355,7 +362,7 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   /**
-   * Minimal settings for Spark-dependent modules that don't need full Spark integration.
+   * Just the module name setting for Spark-dependent modules that don't need full Spark integration.
    * Use this for modules that need versioned artifacts but use default Scala settings.
    *
    * @param sparkVersionKey The sparkVersion setting key for this project
@@ -364,34 +371,19 @@ object CrossSparkVersions extends AutoPlugin {
     Seq(
       sparkVersionKey := getSparkVersion(),
       // Dynamically modify moduleName to add Spark version suffix
-      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value),
-      requiresCrossSparkBuild := true
+      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value)
     )
   }
 
   /**
    * Unified settings for Spark-dependent modules.
    * Use this for modules that need to be built for multiple Spark versions.
+   * Works for both published modules and internal modules.
    *
    * @param sparkVersionKey The sparkVersion setting key for this project
    */
   def sparkDependentSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
     sparkDependentModuleName(sparkVersionKey) ++ sparkVersionAwareSettings(sparkVersionKey)
-  }
-
-  /**
-   * Spark version-aware settings for internal modules (not published).
-   * Use this for internal modules that need Spark version-specific configuration
-   * but are not published to Maven (e.g., sparkV1, sparkV2).
-   *
-   * @param sparkVersionKey The sparkVersion setting key for this project
-   */
-  def sparkInternalSettings(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
-    Seq(
-      sparkVersionKey := getSparkVersion(),
-      // Dynamically modify moduleName to add Spark version suffix
-      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value),
-    ) ++ sparkVersionAwareSettings(sparkVersionKey)
   }
 
   /**
@@ -425,8 +417,8 @@ object CrossSparkVersions extends AutoPlugin {
             // Set the sparkVersion system property
             sys.props("sparkVersion") = spec.fullVersion
 
-            // Run the runOnlyForSparkModules command
-            Command.process(s"runOnlyForSparkModules $task", state)
+            // Run the runOnlyForReleasableSparkModules command
+            Command.process(s"runOnlyForReleasableSparkModules $task", state)
           }: ReleaseStep
         )
       }
@@ -435,22 +427,29 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   override lazy val projectSettings = Seq(
-    commands += Command.args("runOnlyForSparkModules", "<task>") { (state, args) =>
+    commands += Command.args("runOnlyForReleasableSparkModules", "<task>") { (state, args) =>
       // Used mainly for cross-Spark publishing of the Spark-dependent modules
       if (args.isEmpty) {
-        sys.error("Usage: runOnlyForSparkModules <task>\nExample: build/sbt -DsparkVersion=<version> \"runOnlyForSparkModules publishM2\"")
+        sys.error("Usage: runOnlyForReleasableSparkModules <task>\nExample: build/sbt -DsparkVersion=<version> \"runOnlyForReleasableSparkModules publishM2\"")
       }
 
       val task = args.mkString(" ")
 
       // Discover Spark-dependent projects dynamically
+      // A project is Spark-dependent if:
+      // 1. It has the sparkVersion setting (uses Spark-aware configuration)
+      // 2. It is publishable (publishArtifact is not false)
       val extracted = sbt.Project.extract(state)
+      val sparkVersionKey = SettingKey[String]("sparkVersion")
+      val publishArtifactKey = SettingKey[Boolean]("publishArtifact")
       val sparkDependentProjects = extracted.structure.allProjectRefs.filter { projRef =>
-        (projRef / requiresCrossSparkBuild).get(extracted.structure.data).getOrElse(false)
+        val hasSparkVersion = (projRef / sparkVersionKey).get(extracted.structure.data).isDefined
+        val isPublishable = (projRef / publishArtifactKey).get(extracted.structure.data).getOrElse(true)
+        hasSparkVersion && isPublishable
       }
 
       if (sparkDependentProjects.isEmpty) {
-        println(s"[warn] No projects with requiresCrossSparkBuild := true found")
+        println(s"[warn] No publishable projects with sparkVersion setting found")
         state
       } else {
         val projectNames = sparkDependentProjects.map(_.project).mkString(", ")
