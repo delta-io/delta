@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks.workloadrunners;
+package io.delta.kernel.benchmarks.workloadrunners;
 
 import io.delta.kernel.*;
+import io.delta.kernel.benchmarks.models.ReadSpec;
+import io.delta.kernel.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.defaults.benchmarks.models.ReadSpec;
-import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
 import org.openjdk.jmh.infra.Blackhole;

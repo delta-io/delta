@@ -2187,6 +2187,12 @@
     ],
     "sqlState" : "KD004"
   },
+  "DELTA_READ_SOURCE_SCHEMA_CONFLICT" : {
+    "message" : [
+      "The schema provided for the source read doesn't match the schema of the Delta table"
+    ],
+    "sqlState" : "42K07"
+  },
   "DELTA_READ_TABLE_WITHOUT_COLUMNS" : {
     "message" : [
       "You are trying to read a Delta table <tableName> that does not have any columns.",
@@ -2598,6 +2604,13 @@
       "Target table final schema is empty."
     ],
     "sqlState" : "428GU"
+  },
+  "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION" : {
+    "message" : [
+      "The provided timestamp (<userTimestamp>) is before the earliest version available to",
+      "this table (<commitTs>). Please use a timestamp after <timestampString>."
+    ],
+    "sqlState" : "42816"
   },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [
@@ -3110,6 +3123,12 @@
       "The provided version (<version>) is not a valid version."
     ],
     "sqlState" : "42815"
+  },
+  "DELTA_VERSION_NOT_FOUND" : {
+    "message" : [
+      "Cannot time travel Delta table to version <userVersion>. Available versions: [<earliest>, <latest>]."
+    ],
+    "sqlState" : "22003"
   },
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
     "message" : [

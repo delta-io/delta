@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.benchmarks;
 
-import io.delta.kernel.defaults.benchmarks.models.TableInfo;
-import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.benchmarks.models.TableInfo;
+import io.delta.kernel.benchmarks.models.WorkloadSpec;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

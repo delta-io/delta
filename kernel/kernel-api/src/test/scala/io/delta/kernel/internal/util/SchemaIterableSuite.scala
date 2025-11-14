@@ -30,10 +30,12 @@ class SchemaIterableSuite extends AnyFunSuite {
 
     val iterable = new SchemaIterable(schema)
 
-    def parentStructFieldAndPathToString(parent: Optional[Tuple2[StructField, String]]): String = {
+    def parentStructFieldAndPathToString(
+        parent: Optional[SchemaIterable.ParentStructFieldInfo]): String = {
       if (parent.isPresent) {
-        val parentField = parent.get._1
-        val parentPath = parent.get._2
+        val parentInfo = parent.get
+        val parentField = parentInfo.getParentField
+        val parentPath = parentInfo.getPathFromParent
         s"Some(${parentField.getName}, $parentPath)"
       } else {
         "None"
