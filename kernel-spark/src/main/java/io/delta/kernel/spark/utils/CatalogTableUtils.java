@@ -19,7 +19,6 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
-import java.util.Collections;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 
