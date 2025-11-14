@@ -250,6 +250,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           throw e
         }
     }
+
     // Check whether the generation expressions are valid
     dfWithExprs.queryExecution.analyzed.transformAllExpressions {
       case expr: Alias =>
@@ -267,7 +268,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         throw DeltaErrors.generatedColumnsNonDeterministicExpression(expr)
       case expr if expr.isInstanceOf[AggregateExpression] =>
         throw DeltaErrors.generatedColumnsAggregateExpression(expr)
-      case expr if !SupportedGenerationExpressions.expressions.contains(expr.getClass) =>
+      case expr if !AllowedUserProvidedExpressions.expressions.contains(expr.getClass) =>
         throw DeltaErrors.generatedColumnsUnsupportedExpression(expr)
     }
     // Compare the columns types defined in the schema and the expression types.

@@ -53,6 +53,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_AGGREGATE_IN_CHECK_CONSTRAINT" : {
+    "message" : [
+      "Found <sqlExpr> in a CHECK constraint. Aggregate expressions are not allowed in CHECK constraints."
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_AGGREGATE_IN_GENERATED_COLUMN" : {
     "message" : [
       "Found <sqlExpr>. A generated column cannot use an aggregate expression"
@@ -1469,6 +1475,12 @@
     ],
     "sqlState" : "42K05"
   },
+  "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES" : {
+    "message" : [
+      "Found <colName> in CHECK constraint. A check constraint cannot use a non-existent column."
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_INVALID_CLONE_PATH" : {
     "message" : [
       "The target location for CLONE needs to be an absolute path or table name. Use an",
@@ -1891,6 +1903,12 @@
   "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT" : {
     "message" : [
       "CHECK constraint '<name>' (<expr>) should be a boolean expression."
+    ],
+    "sqlState" : "42621"
+  },
+  "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_CHECK_CONSTRAINT" : {
+    "message" : [
+      "Found <expr> in a CHECK constraint. A CHECK constraint cannot use a nondeterministic expression."
     ],
     "sqlState" : "42621"
   },
@@ -2650,6 +2668,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_UDF_IN_CHECK_CONSTRAINT" : {
+    "message" : [
+      "Found <expr> in a CHECK constraint. A CHECK constraint cannot use a user-defined function."
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_UDF_IN_GENERATED_COLUMN" : {
     "message" : [
       "Found <udfExpr>. A generated column cannot use a user-defined function"
@@ -2909,6 +2933,12 @@
       "Unsupported expression type(<expType>) for <causedBy>. The supported types are [<supportedTypes>]."
     ],
     "sqlState" : "0A000"
+  },
+  "DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT" : {
+    "message" : [
+      "Found <expression> in a CHECK constraint. <expression> cannot be used in a CHECK constraint."
+    ],
+    "sqlState" : "42621"
   },
   "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
     "message" : [
