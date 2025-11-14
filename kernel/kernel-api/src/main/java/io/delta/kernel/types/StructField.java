@@ -215,6 +215,30 @@ public class StructField {
         && Objects.equals(typeChanges, that.typeChanges);
   }
 
+  /** @return whether the struct fields are equal, ignoring collations */
+  public boolean equivalentIgnoreCollations(StructField other) {
+    if (this == other) {
+      return true;
+    }
+    if (other == null) {
+      return false;
+    }
+    // Compare metadata while ignoring collation metadata differences
+    FieldMetadata metadataWithoutCollations =
+        new FieldMetadata.Builder().fromMetadata(metadata).remove(COLLATIONS_METADATA_KEY).build();
+    FieldMetadata otherMetadataWithoutCollations =
+        new FieldMetadata.Builder()
+            .fromMetadata(other.metadata)
+            .remove(COLLATIONS_METADATA_KEY)
+            .build();
+
+    return nullable == other.nullable
+        && name.equals(other.name)
+        && dataType.equivalentIgnoreCollations(other.dataType)
+        && metadataWithoutCollations.equals(otherMetadataWithoutCollations)
+        && Objects.equals(typeChanges, other.typeChanges);
+  }
+
   @Override
   public int hashCode() {
     return Objects.hash(name, dataType, nullable, metadata, typeChanges);
