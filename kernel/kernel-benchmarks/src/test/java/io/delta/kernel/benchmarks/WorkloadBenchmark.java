@@ -98,6 +98,7 @@ public class WorkloadBenchmark<T> {
     Options opt =
         new OptionsBuilder()
             .include(WorkloadBenchmark.class.getSimpleName())
+            .shouldFailOnError(true)
             .param("workloadSpecJson", workloadSpecsArray)
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
