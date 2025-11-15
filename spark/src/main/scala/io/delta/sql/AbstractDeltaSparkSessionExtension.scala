@@ -55,6 +55,12 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     extensions.injectResolutionRule { session =>
       PreprocessTimeTravel(session)
     }
+    // CRITICAL: Register UseKernelForStreamingRule BEFORE DeltaAnalysis
+    // This ensures batch operations are unwrapped to DeltaTableV2 before
+    // DeltaAnalysis's FallbackToV1DeltaRelation runs
+    extensions.injectResolutionRule { session =>
+      new UseKernelForStreamingRule(session)
+    }
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support
       // id column mapping mode for Delta.
