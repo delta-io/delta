@@ -28,6 +28,11 @@ import io.delta.standalone.internal.util.FileNames.{checkpointPrefix, checkpoint
 private[internal] trait MetadataCleanup {
   self: DeltaLogImpl =>
 
+  /** Returns the table name from dataPath for logging purposes. */
+  private def tableIdentifier: String = {
+    dataPath.getName
+  }
+
   /** Whether to clean up expired log files and checkpoints. */
   def enableExpiredLogCleanup: Boolean =
     DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.fromMetadata(metadata)
@@ -51,7 +56,7 @@ private[internal] trait MetadataCleanup {
     val fileCutOffTime = truncateDay(clock.getTimeMillis() - deltaRetentionMillis).getTime
 
     lazy val formattedDate = fileCutOffTime.toGMTString
-    logInfo(s"Starting the deletion of log files older than $formattedDate")
+    logInfo(s"[tableName=$tableIdentifier] Starting the deletion of log files older than $formattedDate")
 
     var numDeleted = 0
     listExpiredDeltaLogs(fileCutOffTime.getTime).map(_.getPath).foreach { path =>
@@ -59,7 +64,7 @@ private[internal] trait MetadataCleanup {
       if (fs.delete(path, false)) numDeleted += 1
     }
 
-    logInfo(s"Deleted $numDeleted log files older than $formattedDate")
+    logInfo(s"[tableName=$tableIdentifier] Deleted $numDeleted log files older than $formattedDate")
   }
 
   /**
