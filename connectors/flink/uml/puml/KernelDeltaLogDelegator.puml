@@ -1,0 +1,49 @@
+@startuml
+'https://plantuml.com/class-diagram
+
+scale 2
+skinparam defaultFontName Fira Sans
+set separator none
+
+package "io.delta.standalone.internal" {
+
+  class DeltaLogImpl
+  
+  class KernelDeltaLogDelegator extends DeltaLogImpl {
+    standaloneDeltaLog : DeltaLogImpl 
+    currentKernelSnapshot : KernelSnapshotDelegator
+
+    KernelSnapshotDelegator snapshot()
+    update() - only update the kernel snapshot
+    tableExists() - use kernel snapshot
+    
+    getChanges() - delegate to standaloneDeltaLog
+
+    getSnapshotForVersionAsOf() - throws
+    getSnapshotForTimestampAsOf() - throws
+    getCommitInfoAt() - throws
+  }
+
+  class SnapshotImpl
+
+  class KernelSnapshotDelegator extends SnapshotImpl {
+    kernelSnapshot : SnapshotImplKernel [SnapshotImpl from kernel package]
+    lazy standaloneSnapshot : SnapshotImpl [SnapshotImpl from standalone]
+
+    protocolScala() - use kernel snapshot
+    metadataScala() - use kernel snapshot
+    getMetadata() - use kernel snapshot
+    getVersion() - use kernel snapshot
+
+    scanScala() - Delegate to standaloneSnapshot
+    setTransactionsScala() - Delegate to standaloneSnapshot
+    numOfFiles() - Delegate to standaloneSnapshot
+    allFilesScala() - Delegate to standaloneSnapshot
+  }
+
+  KernelDeltaLogDelegator::currentKernelSnapshot --> KernelSnapshotDelegator
+  KernelDeltaLogDelegator::standaloneDeltaLog -left-> DeltaLogImpl
+  KernelSnapshotDelegator::standaloneSnapshot -left-> SnapshotImpl
+}
+
+@enduml

@@ -1,0 +1,144 @@
+@startuml
+'https://plantuml.com/class-diagram
+
+package "org.apache.hadoop" #DDDDDD {
+  class Configuration
+}
+
+package "org.apache.flink" #DDDDDD {
+
+  interface DynamicTableFactory
+  interface DynamicTableFactory.Context
+
+  interface DynamicTableSinkFactory extends DynamicTableFactory {
+    + createDynamicTableSink(DynamicTableFactory.Context) : DynamicTableSink
+  }
+
+  interface DynamicTableSourceFactory extends DynamicTableFactory {
+    + createDynamicTableSource(DynamicTableFactory.Context) : DynamicTableSource
+  }
+
+  interface DynamicTableSink {
+    + getChangelogMode(ChangelogMode) : ChangelogMode
+    + getSinkRuntimeProvider(DynamicTableSink.Context) : SinkRuntimeProvider
+  }
+
+  interface DynamicTableSink.Context
+  interface DynamicTableSource
+  interface DynamicTableSource.Context
+
+  interface ScanTableSource extends DynamicTableSource {
+    + getChangelogMode() : ChangelogMode
+    + getScanRuntimeProvider(ScanContext) : ScanRuntimeProvider
+  }
+
+  interface SupportsPartitioning {
+    + applyStaticPartition(Map<String, String>) : void
+  }
+
+  interface ScanContext extends DynamicTableSource.Context
+  interface SinkRuntimeProvider
+  interface ScanRuntimeProvider {
+    isBounded() : boolean
+  }
+
+  /' inner interface '/
+  DynamicTableFactory +-- DynamicTableFactory.Context
+  DynamicTableSink +-- DynamicTableSink.Context
+  DynamicTableSource +-- DynamicTableSource.Context
+
+  /' start layout for org.apache.flink '/
+  DynamicTableFactory -[hidden]up- DynamicTableFactory.Context
+  DynamicTableSink -[hidden]up- DynamicTableSink.Context
+  DynamicTableSource -[hidden]up- DynamicTableSource.Context
+  /' end layout for org.apache.flink '/
+}
+
+/' ------------------------------- '/
+package "io.delta.flink" {
+
+  class DeltaDynamicTableFactory implements DynamicTableSinkFactory, DynamicTableSourceFactory {
+    - isFromCatalog : boolean
+
+    ~ {static} fromCatalog() : DeltaDynamicTableFactory
+    + createDynamicTableSink(DynamicTableFactory.Context) : DynamicTableSink
+    + createDynamicTableSource(DynamicTableFactory.Context) : DynamicTableSource
+  }
+
+  class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitioning {
+    + getChangelogMode(ChangelogMode) : ChangelogMode
+    + getSinkRuntimeProvider(DynamicTableSink.Context) : SinkRuntimeProvider
+  }
+
+  class DeltaDynamicTableSource implements ScanTableSource {
+    - hadoopConf : Configuration
+    - queryOptions : QueryOptions
+    - columns : List<String>
+
+    + getChangelogMode() : ChangelogMode
+    + getScanRuntimeProvider(ScanContext) : ScanRuntimeProvider
+  }
+
+  class QueryOptions {
+    - deltaTablePath : String
+    - queryMode : QueryMode
+    - jobSpecificOptions : Map<String, String>
+
+    + getDeltaTablePath() : String
+    + getQueryMode() : QueryMode
+    + getJobSpecificOptions() : Map<String, String>
+  }
+
+  enum QueryMode {
+    BATCH
+    STREAMING
+  }
+
+  note right of DeltaDynamicTableSink::getChangelogMode
+    Always returns Flink's
+    ChangelogMode::INSERT_ONLY.
+  end note
+
+  note right of DeltaDynamicTableSink::getSinkRuntimeProvider
+    Will use Delta Sink Builder
+    to set up a DeltaSink and return
+    its new instance wrapped in
+    Flink's SinkRuntimeProvider.
+  end note
+
+  note left of DeltaDynamicTableFactory::fromCatalog
+    Will be called from Delta Catalog
+    setting "isFromCatalog" flag to "true".
+  end note
+
+  note left of DeltaDynamicTableSource::getChangelogMode
+    Always returns Flink's
+    ChangelogMode::INSERT_ONLY.
+  end note
+
+  note left of DeltaDynamicTableSource::getScanRuntimeProvider
+    Will use Delta Source Builder
+    to set up a DeltaSource and return
+    its new instance wrapped in
+    Flink's ScanRuntimeProvider.
+  end note
+
+  /' start layout for io.delta.flink '/
+  QueryOptions -[hidden]up- DeltaDynamicTableFactory
+  QueryOptions -[hidden]right- QueryMode
+  /' end layout for io.delta.flink '/
+}
+
+/' legend '/
+skinparam legendBackgroundColor #ffffff
+legend
+
+|= field |= method |=  |
+|  <img:http://s.plantuml.com/private-field.png>     |   <img:http://s.plantuml.com/private-method.png>     | private |
+|  <img:http://s.plantuml.com/protected-field.png>   |   <img:http://s.plantuml.com/protected-method.png>   | protected |
+|  <img:http://s.plantuml.com/package-private-field.png>     |   <img:http://s.plantuml.com/package-private-method.png>    | package private |
+|  <img:http://s.plantuml.com/public-field.png>     |   <img:http://s.plantuml.com/public-method.png>     | public |
+
+endlegend
+
+@enduml
