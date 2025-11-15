@@ -1692,6 +1692,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH =
+    buildConf("skipping.enhancedIsNullPushdownExprs.maxDepth")
+      .doc("The maximum number of times a complex expression like Or or And would have an IsNull " +
+        "pushed down in it for data skipping.")
+      .internal()
+      .intConf
+      .createWithDefault(8)
+
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
    * already used by Databricks' data skipping implementation. There's no benefit to making OSS
