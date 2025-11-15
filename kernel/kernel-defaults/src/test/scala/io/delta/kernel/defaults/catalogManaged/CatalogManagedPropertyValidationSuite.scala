@@ -259,6 +259,11 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
             val updateBuilder = TableManager
               .loadSnapshot(tablePath)
               .withCommitter(customCatalogCommitter)
+              .withMaxCatalogVersionIfApplicable(
+                TableFeatures.isPropertiesManuallySupportingTableFeature(
+                  testCase.initialTableProperties.asJava,
+                  TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
+                0)
               .build(defaultEngine)
               .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
               .withTablePropertiesAdded(testCase.transactionProperties.asJava)
@@ -275,6 +280,11 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
             TableManager
               .loadSnapshot(tablePath)
               .withCommitter(customCatalogCommitter)
+              .withMaxCatalogVersionIfApplicable(
+                TableFeatures.isPropertiesManuallySupportingTableFeature(
+                  testCase.initialTableProperties.asJava,
+                  TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
+                0)
               .build(defaultEngine)
               .asInstanceOf[SnapshotImpl]
               .buildReplaceTableTransaction(replaceSchema, "engineInfo")
@@ -286,9 +296,19 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
           // Transaction building should succeed
           txnBuilder.build(defaultEngine).commit(defaultEngine, emptyIterable[Row])
 
+          val maxCatalogVersion =
+            if (testCase.operationType == "UPDATE" || testCase.operationType == "REPLACE") {
+              1
+            } else {
+              0
+            }
+
           // Verify the results
           val snapshot = TableManager
             .loadSnapshot(tablePath)
+            .withMaxCatalogVersionIfApplicable(
+              testCase.expectedCatalogManagedSupported,
+              maxCatalogVersion)
             .build(defaultEngine)
             .asInstanceOf[SnapshotImpl]
 
