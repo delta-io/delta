@@ -22,11 +22,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
@@ -370,5 +376,28 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
           .history()
           .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);
     }
+  }
+
+  @Test
+  public void testIteratorLast() {
+    // Test with empty iterator
+    List<Integer> emptyList = new ArrayList<>();
+    CloseableIterator<Integer> emptyIterator = Utils.toCloseableIterator(emptyList.iterator());
+    Optional<Integer> emptyResult = StreamingHelper.iteratorLast(emptyIterator);
+    assertFalse(emptyResult.isPresent());
+
+    // Test with single element
+    List<Integer> singleList = Arrays.asList(42);
+    CloseableIterator<Integer> singleIterator = Utils.toCloseableIterator(singleList.iterator());
+    Optional<Integer> singleResult = StreamingHelper.iteratorLast(singleIterator);
+    assertTrue(singleResult.isPresent());
+    assertEquals(42, singleResult.get());
+
+    // Test with multiple elements
+    List<Integer> multiList = Arrays.asList(1, 2, 3, 4, 5);
+    CloseableIterator<Integer> multiIterator = Utils.toCloseableIterator(multiList.iterator());
+    Optional<Integer> multiResult = StreamingHelper.iteratorLast(multiIterator);
+    assertTrue(multiResult.isPresent());
+    assertEquals(5, multiResult.get());
   }
 }
