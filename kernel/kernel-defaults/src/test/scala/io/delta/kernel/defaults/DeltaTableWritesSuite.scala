@@ -1216,6 +1216,37 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  // Tests transaction conflict detection with the same app ID but different versions.
+  private def testTransactionConflictWithSameAppId(
+      firstVersion: Long,
+      secondVersion: Long): Unit = {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create the table (no set-txn here to avoid unrelated schema or idempotency checks)
+      val createTxn = getCreateTxn(engine, tablePath, testSchema)
+      commitTransaction(createTxn, engine, emptyIterable())
+
+      // Start two transactions from the same snapshot with the same app ID but different
+      //    versions. Both builds must succeed; the conflict is detected on commit when they race
+      //    for the same next table version and ConflictChecker processes the winning commit.
+      val txn1 = getUpdateTxn(engine, tablePath, txnId = Some(("t1", firstVersion)))
+      val txn2 = getUpdateTxn(engine, tablePath, txnId = Some(("t1", secondVersion)))
+
+      // Commit the first, then the second should fail with ConcurrentTransactionException
+      commitTransaction(txn1, engine, emptyIterable())
+      intercept[ConcurrentTransactionException] {
+        commitTransaction(txn2, engine, emptyIterable())
+      }
+    }
+  }
+
+  test("block concurrent set-txns with the same app id but higher version") {
+    testTransactionConflictWithSameAppId(firstVersion = 3, secondVersion = 5)
+  }
+
+  test("block concurrent set-txns with the same app id but lower version") {
+    testTransactionConflictWithSameAppId(firstVersion = 5, secondVersion = 3)
+  }
+
   def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
     def process(dataType: DataType): Option[DataType] = dataType match {
       case a: ArrayType =>
