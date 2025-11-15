@@ -26,7 +26,7 @@ import scala.collection.mutable
 /**
  * Trait that forces DataSourceV2 mode to STRICT, ensuring all operations
  * use the Kernel-based SparkTable implementation instead of DeltaTableV2.
- * 
+ *
  * Usage:
  * {{{
  * class MyKernelTest extends MyOriginalSuite with Dsv2ForceTest {
