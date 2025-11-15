@@ -692,6 +692,11 @@ lazy val spark = (project in file("spark-unified"))
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
+      // JUnit Jupiter (JUnit 5) for spark-unified Java tests
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.catalog;
 import io.delta.kernel.spark.table.SparkTable;
 import org.apache.spark.sql.delta.DeltaDsv2EnableConf;
 import java.util.HashMap;
+import java.util.function.Supplier;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -63,39 +64,39 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
 
   @Override
   public Table newDeltaCatalogBasedTable(Identifier ident, CatalogTable catalogTable) {
-    SparkSession spark = spark();
-    String mode = spark.conf().get(
-        DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key(),
-        DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.defaultValueString());
-
-    switch (mode.toUpperCase()) {
-      case "STRICT":
-        return loadCatalogBasedDsv2Table(ident, catalogTable);
-      default:
-        return super.newDeltaCatalogBasedTable(ident, catalogTable);
-    }
+    return createBasedOnDsv2Mode(
+        () -> new SparkTable(ident, catalogTable, new HashMap<>()),
+        () -> super.newDeltaCatalogBasedTable(ident, catalogTable));
   }
 
   @Override
   public Table newDeltaPathTable(Identifier ident) {
-    SparkSession spark = spark();
-    String mode = spark.conf().get(
-        DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key(),
-        DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.defaultValueString());
+    return createBasedOnDsv2Mode(
+        () -> new SparkTable(ident, ident.name()),
+        () -> super.newDeltaPathTable(ident));
+  }
 
+  /**
+   * Create table based on DataSourceV2 enable mode configuration.
+   *
+   * @param dsv2ConnectorSupplier Function to call when in STRICT mode (uses Kernel SparkTable)
+   * @param v1ConnectorSupplier Function to call in default mode (uses V1 DeltaTableV2)
+   * @return Table instance from the appropriate supplier
+   */
+  private Table createBasedOnDsv2Mode(
+      Supplier<Table> dsv2ConnectorSupplier,
+      Supplier<Table> v1ConnectorSupplier) {
+    String mode =
+        spark()
+            .conf()
+            .get(
+                DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key(),
+                DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.defaultValueString());
     switch (mode.toUpperCase()) {
       case "STRICT":
-        return loadPathBasedDsv2Table(ident);
+        return dsv2ConnectorSupplier.get();
       default:
-        return super.newDeltaPathTable(ident);
+        return v1ConnectorSupplier.get();
     }
-  }
-
-  private Table loadCatalogBasedDsv2Table(Identifier ident, CatalogTable catalogTable) {
-    return new SparkTable(ident, catalogTable, new HashMap<>());
-  }
-
-  private Table loadPathBasedDsv2Table(Identifier ident) {
-    return new SparkTable(ident, ident.name());
   }
 }

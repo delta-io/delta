@@ -18,8 +18,8 @@ package org.apache.spark.sql.delta;
 
 import java.util.Arrays;
 import java.util.HashSet;
-import org.apache.spark.internal.config.ConfigBuilder;
 import org.apache.spark.internal.config.ConfigEntry;
+import org.apache.spark.sql.internal.SQLConf;
 import scala.jdk.javaapi.CollectionConverters;
 
 /**
@@ -29,9 +29,8 @@ import scala.jdk.javaapi.CollectionConverters;
  * independent evolution of the DSv2 feature.
  *
  * <p>Note: This class uses {@code package org.apache.spark.sql.delta} (not {@code
- * io.delta.kernel.spark}) to access Spark's internal config API ({@link
- * org.apache.spark.internal.config.ConfigBuilder}), which is only accessible from {@code
- * org.apache.spark.*} packages.
+ * io.delta.kernel.spark}) to access Spark's internal config API ({@link SQLConf#buildConf}), which
+ * is only accessible from {@code org.apache.spark.*} packages.
  */
 public class DeltaDsv2EnableConf {
 
@@ -51,7 +50,7 @@ public class DeltaDsv2EnableConf {
    * <p>Default value: "AUTO"
    */
   public static final ConfigEntry<String> DATASOURCEV2_ENABLE_MODE =
-      new ConfigBuilder(SQL_CONF_PREFIX + ".datasourcev2.enableMode")
+      SQLConf.buildConf(SQL_CONF_PREFIX + ".datasourcev2.enableMode")
           .doc(
               "Controls the DataSourceV2 enable mode. "
                   + "Valid values: NONE (disabled), STRICT (always enabled), AUTO (automatic determination).")
