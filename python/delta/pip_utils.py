@@ -74,8 +74,27 @@ See the online documentation for the correct usage of this function.
         '''
         raise Exception(msg) from e
 
+    # Get Spark version from pyspark module
+    import pyspark
+    spark_version = pyspark.__version__
+
     scala_version = "2.13"
-    maven_artifact = f"io.delta:delta-spark_{scala_version}:{delta_version}"
+
+    # Determine the artifact name based on Spark version
+    # NOTE: When updating LATEST_RELEASED_SPARK_VERSION in project/CrossSparkVersions.scala,
+    # also update the version check here to match the new latest version.
+    latest_released_spark_version_prefix = "3.5."
+
+    artifact_name = f"delta-spark_{scala_version}"
+
+    if spark_version:
+        spark_major_minor = ".".join(spark_version.split(".")[:2])  # e.g., "3.5" or "4.0"
+
+        # If not the latest released Spark version, add Spark version to artifact name
+        if not spark_version.startswith(latest_released_spark_version_prefix):
+            artifact_name = f"delta-spark_{spark_major_minor}_{scala_version}"
+
+    maven_artifact = f"io.delta:{artifact_name}:{delta_version}"
 
     extra_packages = extra_packages if extra_packages is not None else []
     all_artifacts = [maven_artifact] + extra_packages
