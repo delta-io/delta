@@ -181,6 +181,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         throw DeltaErrors.deltaCannotVacuumManagedTable()
       }
 
+      // By default, we will do full vacuum unless LITE vacuum conf is set
+      val isLiteVacuumEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.LITE_VACUUM_ENABLED)
+      val defaultType = if (isLiteVacuumEnabled) VacuumType.LITE else VacuumType.FULL
+      val vacuumType = vacuumTypeOpt.map(VacuumType.withName).getOrElse(defaultType)
 
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.flatMap { h =>
@@ -235,10 +239,6 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
       val shouldIcebergMetadataDirBeHidden = UniversalFormat.icebergEnabled(snapshot.metadata)
-      // By default, we will do full vacuum unless LITE vacuum conf is set
-      val isLiteVacuumEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.LITE_VACUUM_ENABLED)
-      val defaultType = if (isLiteVacuumEnabled) VacuumType.LITE else VacuumType.FULL
-      val vacuumType = vacuumTypeOpt.map(VacuumType.withName).getOrElse(defaultType)
       val latestCommitVersionOutsideOfRetentionWindowOpt: Option[Long] =
         if (vacuumType == VacuumType.LITE) {
           try {
