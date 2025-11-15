@@ -1399,6 +1399,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (!RedirectFeature.isFeatureSupported(snapshot)) return
     // If this transaction tried to unset redirect feature, then skips validation.
     if (RedirectFeature.isUpdateProperty(snapshot, op)) return
+    // If this transaction tried to drop redirect feature, then skips validation.
+    if (RedirectFeature.isDropFeature(op)) return
     // Get the redirect configuration from current snapshot.
     val redirectConfigOpt = RedirectFeature.getRedirectConfiguration(snapshot)
     redirectConfigOpt.foreach { redirectConfig =>
