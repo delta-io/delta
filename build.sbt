@@ -596,17 +596,21 @@ lazy val spark = (project in file("spark-unified"))
     // Set Test baseDirectory before crossSparkSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
-    // Test sources from spark/ directory (sparkV1's directory)
+    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory
     // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
+      val unifiedDir = baseDirectory.value
       Seq(
         sparkDir / "src" / "test" / "scala",
-        sparkDir / "src" / "test" / "java"
+        sparkDir / "src" / "test" / "java",
+        unifiedDir / "src" / "test" / "scala",
+        unifiedDir / "src" / "test" / "java"
       )
     },
     Test / unmanagedResourceDirectories := Seq(
-      (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
+      (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
+      baseDirectory.value / "src" / "test" / "resources"
     ),
 
     crossSparkSettings(),

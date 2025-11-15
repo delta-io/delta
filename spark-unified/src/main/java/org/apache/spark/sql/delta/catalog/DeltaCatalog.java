@@ -16,6 +16,15 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.kernel.spark.table.SparkTable;
+import org.apache.spark.sql.delta.DeltaDsv2EnableConf;
+import java.util.HashMap;
+import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.Table;
+
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
  *
@@ -51,4 +60,42 @@ package org.apache.spark.sql.delta.catalog;
  * </ul>
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
+
+  @Override
+  public Table newDeltaCatalogBasedTable(Identifier ident, CatalogTable catalogTable) {
+    SparkSession spark = spark();
+    String mode = spark.conf().get(
+        DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key(),
+        DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.defaultValueString());
+
+    switch (mode.toUpperCase()) {
+      case "STRICT":
+        return loadCatalogBasedDsv2Table(ident, catalogTable);
+      default:
+        return super.newDeltaCatalogBasedTable(ident, catalogTable);
+    }
+  }
+
+  @Override
+  public Table newDeltaPathTable(Identifier ident) {
+    SparkSession spark = spark();
+    String mode = spark.conf().get(
+        DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key(),
+        DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.defaultValueString());
+
+    switch (mode.toUpperCase()) {
+      case "STRICT":
+        return loadPathBasedDsv2Table(ident);
+      default:
+        return super.newDeltaPathTable(ident);
+    }
+  }
+
+  private Table loadCatalogBasedDsv2Table(Identifier ident, CatalogTable catalogTable) {
+    return new SparkTable(ident, catalogTable, new HashMap<>());
+  }
+
+  private Table loadPathBasedDsv2Table(Identifier ident) {
+    return new SparkTable(ident, ident.name());
+  }
 }
