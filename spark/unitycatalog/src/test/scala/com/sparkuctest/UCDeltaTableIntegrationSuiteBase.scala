@@ -40,6 +40,49 @@ abstract class UCDeltaTableIntegrationSuiteBase
    * Must be implemented by subclasses to provide the execution engine.
    */
   protected def sqlExecutor: UCDeltaTableIntegrationSuiteBase.SQLExecutor
+
+  /**
+   * Convenience method for sqlExecutor.runSQL - executes SQL and returns results.
+   */
+  protected def sql(sqlQuery: String): Seq[Seq[String]] = sqlExecutor.runSQL(sqlQuery)
+
+  /**
+   * Convenience method for sqlExecutor.checkTable - verifies table contents.
+   */
+  protected def check(tableName: String, expected: Seq[Seq[String]]): Unit = {
+    sqlExecutor.checkTable(tableName, expected)
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param schema The table schema (e.g., "id INT, name STRING")
+   * @param testCode The test function that receives the full table name
+   */
+  protected def withNewTable(tableName: String, schema: String)
+                            (testCode: String => Unit): Unit = {
+    withTempDir { dir =>
+      val tablePath = new java.io.File(dir, tableName).getAbsolutePath
+      val fullTableName = s"$unityCatalogName.default.$tableName"
+
+      // Create the table
+      sql(s"""
+        CREATE TABLE $fullTableName (
+          $schema
+        ) USING DELTA
+        LOCATION '$tablePath'
+      """)
+
+      try {
+        // Run the test code with the full table name
+        testCode(fullTableName)
+      } finally {
+        // Clean up the table
+        spark.sql(s"DROP TABLE IF EXISTS $fullTableName")
+      }
+    }
+  }
 }
 
 /**
