@@ -697,6 +697,60 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
+lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
+  .settings(
+    name := "delta-spark-unitycatalog",
+    commonSettings,
+    scalaStyleSettings,
+    skipReleaseSettings,
+    crossSparkSettings(),
+
+    // This is a test-only module - no production sources
+    Compile / sources := Seq.empty,
+
+    Test / javaOptions ++= Seq("-ea"),
+
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    Test / parallelExecution := false,
+
+    libraryDependencies ++= Seq(
+      // Unity Catalog dependencies - matching UC's own spark connector config
+      "io.unitycatalog" %% "unitycatalog-spark" % "0.3.0" % "test",
+      "io.unitycatalog" % "unitycatalog-client" % "0.3.0" % "test",
+      
+      // Standard test dependencies
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "junit" % "junit" % "4.13.2" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+
+      // Spark test dependencies
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+    ),
+
+    // Add Unity Catalog server-shaded JAR for tests (with all dependencies shaded)
+    // This JAR is built from local Unity Catalog repository
+    Test / unmanagedJars += {
+      val ucServerShadedJar = file("/Users/tdas/Projects/unitycatalog/server-shaded/target") / 
+        "unitycatalog-server-shaded-assembly-0.3.0-SNAPSHOT.jar"
+      if (!ucServerShadedJar.exists()) {
+        throw new RuntimeException(
+          s"Unity Catalog server-shaded JAR not found at ${ucServerShadedJar}. " +
+          "Please build it first by running: cd /Users/tdas/Projects/unitycatalog && build/sbt serverShaded/assembly"
+        )
+      }
+      ucServerShadedJar
+    },
+
+    Test / testOptions += Tests.Argument("-oDF"),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+  )
+
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -1502,7 +1556,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
