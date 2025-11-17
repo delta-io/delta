@@ -134,7 +134,9 @@ public class ProtocolMetadataLogReplay {
 
         if (protocol == null) {
           columnarBatch = nextElem.getColumnarBatch();
-          assert (columnarBatch.getSchema().equivalentIgnoreCollations(PROTOCOL_METADATA_READ_SCHEMA));
+          assert (columnarBatch
+              .getSchema()
+              .equivalentIgnoreCollations(PROTOCOL_METADATA_READ_SCHEMA));
 
           final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
 
@@ -155,7 +157,9 @@ public class ProtocolMetadataLogReplay {
         if (metadata == null) {
           if (columnarBatch == null) {
             columnarBatch = nextElem.getColumnarBatch();
-            assert (columnarBatch.getSchema().equivalentIgnoreCollations(PROTOCOL_METADATA_READ_SCHEMA));
+            assert (columnarBatch
+                .getSchema()
+                .equivalentIgnoreCollations(PROTOCOL_METADATA_READ_SCHEMA));
           }
           final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
 
