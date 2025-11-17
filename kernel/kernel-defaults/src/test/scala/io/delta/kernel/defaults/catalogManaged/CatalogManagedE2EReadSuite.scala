@@ -344,6 +344,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         org.apache.commons.io.FileUtils.copyDirectory(
           new java.io.File(resourceTablePath),
           tempDir)
+
         // "Publish" v1 and v2 (we do both to maintain ordered backfill)
         val deltaLogPath = new Path(tempDir.getPath, "_delta_log")
         val stagedCommitPath = new Path(deltaLogPath, "_staged_commits")
@@ -356,30 +357,34 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           org.apache.commons.io.FileUtils.copyFile(stagedCommitFile, publishedCommitFile)
         }
 
-        // Try to read the table with maxCatalogVersion = 1 (no parsedLogData)
-        {
-          val snapshot = TableManager
-            .loadSnapshot(tempDir.getPath)
-            .withMaxCatalogVersion(1)
-            .build(defaultEngine)
-          assert(snapshot.getVersion == 1)
+        def convertResourceLogData(logData: ParsedLogData): ParsedLogData = {
+          val path = new Path(stagedCommitPath, new Path(logData.getFileStatus.getPath).getName)
+          ParsedLogData.forFileStatus(FileStatus.of(
+            defaultEngine.getFileSystemClient.resolvePath(path.toString)))
         }
 
-        // Try to read the table with maxCatalogVersion = 1 (with parsedLogData)
-        {
-          def convertResourceLogData(logData: ParsedLogData): ParsedLogData = {
-            val path = new Path(stagedCommitPath, new Path(logData.getFileStatus.getPath).getName)
-            ParsedLogData.forFileStatus(FileStatus.of(
-              defaultEngine.getFileSystemClient.resolvePath(path.toString)))
+        Seq(0, 1, 2).foreach { maxCatalogVersion =>
+          {
+            // Try to read the table with no parsedLogData
+            val snapshot = TableManager
+              .loadSnapshot(tempDir.getPath)
+              .withMaxCatalogVersion(maxCatalogVersion)
+              .build(defaultEngine)
+            assert(snapshot.getVersion == maxCatalogVersion)
+
           }
-          val snapshot = TableManager
-            .loadSnapshot(tempDir.getPath)
-            .withMaxCatalogVersion(1)
-            .withLogData(resourceLogData
-              .filter(_.getVersion == 1)
-              .map(convertResourceLogData).asJava)
-            .build(defaultEngine)
-          assert(snapshot.getVersion == 1)
+          {
+            // Try to read the table with parsedLogData
+            val parsedLogData = resourceLogData
+              .filter(_.getVersion <= maxCatalogVersion)
+              .map(convertResourceLogData)
+            val snapshot = TableManager
+              .loadSnapshot(tempDir.getPath)
+              .withMaxCatalogVersion(maxCatalogVersion)
+              .withLogData(parsedLogData.asJava)
+              .build(defaultEngine)
+            assert(snapshot.getVersion == maxCatalogVersion)
+          }
         }
       }
     }

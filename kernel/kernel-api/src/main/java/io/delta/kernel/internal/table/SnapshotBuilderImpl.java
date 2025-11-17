@@ -183,6 +183,11 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
   }
 
+  /**
+   * For catalog managed tables we cannot time-travel to a version after the max catalog version. We
+   * also require that the latestSnapshot provided for timestamp-based queries has the max catalog
+   * version.
+   */
   private void validateMaxCatalogVersionCompatibleWithTimeTravelParams() {
     ctx.maxCatalogVersion.ifPresent(
         maxVersion -> {
@@ -202,6 +207,13 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
         });
   }
 
+  /**
+   * When a catalog implementation has provided catalog commits we require that they provide up to
+   * and including the version that we will load (which for a latest query is the max catalog
+   * version, and for a time-travel-by-version query is the version to load). This is to validate
+   * that the catalog has queried and provided sufficient catalog commits to correctly read the
+   * table.
+   */
   private void validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad() {
     ctx.maxCatalogVersion.ifPresent(
         maxVersion -> {
