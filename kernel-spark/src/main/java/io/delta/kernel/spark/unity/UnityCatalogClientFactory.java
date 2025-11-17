@@ -40,7 +40,7 @@ public final class UnityCatalogClientFactory {
   private UnityCatalogClientFactory() {}
 
   private static volatile BiFunction<String, String, UCClient> clientBuilder =
-      UCTokenBasedRestClient::new;
+      UnityCatalogClientFactory::defaultClientBuilder;
 
   /**
    * Creates a Unity Catalog client for the provided catalog table if it is Unity Catalog managed.
@@ -273,6 +273,15 @@ public final class UnityCatalogClientFactory {
 
   /** Visible for testing: reset the UC client builder to the default implementation. */
   public static void resetClientBuilderForTesting() {
-    clientBuilder = UCTokenBasedRestClient::new;
+    clientBuilder = UnityCatalogClientFactory::defaultClientBuilder;
+  }
+
+  private static UCClient defaultClientBuilder(String uri, String token) {
+    try {
+      return new UCTokenBasedRestClient(uri, token);
+    } catch (NoClassDefFoundError e) {
+      throw new IllegalStateException(
+          "Unity Catalog client requires Apache HttpClient dependencies on the classpath.", e);
+    }
   }
 }
