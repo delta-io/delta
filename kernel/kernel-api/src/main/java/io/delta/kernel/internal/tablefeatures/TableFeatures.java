@@ -842,6 +842,6 @@ public class TableFeatures {
    */
   private static boolean hasTypeColumn(StructType tableSchema, DataType type) {
     return new SchemaIterable(tableSchema)
-        .stream().anyMatch(element -> element.getField().getDataType().equals(type));
+        .stream().anyMatch(element -> element.getField().getDataType().equivalentIgnoreCollationss(type));
   }
 }
