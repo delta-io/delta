@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks.models;
+package io.delta.kernel.benchmarks.models;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.delta.kernel.defaults.benchmarks.workloadrunners.WorkloadRunner;
-import io.delta.kernel.defaults.benchmarks.workloadrunners.WriteRunner;
+import io.delta.kernel.benchmarks.workloadrunners.WorkloadRunner;
+import io.delta.kernel.benchmarks.workloadrunners.WriteRunner;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.statistics.DataFileStatistics;

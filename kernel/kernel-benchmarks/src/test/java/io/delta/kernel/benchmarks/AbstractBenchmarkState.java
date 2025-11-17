@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.benchmarks;
 
-import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
-import io.delta.kernel.defaults.benchmarks.workloadrunners.WorkloadRunner;
+import io.delta.kernel.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.benchmarks.workloadrunners.WorkloadRunner;
 import io.delta.kernel.engine.*;
 import org.openjdk.jmh.annotations.*;
 

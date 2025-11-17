@@ -200,6 +200,10 @@ object SuiteGeneratorConfig {
       dimensionCombinations.toList.map(dims ::: _)
     }
 
+    def prependToAll(dimensionCombinations: List[List[Dimension]]): List[List[Dimension]] = {
+      prependToAll(dimensionCombinations: _*)
+    }
+
     // Continued DSL from the Dimension class above to work around the different
     // operator precedence between :: and `and`.
     def and(other: Dimension): List[Dimension] = dims ::: other :: Nil

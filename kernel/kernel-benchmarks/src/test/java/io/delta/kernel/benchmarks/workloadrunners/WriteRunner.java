@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks.workloadrunners;
+package io.delta.kernel.benchmarks.workloadrunners;
 
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.*;
+import io.delta.kernel.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.benchmarks.models.WriteSpec;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
-import io.delta.kernel.defaults.benchmarks.models.WriteSpec;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
