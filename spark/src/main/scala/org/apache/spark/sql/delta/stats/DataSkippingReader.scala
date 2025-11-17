@@ -583,12 +583,14 @@ trait DataSkippingReaderBase
         // The result of an AND is only Null if either operand is a Null, and the other operand is
         // True.
         constructDataFilters(
-          Or(
-            Or(
-              And(left, IsNull(right)),
-              And(right, IsNull(left))
-            ),
-            And(IsNull(left), IsNull(right))
+          And(
+            Or(IsNull(left), IsNull(right)),
+            Not(
+              Or(
+                EqualNullSafe(left, FalseLiteral),
+                EqualNullSafe(right, FalseLiteral)
+              )
+            )
           ),
           isNullExpansionDepth = isNullExpansionDepth + 1
         )
@@ -598,12 +600,14 @@ trait DataSkippingReaderBase
         // The result of an OR is only Null if either operand is a Null, _and_ neither operand is
         // true.
         constructDataFilters(
-          Or(
-            Or(
-              And(Not(left), IsNull(right)),
-              And(Not(right), IsNull(left))
-            ),
-            And(IsNull(left), IsNull(right))
+          And(
+            Or(IsNull(left), IsNull(right)),
+            Not(
+              Or(
+                EqualNullSafe(left, TrueLiteral),
+                EqualNullSafe(right, TrueLiteral)
+              )
+            )
           ),
           isNullExpansionDepth = isNullExpansionDepth + 1
         )
