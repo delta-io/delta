@@ -262,7 +262,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assert(getMaxFieldId(engine, tablePath) == 2)
+      assert(getMaxFieldId(engine, tablePath) == 3)
     }
   }
 
@@ -363,10 +363,10 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       val updatedInnerStruct = updatedSchema.get("b").getDataType.asInstanceOf[StructType]
       assertColumnMapping(updatedInnerStruct.get("d"), 3)
       assertColumnMapping(updatedInnerStruct.get("e"), 4)
-      assertColumnMapping(updatedInnerStruct.get("s"), 6)
+      assertColumnMapping(updatedInnerStruct.get("s"), 5)
       val nestedSType = updatedInnerStruct.get("s").getDataType.asInstanceOf[StringType]
       assert(nestedSType.getCollationIdentifier == utf8Lcase)
-      assertColumnMapping(updatedSchema.get("c"), 5)
+      assertColumnMapping(updatedSchema.get("c"), 6)
 
       // Verify the top level and nested field reordering is maintained
       val topLevelFields = updatedSchema.fieldNames().asScala
@@ -401,6 +401,47 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
         .add(
           "map",
           new MapType(StringType.STRING, StringType.STRING, false),
+          true,
+          fieldMetadataForMapColumn(4, "map", "map", 5, 6))
+
+      updateTableMetadata(engine, tablePath, newSchema)
+
+      val structType = table.getLatestSnapshot(engine).getSchema
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("arr"), 2, "arr")
+      assertColumnMapping(structType.get("map"), 4, "map")
+      assert(structType.get("arr").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
+        == FieldMetadata.builder().putLong("arr.element", 3).build())
+      assert(structType.get("map").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
+        == FieldMetadata.builder().putLong("map.key", 5).putLong("map.value", 6).build())
+    }
+  }
+
+  test("Updating schema with adding an array and map type with collated strings") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", IntegerType.INTEGER, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", IntegerType.INTEGER, true, currentSchema.get("a").getMetadata)
+        .add(
+          "arr",
+          new ArrayType(new StringType(utf8Lcase), false),
+          true,
+          fieldMetadataForArrayColumn(2, "arr", "arr", 3))
+        .add(
+          "map",
+          new MapType(new StringType(utf8Lcase), new StringType(utf8Lcase), false),
           true,
           fieldMetadataForMapColumn(4, "map", "map", 5, 6))
 
@@ -606,6 +647,42 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       val actualSchema = snapshot.getSchema
 
       assert(expectedSchema == actualSchema)
+    }
+  }
+
+  test("Renaming collated clustering columns") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("clustering-col", new StringType(utf8Lcase), true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        clusteringColsOpt = Some(List(new Column("clustering-col"))),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val expectedSchema = new StructType()
+        .add(
+          "renamed-clustering-col",
+          new StringType(utf8Lcase),
+          true,
+          currentSchema.get("clustering-col").getMetadata)
+
+      updateTableMetadata(engine, tablePath, expectedSchema)
+
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val actualSchema = snapshot.getSchema
+
+      assert(expectedSchema == actualSchema)
+
+      val renamedType =
+        actualSchema.get("renamed-clustering-col").getDataType.asInstanceOf[StringType]
+      assert(renamedType.getCollationIdentifier == utf8Lcase)
     }
   }
 
@@ -1266,7 +1343,12 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       val currentSchema = table.getLatestSnapshot(engine).getSchema
       val newSchema = new StructType()
-        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add(
+          "a",
+          StringType.STRING,
+          true,
+          currentSchema.get("a").getMetadata
+        ) // currentSchema.get("p").getMetadata
         .add("q", new StringType(utf8Lcase), true, currentSchema.get("p").getMetadata)
 
       assertSchemaEvolutionFails[IllegalArgumentException](
