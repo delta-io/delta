@@ -191,7 +191,7 @@ public class PartitionUtils {
                   partColName);
               DataType partColType = partColField.getDataType();
 
-              if (!partColType.equivalent(partValue.getDataType())) {
+              if (!partColType.equivalentIgnoreCollations(partValue.getDataType())) {
                 throw new IllegalArgumentException(
                     String.format(
                         "Partition column %s is of type %s but the value provided is of type %s",
