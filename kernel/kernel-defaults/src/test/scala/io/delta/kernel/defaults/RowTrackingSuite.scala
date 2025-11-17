@@ -193,7 +193,9 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
     }
   }
 
-  test("RowTracking.isEnabled - throws exception when enabled in metadata but not supported by protocol") {
+  test(
+    "RowTracking.isEnabled - throws exception when enabled in metadata but not " +
+      "supported by protocol") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create a table without row tracking support
       createEmptyTable(engine, tablePath, testSchema)
