@@ -74,33 +74,40 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
           val newResolvedTable = ResolvedTable(catalog, identifier, sparkTable, attrs)
 
           // Return updated StreamingRelationV2 with SparkTable
-          StreamingRelationV2(source, sourceName, newResolvedTable, extraOptions, output, v1Relation)
+          StreamingRelationV2(
+            source, sourceName, newResolvedTable, extraOptions, output, v1Relation)
 
         } catch {
           case e: Exception =>
             // If replacement fails, log warning and fall back to default (V1)
-            logWarning(s"Failed to replace HybridDeltaTable with SparkTable for streaming source $identifier, " +
-              s"falling back to V1: ${e.getMessage}", e)
+            logWarning(
+              s"Failed to replace HybridDeltaTable with SparkTable for streaming source " +
+              s"$identifier, falling back to V1: ${e.getMessage}", e)
             streamingRel
         }
 
-      // Case 2: Batch/write operations → Replace HybridDeltaTable with DeltaTableV2 (V1)
+      // Case 2: Batch/write operations - Replace HybridDeltaTable with DeltaTableV2 (V1)
       // This matches DataSourceV2Relation which is what batch reads create
-      case dsv2 @ DataSourceV2Relation(hybridTable: HybridDeltaTable, output, catalog, identifier, options) =>
+      case dsv2 @ DataSourceV2Relation(
+          hybridTable: HybridDeltaTable, output, catalog, identifier, options) =>
         try {
-          logInfo(s"Replacing HybridDeltaTable with DeltaTableV2 for batch/write operation: $identifier")
+          logInfo(
+            s"Replacing HybridDeltaTable with DeltaTableV2 for batch/write operation: " +
+            s"$identifier")
 
           // Get the DeltaTableV2 (V1) from hybrid
           val v1Table = hybridTable.getUnderlyingDeltaTableV2()
 
           // Return DataSourceV2Relation with plain DeltaTableV2
-          // This allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert to LogicalRelation (V1)
+          // This allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert
+          // to LogicalRelation (V1)
           DataSourceV2Relation(v1Table, output, catalog, identifier, options)
 
         } catch {
           case e: Exception =>
             // If replacement fails, log warning and keep hybrid (will default to V1)
-            logWarning(s"Failed to replace HybridDeltaTable with DeltaTableV2 for $identifier, " +
+            logWarning(
+              s"Failed to replace HybridDeltaTable with DeltaTableV2 for $identifier, " +
               s"keeping hybrid: ${e.getMessage}", e)
             dsv2
         }

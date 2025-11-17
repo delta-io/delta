@@ -2860,7 +2860,6 @@ trait DeltaSQLConfBase {
   ///////////////////
   // KERNEL STREAMING
   ///////////////////
-  
   val DELTA_KERNEL_STREAMING_ENABLED =
     buildConf("kernel.streaming.enabled")
       .internal()

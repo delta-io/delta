@@ -91,18 +91,17 @@ class HybridDeltaTable(
 
   override def capabilities(): java.util.Set[TableCapability] = {
     // Add MICRO_BATCH_READ capability to enable StreamingRelationV2 creation
-    // This capability is required for Spark to create StreamingRelationV2 instead of StreamingRelation
+    // This capability is required for Spark to create StreamingRelationV2 instead of
+    // StreamingRelation
     val v1Caps = v1Table.capabilities().asScala.toSet
     val hybridCaps = v1Caps + TableCapability.MICRO_BATCH_READ
     hybridCaps.asJava
   }
-  
   /**
    * Returns the underlying DeltaTableV2 for cases where we need to use V1
    * (e.g., for batch operations before DeltaAnalysis).
    */
   def getUnderlyingDeltaTableV2(): DeltaTableV2 = v1Table
-  
   /**
    * Returns the SparkTable for cases where we want to use V2
    * (e.g., for streaming reads).

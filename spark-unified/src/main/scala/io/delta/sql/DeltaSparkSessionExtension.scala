@@ -44,7 +44,6 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
   override def apply(extensions: SparkSessionExtensions): Unit = {
     // First apply the base extensions from AbstractDeltaSparkSessionExtension
     super.apply(extensions)
-    
     // Register the analyzer rule for kernel-based streaming
     // This rule wraps HybridDeltaTable with context hint for streaming queries
     extensions.injectResolutionRule { session =>
