@@ -5,7 +5,7 @@ jobs:
     name: "Delta Unity Tests"
     runs-on: ubuntu-24.04
     env:
-      SCALA_VERSION: 2.12.18
+      SCALA_VERSION: 2.13.16
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4

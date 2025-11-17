@@ -21,7 +21,9 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.Operation
 import io.delta.kernel.Snapshot
+import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.storage.commit.Commit
 import io.delta.unity.InMemoryUCClient.TableData
@@ -110,6 +112,48 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       assert(snapshotV3.getVersion === 3)
       assert(logSegmentV3.getAllCatalogCommits.asScala.map(x => x.getVersion) === Seq(3))
       assert(logSegmentV3.getMaxPublishedDeltaVersion.get() === 2)
+    }
+  }
+
+  test("can load snapshot for table with CRC files for unpublished versions") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      // ===== GIVEN =====
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+      // CREATE -- v0.json
+      val result0 = ucCatalogManagedClient
+        .buildCreateTableTransaction("ucTableId", tablePath, testSchema, "test-engine")
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+      val tableData0 = new TableData(-1, ArrayBuffer[Commit]())
+      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData0)
+
+      var currentSnapshot = result0.getPostCommitSnapshot.get()
+
+      // INSERT -- Empty commits with CRC generation
+      for (_ <- 1 to 3) {
+        val txn = currentSnapshot
+          .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
+          .build(engine)
+        val result = txn.commit(engine, CloseableIterable.emptyIterable())
+        currentSnapshot = result.getPostCommitSnapshot.get()
+        currentSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
+      }
+
+      // ===== WHEN =====
+      val freshSnapshot = loadSnapshot(ucCatalogManagedClient, engine, "ucTableId", tablePath)
+
+      // ===== THEN =====
+      val logSegment = freshSnapshot.getLogSegment
+
+      assert(freshSnapshot.getVersion === 3)
+      assert(logSegment.getAllCatalogCommits.asScala.map(_.getVersion) === Seq(1, 2, 3))
+      assert(logSegment.getMaxPublishedDeltaVersion.get() === 0)
+
+      val checksumVersion = FileNames.checksumVersion(logSegment.getLastSeenChecksum.get.getPath)
+      assert(checksumVersion === 3)
     }
   }
 }

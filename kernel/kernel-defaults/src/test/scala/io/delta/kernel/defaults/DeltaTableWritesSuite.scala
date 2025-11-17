@@ -19,8 +19,8 @@ import java.io.File
 import java.nio.file.Files
 import java.util.{Locale, Optional}
 
-import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
+import scala.jdk.CollectionConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
@@ -37,6 +37,7 @@ import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElemen
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
 import io.delta.kernel.types.ByteType.BYTE
@@ -700,7 +701,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val schema = if (includeTimestampNtz) goldenTableSchema
         else removeTimestampNtzTypeColumns(goldenTableSchema)
 
-        val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+        val data = readTableUsingKernel(engine, parquetAllTypes, schema).toSeq
         val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
 
         appendData(engine, tblPath, isNewTable = true, schema, data = dataWithPartInfo)
@@ -748,7 +749,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           "dateType",
           "timestampType") ++ (if (includeTimestampNtz) Seq("timestampNtzType") else Seq.empty)
         val casePreservingPartCols =
-          casePreservingPartitionColNames(schema, partCols.asJava).asScala.to[Seq]
+          casePreservingPartitionColNames(schema, partCols.asJava).asScala.toSeq
 
         // get the partition values from the data batch at the given rowId
         def getPartitionValues(batch: ColumnarBatch, rowId: Int): Map[String, Literal] = {
@@ -782,7 +783,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           }.toMap
         }
 
-        val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+        val data = readTableUsingKernel(engine, parquetAllTypes, schema).toSeq
 
         // From the above table read data, convert each row as a new batch with partition info
         // Take the values of the partitionCols from the data and create a new batch with the
@@ -1143,7 +1144,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // we need to compare stats after removing the tightBounds field from Kernel stats
       val kernelStatsWithoutTightBounds = kernelStats.map { node =>
         val objectNode =
-          node.deepCopy().asInstanceOf[com.fasterxml.jackson.databind.node.ObjectNode]
+          node.deepCopy().asInstanceOf[ObjectNode]
         objectNode.remove("tightBounds")
         objectNode
       }

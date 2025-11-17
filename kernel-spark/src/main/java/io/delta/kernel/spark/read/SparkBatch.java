@@ -66,7 +66,7 @@ public class SparkBatch implements Batch {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf) {
 
-    this.tablePath = Objects.requireNonNull(tablePath, "tableName is null");
+    this.tablePath = Objects.requireNonNull(tablePath, "tablePath is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -127,6 +127,7 @@ public class SparkBatch implements Batch {
     SparkBatch that = (SparkBatch) obj;
     return Objects.equals(this.tablePath, that.tablePath)
         && Objects.equals(this.readDataSchema, that.readDataSchema)
+        && Objects.equals(this.dataSchema, that.dataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
         && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
         && Arrays.equals(this.dataFilters, that.dataFilters)
@@ -137,6 +138,7 @@ public class SparkBatch implements Batch {
   public int hashCode() {
     int result = tablePath.hashCode();
     result = 31 * result + readDataSchema.hashCode();
+    result = 31 * result + dataSchema.hashCode();
     result = 31 * result + partitionSchema.hashCode();
     result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
     result = 31 * result + Arrays.hashCode(dataFilters);
@@ -152,7 +154,9 @@ public class SparkBatch implements Batch {
     int minPartitionNum =
         minPartitionNumOption.isDefined()
             ? ((Number) minPartitionNumOption.get()).intValue()
-            : sparkSession.leafNodeDefaultParallelism();
+            : sqlConf
+                .getConf(SQLConf.LEAF_NODE_DEFAULT_PARALLELISM())
+                .getOrElse(() -> sparkSession.sparkContext().defaultParallelism());
     if (minPartitionNum <= 0) {
       minPartitionNum = 1;
     }

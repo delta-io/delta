@@ -148,6 +148,12 @@ object SuiteGeneratorConfig {
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
+    val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE = DimensionWithMultipleValues(
+      "StructEvolutionPreserveNullSource",
+      List("Disabled", "Enabled"), alias = Some("PreserveNullSource"))
+    val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE_UPDATE_STAR = DimensionWithMultipleValues(
+      "StructEvolutionPreserveNullSourceUpdateStar",
+      List("Disabled", "Enabled"), alias = Some("PreserveNullSourceUpdateStar"))
   }
 
   private object Tests {
@@ -163,11 +169,13 @@ object SuiteGeneratorConfig {
       "MergeIntoNotMatchedBySourceCDCPart1Tests",
       "MergeIntoNotMatchedBySourceCDCPart2Tests",
       "MergeIntoSchemaEvolutionCoreTests",
-      "MergeIntoSchemaEvolutionBaseTests",
+      "MergeIntoSchemaEvolutionBaseNewColumnTests",
+      "MergeIntoSchemaEvolutionBaseExistingColumnTests",
       "MergeIntoSchemaEvoStoreAssignmentPolicyTests",
       "MergeIntoSchemaEvolutionNotMatchedBySourceTests",
       "MergeIntoNestedStructInMapEvolutionTests",
-      "MergeIntoNestedStructEvolutionTests"
+      "MergeIntoNestedStructEvolutionUpdateOnlyTests",
+      "MergeIntoNestedStructEvolutionInsertTests"
     )
     val MERGE_SQL = List(
       "MergeIntoSQLTests",
@@ -190,6 +198,10 @@ object SuiteGeneratorConfig {
      */
     def prependToAll(dimensionCombinations: List[Dimension]*): List[List[Dimension]] = {
       dimensionCombinations.toList.map(dims ::: _)
+    }
+
+    def prependToAll(dimensionCombinations: List[List[Dimension]]): List[List[Dimension]] = {
+      prependToAll(dimensionCombinations: _*)
     }
 
     // Continued DSL from the Dimension class above to work around the different
@@ -245,6 +257,21 @@ object SuiteGeneratorConfig {
           List(Dims.NAME_BASED, Dims.COLUMN_MAPPING).prependToAll(
             List(),
             List(Dims.CDC, Dims.MERGE_ROW_TRACKING_DV)
+          )
+        ),
+        TestConfig(
+          "MergeIntoTopLevelStructEvolutionNullnessTests" ::
+            "MergeIntoNestedStructEvolutionNullnessTests" ::
+            "MergeIntoTopLevelArrayStructEvolutionNullnessTests" ::
+            "MergeIntoNestedArrayStructEvolutionNullnessTests" ::
+            "MergeIntoTopLevelMapStructEvolutionNullnessTests" ::
+            "MergeIntoNestedMapStructEvolutionNullnessTests" :: Nil,
+          List(
+            List(
+              Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional,
+              Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE,
+              Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE_UPDATE_STAR
+            )
           )
         )
       )
@@ -321,6 +348,20 @@ object SuiteGeneratorConfig {
             List(Dims.CDC.asOptional, Dims.PERSISTENT_DV),
             List(Dims.PERSISTENT_DV_OFF, Dims.COLUMN_MAPPING),
             List(Dims.CDC, Dims.PERSISTENT_DV_ON, Dims.COLUMN_MAPPING)
+          )
+        )
+      )
+    ),
+    TestGroup(
+      name = "InsertSuites",
+      imports = List(
+        importer"org.apache.spark.sql.delta._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List("DeltaInsertIntoImplicitCastTests", "DeltaInsertIntoImplicitCastStreamingWriteTests"),
+          List(
+            List()
           )
         )
       )

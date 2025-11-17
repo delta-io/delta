@@ -24,6 +24,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
+import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.sql.Timestamp;
 import java.util.stream.Stream;
@@ -38,17 +39,18 @@ import scala.Option;
 
 public class StreamingHelperTest extends SparkDsv2TestBase {
 
-  private StreamingHelper streamingHelper;
+  private PathBasedSnapshotManager snapshotManager;
 
   @Test
   public void testUnsafeVolatileSnapshot(@TempDir File tempDir) {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_volatile_snapshot";
     createEmptyTestTable(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
-    Snapshot kernelSnapshot = streamingHelper.unsafeVolatileSnapshot();
+    Snapshot kernelSnapshot = snapshotManager.loadLatestSnapshot();
 
     spark.sql(String.format("INSERT INTO %s VALUES (4, 'David')", testTableName));
 
@@ -61,19 +63,20 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_update";
     createEmptyTestTable(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
-    Snapshot initialSnapshot = streamingHelper.loadLatestSnapshot();
+    Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     assertEquals(0L, initialSnapshot.getVersion());
 
     spark.sql(String.format("INSERT INTO %s VALUES (4, 'David')", testTableName));
 
     org.apache.spark.sql.delta.Snapshot deltaSnapshot =
         deltaLog.update(false, Option.empty(), Option.empty());
-    Snapshot updatedSnapshot = streamingHelper.loadLatestSnapshot();
+    Snapshot updatedSnapshot = snapshotManager.loadLatestSnapshot();
     org.apache.spark.sql.delta.Snapshot cachedSnapshot = deltaLog.unsafeVolatileSnapshot();
-    Snapshot kernelcachedSnapshot = streamingHelper.unsafeVolatileSnapshot();
+    Snapshot kernelcachedSnapshot = snapshotManager.loadLatestSnapshot();
 
     assertEquals(1L, updatedSnapshot.getVersion());
     assertEquals(deltaSnapshot.version(), updatedSnapshot.getVersion());
@@ -86,11 +89,12 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_multiple_updates";
     createEmptyTestTable(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
-    assertEquals(0L, streamingHelper.loadLatestSnapshot().getVersion());
+    assertEquals(0L, snapshotManager.loadLatestSnapshot().getVersion());
 
     for (int i = 0; i < 3; i++) {
       spark.sql(
@@ -98,7 +102,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
 
       org.apache.spark.sql.delta.Snapshot deltaSnapshot =
           deltaLog.update(false, Option.empty(), Option.empty());
-      Snapshot kernelSnapshot = streamingHelper.loadLatestSnapshot();
+      Snapshot kernelSnapshot = snapshotManager.loadLatestSnapshot();
 
       long expectedVersion = i + 1;
       assertEquals(expectedVersion, deltaSnapshot.version());
@@ -128,7 +132,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_past";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
 
     Thread.sleep(100);
     Timestamp timestamp = new Timestamp(System.currentTimeMillis());
@@ -146,8 +151,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
                 false /* canReturnEarliestCommit */);
 
     DeltaHistoryManager.Commit kernelCommit =
-        streamingHelper.getActiveCommitAtTime(
-            timestamp,
+        snapshotManager.getActiveCommitAtTime(
+            timestamp.getTime(),
             false /* canReturnLastCommit */,
             true /* mustBeRecreatable */,
             false /* canReturnEarliestCommit */);
@@ -162,7 +167,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_future_last";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
 
     Timestamp futureTimestamp = new Timestamp(System.currentTimeMillis() + 10000);
 
@@ -178,8 +184,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
                 false /* canReturnEarliestCommit */);
 
     DeltaHistoryManager.Commit kernelCommit =
-        streamingHelper.getActiveCommitAtTime(
-            futureTimestamp,
+        snapshotManager.getActiveCommitAtTime(
+            futureTimestamp.getTime(),
             true /* canReturnLastCommit */,
             true /* mustBeRecreatable */,
             false /* canReturnEarliestCommit */);
@@ -194,7 +200,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_future_not_recreatable";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
 
     Timestamp futureTimestamp = new Timestamp(System.currentTimeMillis() + 10000);
 
@@ -210,8 +217,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
                 false /* canReturnEarliestCommit */);
 
     DeltaHistoryManager.Commit kernelCommit =
-        streamingHelper.getActiveCommitAtTime(
-            futureTimestamp,
+        snapshotManager.getActiveCommitAtTime(
+            futureTimestamp.getTime(),
             true /* canReturnLastCommit */,
             false /* mustBeRecreatable */,
             false /* canReturnEarliestCommit */);
@@ -226,7 +233,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_early";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
 
     Timestamp earlyTimestamp = new Timestamp(0);
 
@@ -242,8 +250,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
                 true /* canReturnEarliestCommit */);
 
     DeltaHistoryManager.Commit kernelCommit =
-        streamingHelper.getActiveCommitAtTime(
-            earlyTimestamp,
+        snapshotManager.getActiveCommitAtTime(
+            earlyTimestamp.getTime(),
             false /* canReturnLastCommit */,
             true /* mustBeRecreatable */,
             true /* canReturnEarliestCommit */);
@@ -258,7 +266,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_commit_early_not_recreatable";
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
 
     Timestamp earlyTimestamp = new Timestamp(0);
 
@@ -274,8 +283,8 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
                 true /* canReturnEarliestCommit */);
 
     DeltaHistoryManager.Commit kernelCommit =
-        streamingHelper.getActiveCommitAtTime(
-            earlyTimestamp,
+        snapshotManager.getActiveCommitAtTime(
+            earlyTimestamp.getTime(),
             false /* canReturnLastCommit */,
             false /* mustBeRecreatable */,
             true /* canReturnEarliestCommit */);
@@ -337,14 +346,15 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_version_" + testName;
     setupTableWithDeletedVersions(testTablePath, testTableName);
-    streamingHelper = new StreamingHelper(testTablePath, spark.sessionState().newHadoopConf());
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
     if (shouldThrow) {
       assertThrows(
           VersionNotFoundException.class,
           () ->
-              streamingHelper.checkVersionExists(
+              snapshotManager.checkVersionExists(
                   versionToCheck, mustBeRecreatable, allowOutOfRange));
 
       assertThrows(
@@ -355,7 +365,7 @@ public class StreamingHelperTest extends SparkDsv2TestBase {
                   .checkVersionExists(
                       versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange));
     } else {
-      streamingHelper.checkVersionExists(versionToCheck, mustBeRecreatable, allowOutOfRange);
+      snapshotManager.checkVersionExists(versionToCheck, mustBeRecreatable, allowOutOfRange);
       deltaLog
           .history()
           .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);

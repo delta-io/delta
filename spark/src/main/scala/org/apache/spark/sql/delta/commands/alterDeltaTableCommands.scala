@@ -1291,6 +1291,13 @@ case class AlterTableAddConstraintDeltaCommand(
           throw a.copy(context = Array.empty)
       }
 
+      Constraints.validateCheckConstraints(
+        sparkSession,
+        Seq(Constraints.Check(name, unresolvedExpr)),
+        deltaLog,
+        txn.metadata.schema
+      )
+
       logInfo(log"Checking that ${MDC(DeltaLogKeys.EXPR, exprText)} " +
         log"is satisfied for existing data. This will require a full table scan.")
       recordDeltaOperation(

@@ -17,16 +17,22 @@ package io.delta.kernel.spark.table;
 
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
+import org.apache.spark.sql.catalyst.TableIdentifier;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Transform;
@@ -34,19 +40,37 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 public class SparkTableTest extends SparkDsv2TestBase {
 
-  @ParameterizedTest(name = "{0}")
+  @ParameterizedTest(name = "{0} - {1}")
   @MethodSource("tableTestCases")
-  public void testDeltaKernelTable(TableTestCase testCase, @TempDir File tempDir) {
+  public void testDeltaKernelTable(
+      TableTestCase testCase, ConstructionMethod method, @TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
-    String tableName = "test_" + testCase.name.toLowerCase().replace(" ", "_");
+    String tableName =
+        "test_" + testCase.name.toLowerCase().replace(" ", "_") + "_" + method.name().toLowerCase();
     testCase.createTableSql.apply(tableName, path);
     Identifier identifier = Identifier.of(new String[] {"test_namespace"}, tableName);
 
-    SparkTable kernelTable = new SparkTable(identifier, path);
+    // Create SparkTable based on construction method
+    SparkTable kernelTable;
+    CatalogTable catalogTable = null;
+
+    switch (method) {
+      case FROM_PATH:
+        kernelTable = new SparkTable(identifier, path);
+        break;
+      case FROM_CATALOG_TABLE:
+        catalogTable =
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
+        kernelTable = new SparkTable(identifier, catalogTable, Collections.emptyMap());
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown construction method: " + method);
+    }
 
     // ===== Test table name =====
     assertEquals(tableName, kernelTable.name());
@@ -89,6 +113,42 @@ public class SparkTableTest extends SparkDsv2TestBase {
 
     // ===== Test capabilities =====
     assertTrue(kernelTable.capabilities().contains(BATCH_READ));
+
+    // ===== Test getCatalogTable based on construction method =====
+    Optional<CatalogTable> retrievedCatalogTable = kernelTable.getCatalogTable();
+    switch (method) {
+      case FROM_PATH:
+        assertFalse(
+            retrievedCatalogTable.isPresent(),
+            "Path-based SparkTable should not have catalog table");
+        break;
+      case FROM_CATALOG_TABLE:
+        assertTrue(
+            retrievedCatalogTable.isPresent(),
+            "CatalogTable-based SparkTable should have catalog table");
+        assertEquals(
+            catalogTable,
+            retrievedCatalogTable.get(),
+            "Retrieved catalog table should match the original");
+        break;
+    }
+  }
+
+  /** Enum to represent different construction methods for SparkTable */
+  enum ConstructionMethod {
+    FROM_PATH("Path"),
+    FROM_CATALOG_TABLE("CatalogTable");
+
+    private final String displayName;
+
+    ConstructionMethod(String displayName) {
+      this.displayName = displayName;
+    }
+
+    @Override
+    public String toString() {
+      return displayName;
+    }
   }
 
   /** Represents a test case configuration for Delta tables */
@@ -119,8 +179,8 @@ public class SparkTableTest extends SparkDsv2TestBase {
     }
   }
 
-  /** Provides different test cases for Delta tables */
-  static Stream<TableTestCase> tableTestCases() {
+  /** Provides different test cases for Delta tables combined with construction methods */
+  static Stream<Arguments> tableTestCases() {
 
     // ===== Partitioned Table =====
     List<Column> partitionedTableColumns = new ArrayList<>();
@@ -146,45 +206,53 @@ public class SparkTableTest extends SparkDsv2TestBase {
     List<Column> singleColumn = new ArrayList<>();
     singleColumn.add(Column.create("id", DataTypes.IntegerType));
 
-    return Stream.of(
-        new TableTestCase(
-            "Partitioned Table",
-            (tableName, path) -> {
-              spark.sql(
-                  String.format(
-                      "CREATE TABLE %s (id INT, data STRING, part INT) USING delta "
-                          + "PARTITIONED BY (part) TBLPROPERTIES ('foo'='bar') LOCATION '%s'",
-                      tableName, path));
-              return null;
-            },
-            partitionedTableColumns,
-            new String[] {"part"},
-            basicProps),
-        new TableTestCase(
-            "UnPartitioned Table",
-            (tableName, path) -> {
-              spark.sql(
-                  String.format(
-                      "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'",
-                      tableName, path));
-              return null;
-            },
-            unPartitionedTableColumns,
-            new String[] {},
-            new HashMap<>()),
-        new TableTestCase(
-            "Multiple Properties",
-            (tableName, path) -> {
-              spark.sql(
-                  String.format(
-                      "CREATE TABLE %s (id INT) USING delta "
-                          + "TBLPROPERTIES ('prop1'='value1', 'prop2'='value2', 'delta.enableChangeDataFeed'='true') "
-                          + "LOCATION '%s'",
-                      tableName, path));
-              return null;
-            },
-            singleColumn,
-            new String[] {},
-            multiProps));
+    List<TableTestCase> testCases =
+        Arrays.asList(
+            new TableTestCase(
+                "Partitioned Table",
+                (tableName, path) -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id INT, data STRING, part INT) USING delta "
+                              + "PARTITIONED BY (part) TBLPROPERTIES ('foo'='bar') LOCATION '%s'",
+                          tableName, path));
+                  return null;
+                },
+                partitionedTableColumns,
+                new String[] {"part"},
+                basicProps),
+            new TableTestCase(
+                "UnPartitioned Table",
+                (tableName, path) -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'",
+                          tableName, path));
+                  return null;
+                },
+                unPartitionedTableColumns,
+                new String[] {},
+                new HashMap<>()),
+            new TableTestCase(
+                "Multiple Properties",
+                (tableName, path) -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id INT) USING delta "
+                              + "TBLPROPERTIES ('prop1'='value1', 'prop2'='value2', 'delta.enableChangeDataFeed'='true') "
+                              + "LOCATION '%s'",
+                          tableName, path));
+                  return null;
+                },
+                singleColumn,
+                new String[] {},
+                multiProps));
+
+    // Create cartesian product of test cases and construction methods
+    return testCases.stream()
+        .flatMap(
+            testCase ->
+                Stream.of(ConstructionMethod.FROM_PATH, ConstructionMethod.FROM_CATALOG_TABLE)
+                    .map(method -> Arguments.of(testCase, method)));
   }
 }
