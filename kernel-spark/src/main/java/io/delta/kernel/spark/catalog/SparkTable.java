@@ -22,6 +22,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.spark.unity.UnityCatalogClientFactory;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -58,6 +59,7 @@ public class SparkTable implements Table, SupportsRead {
   private final Column[] columns;
   private final Transform[] partitionTransforms;
   private final Optional<CatalogTable> catalogTable;
+  private final Optional<UnityCatalogClientFactory.UnityCatalogClient> unityCatalogClient;
 
   /**
    * Creates a SparkTable from a filesystem path without a catalog table.
@@ -118,6 +120,9 @@ public class SparkTable implements Table, SupportsRead {
       Optional<CatalogTable> catalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.catalogTable = catalogTable;
+    this.unityCatalogClient =
+        catalogTable.flatMap(
+            table -> UnityCatalogClientFactory.create(SparkSession.active(), identifier, table));
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
     Map<String, String> merged = new HashMap<>();
@@ -195,6 +200,10 @@ public class SparkTable implements Table, SupportsRead {
    */
   public Optional<CatalogTable> getCatalogTable() {
     return catalogTable;
+  }
+
+  public Optional<UnityCatalogClientFactory.UnityCatalogClient> getUnityCatalogClient() {
+    return unityCatalogClient;
   }
 
   @Override
