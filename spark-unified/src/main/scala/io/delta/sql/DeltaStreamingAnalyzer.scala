@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.spark.table.SparkTable
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
@@ -65,7 +66,8 @@ class UseV2ForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
     // Transform StreamingRelation (V1) to StreamingRelationV2 (V2) for catalog-managed tables
     plan.resolveOperatorsDown {
       case streamingRel @ StreamingRelation(dataSource, sourceName, output)
-          if isCatalogManagedDeltaTable(dataSource) =>
+          if isCatalogManagedDeltaTable(dataSource) &&
+             isCatalogOwnedTable(spark, dataSource.catalogTable.get) =>
 
         val catalogTable = dataSource.catalogTable.get
         val tableIdent = catalogTable.identifier
@@ -121,5 +123,16 @@ class UseV2ForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
       // Check if it's a Delta table by looking at the provider
       catalogTable.provider.exists(_.equalsIgnoreCase("delta"))
     }
+  }
+
+  /**
+   * Check if the table is catalog-owned (CCV2).
+   */
+  private def isCatalogOwnedTable(
+      spark: SparkSession,
+      catalogTable: CatalogTable): Boolean = {
+    // TODO: Implement actual check for catalog-owned tables
+    // Currently returns true to enable V2 streaming for all catalog-managed tables
+    true
   }
 }
