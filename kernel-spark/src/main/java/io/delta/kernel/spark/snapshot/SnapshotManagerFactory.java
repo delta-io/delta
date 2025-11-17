@@ -67,9 +67,10 @@ public final class SnapshotManagerFactory {
         && CatalogTableUtils.isUnityCatalogManagedTable(catalogTable.get())
         && unityCatalogClient.isPresent()) {
       LOG.debug(
-          "Unity Catalog-managed table '{}' detected. Falling back to PathBasedSnapshotManager "
-              + "until catalog-managed support is wired.",
+          "Unity Catalog-managed table '{}' detected. Using CatalogManagedSnapshotManager.",
           identifier);
+      return new CatalogManagedSnapshotManager(
+          tablePath, catalogTable.get(), unityCatalogClient.get(), hadoopConf);
     }
 
     return new PathBasedSnapshotManager(tablePath, hadoopConf);
