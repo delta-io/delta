@@ -738,6 +738,153 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(exMsg.contains("Missing checkpoint at version 1"))
   }
 
+  /* ------------------- CATALOG MANAGED TABLE TESTS ------------------ */
+
+  test("catalog managed: use _last_checkpoint for latest query") {
+    // Test that for catalog managed tables, we use _last_checkpoint file for "latest" queries
+    val deltas = deltaFileStatuses(0L to 30)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20, 25))
+    val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)
+    val files = deltas ++ checkpoints ++ Seq(lastCheckpointFileStatus)
+
+    // Latest query with catalog managed table (maxCatalogVersion = 30)
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      mockEngine(
+        jsonHandler = new MockReadLastCheckpointFileJsonHandler(
+          lastCheckpointFileStatus.getPath,
+          25
+        ), // _last_checkpoint points to version 25
+        fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))),
+      Optional.empty(), // timeTravelVersionOpt
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(30L) // maxCatalogVersionOpt
+    )
+
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 30,
+      expectedDeltas = deltaFileStatuses(26L to 30),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(25)),
+      expectedCheckpointVersion = Some(25),
+      expectedLastCommitTimestamp = 300L)
+  }
+
+  test("catalog managed: discard _last_checkpoint when it's after maxCatalogVersion") {
+    // Test that _last_checkpoint is discarded when it's after maxCatalogVersion
+    val deltas = deltaFileStatuses(0L to 30)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20, 25))
+    val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)
+    val files = deltas ++ checkpoints ++ Seq(lastCheckpointFileStatus)
+
+    // Latest query with catalog managed table where maxCatalogVersion < _last_checkpoint version
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      mockEngine(
+        jsonHandler = new MockReadLastCheckpointFileJsonHandler(
+          lastCheckpointFileStatus.getPath,
+          25
+        ), // _last_checkpoint points to version 25
+        fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))),
+      Optional.empty(), // timeTravelVersionOpt
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(22L) // maxCatalogVersionOpt is 22, which is < 25
+    )
+
+    // Should use checkpoint at version 20, not 25
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 22,
+      expectedDeltas = deltaFileStatuses(21L to 22),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(20)),
+      expectedCheckpointVersion = Some(20),
+      expectedLastCommitTimestamp = 220L)
+  }
+
+  test("catalog managed: time travel query ignores _last_checkpoint") {
+    // Test that time travel queries don't use _last_checkpoint even for catalog managed tables
+    val deltas = deltaFileStatuses(0L to 30)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20, 25))
+    val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)
+    val files = deltas ++ checkpoints ++ Seq(lastCheckpointFileStatus)
+
+    // Time travel query with catalog managed table
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      mockEngine(
+        jsonHandler = new MockReadLastCheckpointFileJsonHandler(
+          lastCheckpointFileStatus.getPath,
+          25
+        ), // _last_checkpoint points to version 25
+        fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))),
+      Optional.of(15L), // timeTravelVersionOpt = 15
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(30L) // maxCatalogVersionOpt
+    )
+
+    // Should use checkpoint at version 10 for time travel to version 15
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 15,
+      expectedDeltas = deltaFileStatuses(11L to 15),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 150L)
+  }
+
+  test("catalog managed: no _last_checkpoint file") {
+    // Test catalog managed table behavior when there's no _last_checkpoint file
+    val deltas = deltaFileStatuses(0L to 20)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10))
+
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSListFromEngine(deltas ++ checkpoints),
+      Optional.empty(), // timeTravelVersionOpt
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(20L) // maxCatalogVersionOpt
+    )
+
+    // Should find checkpoint at version 10 by searching backwards from version 20
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 20,
+      expectedDeltas = deltaFileStatuses(11L to 20),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 200L)
+  }
+
+  test("catalog managed: _last_checkpoint exactly at maxCatalogVersion") {
+    // Test edge case where _last_checkpoint is exactly at maxCatalogVersion
+    val deltas = deltaFileStatuses(0L to 25)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20, 25))
+    val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)
+    val files = deltas ++ checkpoints ++ Seq(lastCheckpointFileStatus)
+
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      mockEngine(
+        jsonHandler = new MockReadLastCheckpointFileJsonHandler(
+          lastCheckpointFileStatus.getPath,
+          25
+        ), // _last_checkpoint points to version 25
+        fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))),
+      Optional.empty(), // timeTravelVersionOpt
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(25L) // maxCatalogVersionOpt is exactly 25
+    )
+
+    // Should use checkpoint at version 25
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 25,
+      expectedDeltas = Seq.empty, // No deltas after checkpoint at version 25
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(25)),
+      expectedCheckpointVersion = Some(25),
+      expectedLastCommitTimestamp = 250L)
+  }
+
   test("One compaction") {
     testWithCompactionsNoCheckpoint(
       deltaVersions = 0L until 5L,
