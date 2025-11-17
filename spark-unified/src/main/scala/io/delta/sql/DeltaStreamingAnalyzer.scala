@@ -16,15 +16,20 @@
 
 package io.delta.sql
 
+import scala.collection.JavaConverters._
+
+import io.delta.kernel.spark.table.SparkTable
+
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.analysis.ResolvedTable
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, StreamingRelationV2}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.execution.datasources.DataSource
 import org.apache.spark.sql.execution.streaming.StreamingRelation
-import io.delta.kernel.spark.table.SparkTable
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Analyzer rule that converts V1 StreamingRelation to V2 StreamingRelationV2 with Kernel-based
@@ -58,7 +63,7 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
     }
 
     // Transform StreamingRelation (V1) to StreamingRelationV2 (V2) for catalog-managed tables
-    plan.transformUp {
+    plan.resolveOperatorsDown {
       case streamingRel @ StreamingRelation(dataSource, sourceName, output)
           if isCatalogManagedDeltaTable(dataSource) =>
 
@@ -83,25 +88,20 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
           dataSource.options.asJava
         )
 
-        // Create ResolvedTable
-        val resolvedTable = ResolvedTable(
-          catalog,
-          identifier,
-          v2Table,
-          v2Table.columns.toAttributes
-        )
+        // Get output attributes from the table schema
+        val outputAttributes = DataTypeUtils.toAttributes(v2Table.schema())
 
         // Return StreamingRelationV2 with V1 fallback
         // Note: v1Relation allows Spark to fall back to V1 if V2 execution fails
         StreamingRelationV2(
-          source = Some(dataSource),
-          sourceName = sourceName,
-          table = resolvedTable,
-          extraOptions = dataSource.options,
-          output = output,
-          catalog = Some(catalog),
-          identifier = Some(identifier),
-          v1Relation = Some(streamingRel)
+          None, // source: no TableProvider, just the table
+          sourceName,
+          v2Table, // table: directly pass SparkTable
+          new CaseInsensitiveStringMap(dataSource.options.asJava),
+          outputAttributes, // output attributes
+          Some(catalog),
+          Some(identifier),
+          Some(streamingRel) // v1Relation fallback
         )
 
       // Don't transform anything else - this preserves:
