@@ -16,59 +16,40 @@
 
 package io.delta.sql
 
-import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, V1Table}
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.catalog.AbstractDeltaCatalog
 
-import scala.collection.JavaConverters._
-
 /**
- * Delta catalog implementation that returns HybridDeltaTable for all Delta tables.
+ * Delta catalog implementation that returns HybridDeltaTable for catalog-managed Delta tables.
  *
  * This catalog extends AbstractDeltaCatalog and overrides loadTable to return
- * HybridDeltaTable instances instead of DeltaTableV2. The HybridDeltaTable can
- * then be wrapped by the analyzer rule with context to indicate V1 or V2 usage.
+ * HybridDeltaTable instances for catalog-managed tables only. Path-based tables and
+ * other table types go through the normal flow without hybrid behavior.
+ *
+ * Scope: Only catalog-managed tables accessed by identifier get the hybrid V1/V2 behavior.
+ * This ensures SparkTable (V2) is only used for well-defined catalog tables where metadata
+ * is fully available.
  */
 class DeltaHybridCatalog extends AbstractDeltaCatalog {
 
   override def loadTable(ident: Identifier): Table = {
-    try {
-      super.loadTable(ident) match {
-        case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          // Return HybridDeltaTable instead of DeltaTableV2
-          new HybridDeltaTable(
-            spark = SparkSession.active,
-            identifier = ident,
-            tablePath = v1.catalogTable.location.toString,
-            options = v1.catalogTable.storage.properties
-          )
-        case o => o
-      }
-    } catch {
-      case e @ (_: org.apache.spark.sql.catalyst.analysis.NoSuchDatabaseException |
-                _: org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException |
-                _: org.apache.spark.sql.catalyst.analysis.NoSuchTableException) =>
-        if (isPathIdentifier(ident)) {
-          newDeltaPathTableHybrid(ident)
-        } else {
-          throw e
-        }
-    }
-  }
+    // Delegate to parent which handles both catalog and path-based tables
+    super.loadTable(ident) match {
+      case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+        // Catalog-managed Delta table - wrap with HybridDeltaTable to enable V2 for streaming
+        // Pass catalogTable to preserve catalog metadata (location, storage properties, etc.)
+        new HybridDeltaTable(
+          spark = SparkSession.active,
+          identifier = ident,
+          tablePath = v1.catalogTable.location.toString,
+          catalogTable = Some(v1.catalogTable),
+          options = v1.catalogTable.storage.properties
+        )
 
-  /**
-   * Creates a HybridDeltaTable for path-based identifiers.
-   */
-  protected def newDeltaPathTableHybrid(ident: Identifier): HybridDeltaTable = {
-    val path = new Path(ident.name())
-    new HybridDeltaTable(
-      spark = SparkSession.active,
-      identifier = ident,
-      tablePath = path.toString,
-      options = Map.empty[String, String]
-    )
+      case o => o  // Path-based tables, Iceberg, non-Delta, etc. - return as-is (normal V1 flow)
+    }
   }
 }
 

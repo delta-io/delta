@@ -19,7 +19,9 @@ package io.delta.sql
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connector.catalog.{Identifier, SupportsRead, SupportsWrite, Table, TableCapability}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.connector.catalog.{Identifier, SupportsRead, SupportsWrite, Table}
+import org.apache.spark.sql.connector.catalog.TableCapability
 import org.apache.spark.sql.connector.read.ScanBuilder
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, WriteBuilder}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -44,11 +46,18 @@ import io.delta.kernel.spark.table.SparkTable
  * The newScanBuilder() and newWriteBuilder() methods should never be called in practice
  * because the analyzer rule replaces this table before physical planning, but they must
  * be implemented to satisfy the interface contracts.
+ *
+ * @param spark The SparkSession
+ * @param identifier The table identifier
+ * @param tablePath The path to the table (may include partition filters for path-based tables)
+ * @param catalogTable The catalog table metadata (for catalog-managed tables)
+ * @param options Additional options for the table
  */
 class HybridDeltaTable(
     spark: SparkSession,
     identifier: Identifier,
     tablePath: String,
+    catalogTable: Option[CatalogTable],
     options: Map[String, String])
   extends Table with SupportsRead with SupportsWrite {
 
@@ -57,7 +66,7 @@ class HybridDeltaTable(
     new DeltaTableV2(
       spark,
       new org.apache.hadoop.fs.Path(tablePath),
-      catalogTable = None,
+      catalogTable = catalogTable,
       tableIdentifier = Some(identifier.toString),
       options = options
     )

@@ -58,59 +58,39 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
     plan.transformUp {
       // Case 1: Streaming read source → Replace HybridDeltaTable with SparkTable (V2)
       // This pattern matches ONLY streaming sources (readStream), not sinks (writeStream)
-      case streamingRel @ StreamingRelationV2(
+      case StreamingRelationV2(
           source,
           sourceName,
-          table @ ResolvedTable(catalog, identifier, hybridTable: HybridDeltaTable, attrs),
+          ResolvedTable(catalog, identifier, hybridTable: HybridDeltaTable, attrs),
           extraOptions,
           output,
           v1Relation) =>
 
-        try {
-          logInfo(s"Replacing HybridDeltaTable with SparkTable for streaming source: $identifier")
+        logInfo(s"Replacing HybridDeltaTable with SparkTable for streaming source: $identifier")
 
-          // Get the SparkTable (V2) from hybrid
-          val sparkTable = hybridTable.getSparkTable()
-          val newResolvedTable = ResolvedTable(catalog, identifier, sparkTable, attrs)
+        // Get the SparkTable (V2) from hybrid
+        val sparkTable = hybridTable.getSparkTable()
+        val newResolvedTable = ResolvedTable(catalog, identifier, sparkTable, attrs)
 
-          // Return updated StreamingRelationV2 with SparkTable
-          StreamingRelationV2(
-            source, sourceName, newResolvedTable, extraOptions, output, v1Relation)
+        // Return updated StreamingRelationV2 with SparkTable
+        StreamingRelationV2(
+          source, sourceName, newResolvedTable, extraOptions, output, v1Relation)
 
-        } catch {
-          case e: Exception =>
-            // If replacement fails, log warning and fall back to default (V1)
-            logWarning(
-              s"Failed to replace HybridDeltaTable with SparkTable for streaming source " +
-              s"$identifier, falling back to V1: ${e.getMessage}", e)
-            streamingRel
-        }
-
-      // Case 2: Batch/write operations - Replace HybridDeltaTable with DeltaTableV2 (V1)
+      // Case 2: Batch/write operations → Replace HybridDeltaTable with DeltaTableV2 (V1)
       // This matches DataSourceV2Relation which is what batch reads create
-      case dsv2 @ DataSourceV2Relation(
+      case DataSourceV2Relation(
           hybridTable: HybridDeltaTable, output, catalog, identifier, options) =>
-        try {
-          logInfo(
-            s"Replacing HybridDeltaTable with DeltaTableV2 for batch/write operation: " +
-            s"$identifier")
 
-          // Get the DeltaTableV2 (V1) from hybrid
-          val v1Table = hybridTable.getUnderlyingDeltaTableV2()
+        logInfo(
+          s"Replacing HybridDeltaTable with DeltaTableV2 for batch/write operation: $identifier")
 
-          // Return DataSourceV2Relation with plain DeltaTableV2
-          // This allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert
-          // to LogicalRelation (V1)
-          DataSourceV2Relation(v1Table, output, catalog, identifier, options)
+        // Get the DeltaTableV2 (V1) from hybrid
+        val v1Table = hybridTable.getUnderlyingDeltaTableV2()
 
-        } catch {
-          case e: Exception =>
-            // If replacement fails, log warning and keep hybrid (will default to V1)
-            logWarning(
-              s"Failed to replace HybridDeltaTable with DeltaTableV2 for $identifier, " +
-              s"keeping hybrid: ${e.getMessage}", e)
-            dsv2
-        }
+        // Return DataSourceV2Relation with plain DeltaTableV2
+        // This allows DeltaAnalysis's FallbackToV1DeltaRelation to match and convert
+        // to LogicalRelation (V1)
+        DataSourceV2Relation(v1Table, output, catalog, identifier, options)
 
       // Don't transform anything else - all other node types pass through unchanged
     }
