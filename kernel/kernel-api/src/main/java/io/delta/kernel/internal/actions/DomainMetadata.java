@@ -86,7 +86,7 @@ public class DomainMetadata {
       return null;
     }
     checkArgument(
-        row.getSchema().equivalentIgnoreCollations(FULL_SCHEMA),
+        row.getSchema().equals(FULL_SCHEMA),
         "Expected schema: %s, found: %s",
         FULL_SCHEMA,
         row.getSchema());
