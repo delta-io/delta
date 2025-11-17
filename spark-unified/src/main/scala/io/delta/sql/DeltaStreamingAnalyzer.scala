@@ -67,7 +67,9 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
           v1Relation) =>
 
         try {
-          logInfo(s"Replacing DeltaTableV2 with Kernel-based SparkTable for streaming source: $identifier")
+          logInfo(
+            s"Replacing DeltaTableV2 with Kernel-based SparkTable for streaming source: " +
+            s"$identifier")
 
           // Create V2 table for streaming read
           val v2Table = new SparkTable(
@@ -79,7 +81,8 @@ class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
           val newResolvedTable = ResolvedTable(catalog, identifier, v2Table, attrs)
 
           // Return updated StreamingRelationV2 with V2 table
-          StreamingRelationV2(source, sourceName, newResolvedTable, extraOptions, output, v1Relation)
+          StreamingRelationV2(
+            source, sourceName, newResolvedTable, extraOptions, output, v1Relation)
 
         } catch {
           case e: Exception =>
