@@ -15,13 +15,12 @@
  */
 package io.delta.kernel.spark.utils;
 
-import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField;
 import org.apache.spark.sql.types.DataTypes;
@@ -52,35 +51,15 @@ public class RowTrackingUtils {
   private RowTrackingUtils() {}
 
   /**
-   * Check if row tracking is enabled for reading.
-   *
-   * @param protocol the protocol to check
-   * @param metadata the metadata to check
-   * @return true if row tracking is enabled
-   * @throws IllegalStateException if row tracking is enabled in metadata but not supported by
-   *     protocol
-   */
-  public static boolean isEnabled(Protocol protocol, Metadata metadata) {
-    boolean isEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
-    if (isEnabled && !TableFeatures.isRowTrackingSupported(protocol)) {
-      throw new IllegalStateException(
-          "Table property 'delta.enableRowTracking' is set on the table but this table version "
-              + "doesn't support table feature 'delta.feature.rowTracking'.");
-    }
-    return isEnabled;
-  }
-
-  /**
    * Create the row tracking metadata struct fields for reading.
    *
    * <p>The order and presence of fields matches Spark V1 implementation:
    *
    * <ul>
-   *   <li>row_id (generated field, only if delta.rowTracking.materializedRowCommitVersionColumnName
-   *       is configured)
+   *   <li>row_id (generated field, always present when row tracking is enabled)
    *   <li>base_row_id (constant field, always present when row tracking is enabled)
    *   <li>default_row_commit_version (constant field, always present when row tracking is enabled)
-   *   <li>row_commit_version (generated field, only if materialized column name is configured)
+   *   <li>row_commit_version (generated field, always present when row tracking is enabled)
    * </ul>
    *
    * @param protocol the protocol
@@ -89,30 +68,29 @@ public class RowTrackingUtils {
    * @param nullableGeneratedFields whether generated fields should be nullable
    * @return list of struct fields for row tracking metadata, or empty list if row tracking is not
    *     enabled
+   * @throws DeltaIllegalStateException if row tracking is enabled but materialized column names are
+   *     missing
    */
   public static List<StructField> createMetadataStructFields(
       Protocol protocol,
       Metadata metadata,
       boolean nullableConstantFields,
       boolean nullableGeneratedFields) {
-    if (!isEnabled(protocol, metadata)) {
+    if (!RowTracking.isEnabled(protocol, metadata)) {
       return new ArrayList<>();
     }
 
     List<StructField> fields = new ArrayList<>();
 
-    // Add row_id (generated field) if materialized column name is configured
-    String materializedRowIdColumnName =
-        metadata.getConfiguration().get(TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME.getKey());
-    if (materializedRowIdColumnName != null) {
-      fields.add(
-          new StructField(
-              ROW_ID,
-              DataTypes.LongType,
-              nullableGeneratedFields,
-              createGeneratedFieldMetadata(
-                  ROW_ID, materializedRowIdColumnName, ROW_ID_METADATA_COL_ATTR_KEY)));
-    }
+    // Add row_id (generated field) - will throw if materialized column name is not configured
+    String rowIdPhysicalName =
+        getPhysicalColumnNameOrThrow(MaterializedRowTrackingColumn.MATERIALIZED_ROW_ID, metadata);
+    fields.add(
+        new StructField(
+            ROW_ID,
+            DataTypes.LongType,
+            nullableGeneratedFields,
+            createGeneratedFieldMetadata(ROW_ID, rowIdPhysicalName, ROW_ID_METADATA_COL_ATTR_KEY)));
 
     // Add base_row_id (constant field)
     fields.add(
@@ -131,24 +109,46 @@ public class RowTrackingUtils {
             createConstantFieldMetadata(
                 DEFAULT_ROW_COMMIT_VERSION, DEFAULT_ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY)));
 
-    // Add row_commit_version (generated field) if materialized column name is configured
-    Optional.ofNullable(
-            metadata
-                .getConfiguration()
-                .get(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey()))
-        .ifPresent(
-            materializedRowCommitVersionColumnName ->
-                fields.add(
-                    new StructField(
-                        ROW_COMMIT_VERSION,
-                        DataTypes.LongType,
-                        nullableGeneratedFields,
-                        createGeneratedFieldMetadata(
-                            ROW_COMMIT_VERSION,
-                            materializedRowCommitVersionColumnName,
-                            ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY))));
+    // Add row_commit_version (generated field) - will throw if materialized column name is not
+    // configured
+    String rowCommitVersionPhysicalName =
+        getPhysicalColumnNameOrThrow(
+            MaterializedRowTrackingColumn.MATERIALIZED_ROW_COMMIT_VERSION, metadata);
+    fields.add(
+        new StructField(
+            ROW_COMMIT_VERSION,
+            DataTypes.LongType,
+            nullableGeneratedFields,
+            createGeneratedFieldMetadata(
+                ROW_COMMIT_VERSION,
+                rowCommitVersionPhysicalName,
+                ROW_COMMIT_VERSION_METADATA_COL_ATTR_KEY)));
 
     return fields;
+  }
+
+  /**
+   * Helper method to get physical column name from MaterializedRowTrackingColumn, converting kernel
+   * IllegalArgumentException to Spark DeltaIllegalStateException.
+   *
+   * @param column the MaterializedRowTrackingColumn instance
+   * @param metadata the table metadata
+   * @return the physical column name
+   * @throws IllegalStateException if the materialized column name is missing
+   */
+  private static String getPhysicalColumnNameOrThrow(
+      MaterializedRowTrackingColumn column, Metadata metadata) {
+    try {
+      return column.getPhysicalColumnName(metadata.getConfiguration());
+    } catch (IllegalArgumentException e) {
+      // Convert kernel exception to a clearer Spark exception
+      throw new IllegalStateException(
+          String.format(
+              "Materialized row tracking column name '%s' is missing in metadata config. "
+                  + "Row tracking is enabled, but the required column name is not configured.",
+              column.getMaterializedColumnNameProperty()),
+          e);
+    }
   }
 
   private static org.apache.spark.sql.types.Metadata createConstantFieldMetadata(

@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class RowTrackingUtilsTest {
   public void testIsEnabled_NotEnabledInMetadata_ReturnsFalse() {
     Protocol protocol = createProtocol(3, 7, Set.of("rowTracking"), Set.of("rowTracking"));
     Metadata metadata = createMetadata(Collections.emptyMap());
-    assertFalse(RowTrackingUtils.isEnabled(protocol, metadata));
+    assertFalse(io.delta.kernel.internal.rowtracking.RowTracking.isEnabled(protocol, metadata));
   }
 
   @Test
@@ -56,7 +56,7 @@ public class RowTrackingUtilsTest {
     Map<String, String> config = new HashMap<>();
     config.put("delta.enableRowTracking", "true");
     Metadata metadata = createMetadata(config);
-    assertTrue(RowTrackingUtils.isEnabled(protocol, metadata));
+    assertTrue(io.delta.kernel.internal.rowtracking.RowTracking.isEnabled(protocol, metadata));
   }
 
   @Test
@@ -68,7 +68,8 @@ public class RowTrackingUtilsTest {
 
     IllegalStateException exception =
         assertThrows(
-            IllegalStateException.class, () -> RowTrackingUtils.isEnabled(protocol, metadata));
+            IllegalStateException.class,
+            () -> io.delta.kernel.internal.rowtracking.RowTracking.isEnabled(protocol, metadata));
     assertTrue(
         exception
             .getMessage()
@@ -84,31 +85,63 @@ public class RowTrackingUtilsTest {
     assertTrue(fields.isEmpty());
   }
 
+  @Test
+  public void testCreateMetadataStructFields_MissingMaterializedRowId_ThrowsException() {
+    Protocol protocol = createProtocol(3, 7, Set.of("rowTracking"), Set.of("rowTracking"));
+    Map<String, String> config = new HashMap<>();
+    config.put("delta.enableRowTracking", "true");
+    // Missing MATERIALIZED_ROW_ID_COLUMN_NAME
+    config.put(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey(), "__row_version");
+    Metadata metadata = createMetadata(config);
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () -> RowTrackingUtils.createMetadataStructFields(protocol, metadata, false, false));
+    assertTrue(
+        exception.getMessage().contains(TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME.getKey()));
+  }
+
+  @Test
+  public void testCreateMetadataStructFields_MissingMaterializedRowCommitVersion_ThrowsException() {
+    Protocol protocol = createProtocol(3, 7, Set.of("rowTracking"), Set.of("rowTracking"));
+    Map<String, String> config = new HashMap<>();
+    config.put("delta.enableRowTracking", "true");
+    config.put(TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME.getKey(), "__row_id");
+    // Missing MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME
+    Metadata metadata = createMetadata(config);
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () -> RowTrackingUtils.createMetadataStructFields(protocol, metadata, false, false));
+    assertTrue(
+        exception
+            .getMessage()
+            .contains(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey()));
+  }
+
   private static Stream<Arguments> createMetadataStructFieldsTestProvider() {
+    // Note: withMaterializedColumns must be true when row tracking is enabled
+    // because materialized column names are required
     return Stream.of(
-        // nullableConstant, nullableGenerated, withMaterializedColumns
-        Arguments.of(false, false, false),
-        Arguments.of(false, true, false),
-        Arguments.of(true, false, false),
-        Arguments.of(true, true, false),
-        Arguments.of(false, false, true),
-        Arguments.of(false, true, true),
-        Arguments.of(true, false, true),
-        Arguments.of(true, true, true));
+        // nullableConstant, nullableGenerated
+        Arguments.of(false, false),
+        Arguments.of(false, true),
+        Arguments.of(true, false),
+        Arguments.of(true, true));
   }
 
   @ParameterizedTest
   @MethodSource("createMetadataStructFieldsTestProvider")
-  public void testCreateMetadataStructFields(
-      boolean nullableConstant, boolean nullableGenerated, boolean withMaterializedColumns) {
+  public void testCreateMetadataStructFields(boolean nullableConstant, boolean nullableGenerated) {
     // Create Kernel Protocol and Metadata
+    // Note: materialized columns are always configured when row tracking is enabled
     Protocol kernelProtocol = createProtocol(3, 7, Set.of("rowTracking"), Set.of("rowTracking"));
     Map<String, String> config = new HashMap<>();
     config.put("delta.enableRowTracking", "true");
-    if (withMaterializedColumns) {
-      config.put(TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME.getKey(), "__row_id");
-      config.put(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey(), "__row_version");
-    }
+    config.put(TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME.getKey(), "__row_id");
+    config.put(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey(), "__row_version");
     Metadata kernelMetadata = createMetadata(config);
 
     // Get actual result from Kernel-Spark API
@@ -118,20 +151,18 @@ public class RowTrackingUtilsTest {
 
     // Build expected fields
     List<StructField> expectedFields = new ArrayList<>();
-    if (withMaterializedColumns) {
-      // row_id (generated field)
-      expectedFields.add(
-          new StructField(
-              "row_id",
-              DataTypes.LongType,
-              nullableGenerated,
-              new MetadataBuilder()
-                  .withMetadata(
-                      org.apache.spark.sql.catalyst.expressions
-                          .FileSourceGeneratedMetadataStructField.metadata("row_id", "__row_id"))
-                  .putBoolean("__row_id_metadata_col", true)
-                  .build()));
-    }
+    // row_id (generated field)
+    expectedFields.add(
+        new StructField(
+            "row_id",
+            DataTypes.LongType,
+            nullableGenerated,
+            new MetadataBuilder()
+                .withMetadata(
+                    org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
+                        .metadata("row_id", "__row_id"))
+                .putBoolean("__row_id_metadata_col", true)
+                .build()));
     // base_row_id (constant field)
     expectedFields.add(
         new StructField(
@@ -153,21 +184,18 @@ public class RowTrackingUtilsTest {
                     FileSourceConstantMetadataStructField.metadata("default_row_commit_version"))
                 .putBoolean("__default_row_version_metadata_col", true)
                 .build()));
-    if (withMaterializedColumns) {
-      // row_commit_version (generated field)
-      expectedFields.add(
-          new StructField(
-              "row_commit_version",
-              DataTypes.LongType,
-              nullableGenerated,
-              new MetadataBuilder()
-                  .withMetadata(
-                      org.apache.spark.sql.catalyst.expressions
-                          .FileSourceGeneratedMetadataStructField.metadata(
-                          "row_commit_version", "__row_version"))
-                  .putBoolean("__row_commit_version_metadata_col", true)
-                  .build()));
-    }
+    // row_commit_version (generated field)
+    expectedFields.add(
+        new StructField(
+            "row_commit_version",
+            DataTypes.LongType,
+            nullableGenerated,
+            new MetadataBuilder()
+                .withMetadata(
+                    org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
+                        .metadata("row_commit_version", "__row_version"))
+                .putBoolean("__row_commit_version_metadata_col", true)
+                .build()));
 
     String protocolJson =
         JsonUtils.rowToJson(SingleAction.createProtocolSingleAction(kernelProtocol.toRow()));

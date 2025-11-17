@@ -161,6 +161,65 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
     data.map(Map.empty[String, Literal] -> _).toIndexedSeq
   }
 
+  test("RowTracking.isEnabled - returns false when row tracking is not enabled in metadata") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with row tracking supported but not enabled
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map.empty)
+
+      val snapshot =
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
+      val protocol = snapshot.getProtocol
+      val metadata = snapshot.getMetadata
+
+      assert(!RowTracking.isEnabled(protocol, metadata))
+    }
+  }
+
+  test("RowTracking.isEnabled - returns true when row tracking is supported and enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with row tracking enabled
+      createTableWithRowTracking(engine, tablePath)
+
+      val snapshot =
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
+      val protocol = snapshot.getProtocol
+      val metadata = snapshot.getMetadata
+
+      assert(RowTracking.isEnabled(protocol, metadata))
+    }
+  }
+
+  test("RowTracking.isEnabled - throws exception when enabled in metadata but not supported by protocol") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a table without row tracking support
+      createEmptyTable(engine, tablePath, testSchema)
+
+      // Get the current metadata and protocol
+      val snapshot =
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
+      val protocol = snapshot.getProtocol
+      val originalMetadata = snapshot.getMetadata
+
+      // Manually create metadata with row tracking enabled (bypassing validation)
+      val configWithRowTracking = originalMetadata.getConfiguration.asScala.toMap +
+        (TableConfig.ROW_TRACKING_ENABLED.getKey -> "true")
+      val problematicMetadata =
+        originalMetadata.withReplacedConfiguration(configWithRowTracking.asJava)
+
+      // Verify that calling isEnabled throws IllegalStateException
+      val e = intercept[IllegalStateException] {
+        RowTracking.isEnabled(protocol, problematicMetadata)
+      }
+      assert(e.getMessage.contains(
+        "Table property 'delta.enableRowTracking' is set on the table but this table version " +
+          "doesn't support table feature 'delta.feature.rowTracking'"))
+    }
+  }
+
   test("Base row IDs/default row commit versions are assigned to AddFile actions") {
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithRowTracking(engine, tablePath)
