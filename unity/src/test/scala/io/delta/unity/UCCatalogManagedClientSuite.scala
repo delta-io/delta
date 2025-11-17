@@ -102,10 +102,6 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       loadSnapshot(ucCatalogManagedClient, versionToLoad = Optional.of(-1L))
     }
     assertThrows[IllegalArgumentException] {
-      // timestamp < 0
-      loadSnapshot(ucCatalogManagedClient, timestampToLoad = Optional.of(-1L))
-    }
-    assertThrows[IllegalArgumentException] {
       // cannot provide both timestamp and version
       loadSnapshot(
         ucCatalogManagedClient,
@@ -220,6 +216,21 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     assert(exMsg.contains("The provided timestamp 1749830881800 ms (2025-06-13T16:08:01.800Z) is " +
       "after the latest available version 2"))
+  }
+
+  test("loadTable does not throw on negative timestamp in validation") {
+    // This specifically tests that the validation logic in UCCatalogManagedClient.loadTable
+    // does not reject negative timestamps
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+    // Should not throw IllegalArgumentException for negative timestamp
+    // (it will fail later when trying to find the table, but that's expected)
+    val ex = intercept[RuntimeException] {
+      loadSnapshot(ucCatalogManagedClient, timestampToLoad = Optional.of(-1L))
+    }
+    // Verify it fails because the table doesn't exist, NOT because of timestamp validation
+    assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
   }
 
   /* ---- end time-travel-by-timestamp tests ---- */

@@ -151,6 +151,9 @@ object SuiteGeneratorConfig {
     val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE = DimensionWithMultipleValues(
       "StructEvolutionPreserveNullSource",
       List("Disabled", "Enabled"), alias = Some("PreserveNullSource"))
+    val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE_UPDATE_STAR = DimensionWithMultipleValues(
+      "StructEvolutionPreserveNullSourceUpdateStar",
+      List("Disabled", "Enabled"), alias = Some("PreserveNullSourceUpdateStar"))
   }
 
   private object Tests {
@@ -195,6 +198,10 @@ object SuiteGeneratorConfig {
      */
     def prependToAll(dimensionCombinations: List[Dimension]*): List[List[Dimension]] = {
       dimensionCombinations.toList.map(dims ::: _)
+    }
+
+    def prependToAll(dimensionCombinations: List[List[Dimension]]): List[List[Dimension]] = {
+      prependToAll(dimensionCombinations: _*)
     }
 
     // Continued DSL from the Dimension class above to work around the different
@@ -260,7 +267,11 @@ object SuiteGeneratorConfig {
             "MergeIntoTopLevelMapStructEvolutionNullnessTests" ::
             "MergeIntoNestedMapStructEvolutionNullnessTests" :: Nil,
           List(
-            List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional, Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE)
+            List(
+              Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional,
+              Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE,
+              Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE_UPDATE_STAR
+            )
           )
         )
       )

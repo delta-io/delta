@@ -81,84 +81,6 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     val FULL = Value("FULL")
   }
 
-  /**
-   * Additional check on retention duration to prevent people from shooting themselves in the foot.
-   */
-  protected def checkRetentionPeriodSafety(
-      spark: SparkSession,
-      retentionMs: Option[Long],
-      configuredRetention: Long): Unit = {
-    require(retentionMs.forall(_ >= 0), "Retention for Vacuum can't be less than 0.")
-    val checkEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
-    val retentionSafe = retentionMs.forall(_ >= configuredRetention)
-    var configuredRetentionHours = TimeUnit.MILLISECONDS.toHours(configuredRetention)
-    if (TimeUnit.HOURS.toMillis(configuredRetentionHours) < configuredRetention) {
-      configuredRetentionHours += 1
-    }
-    require(!checkEnabled || retentionSafe,
-      s"""Are you sure you would like to vacuum files with such a low retention period? If you have
-        |writers that are currently writing to this table, there is a risk that you may corrupt the
-        |state of your Delta table.
-        |
-        |If you are certain that there are no operations being performed on this table, such as
-        |insert/upsert/delete/optimize, then you may turn off this check by setting:
-        |spark.databricks.delta.retentionDurationCheck.enabled = false
-        |
-        |If you are not sure, please use a value not less than "$configuredRetentionHours hours".
-       """.stripMargin)
-  }
-
-  /**
-   * Helper to compute all valid files based on basePath and Snapshot provided.
-   */
-  private def getValidFilesFromSnapshot(
-      spark: SparkSession,
-      basePath: String,
-      snapshot: Snapshot,
-      retentionMillis: Option[Long],
-      hadoopConf: Broadcast[SerializableConfiguration],
-      clock: Clock,
-      checkAbsolutePathOnly: Boolean): DataFrame = {
-    import org.apache.spark.sql.delta.implicits._
-    require(snapshot.version >= 0, "No state defined for this table. Is this really " +
-      "a Delta table? Refusing to garbage collect.")
-
-    val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
-    checkRetentionPeriodSafety(spark, retentionMillis, snapshotTombstoneRetentionMillis)
-    val deleteBeforeTimestamp = retentionMillis match {
-      case Some(millis) => clock.getTimeMillis() - millis
-      case _ => snapshot.minFileRetentionTimestamp
-    }
-    val relativizeIgnoreError =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
-    val dvDiscoveryDisabled = DeltaUtils.isTesting && spark.sessionState.conf.getConf(
-      DeltaSQLConf.FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED)
-
-    val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
-    snapshot.stateDS.mapPartitions { actions =>
-      val reservoirBase = new Path(basePath)
-      val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
-      actions.flatMap {
-        _.unwrap match {
-          // Existing tables may not store canonicalized paths, so we check both the canonicalized
-          // and non-canonicalized paths to ensure we don't accidentally delete wrong files.
-          case fa: FileAction if checkAbsolutePathOnly &&
-            !fa.path.contains(basePath) && !fa.path.contains(canonicalizedBasePath) => Nil
-          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp => Nil
-          case fa: FileAction =>
-            getValidRelativePathsAndSubdirs(
-              fa,
-              fs,
-              reservoirBase,
-              relativizeIgnoreError,
-              dvDiscoveryDisabled
-            )
-          case _ => Nil
-        }
-      }
-    }.toDF("path")
-  }
 
   def getFilesFromInventory(
       basePath: String,
@@ -302,7 +224,13 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           retentionMillis,
           hadoopConf,
           clock,
-          checkAbsolutePathOnly = false)
+          ValidFilesConfig(
+            checkAbsolutePathOnly = false,
+            performRetentionSafetyCheck = true,
+            relativizeIgnoreError = None,
+            dvDiscoveryDisabled = None
+          )
+        )
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
@@ -339,25 +267,15 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           getFilesFromDeltaLog(spark, snapshot, basePath, hadoopConf,
             latestCommitVersionOutsideOfRetentionWindowOpt)
         case _ =>
-          val files = DeltaFileOperations.recursiveListDirs(
-              spark,
-              Seq(basePath),
-              hadoopConf,
-              hiddenDirNameFilter =
-                DeltaTableUtils.isHiddenDirectory(
-                  partitionColumns, _, shouldIcebergMetadataDirBeHidden
-                ),
-              hiddenFileNameFilter =
-                DeltaTableUtils.isHiddenDirectory(
-                  partitionColumns, _, shouldIcebergMetadataDirBeHidden
-                ),
-              fileListingParallelism = Option(parallelism)
-            )
-            .map { f =>
-              // Below logic will make paths url-encoded
-              val path = pathStringtoUrlEncodedString(f.path)
-              SerializableFileStatus(path, f.length, f.isDir, f.modificationTime)
-            }
+          val files = getFilesFromFilesystem(
+            spark,
+            deltaLog,
+            snapshot,
+            hadoopConf,
+            shouldIcebergMetadataDirBeHidden,
+            applyHiddenFilters = true,
+            parallelism = Option(parallelism)
+          )
           (files, None, None)
           }
       val allFilesAndDirs = allFilesAndDirsWithDuplicates.groupByKey(_.path)
@@ -385,31 +303,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           //   5. We subtract all the valid files and tombstones in our state
           //   6. We filter all paths with a count of 1, which will correspond to files not in the
           //      state, and empty directories. We can safely delete all of these
-          val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
-          val diff = allFilesAndDirs
-            .where(col("modificationTime") < deleteBeforeTimestamp || col("isDir"))
-            .mapPartitions { fileStatusIterator =>
-              val reservoirBase = new Path(basePath)
-              val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
-              fileStatusIterator.flatMap { fileStatus =>
-                if (fileStatus.isDir) {
-                  Iterator.single(FileNameAndSize(
-                    relativize(urlEncodedStringToPath(fileStatus.path), fs,
-                      reservoirBase, isDir = true), 0L))
-                } else {
-                  val dirs = getAllSubdirs(canonicalizedBasePath, fileStatus.path, fs)
-                  val dirsWithSlash = dirs.map { p =>
-                    val relativizedPath = relativize(urlEncodedStringToPath(p), fs,
-                      reservoirBase, isDir = true)
-                    FileNameAndSize(relativizedPath, 0L)
-                  }
-                  dirsWithSlash ++ Iterator(
-                    FileNameAndSize(relativize(
-                      urlEncodedStringToPath(fileStatus.path), fs, reservoirBase, isDir = false),
-                      fileStatus.length))
-                }
-              }
-            }.groupBy(col("path")).agg(count(new Column("*")).as("count"),
+          val diff = includeRespectiveDirectoriesWithFilesAndSafetyCheck(
+              allFilesAndDirs, basePath, Some(deleteBeforeTimestamp), hadoopConf)
+            .groupBy(col("path")).agg(count(new Column("*")).as("count"),
               sum("length").as("length"))
             .join(validFiles, Seq("path"), "leftanti")
             .where(col("count") === 1)
@@ -577,89 +473,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     }
 
     (getFilesFromDeltaLog(spark, deltaLog, basePath, hadoopConf,
-        eligibleStartCommitVersion, eligibleEndCommitVersion),
+        eligibleStartCommitVersion, eligibleEndCommitVersion, relativizeIgnoreError = None),
       Some(eligibleStartCommitVersion),
       Some(eligibleEndCommitVersion)
     )
-  }
-
-/**
- * Returns eligible files to be deleted by looking at the delta log given the start and the end
- * commit versions.
- */
-  protected def getFilesFromDeltaLog(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      basePath: String,
-      hadoopConf: Broadcast[SerializableConfiguration],
-      eligibleStartCommitVersion: Long,
-      eligibleEndCommitVersion: Long): Dataset[SerializableFileStatus] = {
-    import org.apache.spark.sql.delta.implicits._
-    // When coordinated commits are enabled, commit files could be found in _delta_log directory
-    // as well as in commit directory. We get the delta log files outside of the retention window
-    // from both the places.
-    val prefix = listingPrefix(deltaLog.logPath, eligibleStartCommitVersion)
-    val eligibleDeltaLogFilesFromDeltaLogDirectory =
-      deltaLog.store.listFrom(prefix, deltaLog.newDeltaHadoopConf)
-        .collect { case DeltaFile(f, deltaFileVersion) => (f, deltaFileVersion) }
-        .takeWhile(_._2 <= eligibleEndCommitVersion)
-        .toSeq
-
-    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-    val commitDirPath = FileNames.commitDirPath(deltaLog.logPath)
-    val updatedStartCommitVersion =
-      eligibleDeltaLogFilesFromDeltaLogDirectory.lastOption.map(_._2)
-        .getOrElse(eligibleStartCommitVersion)
-    val eligibleDeltaLogFilesFromCommitDirectory = if (fs.exists(commitDirPath)) {
-      deltaLog.store
-        .listFrom(listingPrefix(commitDirPath, updatedStartCommitVersion),
-          deltaLog.newDeltaHadoopConf)
-        .collect { case UnbackfilledDeltaFile(f, deltaFileVersion, _) => (f, deltaFileVersion) }
-        .takeWhile(_._2 <= eligibleEndCommitVersion)
-        .toSeq
-    } else {
-      Seq.empty
-    }
-
-    val allDeltaLogFilesOutsideTheRetentionWindow = eligibleDeltaLogFilesFromDeltaLogDirectory ++
-      eligibleDeltaLogFilesFromCommitDirectory
-    val deltaLogFileIndex = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT,
-      allDeltaLogFilesOutsideTheRetentionWindow.map(_._1)).get
-
-    val allActions = deltaLog.loadIndex(deltaLogFileIndex).as[SingleAction]
-    val nonCDFFiles = allActions
-      .where("remove IS NOT NULL")
-      .select(col("remove")
-      .as[RemoveFile])
-      .mapPartitions { iter =>
-        iter.flatMap { r =>
-          val modificationTime = r.deletionTimestamp.getOrElse(0L)
-          val dv = getDeletionVectorRelativePathAndSize(r).map { case (path, length) =>
-            SerializableFileStatus(path, length, isDir = false, modificationTime)
-          }
-          dv.iterator ++ Iterator.single(SerializableFileStatus(
-            r.path, r.size.getOrElse(0L), isDir = false, modificationTime))
-        }
-      }
-      .as[SerializableFileStatus]
-    val cdfFiles = allActions
-      .where("cdc IS NOT NULL")
-      .select(col("cdc")
-      .as[AddCDCFile])
-      .map(cdc => SerializableFileStatus(cdc.path, cdc.size, isDir = false, modificationTime = 0L))
-
-    val relativizeIgnoreError =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
-    nonCDFFiles.union(cdfFiles).mapPartitions { iter =>
-      val reservoirBase = new Path(basePath)
-      val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
-      iter.flatMap { f =>
-        // if file path is outside of the table base path, those files are not considered as they
-        // are not part of this table. Shallow clone is one example where this happens.
-        getRelativePath(f.path, fs, reservoirBase, relativizeIgnoreError)
-          .map(SerializableFileStatus(_, f.length, f.isDir, f.modificationTime))
-      }
-    }
   }
 }
 
@@ -674,7 +491,7 @@ trait VacuumCommandImpl extends DeltaCommand {
    */
   private def shouldLogVacuum(
       spark: SparkSession,
-      deltaLog: DeltaLog,
+      table: DeltaTableV2,
       hadoopConf: Configuration,
       path: Path): Boolean = {
     val logVacuumConf = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED)
@@ -683,6 +500,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       return logVacuumConf.get
     }
 
+    val deltaLog = table.deltaLog
     val logStore = deltaLog.store
 
     try {
@@ -723,7 +541,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       )
 
     // We perform an empty commit in order to record information about the Vacuum
-    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
+    if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
       val txn = table.startTransaction()
@@ -761,7 +579,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
     val deltaLog = table.deltaLog
-    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
+    if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val txn = table.startTransaction()
       val status = if (filesDeleted.isEmpty && dirCounts.isEmpty) { "FAILED" } else { "COMPLETED" }
       if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
@@ -932,6 +750,317 @@ trait VacuumCommandImpl extends DeltaCommand {
         }
       case None => None
     }
+  }
+
+  // Utility methods for use by VacuumCommand and other commands
+
+  /**
+   * Additional check on retention duration to prevent people from shooting themselves in the foot.
+   */
+  protected def checkRetentionPeriodSafety(
+      spark: SparkSession,
+      retentionMs: Option[Long],
+      configuredRetention: Long): Unit = {
+    require(retentionMs.forall(_ >= 0), "Retention for Vacuum can't be less than 0.")
+    val checkEnabled =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
+    val retentionSafe = retentionMs.forall(_ >= configuredRetention)
+    var configuredRetentionHours = TimeUnit.MILLISECONDS.toHours(configuredRetention)
+    if (TimeUnit.HOURS.toMillis(configuredRetentionHours) < configuredRetention) {
+      configuredRetentionHours += 1
+    }
+    require(!checkEnabled || retentionSafe,
+      s"""Are you sure you would like to vacuum files with such a low retention period? If you have
+        |writers that are currently writing to this table, there is a risk that you may corrupt the
+        |state of your Delta table.
+        |
+        |If you are certain that there are no operations being performed on this table, such as
+        |insert/upsert/delete/optimize, then you may turn off this check by setting:
+        |spark.databricks.delta.retentionDurationCheck.enabled = false
+        |
+        |If you are not sure, please use a value not less than "$configuredRetentionHours hours".
+       """.stripMargin)
+  }
+
+  /**
+   * Configuration for getValidFilesFromSnapshot behavior.
+   *
+   * @param checkAbsolutePathOnly If true, filters out files not in table path (for clones)
+   * @param performRetentionSafetyCheck If true, validates retention period is safe
+   * @param relativizeIgnoreError If None, reads from config; if Some(value), uses that value
+   * @param dvDiscoveryDisabled If None, reads from config+test; if Some(value), uses that value
+   */
+  case class ValidFilesConfig(
+    checkAbsolutePathOnly: Boolean,
+    performRetentionSafetyCheck: Boolean,
+    relativizeIgnoreError: Option[Boolean],
+    dvDiscoveryDisabled: Option[Boolean]
+  )
+
+  /**
+   * Returns eligible files (RemoveFile + CDC) from a range of commit versions.
+   *
+   * @param relativizeIgnoreError If None, reads from config; if Some(value), uses that value
+   */
+  protected def getFilesFromDeltaLog(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      basePath: String,
+      hadoopConf: Broadcast[SerializableConfiguration],
+      eligibleStartCommitVersion: Long,
+      eligibleEndCommitVersion: Long,
+      relativizeIgnoreError: Option[Boolean]): Dataset[SerializableFileStatus] = {
+    import org.apache.spark.sql.delta.implicits._
+    // When coordinated commits are enabled, commit files could be found in _delta_log directory
+    // as well as in commit directory. We get the delta log files outside of the retention window
+    // from both the places.
+    val prefix = listingPrefix(deltaLog.logPath, eligibleStartCommitVersion)
+    val eligibleDeltaLogFilesFromDeltaLogDirectory =
+      deltaLog.store.listFrom(prefix, deltaLog.newDeltaHadoopConf)
+        .collect { case DeltaFile(f, deltaFileVersion) => (f, deltaFileVersion) }
+        .takeWhile(_._2 <= eligibleEndCommitVersion)
+        .toSeq
+
+    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+    val commitDirPath = FileNames.commitDirPath(deltaLog.logPath)
+    val updatedStartCommitVersion =
+      eligibleDeltaLogFilesFromDeltaLogDirectory.lastOption.map(_._2)
+        .getOrElse(eligibleStartCommitVersion)
+    val eligibleDeltaLogFilesFromCommitDirectory = if (fs.exists(commitDirPath)) {
+      deltaLog.store
+        .listFrom(listingPrefix(commitDirPath, updatedStartCommitVersion),
+          deltaLog.newDeltaHadoopConf)
+        .collect { case UnbackfilledDeltaFile(f, deltaFileVersion, _) => (f, deltaFileVersion) }
+        .takeWhile(_._2 <= eligibleEndCommitVersion)
+        .toSeq
+    } else {
+      Seq.empty
+    }
+
+    val allDeltaLogFilesOutsideTheRetentionWindow = eligibleDeltaLogFilesFromDeltaLogDirectory ++
+      eligibleDeltaLogFilesFromCommitDirectory
+    val deltaLogFileIndex = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT,
+      allDeltaLogFilesOutsideTheRetentionWindow.map(_._1)).get
+
+    val allActions = deltaLog.loadIndex(deltaLogFileIndex).as[SingleAction]
+    val nonCDFFiles = allActions
+      .where("remove IS NOT NULL")
+      .select(col("remove")
+      .as[RemoveFile])
+      .mapPartitions { iter =>
+        iter.flatMap { r =>
+          val modificationTime = r.deletionTimestamp.getOrElse(0L)
+          val dv = getDeletionVectorRelativePathAndSize(r).map { case (path, length) =>
+            SerializableFileStatus(path, length, isDir = false, modificationTime)
+          }
+          dv.iterator ++ Iterator.single(SerializableFileStatus(
+            r.path, r.size.getOrElse(0L), isDir = false, modificationTime))
+        }
+      }
+      .as[SerializableFileStatus]
+    val cdfFiles = allActions
+      .where("cdc IS NOT NULL")
+      .select(col("cdc")
+      .as[AddCDCFile])
+      .map(cdc => SerializableFileStatus(cdc.path, cdc.size, isDir = false, modificationTime = 0L))
+
+    val relativizeIgnoreErrorValue = relativizeIgnoreError.getOrElse(
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
+    )
+    nonCDFFiles.union(cdfFiles).mapPartitions { iter =>
+      val tableBasePath = new Path(basePath)
+      val fs = tableBasePath.getFileSystem(hadoopConf.value.value)
+      iter.flatMap { f =>
+        // if file path is outside of the table base path, those files are not considered as they
+        // are not part of this table. Shallow clone is one example where this happens.
+        getRelativePath(f.path, fs, tableBasePath, relativizeIgnoreErrorValue)
+          .map(SerializableFileStatus(_, f.length, f.isDir, f.modificationTime))
+      }
+    }
+  }
+
+  /**
+   * Returns files from filesystem via recursive directory listing.
+   *
+   * @param spark SparkSession
+   * @param deltaLog DeltaLog for the table
+   * @param snapshot Current snapshot
+   * @param hadoopConf Hadoop configuration
+   * @param shouldIcebergMetadataDirBeHidden Whether to hide Iceberg metadata directories
+   * @param applyHiddenFilters If true, excludes hidden directories (_delta_log, etc.).
+   * @param parallelism Optional parallelism for file listing
+   * @return Dataset of SerializableFileStatus with url-encoded relative paths
+   */
+  protected def getFilesFromFilesystem(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
+      hadoopConf: Broadcast[SerializableConfiguration],
+      shouldIcebergMetadataDirBeHidden: Boolean,
+      applyHiddenFilters: Boolean,
+      parallelism: Option[Int]): Dataset[SerializableFileStatus] = {
+    import org.apache.spark.sql.delta.implicits._
+
+    val basePath = deltaLog.dataPath.toString
+    val partitionColumns = snapshot.metadata.partitionColumns
+
+    val (hiddenDirFilter, hiddenFileFilter) = if (applyHiddenFilters) {
+      // Apply filters to exclude _delta_log and other hidden directories
+      val filter = DeltaTableUtils.isHiddenDirectory(
+        partitionColumns, _: String, shouldIcebergMetadataDirBeHidden)
+      (filter, filter)
+    } else {
+      // Include all directories and files
+      ((_: String) => false, (_: String) => false)
+    }
+
+    // Use DeltaFileOperations.recursiveListDirs
+    val files = DeltaFileOperations.recursiveListDirs(
+      spark,
+      Seq(basePath),
+      hadoopConf,
+      hiddenDirNameFilter = hiddenDirFilter,
+      hiddenFileNameFilter = hiddenFileFilter,
+      fileListingParallelism = parallelism
+    )
+      .map { f =>
+        // Make paths url-encoded (same pattern as VacuumCommand)
+        val path = pathStringtoUrlEncodedString(f.path)
+        SerializableFileStatus(path, f.length, f.isDir, f.modificationTime)
+      }
+
+    files
+  }
+
+  /**
+   * Helper to compute all valid files based on basePath and Snapshot provided.
+   * Returns a DataFrame with a single column "path" containing all files that should be
+   * protected from vacuum (active files, tombstones in retention, DVs, subdirs, etc.)
+   *
+   * @param config Configuration for behavior customization
+   */
+  protected def getValidFilesFromSnapshot(
+      spark: SparkSession,
+      basePath: String,
+      snapshot: Snapshot,
+      retentionMillis: Option[Long],
+      hadoopConf: Broadcast[SerializableConfiguration],
+      clock: Clock,
+      config: ValidFilesConfig): DataFrame = {
+    import org.apache.spark.sql.delta.implicits._
+    require(snapshot.version >= 0, "No state defined for this table. Is this really " +
+      "a Delta table? Refusing to garbage collect.")
+
+    val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
+
+    // Safety check only for vacuum (not for read-only metrics)
+    if (config.performRetentionSafetyCheck) {
+      checkRetentionPeriodSafety(spark, retentionMillis, snapshotTombstoneRetentionMillis)
+    }
+
+    val deleteBeforeTimestamp = retentionMillis match {
+      case Some(millis) => clock.getTimeMillis() - millis
+      case _ => snapshot.minFileRetentionTimestamp
+    }
+
+    // Use provided values or read from config
+    val relativizeIgnoreErrorValue = config.relativizeIgnoreError.getOrElse(
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
+    )
+    val dvDiscoveryDisabledValue = config.dvDiscoveryDisabled.getOrElse(
+      DeltaUtils.isTesting && spark.sessionState.conf.getConf(
+        DeltaSQLConf.FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED)
+    )
+
+    val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
+    snapshot.stateDS.mapPartitions { actions =>
+      val reservoirBase = new Path(basePath)
+      val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
+      actions.flatMap {
+        _.unwrap match {
+          // Existing tables may not store canonicalized paths, so we check both the canonicalized
+          // and non-canonicalized paths to ensure we don't accidentally delete wrong files.
+          case fa: FileAction if config.checkAbsolutePathOnly &&
+            !fa.path.contains(basePath) && !fa.path.contains(canonicalizedBasePath) => Nil
+          case tombstone: RemoveFile if tombstone.delTimestamp < deleteBeforeTimestamp => Nil
+          case fa: FileAction =>
+            getValidRelativePathsAndSubdirs(
+              fa,
+              fs,
+              reservoirBase,
+              relativizeIgnoreErrorValue,
+              dvDiscoveryDisabledValue
+            )
+          case _ => Nil
+        }
+      }
+    }.toDF("path")
+  }
+
+  /**
+   * Expands files into their parent directories.
+   * Used by both VacuumCommand (for deletion).
+   *
+   * For each file, this creates entries for all parent directories.
+   * The caller must then aggregate and perform safety checks:
+   * 1. GroupBy path and aggregate (count, sum length, max modificationTime)
+   * 2. Join with validFiles (leftanti) to remove protected files
+   * 3. Filter where count === 1 (safety check - only unique paths are safe to delete)
+   *
+   * @param files Dataset of files to process
+   * @param basePath Base path of the table
+   * @param deleteBeforeTimestamp If Some(timestamp), filters files by modificationTime
+   *                              < timestamp (for VacuumCommand). If None, includes all files
+   *                              regardless of time.
+   * @param hadoopConf Hadoop configuration
+   *
+   * @return DataFrame with schema (path: String, length: Long,
+   *         isDir: Boolean, modificationTime: Long)
+   *         The caller should groupBy, aggregate, join with validFiles, then filter count === 1
+   */
+  protected def includeRespectiveDirectoriesWithFilesAndSafetyCheck(
+      files: Dataset[SerializableFileStatus],
+      basePath: String,
+      deleteBeforeTimestamp: Option[Long],
+      hadoopConf: Broadcast[SerializableConfiguration]
+  ): DataFrame = {
+    import org.apache.spark.sql.functions.col
+
+    implicit val serializableFileStatusEncoder =
+      org.apache.spark.sql.Encoders.product[SerializableFileStatus]
+
+    val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
+
+    val filteredFiles = deleteBeforeTimestamp match {
+      case Some(timestamp) =>
+        files.where(col("modificationTime") < timestamp || col("isDir"))
+      case None =>
+        files
+    }
+
+    filteredFiles
+      .mapPartitions { fileStatusIterator =>
+        val reservoirBase = new Path(basePath)
+        val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
+        fileStatusIterator.flatMap { fileStatus =>
+          if (fileStatus.isDir) {
+            Iterator.single(SerializableFileStatus(
+              relativize(urlEncodedStringToPath(fileStatus.path), fs,
+                reservoirBase, isDir = true), 0L, isDir = true, fileStatus.modificationTime))
+          } else {
+            val dirs = getAllSubdirs(canonicalizedBasePath, fileStatus.path, fs)
+            val dirsWithSlash = dirs.map { p =>
+              val relativizedPath = relativize(urlEncodedStringToPath(p), fs,
+                reservoirBase, isDir = true)
+              SerializableFileStatus(relativizedPath, 0L, isDir = true, fileStatus.modificationTime)
+            }
+            dirsWithSlash ++ Iterator(
+              SerializableFileStatus(relativize(
+                urlEncodedStringToPath(fileStatus.path), fs, reservoirBase, isDir = false),
+                fileStatus.length, isDir = false, fileStatus.modificationTime))
+          }
+        }
+      }.toDF()
   }
 }
 

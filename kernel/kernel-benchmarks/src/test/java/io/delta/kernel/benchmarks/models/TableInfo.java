@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks.models;
+package io.delta.kernel.benchmarks.models;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
