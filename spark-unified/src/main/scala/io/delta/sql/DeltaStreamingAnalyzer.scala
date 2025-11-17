@@ -32,11 +32,11 @@ import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
- * Analyzer rule that converts V1 StreamingRelation to V2 StreamingRelationV2 with Kernel-based
+ * Analyzer rule that converts V1 StreamingRelation to V2 StreamingRelationV2 with V2-based
  * tables for catalog-managed Delta tables only.
  *
  * This rule enables Delta to use:
- * - V2 (Kernel-based) implementation for streaming reads of catalog-managed tables
+ * - V2 (DataSource V2) implementation for streaming reads of catalog-managed tables
  * - V1 (DeltaLog-based) implementation for path-based tables, streaming writes, and batch ops
  *
  * The rule works by:
@@ -50,15 +50,15 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * - Streaming writes (sinks) continue to use V1
  * - Batch operations continue to use V1
  */
-class UseKernelForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
+class UseV2ForStreamingRule(spark: SparkSession) extends Rule[LogicalPlan] {
 
-  // Check if Kernel streaming is enabled via configuration
-  private def isKernelStreamingEnabled: Boolean = {
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_KERNEL_STREAMING_ENABLED)
+  // Check if V2 streaming is enabled via configuration
+  private def isV2StreamingEnabled: Boolean = {
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_V2_STREAMING_ENABLED)
   }
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
-    if (!isKernelStreamingEnabled) {
+    if (!isV2StreamingEnabled) {
       return plan
     }
 

@@ -74,10 +74,10 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     // First apply the base extensions from AbstractDeltaSparkSessionExtension
     super.apply(extensions)
 
-    // Register the analyzer rule for kernel-based streaming
+    // Register the analyzer rule for V2 streaming
     // This rule replaces V1 (DeltaTableV2) with V2 (SparkTable) for streaming queries
     extensions.injectResolutionRule { session =>
-      new UseKernelForStreamingRule(session)
+      new UseV2ForStreamingRule(session)
     }
   }
 

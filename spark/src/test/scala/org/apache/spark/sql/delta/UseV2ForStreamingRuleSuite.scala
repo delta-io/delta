@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import io.delta.sql.UseKernelForStreamingRule
+import io.delta.sql.UseV2ForStreamingRule
 import io.delta.kernel.spark.table.SparkTable
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
@@ -27,7 +27,7 @@ import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.test.SharedSparkSession
 
-class UseKernelForStreamingRuleSuite
+class UseV2ForStreamingRuleSuite
   extends QueryTest
   with SharedSparkSession
   with StreamTest
@@ -35,9 +35,9 @@ class UseKernelForStreamingRuleSuite
 
   import testImplicits._
 
-  // Helper: run code with Kernel streaming enabled/disabled
-  def withKernelStreaming[T](enabled: Boolean)(f: => T): T = {
-    val key = DeltaSQLConf.DELTA_KERNEL_STREAMING_ENABLED.key
+  // Helper: run code with V2 streaming enabled/disabled
+  def withV2Streaming[T](enabled: Boolean)(f: => T): T = {
+    val key = DeltaSQLConf.DELTA_V2_STREAMING_ENABLED.key
     val oldValue = spark.conf.getOption(key)
     try {
       spark.conf.set(key, enabled.toString)
@@ -74,20 +74,20 @@ class UseKernelForStreamingRuleSuite
       sql("CREATE TABLE test_table (id INT, value STRING) USING delta")
       sql("INSERT INTO test_table VALUES (1, 'a'), (2, 'b')")
 
-      withKernelStreaming(enabled = true) {
+      withV2Streaming(enabled = true) {
         val streamDF = spark.readStream.table("test_table")
         assertUsesV2(streamDF)
       }
     }
   }
 
-  // TODO: Enable when Kernel implements latestOffset()
+  // TODO: Enable when V2 implements latestOffset()
   ignore("catalog table execution with V2 produces correct results") {
     withTable("test_table") {
       sql("CREATE TABLE test_table (id INT, value STRING) USING delta")
       sql("INSERT INTO test_table VALUES (1, 'a'), (2, 'b'), (3, 'c')")
 
-      withKernelStreaming(enabled = true) {
+      withV2Streaming(enabled = true) {
         val streamDF = spark.readStream.table("test_table")
 
         val query = streamDF
@@ -111,7 +111,7 @@ class UseKernelForStreamingRuleSuite
     withTempDir { dir =>
       spark.range(5).write.format("delta").save(dir.getCanonicalPath)
 
-      withKernelStreaming(enabled = true) {
+      withV2Streaming(enabled = true) {
         val streamDF = spark.readStream.format("delta").load(dir.getCanonicalPath)
         assertUsesV1(streamDF)
       }
@@ -122,7 +122,7 @@ class UseKernelForStreamingRuleSuite
     withTempDir { dir =>
       spark.range(5).toDF("id").write.format("delta").save(dir.getCanonicalPath)
 
-      withKernelStreaming(enabled = true) {
+      withV2Streaming(enabled = true) {
         val streamDF = spark.readStream.format("delta").load(dir.getCanonicalPath)
 
         val query = streamDF
@@ -147,7 +147,7 @@ class UseKernelForStreamingRuleSuite
       sql("CREATE TABLE test_table (id INT) USING delta")
       sql("INSERT INTO test_table VALUES (1)")
 
-      withKernelStreaming(enabled = false) {
+      withV2Streaming(enabled = false) {
         val streamDF = spark.readStream.table("test_table")
         assertUsesV1(streamDF)
       }
@@ -159,7 +159,7 @@ class UseKernelForStreamingRuleSuite
       sql("CREATE TABLE test_table (id INT) USING delta")
       sql("INSERT INTO test_table VALUES (1)")
 
-      withKernelStreaming(enabled = true) {
+      withV2Streaming(enabled = true) {
         val streamDF = spark.readStream.table("test_table")
         val plan = streamDF.queryExecution.analyzed
 
@@ -175,13 +175,13 @@ class UseKernelForStreamingRuleSuite
     }
   }
 
-  // TODO: Enable when Kernel implements latestOffset()
+  // TODO: Enable when V2 implements latestOffset()
   ignore("multi-batch streaming with V2 processes correctly") {
     withTable("test_table") {
       sql("CREATE TABLE test_table (id INT, value STRING) USING delta")
       sql("INSERT INTO test_table VALUES (1, 'a')")
 
-      withKernelStreaming(enabled = true) {
+      withV2Streaming(enabled = true) {
         val streamDF = spark.readStream.table("test_table")
 
         val query = streamDF

@@ -2857,18 +2857,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  ///////////////////
-  // KERNEL STREAMING
-  ///////////////////
+  ////////////////
+  // V2 STREAMING
+  ////////////////
 
-  val DELTA_KERNEL_STREAMING_ENABLED =
-    buildConf("kernel.streaming.enabled")
+  val DELTA_V2_STREAMING_ENABLED =
+    buildConf("v2.streaming.enabled")
       .internal()
       .doc(
-        """When enabled, streaming queries will use the Kernel-based V2 (DSv2) implementation
+        """When enabled, streaming queries will use the V2 (DataSource V2) implementation
           |with MicroBatchStream support. Batch queries and write operations will continue to use
           |the traditional V1 (DeltaLog-based) implementation. This allows gradual rollout of
-          |Kernel streaming while maintaining compatibility with existing operations.
+          |V2 streaming while maintaining compatibility with existing operations.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
