@@ -189,7 +189,7 @@ public class CommitInfo {
             deltaFileStatus.getPath())) {
       while (columnarBatchIter.hasNext()) {
         final ColumnarBatch columnarBatch = columnarBatchIter.next();
-        assert (columnarBatch.getSchema().equivalentIgnoreCollations(READ_SCHEMA));
+        assert (columnarBatch.getSchema().equals(READ_SCHEMA));
         final ColumnVector commitInfoVector = columnarBatch.getColumnVector(0);
         for (int i = 0; i < commitInfoVector.getSize(); i++) {
           if (!commitInfoVector.isNullAt(i)) {

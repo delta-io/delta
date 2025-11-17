@@ -245,7 +245,7 @@ public class LogReplay {
             Optional.empty())) {
       while (reverseIter.hasNext()) {
         final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
-        assert (columnarBatch.getSchema().equivalentIgnoreCollations(SET_TRANSACTION_READ_SCHEMA));
+        assert (columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
 
         final ColumnVector txnVector = columnarBatch.getColumnVector(0);
         for (int rowId = 0; rowId < txnVector.getSize(); rowId++) {
@@ -356,7 +356,7 @@ public class LogReplay {
         final long version = nextElem.getVersion();
         final ColumnarBatch columnarBatch = nextElem.getColumnarBatch();
         logReadCount++;
-        assert (columnarBatch.getSchema().equivalentIgnoreCollations(DOMAIN_METADATA_READ_SCHEMA));
+        assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
 
         final ColumnVector dmVector = columnarBatch.getColumnVector(0);
 
