@@ -39,6 +39,9 @@ public abstract class DataType {
   /**
    * Are the data types same? The collations could be different.
    *
+   * <p>Should be used for schema comparison where collation differences are not important. E.g.,
+   * input data validation.
+   *
    * @param dataType
    * @return
    */

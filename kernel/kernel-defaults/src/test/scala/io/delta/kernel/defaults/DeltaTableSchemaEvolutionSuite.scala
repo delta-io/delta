@@ -30,7 +30,7 @@ import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
-import io.delta.kernel.types.{ArrayType, DecimalType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType, TypeChange}
+import io.delta.kernel.types.{ArrayType, CollationIdentifier, DecimalType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType, TypeChange}
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
@@ -50,6 +50,8 @@ class DeltaTableSchemaEvolutionTransactionBuilderV2Suite extends DeltaTableSchem
  */
 trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteUtils
     with ColumnMappingSuiteBase {
+
+  val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
 
   test("Add nullable column succeeds and correctly updates maxFieldId") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -77,21 +79,25 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
           true,
           fieldMetadataForColumn(3, "b"))
         .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+        .add("f", new StringType(utf8Lcase), true, fieldMetadataForColumn(6, "f"))
 
       updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("f"), 6, "f")
+      val updatedFType = structType.get("f").getDataType.asInstanceOf[StringType]
+      assert(updatedFType.getCollationIdentifier == utf8Lcase)
 
       val innerStruct = structType.get("b").getDataType.asInstanceOf[StructType]
       assertColumnMapping(innerStruct.get("d"), 4, "d")
       assertColumnMapping(innerStruct.get("e"), 5, "e")
       assertColumnMapping(structType.get("c"), 2)
-      assert(getMaxFieldId(engine, tablePath) == 5)
+      assert(getMaxFieldId(engine, tablePath) == 6)
     }
   }
 
-  test("Drop column succeeds") {
+  test("Change collation of existing STRING field succeeds") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
@@ -105,7 +111,148 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
         tableProperties = Map(
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", new StringType(utf8Lcase), true, currentSchema.get("a").getMetadata)
+        .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+
+      updateTableMetadata(engine, tablePath, newSchema)
+
+      val updatedSchema = table.getLatestSnapshot(engine).getSchema
+      val updatedAType = updatedSchema.get("a").getDataType.asInstanceOf[StringType]
+      assert(updatedAType.getCollationIdentifier == utf8Lcase)
+      // Ensure no type changes recorded for a pure collation change
+      assert(updatedSchema.get("a").getTypeChanges.isEmpty)
+    }
+  }
+
+  test("Add new STRING column with non-default collation succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", StringType.STRING, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("b", new StringType(utf8Lcase), true, fieldMetadataForColumn(3, "b"))
+
+      updateTableMetadata(engine, tablePath, newSchema)
+
+      val updatedSchema = table.getLatestSnapshot(engine).getSchema
+      assertColumnMapping(updatedSchema.get("a"), 1)
+      assertColumnMapping(updatedSchema.get("b"), 3, "b")
+      val updatedBType = updatedSchema.get("b").getDataType.asInstanceOf[StringType]
+      assert(updatedBType.getCollationIdentifier == utf8Lcase)
+    }
+  }
+
+  test("Change nested STRING collation inside struct succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add(
+          "b",
+          new StructType()
+            .add("d", StringType.STRING, true, fieldMetadataForColumn(3, "d")),
+          true,
+          fieldMetadataForColumn(2, "b"))
+        .add("a", StringType.STRING, true, fieldMetadataForColumn(1, "a"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val innerStruct = currentSchema.get("b").getDataType.asInstanceOf[StructType]
+
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add(
+          "b",
+          new StructType()
+            .add("d", new StringType(utf8Lcase), true, innerStruct.get("d").getMetadata),
+          true,
+          currentSchema.get("b").getMetadata)
+
+      updateTableMetadata(engine, tablePath, newSchema)
+
+      val updatedSchema = table.getLatestSnapshot(engine).getSchema
+      val updatedInnerStruct = updatedSchema.get("b").getDataType.asInstanceOf[StructType]
+      val updatedDType = updatedInnerStruct.get("d").getDataType.asInstanceOf[StringType]
+      assert(updatedDType.getCollationIdentifier == utf8Lcase)
+      // Ensure IDs/physical names preserved
+      assertColumnMapping(updatedInnerStruct.get("d"), 3, "d")
+    }
+  }
+
+  test("Change collation of STRING partition column succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("partition1", StringType.STRING, true)
+        .add("data", StringType.STRING, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        partCols = Seq("partition1"),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add(
+          "partition1",
+          new StringType(utf8Lcase),
+          true,
+          currentSchema.get("partition1").getMetadata)
+        .add("data", StringType.STRING, true, currentSchema.get("data").getMetadata)
+
+      updateTableMetadata(engine, tablePath, newSchema)
+
+      val updatedSchema = table.getLatestSnapshot(engine).getSchema
+      val updatedPartitionType =
+        updatedSchema.get("partition1").getDataType.asInstanceOf[StringType]
+      assert(updatedPartitionType.getCollationIdentifier == utf8Lcase)
+      // Verify ordering preserved and no unintended changes
+      val topLevelFields = updatedSchema.fieldNames().asScala
+      assert(topLevelFields == Array("partition1", "data").toSeq)
+    }
+  }
+
+  test("Drop column succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+        .add("d", new StringType(utf8Lcase), true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
       assertColumnMapping(table.getLatestSnapshot(engine).getSchema.get("c"), 2)
+      assertColumnMapping(table.getLatestSnapshot(engine).getSchema.get("d"), 3)
 
       val currentSchema = table.getLatestSnapshot(engine).getSchema()
       val newSchema = new StructType()
@@ -131,6 +278,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
             .add("e", IntegerType.INTEGER, true),
           true)
         .add("c", IntegerType.INTEGER, true)
+        .add("s", new StringType(utf8Lcase), true)
 
       createEmptyTable(
         engine,
@@ -153,6 +301,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
           true,
           currentSchema.get("b").getMetadata)
         .add("renamed-c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+        .add("renamed-s", new StringType(utf8Lcase), true, currentSchema.get("s").getMetadata)
 
       updateTableMetadata(engine, tablePath, newSchema)
 
@@ -163,6 +312,9 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       assertColumnMapping(updatedInnerStruct.get("renamed-d"), 3)
       assertColumnMapping(updatedInnerStruct.get("e"), 4)
       assertColumnMapping(updatedSchema.get("renamed-c"), 5)
+      assertColumnMapping(updatedSchema.get("renamed-s"), 6)
+      val renamedSType = updatedSchema.get("renamed-s").getDataType.asInstanceOf[StringType]
+      assert(renamedSType.getCollationIdentifier == utf8Lcase)
     }
   }
 
@@ -175,7 +327,8 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
           "b",
           new StructType()
             .add("d", IntegerType.INTEGER, true)
-            .add("e", IntegerType.INTEGER, true),
+            .add("e", IntegerType.INTEGER, true)
+            .add("s", new StringType(utf8Lcase), true),
           true)
         .add("c", IntegerType.INTEGER, true)
 
@@ -196,6 +349,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
         .add(
           "b",
           new StructType()
+            .add("s", new StringType(utf8Lcase), true, innerStruct.get("s").getMetadata)
             .add("e", IntegerType.INTEGER, true, innerStruct.get("e").getMetadata)
             .add("d", IntegerType.INTEGER, true, innerStruct.get("d").getMetadata),
           true,
@@ -209,13 +363,16 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       val updatedInnerStruct = updatedSchema.get("b").getDataType.asInstanceOf[StructType]
       assertColumnMapping(updatedInnerStruct.get("d"), 3)
       assertColumnMapping(updatedInnerStruct.get("e"), 4)
+      assertColumnMapping(updatedInnerStruct.get("s"), 6)
+      val nestedSType = updatedInnerStruct.get("s").getDataType.asInstanceOf[StringType]
+      assert(nestedSType.getCollationIdentifier == utf8Lcase)
       assertColumnMapping(updatedSchema.get("c"), 5)
 
       // Verify the top level and nested field reordering is maintained
       val topLevelFields = updatedSchema.fieldNames().asScala
       assert(topLevelFields == Array("a", "c", "b").toSeq)
       val innerFields = updatedInnerStruct.fieldNames().asScala
-      assert(innerFields == Array("e", "d").toSeq)
+      assert(innerFields == Array("s", "e", "d").toSeq)
     }
   }
 
@@ -778,6 +935,8 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
           true,
           fieldMetadataForColumn(3, "b"))
         .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+        // Add a new collated STRING field
+        .add("s", new StringType(utf8Lcase), true, fieldMetadataForColumn(6, "s"))
 
       assertSchemaEvolutionFails[IllegalArgumentException](
         table,
@@ -796,6 +955,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       val initialSchema = new StructType()
         .add("a", StringType.STRING, true)
         .add("c", IntegerType.INTEGER, true)
+        .add("s", new StringType(utf8Lcase), true)
 
       createEmptyTable(engine, tablePath, initialSchema, tableProperties = Map.empty)
 
@@ -824,13 +984,14 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       val initialSchema = new StructType()
         .add("partition1", StringType.STRING, true)
         .add("partition2", IntegerType.INTEGER, true)
+        .add("partition3", new StringType(utf8Lcase), true)
         .add("data", StringType.STRING, true)
 
       createEmptyTable(
         engine,
         tablePath,
         initialSchema,
-        partCols = Seq("partition1", "partition2"),
+        partCols = Seq("partition1", "partition2", "partition3"),
         tableProperties = Map(
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
@@ -838,6 +999,11 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       val currentSchema = table.getLatestSnapshot(engine).getSchema
       val newSchema = new StructType()
         .add("partition2", IntegerType.INTEGER, true, currentSchema.get("partition2").getMetadata)
+        .add(
+          "partition3",
+          new StringType(utf8Lcase),
+          true,
+          currentSchema.get("partition3").getMetadata)
         .add("partition1", StringType.STRING, true, currentSchema.get("partition1").getMetadata)
         .add("data", StringType.STRING, true, currentSchema.get("data").getMetadata)
 
@@ -846,7 +1012,9 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
       // Verify the ordering is expected
       val topLevelFields = updatedSchema.fieldNames().asScala
-      assert(topLevelFields == Array("partition2", "partition1", "data").toSeq)
+      assert(topLevelFields == Array("partition2", "partition3", "partition1", "data").toSeq)
+      val p3Type = updatedSchema.get("partition3").getDataType.asInstanceOf[StringType]
+      assert(p3Type.getCollationIdentifier == utf8Lcase)
     }
   }
 
@@ -910,6 +1078,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
             .add("e", IntegerType.INTEGER, true, fieldMetadataForColumn(5, "e")),
           true,
           fieldMetadataForColumn(3, "b"))
+        .add("s", new StringType(utf8Lcase), true, fieldMetadataForColumn(6, "s"))
         .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
 
       assertSchemaEvolutionFails[KernelException](
@@ -1015,6 +1184,41 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
     }
   }
 
+  test("Cannot drop a collated partition column") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("p", new StringType(utf8Lcase), true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        partCols = Seq("p"),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add(
+          "b",
+          new StructType()
+            .add("d", IntegerType.INTEGER, true, fieldMetadataForColumn(4, "d"))
+            .add("e", IntegerType.INTEGER, true, fieldMetadataForColumn(5, "e")),
+          true,
+          fieldMetadataForColumn(3, "b"))
+
+      assertSchemaEvolutionFails[IllegalArgumentException](
+        table,
+        engine,
+        newSchema,
+        "Partition column p not found in the schema")
+    }
+  }
+
   test("Cannot rename a partition column") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
@@ -1041,6 +1245,35 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
         engine,
         newSchema,
         "Partition column c not found in the schema")
+    }
+  }
+
+  test("Cannot rename a collated partition column") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("p", new StringType(utf8Lcase), true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        partCols = Seq("p"),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("q", new StringType(utf8Lcase), true, currentSchema.get("p").getMetadata)
+
+      assertSchemaEvolutionFails[IllegalArgumentException](
+        table,
+        engine,
+        newSchema,
+        "Partition column p not found in the schema")
     }
   }
 
