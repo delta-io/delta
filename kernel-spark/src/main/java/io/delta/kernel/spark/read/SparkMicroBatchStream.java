@@ -27,13 +27,17 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
+import io.delta.kernel.spark.utils.PartitionUtils;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.spark.utils.StreamingHelper;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.time.ZoneId;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
@@ -45,8 +49,17 @@ import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.FilePartition$;
+import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.Option;
+import scala.collection.JavaConverters;
+import scala.collection.Seq;
 
 public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissionControl {
 
@@ -62,10 +75,19 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   private final String tableId;
   private final boolean shouldValidateOffsets;
   private final SparkSession spark;
+  private final String tablePath;
+  private final StructType readDataSchema;
+  private final StructType dataSchema;
+  private final StructType partitionSchema;
+  private final Filter[] dataFilters;
+  private final Configuration hadoopConf;
+  private final SQLConf sqlConf;
+  private final scala.collection.immutable.Map<String, String> scalaOptions;
 
   // Tracks whether this is the first batch for this stream (no checkpointed offset).
   private boolean isFirstBatch = false;
 
+  /** Test-only constructor with minimal parameters. */
   public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
     this(
         snapshotManager,
@@ -73,18 +95,62 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         SparkSession.active(),
         new DeltaOptions(
             scala.collection.immutable.Map$.MODULE$.empty(),
-            SparkSession.active().sessionState().conf()));
+            SparkSession.active().sessionState().conf()),
+        /* tablePath= */ "",
+        /* dataSchema= */ new StructType(),
+        /* partitionSchema= */ new StructType(),
+        /* readDataSchema= */ new StructType(),
+        /* dataFilters= */ new Filter[0],
+        /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
+  }
+
+  /**
+   * Test-only constructor with spark, options parameters for testing getStartingVersion and other
+   * option-dependent behavior.
+   */
+  public SparkMicroBatchStream(
+      DeltaSnapshotManager snapshotManager,
+      Configuration hadoopConf,
+      SparkSession spark,
+      DeltaOptions options) {
+    this(
+        snapshotManager,
+        hadoopConf,
+        spark,
+        options,
+        /* tablePath= */ "",
+        /* dataSchema= */ new StructType(),
+        /* partitionSchema= */ new StructType(),
+        /* readDataSchema= */ new StructType(),
+        /* dataFilters= */ new Filter[0],
+        /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
   }
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Configuration hadoopConf,
       SparkSession spark,
-      DeltaOptions options) {
-    this.spark = spark;
-    this.snapshotManager = snapshotManager;
+      DeltaOptions options,
+      String tablePath,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType readDataSchema,
+      Filter[] dataFilters,
+      scala.collection.immutable.Map<String, String> scalaOptions) {
+    this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
+    this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
+    this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
-    this.options = options;
+    this.options = Objects.requireNonNull(options, "options is null");
+    this.tablePath = Objects.requireNonNull(tablePath, "tablePath is null");
+    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
+    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
+    this.dataFilters =
+        Arrays.copyOf(
+            Objects.requireNonNull(dataFilters, "dataFilters is null"), dataFilters.length);
+    this.sqlConf = SQLConf.get();
+    this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
 
     // Initialize snapshot at source init to get table ID, similar to DeltaSource.scala
     Snapshot snapshotAtSourceInit = snapshotManager.loadLatestSnapshot();
@@ -225,12 +291,72 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public InputPartition[] planInputPartitions(Offset start, Offset end) {
-    throw new UnsupportedOperationException("planInputPartitions is not supported");
+    DeltaSourceOffset startOffset = (DeltaSourceOffset) start;
+    DeltaSourceOffset endOffset = (DeltaSourceOffset) end;
+
+    long fromVersion = startOffset.reservoirVersion();
+    long fromIndex = startOffset.index();
+    boolean isInitialSnapshot = startOffset.isInitialSnapshot();
+
+    List<PartitionedFile> partitionedFiles = new ArrayList<>();
+    long totalBytesToRead = 0;
+    try (CloseableIterator<IndexedFile> fileChanges =
+        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Option.apply(endOffset))) {
+      while (fileChanges.hasNext()) {
+        IndexedFile indexedFile = fileChanges.next();
+        if (!indexedFile.hasFileAction() || indexedFile.getAddFile() == null) {
+          continue;
+        }
+        AddFile addFile = indexedFile.getAddFile();
+        InternalRow partitionRow =
+            PartitionUtils.getPartitionRow(
+                addFile.getPartitionValues(),
+                partitionSchema,
+                ZoneId.of(sqlConf.sessionLocalTimeZone()));
+        // Preferred node locations are not used.
+        String[] preferredLocations = new String[0];
+        // Constant metadata columns are not used.
+        scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
+            scala.collection.immutable.Map$.MODULE$.empty();
+
+        PartitionedFile partitionedFile =
+            new PartitionedFile(
+                partitionRow,
+                SparkPath.fromUrlString(tablePath + addFile.getPath()),
+                /* start= */ 0L,
+                /* length= */ addFile.getSize(),
+                preferredLocations,
+                addFile.getModificationTime(),
+                /* fileSize= */ addFile.getSize(),
+                otherConstantMetadataColumnValues);
+
+        totalBytesToRead += addFile.getSize();
+        partitionedFiles.add(partitionedFile);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to get file changes", e);
+    }
+
+    long maxSplitBytes =
+        PartitionUtils.calculateMaxSplitBytes(
+            spark, totalBytesToRead, partitionedFiles.size(), sqlConf);
+    // Partitions files into Spark FilePartitions.
+    Seq<FilePartition> filePartitions =
+        FilePartition$.MODULE$.getFilePartitions(
+            spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
+    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
   }
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    throw new UnsupportedOperationException("createReaderFactory is not supported");
+    return PartitionUtils.createParquetReaderFactory(
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        dataFilters,
+        scalaOptions,
+        hadoopConf,
+        sqlConf);
   }
 
   ///////////////

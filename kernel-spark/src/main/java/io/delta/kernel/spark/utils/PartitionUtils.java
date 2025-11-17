@@ -46,22 +46,7 @@ public class PartitionUtils {
 
   /**
    * Calculate the maximum split bytes for file partitioning, considering total bytes and file
-   * count. This is used for optimal file splitting in both batch and streaming scenarios.
-   *
-   * <p>The algorithm balances several factors:
-   *
-   * <ul>
-   *   <li>Ensures good parallelism by dividing work across available cores
-   *   <li>Respects the maximum partition size (spark.sql.files.maxPartitionBytes)
-   *   <li>Accounts for file open overhead (spark.sql.files.openCostInBytes)
-   *   <li>Prevents creating partitions smaller than the open cost
-   * </ul>
-   *
-   * @param sparkSession the Spark session
-   * @param totalBytes total bytes across all files
-   * @param fileCount number of files
-   * @param sqlConf the SQL configuration
-   * @return maximum split bytes for partitioning
+   * count. This is used for optimal file splitting in both batch and streaming read.
    */
   public static long calculateMaxSplitBytes(
       SparkSession sparkSession, long totalBytes, int fileCount, SQLConf sqlConf) {
@@ -86,11 +71,6 @@ public class PartitionUtils {
   /**
    * Calculate the maximum split bytes for file partitioning using file list. Convenience method
    * that calculates total bytes from the file list.
-   *
-   * @param sparkSession the Spark session
-   * @param partitionedFiles list of partitioned files
-   * @param sqlConf the SQL configuration
-   * @return maximum split bytes for partitioning
    */
   public static long calculateMaxSplitBytes(
       SparkSession sparkSession, List<PartitionedFile> partitionedFiles, SQLConf sqlConf) {
@@ -101,14 +81,6 @@ public class PartitionUtils {
   /**
    * Build the partition InternalRow from kernel partition values by casting them to the desired
    * Spark types using the session time zone for temporal types.
-   *
-   * <p>This method handles the conversion of Delta Kernel's partition values (stored as strings in
-   * a MapValue) to Spark's InternalRow representation, properly typed for each partition column.
-   *
-   * @param partitionValues the partition values from kernel (AddFile.getPartitionValues())
-   * @param partitionSchema the partition schema defining the expected types
-   * @param zoneId the time zone for temporal type conversions
-   * @return InternalRow containing the typed partition values
    */
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
@@ -139,28 +111,7 @@ public class PartitionUtils {
         JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
   }
 
-  /**
-   * Create a PartitionReaderFactory for reading Parquet files with partition support.
-   *
-   * <p>This method creates a reader factory that uses Spark's ParquetFileFormat to read files, with
-   * support for:
-   *
-   * <ul>
-   *   <li>Vectorized reading when schema is compatible
-   *   <li>Partition column injection
-   *   <li>Data filter pushdown
-   *   <li>Schema projection
-   * </ul>
-   *
-   * @param dataSchema the full data schema of the table
-   * @param partitionSchema the partition schema
-   * @param readDataSchema the projected data schema to read
-   * @param dataFilters filters to push down to the file format
-   * @param scalaOptions options to pass to the file format
-   * @param hadoopConf Hadoop configuration for file access
-   * @param sqlConf SQL configuration for vectorization checks
-   * @return PartitionReaderFactory for reading the files
-   */
+  /** Create a PartitionReaderFactory for reading Parquet files with partition support. */
   public static PartitionReaderFactory createParquetReaderFactory(
       StructType dataSchema,
       StructType partitionSchema,
