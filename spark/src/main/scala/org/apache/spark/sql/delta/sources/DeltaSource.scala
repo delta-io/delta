@@ -1573,7 +1573,7 @@ object DeltaSource extends DeltaLogging {
    * @param tableId The table ID
    * @param fileVersion The version of the last indexed file.
    * @param fileIndex The index of the last indexed file.
-   * @param version Previous offset reservoir version.
+   * @param previousVersion Previous offset reservoir version.
    * @param isInitialSnapshot Whether previous offset is starting version or not.
    * @return A DeltaSourceOffset representing the next offset to read from.
    */
@@ -1581,17 +1581,17 @@ object DeltaSource extends DeltaLogging {
       tableId: String,
       fileVersion: Long,
       fileIndex: Long,
-      version: Long,
+      previousVersion: Long,
       isInitialSnapshot: Boolean): DeltaSourceOffset = {
     val (v, i) = (fileVersion, fileIndex)
-    assert(v >= version,
-      s"buildOffsetFromIndexedFile returns an invalid version: $v (expected: >= $version), " +
-        s"tableId: $tableId")
+    assert(v >= previousVersion,
+      s"buildOffsetFromIndexedFile returns an invalid version: $v " +
+        s"(expected: >= $previousVersion), tableId: $tableId")
 
     // If the last file in previous batch is the end index of that version, automatically bump
     // to next version to skip accessing that version file altogether. The END_INDEX should never
     // be returned as an offset.
-    if (i == DeltaSourceOffset.END_INDEX) {
+    val offset = if (i == DeltaSourceOffset.END_INDEX) {
       // isInitialSnapshot must be false here as we have bumped the version.
       DeltaSourceOffset(
         tableId,
@@ -1602,11 +1602,11 @@ object DeltaSource extends DeltaLogging {
       // isInitialSnapshot will be true only if previous isInitialSnapshot is true and the next file
       // is still at the same version.
       DeltaSourceOffset(
-        tableId,
-        v,
-        index = i,
-        isInitialSnapshot = isInitialSnapshot && v == version)
+        tableId, v, i,
+        isInitialSnapshot = v == previousVersion && isInitialSnapshot
+        )
     }
+    offset
   }
 }
 
