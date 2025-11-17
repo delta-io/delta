@@ -31,11 +31,11 @@ class CatalogTableUtilsTest {
   @Test
   void testIsCatalogManaged_CatalogFlagEnabled_ReturnsTrue() {
     CatalogTable table =
-        catalogTable(Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
+        catalogTable(
+            Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
     assertTrue(
-        CatalogTableUtils.isCatalogManaged(table),
-        "Catalog-managed flag should enable detection");
+        CatalogTableUtils.isCatalogManaged(table), "Catalog-managed flag should enable detection");
   }
 
   @Test
@@ -55,8 +55,7 @@ class CatalogTableUtilsTest {
     CatalogTable table = catalogTable(Collections.emptyMap(), Collections.emptyMap());
 
     assertFalse(
-        CatalogTableUtils.isCatalogManaged(table),
-        "No catalog flags should disable detection");
+        CatalogTableUtils.isCatalogManaged(table), "No catalog flags should disable detection");
   }
 
   @Test
@@ -79,8 +78,7 @@ class CatalogTableUtilsTest {
   void testIsUnityCatalogManaged_MissingId_ReturnsFalse() {
     CatalogTable table =
         catalogTable(
-            Collections.emptyMap(),
-            Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
+            Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
     assertFalse(
         CatalogTableUtils.isUnityCatalogManagedTable(table),
