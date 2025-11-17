@@ -3,6 +3,7 @@ package io.delta.kernel.spark.utils;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
+import java.util.HashMap;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 
@@ -10,9 +11,9 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  * Utility helpers for inspecting Delta-related metadata persisted on Spark {@link CatalogTable}
  * instances by Unity Catalog.
  *
- * <p>Unity Catalog marks catalog-managed tables via feature flags stored in table properties. This
- * helper centralises the logic for interpreting those properties so the Kernel connector can decide
- * when to use catalog-owned (CCv2) behaviour.
+ * <p>Unity Catalog marks catalog-managed tables via feature flags stored in table storage
+ * properties. This helper centralises the logic for interpreting those properties so the Kernel
+ * connector can decide when to use catalog-owned (CCv2) behaviour.
  *
  * <ul>
  *   <li>{@link #isCatalogManaged(CatalogTable)} checks whether either {@code
@@ -48,14 +49,14 @@ public final class CatalogTableUtils {
     return isUCBacked && isCatalogManaged(table);
   }
 
-  /**
-   * Returns storage-layer metadata published with a {@link CatalogTable}. Unity Catalog and other
-   * Spark connectors propagate connection credentials and format-specific options through the
-   * storage properties map rather than the logical table properties map.
-   */
+  // We merge the storage and logical properties into a single map because we want to be able to
+  // access both sets of properties in a single method.
   public static Map<String, String> getStorageProperties(CatalogTable table) {
     requireNonNull(table, "table is null");
-    return ScalaUtils.toJavaMap(table.storage().properties());
+    Map<String, String> merged = new HashMap<>();
+    merged.putAll(ScalaUtils.toJavaMap(table.storage().properties()));
+    merged.putAll(ScalaUtils.toJavaMap(table.properties()));
+    return merged;
   }
 
   public static boolean isCatalogManagedFeatureEnabled(
