@@ -3,7 +3,6 @@ package io.delta.kernel.spark.utils;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
-import java.util.HashMap;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 
@@ -31,8 +30,12 @@ public final class CatalogTableUtils {
 
   private CatalogTableUtils() {}
 
-  // Checks whether *any* catalog manages this table via CCv2 semantics by checking
-  // if the catalogManaged/catalogOwned-preview flags are 'supported'
+  /**
+   * Checks whether any catalog manages this table via CCv2 semantics.
+   *
+   * @param table Spark {@link CatalogTable} descriptor
+   * @return {@code true} when either catalog feature flag is set to {@code supported}
+   */
   public static boolean isCatalogManaged(CatalogTable table) {
     requireNonNull(table, "table is null");
     Map<String, String> storageProperties = getStorageProperties(table);
@@ -40,8 +43,12 @@ public final class CatalogTableUtils {
         || isCatalogManagedFeatureEnabled(storageProperties, FEATURE_CATALOG_OWNED_PREVIEW);
   }
 
-  // Checks if table is *Unity Catalog* managed - meaning it isCatalogManaged, and it contains
-  // a UC identifier (UC_TABLE_ID_KEY)
+  /**
+   * Checks whether the table is Unity Catalog managed.
+   *
+   * @param table Spark {@link CatalogTable} descriptor
+   * @return {@code true} when the table is catalog managed and contains the UC identifier
+   */
   public static boolean isUnityCatalogManagedTable(CatalogTable table) {
     requireNonNull(table, "table is null");
     Map<String, String> storageProperties = getStorageProperties(table);
@@ -49,14 +56,15 @@ public final class CatalogTableUtils {
     return isUCBacked && isCatalogManaged(table);
   }
 
-  // We merge the storage and logical properties into a single map because we want to be able to
-  // access both sets of properties in a single method.
+  /**
+   * Returns the catalog storage properties published with a {@link CatalogTable}.
+   *
+   * @param table Spark {@link CatalogTable} descriptor
+   * @return Java map view of the storage properties
+   */
   public static Map<String, String> getStorageProperties(CatalogTable table) {
     requireNonNull(table, "table is null");
-    Map<String, String> merged = new HashMap<>();
-    merged.putAll(ScalaUtils.toJavaMap(table.storage().properties()));
-    merged.putAll(ScalaUtils.toJavaMap(table.properties()));
-    return merged;
+    return ScalaUtils.toJavaMap(table.storage().properties());
   }
 
   public static boolean isCatalogManagedFeatureEnabled(
