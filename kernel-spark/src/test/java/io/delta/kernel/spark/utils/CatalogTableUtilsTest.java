@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -28,94 +29,88 @@ import org.junit.jupiter.api.Test;
 class CatalogTableUtilsTest {
 
   @Test
-  void catalogManagedFlagEnablesDetection() {
+  void testIsCatalogManaged_CatalogFlagEnabled_ReturnsTrue() {
     CatalogTable table =
-        catalogTableWithProperties(
-            Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
+        catalogTable(Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
     assertTrue(
-        CatalogTableUtils.isCatalogManaged(table), "Should detect catalog management with flag");
-    assertFalse(
-        CatalogTableUtils.isUnityCatalogManagedTable(table), "Should not detect Unity without ID");
+        CatalogTableUtils.isCatalogManaged(table),
+        "Catalog-managed flag should enable detection");
   }
 
   @Test
-  void previewFlagEnablesDetectionIgnoringCase() {
+  void testIsCatalogManaged_PreviewFlagEnabled_ReturnsTrue() {
     CatalogTable table =
-        catalogTableWithProperties(
+        catalogTable(
             Collections.emptyMap(),
             Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "SuPpOrTeD"));
 
     assertTrue(
-        CatalogTableUtils.isCatalogManaged(table), "Should detect via preview flag ignoring case");
-    assertFalse(
-        CatalogTableUtils.isUnityCatalogManagedTable(table), "Should not detect Unity without ID");
+        CatalogTableUtils.isCatalogManaged(table),
+        "Preview flag should enable detection ignoring case");
   }
 
   @Test
-  void noFlagsMeansNotManaged() {
-    CatalogTable table = catalogTableWithProperties(Collections.emptyMap());
+  void testIsCatalogManaged_NoFlags_ReturnsFalse() {
+    CatalogTable table = catalogTable(Collections.emptyMap(), Collections.emptyMap());
 
     assertFalse(
-        CatalogTableUtils.isCatalogManaged(table), "Should not detect management without flags");
-    assertFalse(
-        CatalogTableUtils.isUnityCatalogManagedTable(table),
-        "Should not detect Unity without ID or flags");
+        CatalogTableUtils.isCatalogManaged(table),
+        "No catalog flags should disable detection");
   }
 
   @Test
-  void unityManagementRequiresFlagAndId() {
+  void testIsUnityCatalogManaged_FlagAndIdPresent_ReturnsTrue() {
     CatalogTable table =
-        catalogTableWithProperties(
+        catalogTable(
             Collections.emptyMap(),
             Map.of(
-                CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported",
-                io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
-                        .UC_TABLE_ID_KEY,
-                    "abc-123"));
+                CatalogTableUtils.FEATURE_CATALOG_MANAGED,
+                "supported",
+                UCCommitCoordinatorClient.UC_TABLE_ID_KEY,
+                "abc-123"));
 
     assertTrue(
-        CatalogTableUtils.isCatalogManaged(table), "Should detect general catalog management");
-    assertTrue(
-        CatalogTableUtils.isUnityCatalogManagedTable(table), "Should detect Unity with ID present");
+        CatalogTableUtils.isUnityCatalogManagedTable(table),
+        "Unity Catalog detection should require flag and identifier");
   }
 
   @Test
-  void unityManagementFailsWithoutId() {
+  void testIsUnityCatalogManaged_MissingId_ReturnsFalse() {
     CatalogTable table =
-        catalogTableWithProperties(
-            Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
+        catalogTable(
+            Collections.emptyMap(),
+            Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
-    assertTrue(
-        CatalogTableUtils.isCatalogManaged(table), "Should detect general catalog management");
     assertFalse(
         CatalogTableUtils.isUnityCatalogManagedTable(table),
-        "Should fail Unity detection without ID");
+        "Missing table identifier should break Unity detection");
   }
 
   @Test
-  void storagePropertiesExposeStorageMetadata() {
+  void testIsUnityCatalogManaged_PreviewFlagMissingId_ReturnsFalse() {
+    CatalogTable table =
+        catalogTable(
+            Collections.emptyMap(),
+            Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "supported"));
+
+    assertFalse(
+        CatalogTableUtils.isUnityCatalogManagedTable(table),
+        "Preview flag without ID should not be considered Unity managed");
+  }
+
+  @Test
+  void testGetStorageProperties_ReturnsPublishedMetadata() {
     Map<String, String> storageProps = Map.of("fs.test.option", "value", "dfs.conf.key", "abc");
-    CatalogTable table = catalogTableWithProperties(Collections.emptyMap(), storageProps);
+    CatalogTable table = catalogTable(Collections.emptyMap(), storageProps);
 
     assertEquals(
         storageProps,
         CatalogTableUtils.getStorageProperties(table),
-        "Should surface storage properties published by the catalog");
+        "Storage properties should surface catalog-published metadata");
   }
 
-  /**
-   * Creates a CatalogTable with the given properties. This is a helper method to create a
-   * CatalogTable for testing purposes - see interface {@link CatalogTable} for more details.
-   *
-   * @param properties the properties to set on the CatalogTable
-   * @return a CatalogTable with the given properties
-   */
-  private static CatalogTable catalogTableWithProperties(Map<String, String> properties) {
-    return catalogTableWithProperties(properties, Collections.emptyMap());
-  }
-
-  private static CatalogTable catalogTableWithProperties(
+  private static CatalogTable catalogTable(
       Map<String, String> properties, Map<String, String> storageProperties) {
     return CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(properties, storageProperties);
   }
