@@ -256,20 +256,18 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
               .withCommitter(customCatalogCommitter)
 
           case "UPDATE" =>
-            var snapshotBuilder = TableManager
+            val updateBuilder = TableManager
               .loadSnapshot(tablePath)
               .withCommitter(customCatalogCommitter)
-            if (
-              TableFeatures.isPropertiesManuallySupportingTableFeature(
-                testCase.initialTableProperties.asJava,
-                TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)
-            ) {
-              snapshotBuilder = snapshotBuilder.withMaxCatalogVersion(0)
-            }
-            val updateBuilder = snapshotBuilder
+              .withMaxCatalogVersionIfApplicable(
+                TableFeatures.isPropertiesManuallySupportingTableFeature(
+                  testCase.initialTableProperties.asJava,
+                  TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
+                0)
               .build(defaultEngine)
               .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
               .withTablePropertiesAdded(testCase.transactionProperties.asJava)
+
             if (testCase.removedPropertyKeys.nonEmpty) {
               updateBuilder.withTablePropertiesRemoved(testCase.removedPropertyKeys.asJava)
             } else {
@@ -279,18 +277,14 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
           case "REPLACE" =>
             val replaceSchema = schema.add("col2", IntegerType.INTEGER)
 
-            var snapshotBuilder = TableManager
+            TableManager
               .loadSnapshot(tablePath)
               .withCommitter(customCatalogCommitter)
-            if (
-              TableFeatures.isPropertiesManuallySupportingTableFeature(
-                testCase.initialTableProperties.asJava,
-                TableFeatures.CATALOG_MANsAGED_R_W_FEATURE_PREVIEW)
-            ) {
-              snapshotBuilder = snapshotBuilder.withMaxCatalogVersion(0)
-            }
-
-            snapshotBuilder
+              .withMaxCatalogVersionIfApplicable(
+                TableFeatures.isPropertiesManuallySupportingTableFeature(
+                  testCase.initialTableProperties.asJava,
+                  TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
+                0)
               .build(defaultEngine)
               .asInstanceOf[SnapshotImpl]
               .buildReplaceTableTransaction(replaceSchema, "engineInfo")
@@ -310,14 +304,11 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
             }
 
           // Verify the results
-          var snapshotBuilder = TableManager
+          val snapshot = TableManager
             .loadSnapshot(tablePath)
-
-          if (testCase.expectedCatalogManagedSupported) {
-            snapshotBuilder = snapshotBuilder.withMaxCatalogVersion(maxCatalogVersion)
-          }
-
-          val snapshot = snapshotBuilder
+            .withMaxCatalogVersionIfApplicable(
+              testCase.expectedCatalogManagedSupported,
+              maxCatalogVersion)
             .build(defaultEngine)
             .asInstanceOf[SnapshotImpl]
 

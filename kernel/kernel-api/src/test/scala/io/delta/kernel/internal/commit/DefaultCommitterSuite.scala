@@ -57,15 +57,13 @@ class DefaultCommitterSuite extends AnyFunSuite
       val emptyMockEngine = createMockFSListFromEngine(Nil)
       val schema = new StructType().add("col1", IntegerType.INTEGER)
       val metadata = testMetadata(schema, Seq[String]())
-
-      var snapshotBuilder = TableManager.loadSnapshot(dataPath.toString)
+      val committer = TableManager.loadSnapshot(dataPath.toString)
         .asInstanceOf[SnapshotBuilderImpl]
         .withProtocolAndMetadata(readProtocol, metadata)
         .atVersion(1)
-      if (readProtocol.supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
-        snapshotBuilder = snapshotBuilder.withMaxCatalogVersion(1)
-      }
-      val committer = snapshotBuilder.build(emptyMockEngine)
+        .withMaxCatalogVersionIfApplicable(
+          readProtocol.supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
+          1).build(emptyMockEngine)
         .getCommitter
 
       assert(committer.isInstanceOf[DefaultFileSystemManagedTableOnlyCommitter])
