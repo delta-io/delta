@@ -30,6 +30,7 @@ import io.delta.kernel.types.StructType;
 import java.util.*;
 import java.util.stream.Stream;
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
+import org.apache.spark.sql.delta.DeltaIllegalStateException;
 import org.apache.spark.sql.delta.RowTracking;
 import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.types.DataTypes;
@@ -94,12 +95,11 @@ public class RowTrackingUtilsTest {
     config.put(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey(), "__row_version");
     Metadata metadata = createMetadata(config);
 
-    IllegalStateException exception =
+    DeltaIllegalStateException exception =
         assertThrows(
-            IllegalStateException.class,
+            DeltaIllegalStateException.class,
             () -> RowTrackingUtils.createMetadataStructFields(protocol, metadata, false, false));
-    assertTrue(
-        exception.getMessage().contains(TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME.getKey()));
+    assertTrue(exception.getMessage().contains("Row ID"));
   }
 
   @Test
@@ -111,14 +111,11 @@ public class RowTrackingUtilsTest {
     // Missing MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME
     Metadata metadata = createMetadata(config);
 
-    IllegalStateException exception =
+    DeltaIllegalStateException exception =
         assertThrows(
-            IllegalStateException.class,
+            DeltaIllegalStateException.class,
             () -> RowTrackingUtils.createMetadataStructFields(protocol, metadata, false, false));
-    assertTrue(
-        exception
-            .getMessage()
-            .contains(TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME.getKey()));
+    assertTrue(exception.getMessage().contains("Row Commit Version"));
   }
 
   private static Stream<Arguments> createMetadataStructFieldsTestProvider() {

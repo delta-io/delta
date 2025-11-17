@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField;
+import org.apache.spark.sql.delta.DeltaIllegalStateException;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.MetadataBuilder;
 import org.apache.spark.sql.types.StructField;
@@ -129,24 +130,28 @@ public class RowTrackingUtils {
 
   /**
    * Helper method to get physical column name from MaterializedRowTrackingColumn, converting kernel
-   * IllegalArgumentException to Spark DeltaIllegalStateException.
+   * IllegalArgumentException to Spark DeltaIllegalStateException. This matches the exception thrown
+   * by Spark V1's MaterializedRowTrackingColumn.
    *
    * @param column the MaterializedRowTrackingColumn instance
    * @param metadata the table metadata
    * @return the physical column name
-   * @throws IllegalStateException if the materialized column name is missing
+   * @throws DeltaIllegalStateException if the materialized column name is missing
    */
   private static String getPhysicalColumnNameOrThrow(
       MaterializedRowTrackingColumn column, Metadata metadata) {
     try {
       return column.getPhysicalColumnName(metadata.getConfiguration());
     } catch (IllegalArgumentException e) {
-      // Convert kernel exception to a clearer Spark exception
-      throw new IllegalStateException(
-          String.format(
-              "Materialized row tracking column name '%s' is missing in metadata config. "
-                  + "Row tracking is enabled, but the required column name is not configured.",
-              column.getMaterializedColumnNameProperty()),
+      // Convert kernel exception to Spark V1-compatible DeltaIllegalStateException
+      // Use the same error class as Spark V1: DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING
+      String rowTrackingColumnType =
+          column == MaterializedRowTrackingColumn.MATERIALIZED_ROW_ID
+              ? "Row ID"
+              : "Row Commit Version";
+      throw new DeltaIllegalStateException(
+          "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+          new String[] {rowTrackingColumnType, metadata.getId()},
           e);
     }
   }
