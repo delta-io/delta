@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
-import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
@@ -138,7 +137,7 @@ public class UnityCatalogClientFactoryTest extends SparkDsv2TestBase {
 
   private static CatalogTable buildUnityCatalogTable(String tableId) {
     Map<String, String> storageProps = new HashMap<>();
-    storageProps.put(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported");
+    storageProps.put("delta.feature.catalogManaged", "supported");
     storageProps.put(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableId);
     return io.delta.kernel.spark.utils.CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(
         new HashMap<>(), storageProps);
