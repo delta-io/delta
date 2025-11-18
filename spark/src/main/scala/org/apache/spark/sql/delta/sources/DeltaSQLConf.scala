@@ -1442,12 +1442,12 @@ trait DeltaSQLConfBase {
         "during schema evolution. This flag is guarded by the flag 'delta.enableTypeWidening'" +
         "All supported widenings are enabled with 'always' selected, which allows some " +
         "conversions between integer types and floating numbers. The value 'same_family_type' " +
-        "fallbacks to the default behavior of the guarding flag. 'never' allows no widenings.")
+        "was the historical behavior. 'never' allows no widenings.")
       .internal()
       .stringConf
       .transform(_.toUpperCase(Locale.ROOT))
       .checkValues(AllowAutomaticWideningMode.values.map(_.toString))
-      .createWithDefault(AllowAutomaticWideningMode.SAME_FAMILY_TYPE.toString)
+      .createWithDefault(AllowAutomaticWideningMode.ALWAYS.toString)
 
   val DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING =
     buildConf("typeWidening.enableStreamingSchemaTracking")
@@ -1801,6 +1801,26 @@ trait DeltaSQLConfBase {
       .transform(_.toUpperCase(Locale.ROOT))
       .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
       .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
+
+  object ValidateCheckConstraintsMode extends Enumeration {
+    val OFF, LOG_ONLY, ASSERT = Value
+
+    def fromConf(conf: SQLConf): Value =
+      withName(conf.getConf(VALIDATE_CHECK_CONSTRAINTS))
+
+    def default: Value =
+      withName(VALIDATE_CHECK_CONSTRAINTS.defaultValueString)
+  }
+
+  val VALIDATE_CHECK_CONSTRAINTS =
+    buildConf("checkConstraints.validation.enabled")
+      .internal()
+      .doc("When enabled, validates check constraints expressions during both creation and write" +
+        " paths to protect against disallowed expressions.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(ValidateCheckConstraintsMode.values.map(_.toString))
+      .createWithDefault(ValidateCheckConstraintsMode.LOG_ONLY.toString)
 
   val DELTA_CONVERT_ICEBERG_ENABLED =
     buildConf("convert.iceberg.enabled")

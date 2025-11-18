@@ -40,6 +40,25 @@ public class RowTracking {
   }
 
   /**
+   * Check if row tracking is enabled for reading.
+   *
+   * @param protocol the protocol to check
+   * @param metadata the metadata to check
+   * @return true if row tracking is enabled
+   * @throws IllegalStateException if row tracking is enabled in metadata but not supported by
+   *     protocol
+   */
+  public static boolean isEnabled(Protocol protocol, Metadata metadata) {
+    boolean isEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+    if (isEnabled && !TableFeatures.isRowTrackingSupported(protocol)) {
+      throw new IllegalStateException(
+          "Table property 'delta.enableRowTracking' is set on the table but this table version "
+              + "doesn't support table feature 'delta.feature.rowTracking'.");
+    }
+    return isEnabled;
+  }
+
+  /**
    * Checks if the provided field is a row tracking column, i.e., either the row ID or the row
    * commit version column.
    *

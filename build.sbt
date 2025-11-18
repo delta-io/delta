@@ -1124,7 +1124,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll
     ),
     assembly / assemblyExcludedJars := {
-      val cp = (fullClasspath in assembly).value
+      val cp = (assembly / fullClasspath).value
       cp.filter { jar =>
         val doExclude = jar.data.getName.contains("jackson-annotations") ||
           jar.data.getName.contains("RoaringBitmap")
