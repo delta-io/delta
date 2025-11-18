@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.types
 
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -199,5 +201,155 @@ class TypeWideningCheckerSuite extends AnyFunSuite {
       IntegerType.INTEGER,
       new DecimalType(15, 3)))
     assert(!TypeWideningChecker.isIcebergV2Compatible(LongType.LONG, new DecimalType(20, 0)))
+  }
+
+  test("assertTableReadable - does nothing if type widening not supported") {
+    val protocol = createProtocolWithoutTypeWidening()
+    val fieldWithTypeChange = createFieldWithTypeChange(
+      "value",
+      LongType.LONG,
+      IntegerType.INTEGER,
+      LongType.LONG)
+    val schema = new StructType(java.util.List.of(fieldWithTypeChange))
+    val metadata = createMetadata(schema)
+
+    TypeWideningChecker.assertTableReadable(protocol, metadata)
+  }
+
+  test("assertTableReadable - does nothing if no type widening metadata") {
+    val protocol = createProtocolWithTypeWidening()
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("name", StringType.STRING)
+    val metadata = createMetadata(schema)
+
+    TypeWideningChecker.assertTableReadable(protocol, metadata)
+  }
+
+  test("assertTableReadable - throws on unsupported type change in nested struct") {
+    val protocol = createProtocolWithTypeWidening()
+    val nestedFieldWithTypeChange = createFieldWithTypeChange(
+      "age",
+      IntegerType.INTEGER,
+      LongType.LONG,
+      IntegerType.INTEGER)
+    val nestedStruct = new StructType(java.util.List.of(nestedFieldWithTypeChange))
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("person", nestedStruct)
+    val metadata = createMetadata(schema)
+
+    val exception = intercept[IllegalStateException] {
+      TypeWideningChecker.assertTableReadable(protocol, metadata)
+    }
+
+    assert(exception.getMessage.contains("The table contains an unsupported type change"))
+  }
+
+  // Parameterized tests for supported type widenings
+  Seq(
+    ("int to long", "value", LongType.LONG, IntegerType.INTEGER, LongType.LONG),
+    ("float to double", "value", DoubleType.DOUBLE, FloatType.FLOAT, DoubleType.DOUBLE),
+    (
+      "date to timestamp_ntz",
+      "date_col",
+      TimestampNTZType.TIMESTAMP_NTZ,
+      DateType.DATE,
+      TimestampNTZType.TIMESTAMP_NTZ),
+    ("byte to short", "value", ShortType.SHORT, ByteType.BYTE, ShortType.SHORT),
+    ("int to double", "value", DoubleType.DOUBLE, IntegerType.INTEGER, DoubleType.DOUBLE),
+    (
+      "decimal widening",
+      "price",
+      new DecimalType(20, 5),
+      new DecimalType(10, 2),
+      new DecimalType(20, 5)),
+    (
+      "int to decimal",
+      "value",
+      new DecimalType(15, 2),
+      IntegerType.INTEGER,
+      new DecimalType(15, 2))).foreach {
+    case (description, fieldName, targetType, fromType, toType) =>
+      test(s"assertTableReadable - allows $description") {
+        val protocol = createProtocolWithTypeWidening()
+        val fieldWithTypeChange =
+          createFieldWithTypeChange(fieldName, targetType, fromType, toType)
+        val schema = new StructType(java.util.List.of(fieldWithTypeChange))
+        val metadata = createMetadata(schema)
+
+        TypeWideningChecker.assertTableReadable(protocol, metadata)
+      }
+  }
+  Seq(
+    ("long to int", "value", IntegerType.INTEGER, LongType.LONG, IntegerType.INTEGER),
+    (
+      "string to int",
+      "value",
+      IntegerType.INTEGER,
+      StringType.STRING,
+      IntegerType.INTEGER)).foreach { case (description, fieldName, targetType, fromType, toType) =>
+    test(s"assertTableReadable - throws on unsupported type change ($description)") {
+      val protocol = createProtocolWithTypeWidening()
+      val fieldWithTypeChange =
+        createFieldWithTypeChange(fieldName, targetType, fromType, toType)
+      val schema = new StructType(java.util.List.of(fieldWithTypeChange))
+      val metadata = createMetadata(schema)
+
+      val exception = intercept[IllegalStateException] {
+        TypeWideningChecker.assertTableReadable(protocol, metadata)
+      }
+      assert(exception.getMessage.contains("The table contains an unsupported type change"))
+    }
+  }
+
+  /** Creates a Protocol with Type Widening feature enabled. */
+  private def createProtocolWithTypeWidening(): Protocol = {
+    new Protocol(
+      3, /* minReaderVersion */
+      7, /* minWriterVersion */
+      java.util.Collections.emptySet(), /* readerFeatures */
+      java.util.Set.of(TableFeatures.TYPE_WIDENING_RW_FEATURE.featureName()) /* writerFeatures */
+    )
+  }
+
+  /** Creates a Protocol without Type Widening feature. */
+  private def createProtocolWithoutTypeWidening(): Protocol = {
+    new Protocol(
+      1, /* minReaderVersion */
+      2, /* minWriterVersion */
+      java.util.Collections.emptySet(), /* readerFeatures */
+      java.util.Collections.emptySet() /* writerFeatures */
+    )
+  }
+
+  /** Creates a test Metadata with the given schema. */
+  private def createMetadata(schema: StructType): Metadata = {
+    import io.delta.kernel.internal.util.VectorUtils
+    new Metadata(
+      "test-id", /* id */
+      java.util.Optional.empty(), /* name */
+      java.util.Optional.empty(), /* description */
+      new io.delta.kernel.internal.actions.Format(), /* format */
+      schema.toJson, /* schemaString */
+      schema, /* schema */
+      VectorUtils.buildArrayValue(
+        java.util.Arrays.asList(),
+        StringType.STRING
+      ), /* partitionColumns */
+      java.util.Optional.empty(), /* createdTime */
+      VectorUtils.stringStringMapValue(java.util.Collections.emptyMap()) /* configuration */
+    )
+  }
+
+  /** Creates a StructField with a type change from fromType to toType. */
+  private def createFieldWithTypeChange(
+      name: String,
+      dataType: DataType,
+      fromType: DataType,
+      toType: DataType): StructField = {
+    val typeChange = new TypeChange(fromType, toType)
+    new StructField(name, dataType, true)
+      .withTypeChanges(java.util.List.of(typeChange))
   }
 }

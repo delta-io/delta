@@ -16,6 +16,10 @@
 
 package io.delta.kernel.internal.types;
 
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 
 /**
@@ -188,5 +192,57 @@ public class TypeWideningChecker {
     }
 
     return false;
+  }
+
+  /**
+   * Checks if the table schema contains any type widening metadata.
+   *
+   * @param schema The schema to check
+   * @return true if any field in the schema contains type changes
+   */
+  private static boolean containsTypeWideningMetadata(StructType schema) {
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+      if (!element.getField().getTypeChanges().isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Asserts that the given table doesn't contain any unsupported type changes. This should never
+   * happen unless a non-compliant writer applied a type change that is not part of the feature
+   * specification.
+   *
+   * @param protocol The table protocol
+   * @param metadata The table metadata
+   * @throws IllegalStateException if the table contains unsupported type changes
+   */
+  public static void assertTableReadable(Protocol protocol, Metadata metadata) {
+    boolean isTypeWideningSupported =
+        protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE)
+            || protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE);
+
+    // If TypeWidening is not supported or no type widening recorded in the metadata,
+    // return early
+    if (!isTypeWideningSupported || !containsTypeWideningMetadata(metadata.getSchema())) {
+      return;
+    }
+
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(metadata.getSchema())) {
+      StructField field = element.getField();
+      for (TypeChange typeChange : field.getTypeChanges()) {
+        DataType fromType = typeChange.getFrom();
+        DataType toType = typeChange.getTo();
+        if (isWideningSupported(fromType, toType)) {
+          continue;
+        }
+        throw new IllegalStateException(
+            String.format(
+                "The table contains an unsupported type change in field '%s' from '%s' to '%s'. "
+                    + "This type widening change is not supported for reading.",
+                element.getNamePath(), fromType, toType));
+      }
+    }
   }
 }
