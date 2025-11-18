@@ -18,16 +18,6 @@ package org.apache.spark.sql.delta.sources
 
 /**
  * SQL configurations for Delta V2 connector (Kernel-based connector).
- *
- * This object defines configurations specific to the Delta V2 connector, which is the
- * Kernel-backed implementation. The V2 connector provides read-only access to Delta tables
- * through Spark's DataSource V2 API.
- *
- * V1 vs V2 Connectors:
- * - V1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
- *   uses DeltaLog for metadata management
- * - V2 Connector (SparkTable): New Kernel-based connector with read-only support,
- *   uses Kernel's Table API for metadata management
  */
 object DeltaSQLConfV2 extends DeltaSQLConfUtils {
 
@@ -49,7 +39,7 @@ object DeltaSQLConfV2 extends DeltaSQLConfUtils {
     buildConf("v2.enableMode")
       .doc(
         "Controls the Delta V2 connector enable mode. " +
-        "Valid values: NONE (disabled, default), STRICT (always enabled for testing).")
+        "Valid values: NONE (disabled, default), STRICT (should ONLY be enabled for testing).")
       .stringConf
       .checkValues(Set("NONE", "STRICT"))
       .createWithDefault("NONE")
