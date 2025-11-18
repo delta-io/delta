@@ -109,7 +109,7 @@ object UCCommitCoordinatorBuilder
     val matchingClients: List[UCClientParams] = getCatalogConfigs(spark)
       .map { case (_, ucClientParams: UCClientParams) => ucClientParams }
       .distinct // Remove duplicates since multiple catalogs can have the same uri and token
-      .filter { case ucClientParams => getMetastoreId(ucClientParams).contains(metastoreId) }
+      .filter(ucClientParams => getMetastoreId(ucClientParams).contains(metastoreId))
 
     matchingClients match {
       case Nil => throw noMatchingCatalogException(metastoreId)
@@ -297,12 +297,10 @@ object UCClientParams extends DeltaLogging {
     // Validate the uri.
     uri match {
       case Some(u) =>
-        try {
-          new URI(u)
-        } catch {
-          case _: URISyntaxException =>
-            logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
-              log"does not have a valid URI ${MDC(DeltaLogKeys.URI, u)}.")
+        if (!isValidURI(u)) {
+          logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
+            log"does not have a valid URI ${MDC(DeltaLogKeys.URI, u)}.")
+          return None
         }
       case None => return None
     }
@@ -313,13 +311,9 @@ object UCClientParams extends DeltaLogging {
         Some(UCClientParams(uri = uri, token = token))
       case (Some(_), _, Some(oUri), Some(_), Some(_)) =>
         // Validate the OAuth URI.
-        try {
-          new URI(oUri)
-        } catch {
-          case _: URISyntaxException =>
-            logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} " +
-              log"as it does not have a valid OAuth URI")
-            return None
+        if (!isValidURI(oUri)) {
+          logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} " +
+            log"as it does not have a valid OAuth URI")
         }
         // Use OAuth credentials to build the UCClientParams.
         Some(UCClientParams(
@@ -331,6 +325,15 @@ object UCClientParams extends DeltaLogging {
         logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it does " +
           "not have configured fixed token or oauth credential in Spark Session.")
         None
+    }
+  }
+
+  private def isValidURI(uri: String): Boolean = {
+    try {
+      new URI(uri)
+      true
+    } catch {
+      case _: URISyntaxException => false
     }
   }
 }
