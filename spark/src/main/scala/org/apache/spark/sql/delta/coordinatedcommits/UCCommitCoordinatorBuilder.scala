@@ -217,17 +217,19 @@ object UCCommitCoordinatorBuilder
         val uri = catalogConfigs.get(s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$URI_SUFFIX")
         val token = catalogConfigs.get(s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$TOKEN_SUFFIX")
         val oauthUri = catalogConfigs.get(
-          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_URI_SUFFIX"
-        )
+          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_URI_SUFFIX")
         val oauthClientId = catalogConfigs.get(
-          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_CLIENT_ID_SUFFIX"
-        )
+          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_CLIENT_ID_SUFFIX")
         val oauthClientSecret = catalogConfigs.get(
-          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_CLIENT_SECRET_SUFFIX"
-        )
+          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_CLIENT_SECRET_SUFFIX")
 
-        UCClientParams.create(catalogName, uri, token, oauthUri, oauthClientId, oauthClientSecret)
-        match {
+        UCClientParams.create(
+          catalogName,
+          uri,
+          token,
+          oauthUri,
+          oauthClientId,
+          oauthClientSecret) match {
           case Some(ucClientParams) =>
             Some(catalogName, ucClientParams)
           case _ =>
@@ -264,11 +266,12 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     new UCTokenBasedRestClient(uri, provider)
 }
 
-case class UCClientParams(uri: Option[String],
-                          token: Option[String] = None,
-                          oauthUri: Option[String] = None,
-                          oauthClientId: Option[String] = None,
-                          oauthClientSecret: Option[String] = None) {
+case class UCClientParams(
+    uri: Option[String],
+    token: Option[String] = None,
+    oauthUri: Option[String] = None,
+    oauthClientId: Option[String] = None,
+    oauthClientSecret: Option[String] = None) {
   def buildUCClient(): UCClient = {
     (uri, token, oauthUri, oauthClientId, oauthClientSecret) match {
       case (Some(u), Some(t), _, _, _) =>
@@ -284,13 +287,13 @@ case class UCClientParams(uri: Option[String],
 }
 
 object UCClientParams extends DeltaLogging {
-  def create(catalogName: String,
-             uri: Option[String],
-              token: Option[String] = None,
-              oauthUri: Option[String] = None,
-              oauthClientId: Option[String] = None,
-              oauthClientSecret: Option[String] = None
-  ): Option[UCClientParams] = {
+  def create(
+      catalogName: String,
+      uri: Option[String],
+      token: Option[String] = None,
+      oauthUri: Option[String] = None,
+      oauthClientId: Option[String] = None,
+      oauthClientSecret: Option[String] = None): Option[UCClientParams] = {
     // Validate the uri.
     uri match {
       case Some(u) =>
