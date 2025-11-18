@@ -40,6 +40,12 @@ class UcClientFactoryTest {
             .config("spark.sql.catalog.other_catalog.token", "other-token-456")
             // Configure an incomplete catalog (missing token)
             .config("spark.sql.catalog.incomplete_catalog.uri", "https://uc-incomplete.example.com")
+            // Configure catalog with invalid URI
+            .config("spark.sql.catalog.invalid_uri_catalog.uri", "ftp://invalid-protocol.com")
+            .config("spark.sql.catalog.invalid_uri_catalog.token", "token")
+            // Configure catalog with malformed URI
+            .config("spark.sql.catalog.malformed_uri_catalog.uri", "not a valid uri")
+            .config("spark.sql.catalog.malformed_uri_catalog.token", "token")
             .getOrCreate();
   }
 
@@ -146,5 +152,36 @@ class UcClientFactoryTest {
     // we can verify they are different instances (implying different configs)
     assertNotEquals(
         testClient, otherClient, "Clients for different catalogs should be distinct instances");
+  }
+
+  @Test
+  void testBuildForCatalog_InvalidUriProtocol_ThrowsException() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> UcClientFactory.buildForCatalog(spark, "invalid_uri_catalog"),
+            "Should throw exception for non-HTTP/HTTPS protocol");
+
+    String message = exception.getMessage();
+    assertTrue(
+        message.contains("HTTP or HTTPS"), "Error message should mention required protocols");
+    assertTrue(
+        message.contains("invalid_uri_catalog"), "Error message should mention catalog name");
+  }
+
+  @Test
+  void testBuildForCatalog_MalformedUri_ThrowsException() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> UcClientFactory.buildForCatalog(spark, "malformed_uri_catalog"),
+            "Should throw exception for malformed URI");
+
+    String message = exception.getMessage();
+    assertTrue(
+        message.contains("Invalid") || message.contains("format"),
+        "Error message should indicate URI format problem");
+    assertTrue(
+        message.contains("malformed_uri_catalog"), "Error message should mention catalog name");
   }
 }

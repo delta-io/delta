@@ -20,6 +20,8 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Map;
 import org.apache.spark.sql.SparkSession;
 
@@ -74,6 +76,44 @@ public final class UcClientFactory {
   private UcClientFactory() {}
 
   /**
+   * Validates that the provided URI is suitable for Unity Catalog connections.
+   *
+   * <p>Checks that the URI is syntactically valid, uses HTTP/HTTPS protocol, and has a host.
+   *
+   * @param uriString the URI string to validate
+   * @param catalogName the catalog name for error context
+   * @throws IllegalArgumentException if the URI is invalid
+   */
+  private static void validateUri(String uriString, String catalogName) {
+    try {
+      URI uri = new URI(uriString);
+
+      // Validate protocol is HTTP or HTTPS
+      String scheme = uri.getScheme();
+      if (scheme == null
+          || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Unity Catalog URI for catalog '%s' must use HTTP or HTTPS protocol, got: %s",
+                catalogName, scheme != null ? scheme : "null"));
+      }
+
+      // Validate host is present
+      if (uri.getHost() == null || uri.getHost().trim().isEmpty()) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Unity Catalog URI for catalog '%s' must specify a host: %s",
+                catalogName, uriString));
+      }
+    } catch (URISyntaxException e) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Invalid Unity Catalog URI format for catalog '%s': %s", catalogName, uriString),
+          e);
+    }
+  }
+
+  /**
    * Builds a Unity Catalog client for the specified catalog.
    *
    * <p>Extracts the Unity Catalog URI and authentication token from Spark session configuration and
@@ -126,8 +166,11 @@ public final class UcClientFactory {
               catalogName, catalogName, catalogName));
     }
 
-    // Extract required URI and token - will throw IllegalArgumentException if missing
+    // Extract and validate required URI
     String uri = getRequiredConfig(catalogConfig, URI_CONFIG_KEY);
+    validateUri(uri, catalogName);
+
+    // Extract required token
     String token = getRequiredConfig(catalogConfig, TOKEN_CONFIG_KEY);
 
     // Delegate to UCTokenBasedRestClient - reuse existing implementation
