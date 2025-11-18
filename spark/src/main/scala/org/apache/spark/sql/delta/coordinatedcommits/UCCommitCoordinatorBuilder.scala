@@ -189,10 +189,17 @@ object UCCommitCoordinatorBuilder
    *   spark.sql.catalog.catalog5.uri = "random-string"
    *   spark.sql.catalog.catalog5.token = "dapi0987654321"
    *
+   *   spark.sql.catalog.catalog6 = "io.unitycatalog.connectors.spark.UCSingleCatalog"
+   *   spark.sql.catalog.catalog6.uri = "https://local:8080/"
+   *   spark.sql.catalog.catalog6.oauthUri = "https://local:8081/"
+   *   spark.sql.catalog.catalog6.oauthClientId = "client-id"
+   *   spark.sql.catalog.catalog6.oauthClientSecret = "client-secret"
+   *
    * This method would return:
    * List(
-   *   ("catalog1", "https://dbc-123abc.databricks.com", "dapi1234567890"),
-   *   ("catalog2", "https://dbc-456def.databricks.com", "dapi0987654321")
+   *   ("catalog1", UCClientParams(..)),
+   *   ("catalog2", UCClientParams(..)),
+   *   ("catalog6", UCClientParams(..))
    * )
    *
    * Note: catalog3 is not included in the result because it's missing the token configuration.

@@ -39,104 +39,107 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 
-public class OAuthUCTokenProvider implements UCTokenProvider{
-    public static final long renewLeadTimeMillis = 30_000L;
-    private final String uri;
-    private final String clientId;
-    private final String clientSecret;
-    private final CloseableHttpClient httpClient;
-    private final ObjectMapper mapper;
+public class OAuthUCTokenProvider implements UCTokenProvider {
 
-    private volatile TemporaryToken tempToken;
+  public static final long renewLeadTimeMillis = 30_000L;
+  private final String uri;
+  private final String clientId;
+  private final String clientSecret;
+  private final CloseableHttpClient httpClient;
+  private final ObjectMapper mapper;
 
-    public OAuthUCTokenProvider(String uri, String clientId, String clientSecret) {
-        this.uri = uri;
-        this.clientId = clientId;
-        this.clientSecret = clientSecret;
-        this.httpClient = HttpClientBuilder.create().build();
+  private volatile TemporaryToken tempToken;
 
-        this.mapper = new ObjectMapper()
-                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-                .setSerializationInclusion(JsonInclude.Include.NON_ABSENT)
-                .setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
-                .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+  public OAuthUCTokenProvider(String uri, String clientId, String clientSecret) {
+    this.uri = uri;
+    this.clientId = clientId;
+    this.clientSecret = clientSecret;
+    this.httpClient = HttpClientBuilder.create().build();
+
+    this.mapper = new ObjectMapper()
+        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+        .setSerializationInclusion(JsonInclude.Include.NON_ABSENT)
+        .setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
+        .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+  }
+
+  @Override
+  public String accessToken() {
+    if (tempToken == null || tempToken.isReadyToRenew()) {
+      synchronized (this) {
+        if (tempToken == null || tempToken.isReadyToRenew()) {
+          try {
+            tempToken = requestToken();
+          } catch (IOException e) {
+            throw new RuntimeException(e);
+          }
+        }
+      }
+    }
+    return tempToken.token;
+  }
+
+  @Override
+  public void close() throws IOException {
+    httpClient.close();
+  }
+
+  private TemporaryToken requestToken() throws IOException {
+    HttpPost request = new HttpPost(uri);
+    request.setHeader(HttpHeaders.CONTENT_TYPE,
+        ContentType.APPLICATION_FORM_URLENCODED.getMimeType());
+    request.setHeader(HttpHeaders.AUTHORIZATION, "Basic " + encodeCredentials());
+
+    String requestBody = toUrlEncoded(
+        Map.of("grant_type", "client_credentials", "scope", "all-apis"));
+    request.setEntity(new StringEntity(requestBody, StandardCharsets.UTF_8));
+
+    try (CloseableHttpResponse response = httpClient.execute(request)) {
+      StatusLine statusLine = response.getStatusLine();
+      String body = EntityUtils.toString(response.getEntity());
+      if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
+        Map<String, String> result = mapper.readValue(body, new TypeReference<>() {
+        });
+        String accessToken = result.get("access_token");
+        long expiresInSeconds = Long.parseLong(result.get("expires_in"));
+        return new TemporaryToken(accessToken, expiresInSeconds * 1000L);
+      } else {
+        throw new IOException(
+            String.format("Failed to obtain access token from %s, status code: %s, body: %s", uri,
+                statusLine.getStatusCode(), body));
+      }
+    }
+  }
+
+  private String encodeCredentials() {
+    String credentials = String.format("%s:%s", clientId, clientSecret);
+    Base64.Encoder encoder = Base64.getEncoder();
+    return encoder.encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static String toUrlEncoded(Map<String, String> params) {
+    StringBuilder sb = new StringBuilder();
+    for (Map.Entry<String, String> e : params.entrySet()) {
+      if (sb.length() > 0) {
+        sb.append("&");
+      }
+      sb.append(e.getKey()).append('=').append(e.getValue());
+    }
+    return sb.toString();
+  }
+
+  public static class TemporaryToken {
+
+    private final String token;
+    private final long expirationTimeMillis;
+
+    public TemporaryToken(String token, long expirationTimeMillis) {
+      this.token = token;
+      this.expirationTimeMillis = expirationTimeMillis;
     }
 
-    @Override
-    public String accessToken() {
-        if(tempToken == null || tempToken.isReadyToRenew()) {
-            synchronized (this) {
-                if(tempToken == null || tempToken.isReadyToRenew()) {
-                    try {
-                        tempToken = requestToken();
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            }
-        }
-        return tempToken.token();
+    public boolean isReadyToRenew() {
+      return System.currentTimeMillis() + renewLeadTimeMillis >= expirationTimeMillis;
     }
-
-    @Override
-    public void close() throws IOException {
-        httpClient.close();
-    }
-
-    private TemporaryToken requestToken() throws IOException {
-        HttpPost request = new HttpPost(uri);
-        request.setHeader(HttpHeaders.CONTENT_TYPE, ContentType.APPLICATION_FORM_URLENCODED.getMimeType());
-        request.setHeader(HttpHeaders.AUTHORIZATION, "Basic " + Base64.getEncoder().encodeToString(String.format("%s:%s", clientId, clientSecret).getBytes(StandardCharsets.UTF_8)));
-
-        String requestBody = mapToUrlEncoded(Map.of(
-                "grant_type", "client_credentials",
-                "scope", "all-apis"));
-        request.setEntity(new StringEntity(requestBody, StandardCharsets.UTF_8));
-
-        try(CloseableHttpResponse response = httpClient.execute(request)){
-            StatusLine statusLine = response.getStatusLine();
-            String body = EntityUtils.toString(response.getEntity());
-            if(statusLine.getStatusCode() == HttpStatus.SC_OK){
-                Map<String, String> result = mapper.readValue(body, new TypeReference<>() {});
-                String accessToken = result.get("access_token");
-                long expiresInSeconds = Long.parseLong(result.get("expires_in"));
-                return new TemporaryToken(accessToken, expiresInSeconds * 1000L);
-            } else{
-                throw new IOException(String.format("Failed to obtain access token from %s, status code: %s, body: %s", uri, statusLine.getStatusCode(), body));
-            }
-        }
-    }
-
-    private static String mapToUrlEncoded(Map<String, String> params) {
-        StringBuilder sb = new StringBuilder();
-        for(Map.Entry<String, String> e : params.entrySet()) {
-            if(sb.length() > 0) {
-                sb.append("&");
-            }
-            sb.append(e.getKey()).append('=').append(e.getValue());
-        }
-        return sb.toString();
-    }
-
-    public static class TemporaryToken {
-        private final String token;
-        private final long expirationTimeMillis;
-
-        public TemporaryToken(String token, long expirationTimeMillis) {
-            this.token = token;
-            this.expirationTimeMillis = expirationTimeMillis;
-        }
-
-        public String token() {
-            return token;
-        }
-
-        public long expirationTimeMillis(){
-            return expirationTimeMillis;
-        }
-
-        public boolean isReadyToRenew(){
-            return  System.currentTimeMillis() + renewLeadTimeMillis >= expirationTimeMillis;
-        }
-    }
+  }
 }
