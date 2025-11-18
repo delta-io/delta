@@ -29,11 +29,11 @@ import scala.collection.JavaConverters;
  * Utility class for extracting Unity Catalog configuration from Spark session.
  *
  * <p>This is a thin wrapper around {@link
- * org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder#getCatalogConfigs}
- * that provides a Java-friendly API for accessing catalog configurations.
+ * org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder#getCatalogConfigs} that
+ * provides a Java-friendly API for accessing catalog configurations.
  *
- * <p>Delegates to UCCommitCoordinatorBuilder for all validation logic (URI parsing, connector
- * class filtering, etc.) to avoid code duplication.
+ * <p>Delegates to UCCommitCoordinatorBuilder for all validation logic (URI parsing, connector class
+ * filtering, etc.) to avoid code duplication.
  */
 public final class SparkConfigUtils {
 
