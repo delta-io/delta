@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.spark.utils;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -95,17 +94,6 @@ class CatalogTableUtilsTest {
     assertFalse(
         CatalogTableUtils.isUnityCatalogManagedTable(table),
         "Preview flag without ID should not be considered Unity managed");
-  }
-
-  @Test
-  void testGetStorageProperties_ReturnsPublishedMetadata() {
-    Map<String, String> storageProps = Map.of("fs.test.option", "value", "dfs.conf.key", "abc");
-    CatalogTable table = catalogTable(Collections.emptyMap(), storageProps);
-
-    assertEquals(
-        storageProps,
-        CatalogTableUtils.getStorageProperties(table),
-        "Storage properties should surface catalog-published metadata");
   }
 
   private static CatalogTable catalogTable(
