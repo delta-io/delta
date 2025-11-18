@@ -693,7 +693,8 @@ trait DeltaSourceBase extends Source
       val allowWideningTypeChanges = typeWideningEnabled && !enableSchemaTrackingForTypeWidening
 
       if (!SchemaUtils.isReadCompatible(
-          schemaChange, schema,
+          existingSchema = schemaChange,
+          readSchema = schema,
           forbidTightenNullability = shouldForbidTightenNullability,
           // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
           // column mapping schema changes, we can allow the standard check to allow missing columns
@@ -728,8 +729,8 @@ trait DeltaSourceBase extends Source
         // and if it works (including that `schemaChange` should not tighten the nullability
         // constraint from `schema`), it is a retryable exception.
         val retryable = !backfilling && SchemaUtils.isReadCompatible(
-          schema,
-          schemaChange,
+          existingSchema = schema,
+          readSchema = schemaChange,
           forbidTightenNullability = shouldForbidTightenNullability,
           // Check for widening type changes that would succeed on retry when we backfill batches.
           typeWideningMode = if (allowWideningTypeChanges) {
