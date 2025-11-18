@@ -94,11 +94,13 @@ public final class CatalogTableUtils {
    * Returns the catalog storage properties published with a {@link CatalogTable}.
    *
    * @param table Spark {@link CatalogTable} descriptor
-   * @return Java map view of the storage properties
+   * @return Java map view of the storage properties, never null
    */
   private static Map<String, String> getStorageProperties(CatalogTable table) {
     requireNonNull(table, "table is null");
-    Map<String, String> storageProperties = ScalaUtils.toJavaMap(table.storage().properties());
-    return storageProperties == null ? Collections.emptyMap() : storageProperties;
+    if (table.storage() == null) {
+      return Collections.emptyMap();
+    }
+    return ScalaUtils.toJavaMap(table.storage().properties());
   }
 }

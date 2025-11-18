@@ -52,4 +52,19 @@ object CatalogTableTestUtils {
       bucketSpec = None,
       properties = scalaProps)
   }
+
+  def catalogTableWithNullStorage(
+      properties: java.util.Map[String, String]): CatalogTable = {
+    val scalaProps = ScalaUtils.toScalaMap(properties)
+
+    CatalogTable(
+      identifier = TableIdentifier("tbl"),
+      tableType = CatalogTableType.MANAGED,
+      storage = null,
+      schema = new StructType(),
+      provider = None,
+      partitionColumnNames = Seq.empty,
+      bucketSpec = None,
+      properties = scalaProps)
+  }
 }

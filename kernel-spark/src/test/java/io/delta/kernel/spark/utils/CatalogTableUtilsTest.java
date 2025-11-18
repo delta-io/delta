@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.utils;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
@@ -96,8 +97,46 @@ class CatalogTableUtilsTest {
         "Preview flag without ID should not be considered Unity managed");
   }
 
+  @Test
+  void testIsCatalogManaged_NullTable_ThrowsException() {
+    assertThrows(
+        NullPointerException.class,
+        () -> CatalogTableUtils.isCatalogManaged(null),
+        "Null table should throw NullPointerException");
+  }
+
+  @Test
+  void testIsUnityCatalogManaged_NullTable_ThrowsException() {
+    assertThrows(
+        NullPointerException.class,
+        () -> CatalogTableUtils.isUnityCatalogManagedTable(null),
+        "Null table should throw NullPointerException");
+  }
+
+  @Test
+  void testIsCatalogManaged_NullStorage_ReturnsFalse() {
+    CatalogTable table = catalogTableWithNullStorage(Collections.emptyMap());
+
+    assertFalse(
+        CatalogTableUtils.isCatalogManaged(table),
+        "Null storage should not be considered catalog managed");
+  }
+
+  @Test
+  void testIsUnityCatalogManaged_NullStorage_ReturnsFalse() {
+    CatalogTable table = catalogTableWithNullStorage(Collections.emptyMap());
+
+    assertFalse(
+        CatalogTableUtils.isUnityCatalogManagedTable(table),
+        "Null storage should not be considered Unity managed");
+  }
+
   private static CatalogTable catalogTable(
       Map<String, String> properties, Map<String, String> storageProperties) {
     return CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(properties, storageProperties);
+  }
+
+  private static CatalogTable catalogTableWithNullStorage(Map<String, String> properties) {
+    return CatalogTableTestUtils$.MODULE$.catalogTableWithNullStorage(properties);
   }
 }
