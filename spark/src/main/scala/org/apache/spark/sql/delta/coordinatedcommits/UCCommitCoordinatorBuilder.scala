@@ -88,7 +88,7 @@ object UCCommitCoordinatorBuilder
   override def buildForCatalog(
       spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
     val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, ucClientParams)) => ucClientParams.buildUCClient()
+      case Some((_, ucClientParams)) => ucClientParams.buildUCClient(ucClientFactory)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
@@ -113,7 +113,7 @@ object UCCommitCoordinatorBuilder
 
     matchingClients match {
       case Nil => throw noMatchingCatalogException(metastoreId)
-      case ucClientParams :: Nil => ucClientParams.buildUCClient()
+      case ucClientParams :: Nil => ucClientParams.buildUCClient(ucClientFactory)
       case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_.uri.get))
     }
   }
@@ -131,7 +131,7 @@ object UCCommitCoordinatorBuilder
       val metastoreId = ucClientParamsToMetastoreIdCache.computeIfAbsent(
         ucClientParams,
         _ => {
-          val ucClient = ucClientParams.buildUCClient()
+          val ucClient = ucClientParams.buildUCClient(ucClientFactory)
           try {
             ucClient.getMetastoreId
           } finally {
@@ -272,13 +272,13 @@ case class UCClientParams(
     oauthUri: Option[String] = None,
     oauthClientId: Option[String] = None,
     oauthClientSecret: Option[String] = None) {
-  def buildUCClient(): UCClient = {
+  def buildUCClient(ucClientFactory: UCClientFactory): UCClient = {
     (uri, token, oauthUri, oauthClientId, oauthClientSecret) match {
       case (Some(u), Some(t), _, _, _) =>
-        UCTokenBasedRestClientFactory.createUCClient(u, t)
+        ucClientFactory.createUCClient(u, t)
       case (Some(u), _, Some(oUri), Some(oClientId), Some(oClientSecret)) =>
         val provider = new OAuthUCTokenProvider(oUri, oClientId, oClientSecret)
-        UCTokenBasedRestClientFactory.createUCClient(u, provider)
+        ucClientFactory.createUCClient(u, provider)
       case _ =>
         throw new IllegalStateException(
           "Invalid UCClientParams, missing token or oauth credentials")
