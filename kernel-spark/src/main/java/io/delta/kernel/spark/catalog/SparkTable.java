@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.table;
+package io.delta.kernel.spark.catalog;
 
 import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
@@ -21,7 +21,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
-import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.spark.snapshot.SnapshotManagerFactory;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -136,9 +136,10 @@ public class SparkTable implements Table, SupportsRead {
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
 
-    this.hadoopConf =
-        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkSession spark = SparkSession.active();
+    this.hadoopConf = spark.sessionState().newHadoopConfWithOptions(toScalaMap(options));
+    this.snapshotManager =
+        SnapshotManagerFactory.create(spark, catalogTable, tablePath, hadoopConf);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
