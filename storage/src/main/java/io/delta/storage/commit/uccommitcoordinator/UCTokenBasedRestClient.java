@@ -57,8 +57,8 @@ import java.util.Optional;
 
 /**
  * A REST client implementation of [[UCClient]] for interacting with Unity Catalog's commit
- * coordination service. This client uses token-based authentication to make HTTP requests to the
- * Unity Catalog API for managing Delta table commits and metadata.
+ * coordination service. This client uses {@link UCTokenProvider} generate Unity Catalog's token
+ * to make HTTP requests to the Unity Catalog API for managing Delta table commits and metadata.
  *
  * <p>The client handles the following primary operations:
  * <ul>
@@ -84,11 +84,13 @@ import java.util.Optional;
  */
 public class UCTokenBasedRestClient implements UCClient {
   private final String baseUri;
+  private final UCTokenProvider ucTokenProvider;
   private final ObjectMapper mapper;
   private final CloseableHttpClient httpClient;
 
-  public UCTokenBasedRestClient(String baseUri, String token) {
+  public UCTokenBasedRestClient(String baseUri, UCTokenProvider ucTokenProvider) {
     this.baseUri = resolve(baseUri, "/api/2.1/unity-catalog");
+    this.ucTokenProvider = ucTokenProvider;
     this.mapper = new ObjectMapper()
       .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
       .setSerializationInclusion(JsonInclude.Include.NON_ABSENT)
@@ -98,8 +100,6 @@ public class UCTokenBasedRestClient implements UCClient {
       HttpClientBuilder
         .create()
         .setDefaultHeaders(Arrays.asList(
-          // Authorization header: Provides the Bearer token for authentication
-          new BasicHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token),
           // Accept header: Indicates that the client expects JSON responses from the server
           new BasicHeader(HttpHeaders.ACCEPT, ContentType.APPLICATION_JSON.getMimeType()),
           // Content-Type header: Indicates that the client sends JSON payloads to the server
@@ -148,6 +148,9 @@ public class UCTokenBasedRestClient implements UCClient {
       ((HttpEntityEnclosingRequestBase) request).setEntity(
         new StringEntity(jsonPayload, ContentType.APPLICATION_JSON));
     }
+
+    // Authorization header: Provides the Bearer token for authentication
+    request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + ucTokenProvider.accessToken());
 
     try (CloseableHttpResponse response = httpClient.execute(request)) {
       int statusCode = response.getStatusLine().getStatusCode();
