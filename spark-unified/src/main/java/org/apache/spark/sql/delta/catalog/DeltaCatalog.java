@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.catalog;
 
 import io.delta.kernel.spark.table.SparkTable;
-import org.apache.spark.sql.delta.DeltaDsv2EnableConf;
+import org.apache.spark.sql.delta.sources.DeltaSQLConfV2;
 import java.util.HashMap;
 import java.util.function.Supplier;
 import org.apache.hadoop.fs.Path;
@@ -56,45 +56,81 @@ import org.apache.spark.sql.connector.catalog.Table;
  *
  * <p>The unified module can access both implementations:</p>
  * <ul>
- *   <li>V1 (hybrid DSv1/DSv2): org.apache.spark.sql.delta.catalog.DeltaTableV2 - Connector using DeltaLog</li>
- *   <li>V2 (Pure DSv2): io.delta.kernel.spark.SparkTable - Kernel-backed connector</li>
+ *   <li>V1 connector: {@link DeltaTableV2} - Legacy connector using DeltaLog, full read/write support</li>
+ *   <li>V2 connector: {@link SparkTable} - Kernel-backed connector, read-only support</li>
  * </ul>
+ *
+ * <p>See {@link DeltaSQLConfV2#V2_ENABLE_MODE} for V1 vs V2 connector definitions and enable mode configuration.</p>
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
+  /**
+   * Creates a catalog-based Delta table.
+   *
+   * <p>Routing logic based on {@link DeltaSQLConfV2#V2_ENABLE_MODE}:
+   * <ul>
+   *   <li>STRICT: Returns Kernel {@link SparkTable} (V2 connector)</li>
+   *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
+   * </ul>
+   *
+   * @param ident Table identifier
+   * @param catalogTable Catalog table metadata
+   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
+   */
   @Override
   public Table newDeltaCatalogBasedTable(Identifier ident, CatalogTable catalogTable) {
-    return createBasedOnDsv2Mode(
+    return createBasedOnV2Mode(
         () -> new SparkTable(ident, catalogTable, new HashMap<>()),
         () -> super.newDeltaCatalogBasedTable(ident, catalogTable));
   }
 
+  /**
+   * Creates a path-based Delta table.
+   *
+   * <p>Routing logic based on {@link DeltaSQLConfV2#V2_ENABLE_MODE}:
+   * <ul>
+   *   <li>STRICT: Returns Kernel {@link SparkTable} (V2 connector)</li>
+   *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
+   * </ul>
+   *
+   * @param ident Table identifier containing table path
+   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
+   */
   @Override
   public Table newDeltaPathTable(Identifier ident) {
-    return createBasedOnDsv2Mode(
+    return createBasedOnV2Mode(
+        // delta.`/path/to/table`, where ident.name() is `/path/to/table`
         () -> new SparkTable(ident, ident.name()),
         () -> super.newDeltaPathTable(ident));
   }
 
   /**
-   * Create table based on DataSourceV2 enable mode configuration.
+   * Routes table creation based on Delta V2 connector enable mode configuration.
    *
-   * @param dsv2ConnectorSupplier Function to call when in STRICT mode (uses Kernel SparkTable)
-   * @param v1ConnectorSupplier Function to call in default mode (uses V1 DeltaTableV2)
-   * @return Table instance from the appropriate supplier
+   * <p>This method checks {@link DeltaSQLConfV2#V2_ENABLE_MODE} and delegates to the
+   * appropriate supplier:
+   * <ul>
+   *   <li>STRICT mode: Uses V2 connector (Kernel SparkTable) - for testing V2 capabilities</li>
+   *   <li>NONE mode (default): Uses V1 connector (DeltaTableV2) - production default with full features</li>
+   * </ul>
+   *
+   * <p>See {@link DeltaSQLConfV2#V2_ENABLE_MODE} for detailed V1 vs V2 connector definitions.
+   *
+   * @param v2ConnectorSupplier Supplier for V2 connector (Kernel SparkTable) - used in STRICT mode
+   * @param v1ConnectorSupplier Supplier for V1 connector (DeltaTableV2) - used in NONE mode (default)
+   * @return Table instance from the selected supplier
    */
-  private Table createBasedOnDsv2Mode(
-      Supplier<Table> dsv2ConnectorSupplier,
+  private Table createBasedOnV2Mode(
+      Supplier<Table> v2ConnectorSupplier,
       Supplier<Table> v1ConnectorSupplier) {
     String mode =
         spark()
             .conf()
-            .get(
-                DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key(),
-                DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.defaultValueString());
+            .get(DeltaSQLConfV2.V2_ENABLE_MODE().key(),
+                DeltaSQLConfV2.V2_ENABLE_MODE().defaultValueString());
     switch (mode.toUpperCase()) {
       case "STRICT":
-        return dsv2ConnectorSupplier.get();
+        return v2ConnectorSupplier.get();
       default:
         return v1ConnectorSupplier.get();
     }

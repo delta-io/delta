@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.delta.kernel.spark.table.SparkTable;
 import java.io.File;
 import java.util.stream.Stream;
-import org.apache.spark.sql.delta.DeltaDsv2EnableConf;
+import org.apache.spark.sql.delta.sources.DeltaSQLConfV2;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
@@ -33,6 +33,17 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+/**
+ * Unit tests for DeltaCatalog's V2 connector routing logic.
+ *
+ * <p>Verifies that {@link DeltaCatalog} correctly routes table loading based on {@link
+ * DeltaSQLConfV2#V2_ENABLE_MODE}:
+ *
+ * <ul>
+ *   <li>STRICT mode → Kernel's SparkTable (V2 connector)
+ *   <li>NONE mode (default) → DeltaTableV2 (V1 connector)
+ * </ul>
+ */
 public class DeltaCatalogTest {
 
   private static SparkSession spark;
@@ -60,13 +71,12 @@ public class DeltaCatalogTest {
 
   @AfterEach
   public void resetConfig() {
-    spark.conf().unset(DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key());
+    spark.conf().unset(DeltaSQLConfV2.V2_ENABLE_MODE().key());
   }
 
   static Stream<Arguments> modeTestCases() {
     return Stream.of(
         Arguments.of("STRICT", SparkTable.class, "Kernel SparkTable"),
-        Arguments.of("AUTO", DeltaTableV2.class, "DeltaTableV2"),
         Arguments.of("NONE", DeltaTableV2.class, "DeltaTableV2"));
   }
 
@@ -82,7 +92,7 @@ public class DeltaCatalogTest {
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'",
             tableName, location));
 
-    spark.conf().set(DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key(), mode);
+    spark.conf().set(DeltaSQLConfV2.V2_ENABLE_MODE().key(), mode);
     DeltaCatalog catalog =
         (DeltaCatalog) spark.sessionState().catalogManager().v2SessionCatalog();
     Identifier ident = Identifier.of(new String[] {"default"}, tableName);
@@ -101,7 +111,7 @@ public class DeltaCatalogTest {
     String path = tempDir.getAbsolutePath();
     spark.sql(String.format("CREATE TABLE delta.`%s` (id INT, name STRING) USING delta", path));
 
-    spark.conf().set(DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key(), mode);
+    spark.conf().set(DeltaSQLConfV2.V2_ENABLE_MODE().key(), mode);
     DeltaCatalog catalog =
         (DeltaCatalog) spark.sessionState().catalogManager().v2SessionCatalog();
     Identifier ident = Identifier.of(new String[] {"delta"}, path);

@@ -16,28 +16,28 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.test.Dsv2ForceTest
+import org.apache.spark.sql.delta.test.V2ForceTest
 
 /**
- * Test suite that runs OpenSourceDataFrameWriterV2Tests with DataSourceV2 mode forced to STRICT.
+ * Test suite that runs OpenSourceDataFrameWriterV2Tests with Delta V2 connector mode forced to STRICT.
  *
- * This is the BEST test suite for validating Kernel's DSv2 read capabilities:
+ * This is the BEST test suite for validating Kernel's V2 connector read capabilities:
  * - Uses spark.table() extensively (245% usage rate - avg 2.5 calls per test)
  * - Zero usage of V1 internal APIs (DeltaLog.forTable)
  * - Tests DataFrameWriterV2 API: writeTo().create/append/replace
- * - All reads go through pure DSv2 catalog path
+ * - All reads go through pure V2 connector catalog path
  *
- * Pattern: Tests use writeTo() to create tables, then spark.table() to read and verify.
+ * Pattern: Tests use writeTo() to create tables (via V1), then spark.table() reads via V2 connector.
  * This validates Kernel's SparkTable can handle catalog-based table reads after V1 writes.
  */
-class DeltaDataFrameWriterV2Dsv2Suite
+class DataFrameWriterV2WithV2ConnectorSuite
   extends OpenSourceDataFrameWriterV2Tests
-  with Dsv2ForceTest {
+  with V2ForceTest {
 
   /**
    * Skip tests that require write operations after initial table creation.
    *
-   * Kernel's SparkTable only implements SupportsRead, not SupportsWrite.
+   * Kernel's SparkTable (V2 connector) only implements SupportsRead, not SupportsWrite.
    * Tests that perform append/replace operations after table creation are skipped.
    */
   override protected def shouldSkipTest(testName: String): Boolean = {

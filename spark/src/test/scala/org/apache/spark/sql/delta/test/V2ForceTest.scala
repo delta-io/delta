@@ -17,26 +17,28 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.delta.DeltaDsv2EnableConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
 import org.scalatest.Tag
 import org.scalactic.source.Position
 
 import scala.collection.mutable
 
 /**
- * Trait that forces DataSourceV2 mode to STRICT, ensuring all operations
- * use the Kernel-based SparkTable implementation instead of DeltaTableV2.
+ * Trait that forces Delta V2 connector mode to STRICT, ensuring all operations
+ * use the Kernel-based SparkTable implementation (V2 connector) instead of DeltaTableV2 (V1 connector).
+ *
+ * See [[DeltaSQLConfV2.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
  *
  * Usage:
  * {{{
- * class MyKernelTest extends MyOriginalSuite with Dsv2ForceTest {
+ * class MyKernelTest extends MyOriginalSuite with V2ForceTest {
  *   override protected def shouldSkipTest(testName: String): Boolean = {
  *     testName.contains("unsupported feature")
  *   }
  * }
  * }}}
  */
-trait Dsv2ForceTest extends DeltaSQLCommandTest {
+trait V2ForceTest extends DeltaSQLCommandTest {
 
   private val testsRun: mutable.Set[String] = mutable.Set.empty
 
@@ -48,7 +50,7 @@ trait Dsv2ForceTest extends DeltaSQLCommandTest {
       testName: String,
       testTags: Tag*)(testFun: => Any)(implicit pos: Position): Unit = {
     if (shouldSkipTest(testName)) {
-      super.ignore(s"$testName - skipped for Kernel based DSv2 (not yet supported)")(testFun)
+      super.ignore(s"$testName - skipped for Kernel-based V2 connector (not yet supported)")(testFun)
     } else {
       super.test(testName, testTags: _*) {
         testsRun.add(testName)
@@ -68,12 +70,12 @@ trait Dsv2ForceTest extends DeltaSQLCommandTest {
   protected def shouldSkipTest(testName: String): Boolean = false
 
   /**
-   * Override `sparkConf` to set the `DATASOURCEV2_ENABLE_MODE` to "STRICT".
-   * This ensures all catalog operations use Kernel SparkTable.
+   * Override `sparkConf` to set V2_ENABLE_MODE to "STRICT".
+   * This ensures all catalog operations use Kernel SparkTable (V2 connector).
    */
   abstract override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set(DeltaDsv2EnableConf.DATASOURCEV2_ENABLE_MODE.key, "STRICT")
+      .set(DeltaSQLConfV2.V2_ENABLE_MODE.key, "STRICT")
   }
 
   override def afterAll(): Unit = {
