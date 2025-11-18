@@ -124,8 +124,6 @@ abstract class ProtocolMetadataWrapperSuiteBase
     // IcebergCompat V2 enabled
     ("v2 enabled", true /* expectedIcebergCompatEnabled */,
       Map(DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key -> "true")),
-    // IcebergCompat V3 enabled
-    ("v3 enabled", true /* expectedIcebergCompatEnabled */,
     // No IcebergCompat enabled
     ("disabled", false /* expectedIcebergCompatEnabled */, Map.empty)
   ).foreach { case (testCaseName, expectedIcebergCompatEnabled, config) =>
