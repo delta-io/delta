@@ -21,12 +21,12 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.types.{IntegerType, StructType}
 
 /**
- * Unit tests for ProtocolMetadataWrapperV1.
+ * Unit tests for ProtocolMetadataAdapterV1.
  *
  * This suite tests the V1 wrapper implementation that adapts delta-spark's Protocol and Metadata
- * to the ProtocolMetadataWrapper interface.
+ * to the ProtocolMetadataAdapter interface.
  */
-class ProtocolMetadataWrapperV1Suite extends ProtocolMetadataWrapperSuiteBase {
+class ProtocolMetadataAdapterV1Suite extends ProtocolMetadataAdapterSuiteBase {
 
   override protected def createWrapper(
       minReaderVersion: Int = 1,
@@ -34,7 +34,7 @@ class ProtocolMetadataWrapperV1Suite extends ProtocolMetadataWrapperSuiteBase {
       readerFeatures: Option[Set[String]] = None,
       writerFeatures: Option[Set[String]] = None,
       schema: StructType = new StructType().add("id", IntegerType),
-      configuration: Map[String, String] = Map.empty): ProtocolMetadataWrapper = {
+      configuration: Map[String, String] = Map.empty): ProtocolMetadataAdapter = {
 
     val protocol = Protocol(
       minReaderVersion = minReaderVersion,
@@ -46,6 +46,6 @@ class ProtocolMetadataWrapperV1Suite extends ProtocolMetadataWrapperSuiteBase {
       schemaString = schema.json,
       configuration = configuration)
 
-    ProtocolMetadataWrapperV1(protocol, metadata)
+    ProtocolMetadataAdapterV1(protocol, metadata)
   }
 }

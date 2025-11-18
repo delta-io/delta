@@ -21,9 +21,9 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructField, StructType}
 
 /**
- * Abstract base class for testing ProtocolMetadataWrapper implementations.
+ * Abstract base class for testing ProtocolMetadataAdapter implementations.
  */
-abstract class ProtocolMetadataWrapperSuiteBase
+abstract class ProtocolMetadataAdapterSuiteBase
   extends SparkFunSuite
   with SharedSparkSession {
 
@@ -43,7 +43,7 @@ abstract class ProtocolMetadataWrapperSuiteBase
       readerFeatures: Option[Set[String]] = None,
       writerFeatures: Option[Set[String]] = None,
       schema: StructType = new StructType().add("id", IntegerType),
-      configuration: Map[String, String] = Map.empty): ProtocolMetadataWrapper
+      configuration: Map[String, String] = Map.empty): ProtocolMetadataAdapter
 
   Seq[(DeltaColumnMappingMode, Map[String, String])](
     (NoMapping, Map.empty),
@@ -162,7 +162,7 @@ abstract class ProtocolMetadataWrapperSuiteBase
     // Table with no special features should be readable
     ("readable table", None, true, Map.empty,
      None, None),
-    // Table with unsupported type widening (string -> integer) should not be readable
+    // Table with unsupported type widening (string -> integer), should not be readable
     ("table with unsupported type widening",
       Some(new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
@@ -212,15 +212,14 @@ abstract class ProtocolMetadataWrapperSuiteBase
     // Row tracking disabled: should return no fields
     ("row tracking disabled", Map.empty, None, None,
      false, false),
-    // Row tracking enabled with materialized columns
-    ("row tracking enabled, nullable constant=false, generated=false",
+    ("row tracking enabled with constant or generated metadata col non nullable",
       Map(
         DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true",
         "delta.rowTracking.materializedRowIdColumnName" -> "_row_id_col",
         "delta.rowTracking.materializedRowCommitVersionColumnName" -> "_row_commit_version_col"),
       Some(Set(RowTrackingFeature.name)), Some(Set(RowTrackingFeature.name)),
      false, false),
-    ("row tracking enabled, nullable constant=true, generated=true",
+    ("row tracking enabled with constant or generated metadata col nullable",
       Map(
         DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true",
         "delta.rowTracking.materializedRowIdColumnName" -> "_row_id_col",

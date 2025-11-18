@@ -26,7 +26,7 @@ import org.apache.spark.sql.types.{StructField, StructType}
  * specific action class implementations.
  * This helps delta kernel based connector reusing DeltaParquetFileFormat.
  */
-trait ProtocolMetadataWrapper {
+trait ProtocolMetadataAdapter {
 
   /**
    * Returns the column mapping mode for this table.

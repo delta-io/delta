@@ -49,7 +49,7 @@ import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnarBatchRow, ColumnV
 import org.apache.spark.util.SerializableConfiguration
 
 /**
- * Base class for Delta Parquet file format that uses ProtocolMetadataWrapper abstraction.
+ * Base class for Delta Parquet file format that uses ProtocolMetadataAdapter abstraction.
  * A thin wrapper over the Parquet file format to support
  *  - columns names without restrictions.
  *  - populated a column from the deletion vector of this file (if exists) to indicate
@@ -57,7 +57,7 @@ import org.apache.spark.util.SerializableConfiguration
  *    of this scan can use the column values to filter out the deleted rows.
  */
 abstract class DeltaParquetFileFormatBase(
-    protected val protocolMetadataWrapper: ProtocolMetadataWrapper,
+    protected val protocolMetadataWrapper: ProtocolMetadataAdapter,
     protected val nullableRowTrackingConstantFields: Boolean = false,
     protected val nullableRowTrackingGeneratedFields: Boolean = false,
     protected val optimizationsEnabled: Boolean = true,
@@ -544,10 +544,7 @@ case class DeltaParquetFileFormat(
     override val tablePath: Option[String] = None,
     override val isCDCRead: Boolean = false)
   extends DeltaParquetFileFormatBase(
-    protocolMetadataWrapper = ProtocolMetadataWrapperV1(protocol, metadata),
-    generateRowIndexFilterId = generateRowIndexFilterId,
-    generateRowIndexFilterColumn = generateRowIndexFilterColumn,
-    generateDeltaFileInScanId = generateDeltaFileInScanId,
+    protocolMetadataWrapper = ProtocolMetadataAdapterV1(protocol, metadata),
     nullableRowTrackingConstantFields = nullableRowTrackingConstantFields,
     nullableRowTrackingGeneratedFields = nullableRowTrackingGeneratedFields,
     optimizationsEnabled = optimizationsEnabled,

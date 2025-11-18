@@ -23,14 +23,14 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.{StructField, StructType}
 
 /**
- * Implementation of ProtocolMetadataWrapper for delta-spark v1 Protocol and Metadata.
+ * Implementation of ProtocolMetadataAdapter for delta-spark v1 Protocol and Metadata.
  *
  * This class adapts the existing delta-spark Protocol and Metadata actions to the
- * ProtocolMetadataWrapper interface, enabling code reuse in DeltaParquetFileFormat.
+ * ProtocolMetadataAdapter interface, enabling code reuse in DeltaParquetFileFormat.
  */
-case class ProtocolMetadataWrapperV1(
+case class ProtocolMetadataAdapterV1(
     protocol: Protocol,
-    metadata: Metadata) extends ProtocolMetadataWrapper {
+    metadata: Metadata) extends ProtocolMetadataAdapter {
 
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
