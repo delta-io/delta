@@ -83,7 +83,7 @@ object UCCommitCoordinatorBuilder
   override def buildForCatalog(
       spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
     val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, token)) => ucClientFactory.createUCClient(uri, token)
+      case Some((_, uri, token)) => UnityCatalogClientFactories.defaultClient(uri, token)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
@@ -108,7 +108,7 @@ object UCCommitCoordinatorBuilder
 
     matchingClients match {
       case Nil => throw noMatchingCatalogException(metastoreId)
-      case (uri, token) :: Nil => ucClientFactory.createUCClient(uri, token)
+      case (uri, token) :: Nil => UnityCatalogClientFactories.defaultClient(uri, token)
       case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_._1))
     }
   }
@@ -125,7 +125,7 @@ object UCCommitCoordinatorBuilder
       val metastoreId = uriTokenToMetastoreIdCache.computeIfAbsent(
         (uri, token),
         _ => {
-          val ucClient = ucClientFactory.createUCClient(uri, token)
+          val ucClient = UnityCatalogClientFactories.defaultClient(uri, token)
           try {
             ucClient.getMetastoreId
           } finally {

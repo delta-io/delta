@@ -22,7 +22,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
-import io.delta.kernel.spark.unity.UnityCatalogClientFactory;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -59,7 +58,7 @@ public class SparkTable implements Table, SupportsRead {
   private final Column[] columns;
   private final Transform[] partitionTransforms;
   private final Optional<CatalogTable> catalogTable;
-  private final Optional<UnityCatalogClientFactory.UnityCatalogClient> unityCatalogClient;
+  private final TableContext tableContext;
 
   /**
    * Creates a SparkTable from a filesystem path without a catalog table.
@@ -69,7 +68,7 @@ public class SparkTable implements Table, SupportsRead {
    * @throws NullPointerException if identifier or tablePath is null
    */
   public SparkTable(Identifier identifier, String tablePath) {
-    this(identifier, tablePath, Collections.emptyMap(), Optional.empty());
+    this(identifier, tablePath, Collections.emptyMap(), Optional.empty(), TableContext.empty());
   }
 
   /**
@@ -81,7 +80,12 @@ public class SparkTable implements Table, SupportsRead {
    * @throws NullPointerException if identifier or tablePath is null
    */
   public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
-    this(identifier, tablePath, options, Optional.empty());
+    this(identifier, tablePath, options, Optional.empty(), TableContext.empty());
+  }
+
+  public SparkTable(
+      Identifier identifier, String tablePath, Map<String, String> options, TableContext context) {
+    this(identifier, tablePath, options, Optional.empty(), context);
   }
 
   /**
@@ -94,11 +98,20 @@ public class SparkTable implements Table, SupportsRead {
    * @param options user-provided options to override catalog properties
    */
   public SparkTable(Identifier identifier, CatalogTable catalogTable, Map<String, String> options) {
+    this(identifier, catalogTable, options, TableContext.empty());
+  }
+
+  public SparkTable(
+      Identifier identifier,
+      CatalogTable catalogTable,
+      Map<String, String> options,
+      TableContext tableContext) {
     this(
         identifier,
         getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
         options,
-        Optional.of(catalogTable));
+        Optional.of(catalogTable),
+        tableContext);
   }
 
   /**
@@ -117,12 +130,11 @@ public class SparkTable implements Table, SupportsRead {
       Identifier identifier,
       String tablePath,
       Map<String, String> userOptions,
-      Optional<CatalogTable> catalogTable) {
+      Optional<CatalogTable> catalogTable,
+      TableContext tableContext) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.catalogTable = catalogTable;
-    this.unityCatalogClient =
-        catalogTable.flatMap(
-            table -> UnityCatalogClientFactory.create(SparkSession.active(), identifier, table));
+    this.tableContext = requireNonNull(tableContext, "tableContext is null");
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
     Map<String, String> merged = new HashMap<>();
@@ -202,8 +214,8 @@ public class SparkTable implements Table, SupportsRead {
     return catalogTable;
   }
 
-  public Optional<UnityCatalogClientFactory.UnityCatalogClient> getUnityCatalogClient() {
-    return unityCatalogClient;
+  public TableContext tableContext() {
+    return tableContext;
   }
 
   @Override

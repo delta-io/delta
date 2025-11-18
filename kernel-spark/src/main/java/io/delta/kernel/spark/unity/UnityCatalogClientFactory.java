@@ -5,7 +5,6 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
-import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -20,6 +19,7 @@ import java.util.function.BiFunction;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.delta.coordinatedcommits.UnityCatalogClientFactories;
 
 /**
  * Factory for constructing Unity Catalog clients from Spark session catalog configuration.
@@ -278,7 +278,7 @@ public final class UnityCatalogClientFactory {
 
   private static UCClient defaultClientBuilder(String uri, String token) {
     try {
-      return new UCTokenBasedRestClient(uri, token);
+      return UnityCatalogClientFactories.defaultClient(uri, token);
     } catch (NoClassDefFoundError e) {
       throw new IllegalStateException(
           "Unity Catalog client requires Apache HttpClient dependencies on the classpath.", e);
