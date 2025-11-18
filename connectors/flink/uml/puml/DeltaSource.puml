@@ -1,0 +1,229 @@
+@startuml
+'https://plantuml.com/class-diagram
+set separator none
+
+package "java.io" #DDDDDD {
+  interface Serializable
+}
+
+package "org.apache.flink" #DDDDDD {
+  interface Source extends Serializable
+  interface SourceReader
+
+  interface SplitEnumerator {
+    + start()
+    + close() : void
+    + handleSplitRequest(int, String) : void
+    + addSplitsBack(List<SplitT>, int) : void
+    + addReader(int) : void
+    + snapshotState(long) : CheckpointT
+    + notifyCheckpointComplete(long) : void
+    + handleSourceEvent(int, SourceEvent) : void
+  }
+
+  enum Boundedness {
+    BOUNDED
+    CONTINUOUS_UNBOUNDED
+  }
+}
+
+package "io.delta.flink.internal" {
+  class DeltaSourceInternal implements Source {
+    - splitEnumeratorProvider : SplitEnumeratorProvider
+
+    + getBoundedness() : Boundedness
+    + createReader(...) : SourceReader
+    + createEnumerator(...) : SplitEnumerator
+    + restoreEnumerator(...) : SplitEnumerator
+  }
+
+  note left of DeltaSourceInternal::getBoundedness
+    Delegates to splitEnumeratorProvider
+  end note
+}
+
+package "io.delta.flink.internal.enumerator" {
+
+  interface SplitEnumeratorProvider extends Serializable {
+    + createInitialStateEnumerator(...) : SplitEnumerator
+    + createEnumeratorForCheckpoint(...) : SplitEnumerator
+    + getBoundedness : Boundedness
+  }
+
+  class BoundedSplitEnumeratorProvider implements SplitEnumeratorProvider {
+    + getBoundedness() : Boundedness
+  }
+  note right of BoundedSplitEnumeratorProvider::getBoundedness
+    returns BOUNDED
+  end note
+
+  class ContinuousSplitEnumeratorProvider implements SplitEnumeratorProvider {
+    + getBoundedness() : Boundedness
+  }
+  note right of ContinuousSplitEnumeratorProvider::getBoundedness
+    returns CONTINUOUS_UNBOUNDED
+  end note
+
+  abstract class DeltaSourceSplitEnumerator implements SplitEnumerator {
+    # deltaTablePath : Path
+    # splitAssigner : FileSplitAssigner
+    # readersAwaitingSplit : LinkedHashMap<Integer, String>
+    --
+    # {abstract} handleNoMoreSplits(int subtaskId) : void
+    --
+    + handleSplitRequest(int, String) : void
+    + addSplitsBack(List<DeltaSourceSplit>, int) : void
+    --
+    # getRemainingSplits() : Collection<DeltaSourceSplit>
+    # addSplits(List<DeltaSourceSplit>) : void
+    # assignSplits() : AssignSplitStatus
+  }
+
+  class BoundedDeltaSourceSplitEnumerator extends DeltaSourceSplitEnumerator {
+    - snapshotProcessor : TableProcessor
+
+    + start() : void
+    # handleNoMoreSplits(int)
+    + snapshotState(long) : DeltaEnumeratorStateCheckpoint<DeltaSourceSplit>
+  }
+  note left of BoundedDeltaSourceSplitEnumerator::start
+     Gets Delta table snapshot to process.
+  end note
+
+  class ContinuousDeltaSourceSplitEnumerator extends DeltaSourceSplitEnumerator {
+    - continuousTableProcessor : ContinuousTableProcessor
+
+    + start()
+    # handleNoMoreSplits(int)
+    + snapshotState(long) : DeltaEnumeratorStateCheckpoint<DeltaSourceSplit>
+  }
+  note left of ContinuousDeltaSourceSplitEnumerator::start
+    If needed, gets Delta table snapshot to process
+    and after that starts monitoring table for changes.
+  end note
+
+  BoundedSplitEnumeratorProvider ..> BoundedDeltaSourceSplitEnumerator : creates
+  ContinuousSplitEnumeratorProvider ..> ContinuousDeltaSourceSplitEnumerator : creates
+
+  BoundedDeltaSourceSplitEnumerator *-- io.delta.flink.source.internal.enumerator.processor.SnapshotProcessor
+  ContinuousDeltaSourceSplitEnumerator *-- io.delta.flink.source.internal.enumerator.processor.ContinuousTableProcessor
+
+  /' layout '/
+  BoundedSplitEnumeratorProvider -[hidden]up- ContinuousSplitEnumeratorProvider
+}
+
+package "io.delta.flink.source.internal.enumerator.processor" {
+
+   interface TableProcessor {
+
+      + process(Consumer<List<DeltaSourceSplit>> : void
+      + getSnapshotVersion() : long
+      /' + snapshotState(DeltaEnumeratorStateCheckpointBuilder<DeltaSourceSplit>) : DeltaEnumeratorStateCheckpointBuilder '/
+    }
+
+    interface ContinuousTableProcessor extends TableProcessor {
+      + isMonitoringForChanges() : boolean
+    }
+
+    abstract class TableProcessorBase implements TableProcessor {
+
+      #  prepareSplits(ChangesPerVersion<AddFile>, SplitFilter<Path>) : List<DeltaSourceSplit>
+      #  setUpEnumeratorContext(List<AddFile>, long) : AddFileEnumeratorContext
+    }
+
+    class SnapshotProcessor extends TableProcessorBase {
+      - snapshot : Snapshot
+      - alreadyProcessedPaths : HashSet<Path>
+    }
+
+    class ChangesProcessor extends TableProcessorBase implements ContinuousTableProcessor {
+
+      - tableMonitor : TableMonitor
+      - checkInterval : long
+      - initialDelay : long
+      - currentSnapshotVersion : long
+    }
+
+    class SnapshotAndChangesTableProcessor implements ContinuousTableProcessor {
+
+      - snapshotProcessor : SnapshotProcessor
+      - changesProcessor : ChangesProcessor
+    }
+
+    SnapshotAndChangesTableProcessor *-- ChangesProcessor
+    SnapshotAndChangesTableProcessor *-- SnapshotProcessor
+}
+
+package "io.delta.flink.internal.builder" {
+   abstract class DeltaSourceBuilderBase {
+    # validate() : void
+    # validateMandatoryOptions() : Validator
+    # validateOptionalParameters() : Validator
+    # validateInapplicableOptions() : Validator
+    --
+    + {abstract} build() : DeltaSource
+    + {abstract} validateOptionExclusions() : Validator
+    + {abstract} getApplicableOptions() : Collection<String
+   }
+
+   abstract class BoundedDeltaSourceBuilder extends DeltaSourceBuilderBase {
+     # {static} enumeratorProvider : BoundedSplitEnumeratorProvider
+
+     + versionAsOf(long) : SELF
+     + timestampAsOf(String) : SELF
+     + getApplicableOptions() : Collection<String
+     + validateOptionExclusions() : Validator
+   }
+   note top of BoundedDeltaSourceBuilder: By default uses\nBoundedSplitEnumeratorProvider
+
+   abstract class ContinuousDeltaSourceBuilder extends DeltaSourceBuilderBase {
+     # {static} enumeratorProvider : ContinuousSplitEnumeratorProvider
+
+     + startingVersion(long) : SELF
+     + startingVersion(String) : SELF
+     + startingTimestamp(String) : SELF
+     + updateCheckIntervalMillis(long) : SELF
+     + ignoreDeletes(boolean) : SELF
+     + ignoreChanges(boolean) : SELF
+     + getApplicableOptions() : Collection<String>
+     + validateOptionExclusions() : Validator
+   }
+   note top of ContinuousDeltaSourceBuilder: By default uses\nContinuousSplitEnumeratorProvider
+}
+
+package "io.delta.flink.source" {
+
+  class RowDataBoundedDeltaSourceBuilder extends BoundedDeltaSourceBuilder {
+    + build() : DeltaSource
+  }
+
+  class RowDataContinuousDeltaSourceBuilder extends ContinuousDeltaSourceBuilder {
+    + build() : DeltaSource
+  }
+
+  note "Creates DeltaSource for RowData input type" as DSRowData
+  RowDataBoundedDeltaSourceBuilder <-- DSRowData
+  RowDataContinuousDeltaSourceBuilder <-- DSRowData
+
+
+  class DeltaSource extends DeltaSourceInternal {
+    + {static} forBoundedRowData(Path, Configuration) : RowDataBoundedDeltaSourceBuilder
+    + {static} forContinuousRowData(Path, Configuration) : RowDataContinuousDeltaSourceBuilder
+  }
+}
+
+/' legend '/
+skinparam legendBackgroundColor #ffffff
+legend
+
+|= field |= method |=  |
+|  <img:http://s.plantuml.com/private-field.png>     |   <img:http://s.plantuml.com/private-method.png>     | private |
+|  <img:http://s.plantuml.com/protected-field.png>   |   <img:http://s.plantuml.com/protected-method.png>   | protected |
+|  <img:http://s.plantuml.com/package-private-field.png>     |   <img:http://s.plantuml.com/package-private-method.png>    | package private |
+|  <img:http://s.plantuml.com/public-field.png>     |   <img:http://s.plantuml.com/public-method.png>     | public |
+|  __underline__     |   __underline__     | static |
+|       |   //italic//     | abstract method |
+
+endlegend
+
+@enduml

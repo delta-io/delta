@@ -1,0 +1,144 @@
+@startuml
+'https://plantuml.com/class-diagram
+
+package "java.io" #DDDDDD {
+  interface Serializable
+}
+
+package "org.apache.flink" #DDDDDD {
+
+  interface Sink extends Serializable
+
+  interface SinkWriter
+
+  interface PendingFileRecoverable
+
+  interface GlobalCommitter
+
+  interface Committer
+
+}
+
+/' ------------------------------- '/
+package "io.delta.flink.internal" {
+
+  class DeltaWriter<IN> implements SinkWriter {
+
+    + write(IN, Context) : void
+    + prepareCommit(boolean) : List<DeltaCommittable>
+    + snapshotState() : List<DeltaWriterBucketState>
+    + close() : void
+  }
+
+  class DeltaCommittable implements Serializable {
+    - deltaPendingFile : DeltaPendingFile
+    - appId : String
+    - checkpointId : long
+  }
+
+  class DeltaPendingFile {
+    - partitionSpec : LinkedHashMap<String, String>
+    - fileName : String
+    - pendingFile : PendingFileRecoverable
+    - recordCount : long
+    - fileSize : long
+    - lastUpdateTime : long
+
+    + toAddFile() : AddFile
+  }
+
+  class DeltaWriterBucketState {
+    - bucketId : String
+    - bucketPath : Path
+    - appId : String
+
+    + getBucketId() : String
+    + getBucketPath() : Path
+    + getAppId() : String
+  }
+
+  class DeltaGlobalCommittable {
+    - deltaCommittables : List<DeltaCommittable>
+
+    + getDeltaCommittables() : List<DeltaCommittable>
+  }
+
+  class DeltaSinkInternal implements Sink {
+
+    + createWriter(InitContext context, List<DeltaWriterBucketState> states : DeltaWriter<IN, DeltaCommittable, DeltaWriterBucketState>
+    + createCommitter() : Optional<Committer<DeltaCommittable>>
+    + createGlobalCommitter() : Optional<GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>>
+  }
+
+  class DeltaSinkBuilder<IN> implements Serializable {
+
+   + createCommitter() : Committer<DeltaCommittable>
+   + createGlobalCommitter() : GlobalCommitter<DeltaCommittable, DeltaGlobalCommittable>
+  }
+
+  class DefaultDeltaFormatBuilder<IN> extends DeltaSinkBuilder {
+
+    + build() : DeltaSinkInternal<IN>
+  }
+
+  class DeltaCommitter implements Committer {
+
+    + commit(List<DeltaCommittable>) : List<DeltaCommittable>
+  }
+
+  class DeltaGlobalCommitter implements GlobalCommitter {
+
+    + combine(List<DeltaCommittable>) : DeltaGlobalCommittable
+    + commit(List<DeltaGlobalCommittable>) : List<DeltaGlobalCommittable>
+  }
+
+  note left of DeltaCommitter::commit
+    Commit Parquet files
+    locally to disk.
+  end note
+
+  note left of DeltaGlobalCommitter::commit
+    Commit data to _delta_log.
+  end note
+}
+
+package "io.delta.flink.sink" {
+  class DeltaSink<IN> extends DeltaSinkInternal {
+
+    + {static} forRowData() : RowDataDeltaSinkBuilder
+  }
+
+  class RowDataDeltaSinkBuilder {
+
+    + build() : DeltaSink<RowData>
+  }
+}
+
+/' extra links/relations '/
+DeltaSinkInternal ..> DeltaWriter : creates
+DeltaSinkInternal ..> DeltaGlobalCommitter : creates
+DeltaSinkInternal ..> DeltaCommitter : creates
+RowDataDeltaSinkBuilder ..> DeltaSink : creates
+DeltaGlobalCommittable o-- DeltaCommittable : aggregation
+
+/' layout '/
+DeltaSink -[hidden]right- DeltaSinkInternal
+DeltaSinkInternal -[hidden]right- DeltaWriter
+DeltaSinkInternal -[hidden]right- DeltaCommitter
+
+DeltaGlobalCommitter -[hidden]right- DeltaWriterBucketState
+DeltaPendingFile -[hidden]right- DeltaWriterBucketState
+
+/' legend '/
+skinparam legendBackgroundColor #ffffff
+legend
+
+|= field |= method |=  |
+|  <img:http://s.plantuml.com/private-field.png>     |   <img:http://s.plantuml.com/private-method.png>     | private |
+|  <img:http://s.plantuml.com/protected-field.png>   |   <img:http://s.plantuml.com/protected-method.png>   | protected |
+|  <img:http://s.plantuml.com/package-private-field.png>     |   <img:http://s.plantuml.com/package-private-method.png>    | package private |
+|  <img:http://s.plantuml.com/public-field.png>     |   <img:http://s.plantuml.com/public-method.png>     | public |
+
+endlegend
+
+@enduml

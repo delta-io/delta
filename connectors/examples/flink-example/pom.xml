@@ -24,14 +24,14 @@ limitations under the License.-->
     <version>1.1-SNAPSHOT</version>
 
     <properties>
-        <maven.compiler.source>1.8</maven.compiler.source>
-        <maven.compiler.target>1.8</maven.compiler.target>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
         <staging.repo.url>""</staging.repo.url>
         <scala.main.version>2.12</scala.main.version>
-        <connectors.version>0.6.0-SNAPSHOT</connectors.version>
-        <flink-version>1.16.2</flink-version>
-        <hadoop-version>3.1.0</hadoop-version>
-        <log4j.version>2.12.1</log4j.version>
+        <connectors.version>3.1.0-SNAPSHOT</connectors.version>
+        <flink-version>2.1.0</flink-version>
+        <hadoop-version>3.3.4</hadoop-version>
+        <log4j.version>2.17.1</log4j.version>
     </properties>
 
     <repositories>
