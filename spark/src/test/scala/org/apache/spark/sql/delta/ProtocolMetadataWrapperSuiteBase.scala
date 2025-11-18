@@ -76,16 +76,16 @@ abstract class ProtocolMetadataWrapperSuiteBase
 
   Seq[(String, Boolean, Map[String, String], Option[Set[String]], Option[Set[String]])](
     // Row tracking enabled by setting table features
-    ("enabled", /* expectedRowIdEnabled=*/true,
+    ("enabled", true,
       Map(DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true"),
       Some(Set(RowTrackingFeature.name)), Some(Set(RowTrackingFeature.name))),
     // Row tracking disabled by default
-    ("disabled", /* expectedRowIdEnabled=*/false, Map.empty, /* readerFeatures=*/None,
-      /* writerFeatures=*/None),
+    ("disabled", false, Map.empty, None,
+     None),
     // Row tracking explicitly disabled via config
-    ("explicitly disabled", /* expectedRowIdEnabled=*/false,
+    ("explicitly disabled", false,
       Map(DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false"),
-      /* readerFeatures=*/None, /* writerFeatures=*/None)
+     None, None)
   ).foreach { case (testCaseName, expectedRowIdEnabled, config, readerFeatures, writerFeatures) =>
     test(s"isRowIdEnabled when $testCaseName") {
       val wrapper = createWrapper(
@@ -100,12 +100,12 @@ abstract class ProtocolMetadataWrapperSuiteBase
 
   Seq[(String, Boolean, Option[Set[String]], Option[Set[String]])](
     // Deletion vectors enabled via table features
-    ("enabled", /* expectedDeletionVectorReadable=*/ true,
+    ("enabled", true,
       Some(Set(DeletionVectorsTableFeature.name)),
       Some(Set(DeletionVectorsTableFeature.name))),
     // Deletion vectors disabled by default
-    ("disabled", /* expectedDeletionVectorReadable=*/false, /* readerFeatures=*/None,
-      /* writerFeatures=*/None)
+    ("disabled", false, None,
+     None)
   ).foreach { case (testCaseName, expectedDeletionVectorReadable, readerFeatures, writerFeatures) =>
     test(s"isDeletionVectorReadable when $testCaseName") {
       val wrapper = createWrapper(
@@ -119,13 +119,13 @@ abstract class ProtocolMetadataWrapperSuiteBase
 
   Seq[(String, Boolean, Map[String, String])](
     // IcebergCompat V1 enabled
-    ("v1 enabled", /* expectedIcebergCompatEnabled=*/true,
+    ("v1 enabled", true,
       Map(DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED.key -> "true")),
     // IcebergCompat V2 enabled
-    ("v2 enabled", /* expectedIcebergCompatEnabled=*/true,
+    ("v2 enabled", true,
       Map(DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key -> "true")),
     // No IcebergCompat enabled
-    ("disabled", /* expectedIcebergCompatEnabled=*/false, Map.empty)
+    ("disabled", false, Map.empty)
   ).foreach { case (testCaseName, expectedIcebergCompatEnabled, config) =>
     test(s"isIcebergCompatAnyEnabled when $testCaseName") {
       val wrapper = createWrapper(
@@ -138,13 +138,13 @@ abstract class ProtocolMetadataWrapperSuiteBase
   Seq[(String, Map[String, String], Seq[(Int, Boolean)])](
     // IcebergCompat V1 enabled: only version 1 should return true
     ("v1 enabled", Map(DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED.key -> "true"),
-      Seq[(Int, Boolean)]((/* version=*/1, /* expectedEnabled=*/true), (2, false), (3, false))),
+      Seq[(Int, Boolean)]((1, true), (2, false), (3, false))),
     // V2 enabled: version 1 and 2 should return true
     ("v2 enabled", Map(DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key -> "true"),
-      Seq[(Int, Boolean)]((/* version=*/1, /* expectedEnabled=*/true), (2, true), (3, false))),
+      Seq[(Int, Boolean)]((1, true), (2, true), (3, false))),
     // No version enabled: all versions should return false
     ("disabled", Map.empty,
-      Seq[(Int, Boolean)]((/* version=*/1, /* expectedEnabled=*/false), (2, false), (3, false)))
+      Seq[(Int, Boolean)]((1, false), (2, false), (3, false)))
   ).foreach { case (testCaseName, config, versionChecks) =>
     test(s"isIcebergCompatGeqEnabled when $testCaseName") {
       val wrapper = createWrapper(
@@ -160,8 +160,8 @@ abstract class ProtocolMetadataWrapperSuiteBase
   Seq[(String, Option[org.apache.spark.sql.types.Metadata], Boolean, Map[String, String],
     Option[Set[String]], Option[Set[String]])](
     // Table with no special features should be readable
-    ("readable table", /* typeChangeMetadata=*/None, /* tableReadable=*/true, Map.empty,
-      /* readerFeatures=*/None, /* writerFeatures=*/None),
+    ("readable table", None, true, Map.empty,
+     None, None),
     // Table with unsupported type widening (string -> integer) should not be readable
     ("table with unsupported type widening",
       Some(new MetadataBuilder()
@@ -173,7 +173,7 @@ abstract class ProtocolMetadataWrapperSuiteBase
             .build()
         ))
         .build()),
-      /* tableReadable=*/false,
+     false,
       Map(DeltaConfigs.ENABLE_TYPE_WIDENING.key -> "true"),
       Some(Set(TypeWideningTableFeature.name)),
       Some(Set(TypeWideningTableFeature.name)))
@@ -210,8 +210,8 @@ abstract class ProtocolMetadataWrapperSuiteBase
   Seq[(String, Map[String, String], Option[Set[String]], Option[Set[String]],
     Boolean, Boolean)](
     // Row tracking disabled: should return no fields
-    ("row tracking disabled", Map.empty, /* readerFeatures=*/None, /* writerFeatures=*/None,
-      /* nullableConstant=*/false, /* nullableGenerated=*/false),
+    ("row tracking disabled", Map.empty, None, None,
+     false, false),
     // Row tracking enabled with materialized columns
     ("row tracking enabled, nullable constant=false, generated=false",
       Map(
@@ -219,14 +219,14 @@ abstract class ProtocolMetadataWrapperSuiteBase
         "delta.rowTracking.materializedRowIdColumnName" -> "_row_id_col",
         "delta.rowTracking.materializedRowCommitVersionColumnName" -> "_row_commit_version_col"),
       Some(Set(RowTrackingFeature.name)), Some(Set(RowTrackingFeature.name)),
-      /* nullableConstant=*/false, /* nullableGenerated=*/false),
+     false, false),
     ("row tracking enabled, nullable constant=true, generated=true",
       Map(
         DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true",
         "delta.rowTracking.materializedRowIdColumnName" -> "_row_id_col",
         "delta.rowTracking.materializedRowCommitVersionColumnName" -> "_row_commit_version_col"),
       Some(Set(RowTrackingFeature.name)), Some(Set(RowTrackingFeature.name)),
-      /* nullableConstant=*/true, /* nullableGenerated=*/true)
+     true, true)
   ).foreach { case (testCaseName, config, readerFeatures, writerFeatures,
     nullableConstant, nullableGenerated) =>
     test(s"createRowTrackingMetadataFields when $testCaseName") {
