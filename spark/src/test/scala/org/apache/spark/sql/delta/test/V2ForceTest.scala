@@ -25,7 +25,8 @@ import scala.collection.mutable
 
 /**
  * Trait that forces Delta V2 connector mode to STRICT, ensuring all operations
- * use the Kernel-based SparkTable implementation (V2 connector) instead of DeltaTableV2 (V1 connector).
+ * use the Kernel-based SparkTable implementation (V2 connector) instead of
+ * DeltaTableV2 (V1 connector).
  *
  * See [[DeltaSQLConfV2.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
  *
@@ -50,7 +51,8 @@ trait V2ForceTest extends DeltaSQLCommandTest {
       testName: String,
       testTags: Tag*)(testFun: => Any)(implicit pos: Position): Unit = {
     if (shouldSkipTest(testName)) {
-      super.ignore(s"$testName - skipped for Kernel-based V2 connector (not yet supported)")(testFun)
+      super.ignore(
+        s"$testName - skipped for Kernel-based V2 connector (not yet supported)")(testFun)
     } else {
       super.test(testName, testTags: _*) {
         testsRun.add(testName)

@@ -19,7 +19,8 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.test.V2ForceTest
 
 /**
- * Test suite that runs OpenSourceDataFrameWriterV2Tests with Delta V2 connector mode forced to STRICT.
+ * Test suite that runs OpenSourceDataFrameWriterV2Tests with Delta V2 connector
+ * mode forced to STRICT.
  *
  * This is the BEST test suite for validating Kernel's V2 connector read capabilities:
  * - Uses spark.table() extensively (245% usage rate - avg 2.5 calls per test)
@@ -27,8 +28,9 @@ import org.apache.spark.sql.delta.test.V2ForceTest
  * - Tests DataFrameWriterV2 API: writeTo().create/append/replace
  * - All reads go through pure V2 connector catalog path
  *
- * Pattern: Tests use writeTo() to create tables (via V1), then spark.table() reads via V2 connector.
- * This validates Kernel's SparkTable can handle catalog-based table reads after V1 writes.
+ * Pattern: Tests use writeTo() to create tables (via V1), then spark.table()
+ * reads via V2 connector. This validates Kernel's SparkTable can handle
+ * catalog-based table reads after V1 writes.
  */
 class DataFrameWriterV2WithV2ConnectorSuite
   extends OpenSourceDataFrameWriterV2Tests
