@@ -98,8 +98,7 @@ public final class CatalogTableUtils {
    */
   private static Map<String, String> getStorageProperties(CatalogTable table) {
     requireNonNull(table, "table is null");
-    Map<String, String> storageProperties =
-        ScalaUtils.toJavaMap(table.storage().properties());
+    Map<String, String> storageProperties = ScalaUtils.toJavaMap(table.storage().properties());
     return storageProperties == null ? Collections.emptyMap() : storageProperties;
   }
 }
