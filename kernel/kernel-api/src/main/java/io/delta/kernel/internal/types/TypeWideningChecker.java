@@ -195,21 +195,6 @@ public class TypeWideningChecker {
   }
 
   /**
-   * Checks if the table schema contains any type widening metadata.
-   *
-   * @param schema The schema to check
-   * @return true if any field in the schema contains type changes
-   */
-  private static boolean containsTypeWideningMetadata(StructType schema) {
-    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
-      if (!element.getField().getTypeChanges().isEmpty()) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
    * Asserts that the given table doesn't contain any unsupported type changes. This should never
    * happen unless a non-compliant writer applied a type change that is not part of the feature
    * specification.
@@ -223,12 +208,12 @@ public class TypeWideningChecker {
         protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE)
             || protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE);
 
-    // If TypeWidening is not supported or no type widening recorded in the metadata,
-    // return early
-    if (!isTypeWideningSupported || !containsTypeWideningMetadata(metadata.getSchema())) {
+    // If TypeWidening is not supported, return early
+    if (!isTypeWideningSupported) {
       return;
     }
 
+    // Validate all type changes are supported
     for (SchemaIterable.SchemaElement element : new SchemaIterable(metadata.getSchema())) {
       StructField field = element.getField();
       for (TypeChange typeChange : field.getTypeChanges()) {
