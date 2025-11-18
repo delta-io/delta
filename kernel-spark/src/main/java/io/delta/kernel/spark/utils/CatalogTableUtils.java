@@ -18,6 +18,7 @@ package io.delta.kernel.spark.utils;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
+import java.util.Collections;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 
@@ -97,6 +98,8 @@ public final class CatalogTableUtils {
    */
   private static Map<String, String> getStorageProperties(CatalogTable table) {
     requireNonNull(table, "table is null");
-    return ScalaUtils.toJavaMap(table.storage().properties());
+    Map<String, String> storageProperties =
+        ScalaUtils.toJavaMap(table.storage().properties());
+    return storageProperties == null ? Collections.emptyMap() : storageProperties;
   }
 }
