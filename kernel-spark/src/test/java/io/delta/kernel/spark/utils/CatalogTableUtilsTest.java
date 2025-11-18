@@ -131,6 +131,24 @@ class CatalogTableUtilsTest {
         "Null storage should not be considered Unity managed");
   }
 
+  @Test
+  void testIsCatalogManaged_NullStorageProperties_ReturnsFalse() {
+    CatalogTable table = catalogTableWithNullStorageProperties(Collections.emptyMap());
+
+    assertFalse(
+        CatalogTableUtils.isCatalogManaged(table),
+        "Null storage properties should not be considered catalog managed");
+  }
+
+  @Test
+  void testIsUnityCatalogManaged_NullStorageProperties_ReturnsFalse() {
+    CatalogTable table = catalogTableWithNullStorageProperties(Collections.emptyMap());
+
+    assertFalse(
+        CatalogTableUtils.isUnityCatalogManagedTable(table),
+        "Null storage properties should not be considered Unity managed");
+  }
+
   private static CatalogTable catalogTable(
       Map<String, String> properties, Map<String, String> storageProperties) {
     return CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(properties, storageProperties);
@@ -138,5 +156,10 @@ class CatalogTableUtilsTest {
 
   private static CatalogTable catalogTableWithNullStorage(Map<String, String> properties) {
     return CatalogTableTestUtils$.MODULE$.catalogTableWithNullStorage(properties);
+  }
+
+  private static CatalogTable catalogTableWithNullStorageProperties(
+      Map<String, String> properties) {
+    return CatalogTableTestUtils$.MODULE$.catalogTableWithNullStorageProperties(properties);
   }
 }

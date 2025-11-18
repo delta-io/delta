@@ -67,4 +67,25 @@ object CatalogTableTestUtils {
       bucketSpec = None,
       properties = scalaProps)
   }
+
+  def catalogTableWithNullStorageProperties(
+      properties: java.util.Map[String, String]): CatalogTable = {
+    val scalaProps = ScalaUtils.toScalaMap(properties)
+
+    CatalogTable(
+      identifier = TableIdentifier("tbl"),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat(
+        locationUri = None,
+        inputFormat = None,
+        outputFormat = None,
+        serde = None,
+        compressed = false,
+        properties = null),
+      schema = new StructType(),
+      provider = None,
+      partitionColumnNames = Seq.empty,
+      bucketSpec = None,
+      properties = scalaProps)
+  }
 }

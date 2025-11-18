@@ -40,7 +40,10 @@ public final class ScalaUtils {
 
   public static Map<String, String> toJavaMap(
       scala.collection.immutable.Map<String, String> scalaMap) {
-    if (scalaMap == null || scalaMap.isEmpty()) {
+    if (scalaMap == null) {
+      return null;
+    }
+    if (scalaMap.isEmpty()) {
       return Collections.emptyMap();
     }
     return CollectionConverters.asJava(scalaMap);
