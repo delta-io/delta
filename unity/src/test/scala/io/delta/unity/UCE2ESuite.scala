@@ -34,6 +34,8 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
+  private val testUcTableId = "testUcTableId"
+
   /** Commits some data. Verifies UC is updated as expected. Returns the post-commit snapshot. */
   private def writeDataAndVerify(
       engine: Engine,
@@ -193,11 +195,11 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
       // Step 1: CREATE -- v0.json
       val result0 = ucCatalogManagedClient
-        .buildCreateTableTransaction("ucTableId", tablePath, testSchema, "test-engine")
+        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable())
       val tableData0 = new TableData(-1, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData0)
+      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData0)
 
       // Step 2: WRITE and commit data up to version 2
       val postCommitSnapshot1 = writeDataAndVerify(
@@ -221,7 +223,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       ucClient.setMaxVersionLimit(1)
 
       // Step 5: Load snapshot with UC client that limits maxRatifiedVersion to 1
-      val snapshot = loadSnapshot(ucCatalogManagedClient, engine, "ucTableId", tablePath)
+      val snapshot = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
 
       // Step 6: Verify that snapshot is at version 1, not version 2
       assert(
