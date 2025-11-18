@@ -356,6 +356,39 @@ trait DeltaErrorsBase
     )
   }
 
+  def checkConstraintReferToWrongColumns(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
+      messageParameters = Array(colName)
+    )
+  }
+
+  def checkConstraintUDF(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UDF_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintNonDeterministicExpression(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintAggregateExpression(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AGGREGATE_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintUnsupportedExpression(expr: Expression): Throwable = {
+    val expressionSql = expr.sql
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT",
+      messageParameters = Array(expressionSql, expressionSql)
+    )
+  }
+
   def deltaRelationPathMismatch(
       relationPath: Seq[String],
       targetType: String,
