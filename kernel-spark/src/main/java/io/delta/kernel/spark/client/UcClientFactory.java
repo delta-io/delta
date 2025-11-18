@@ -153,25 +153,33 @@ public final class UcClientFactory {
     requireNonNull(spark, "spark is null");
     requireNonNull(catalogName, "catalogName is null");
 
-    // Extract all catalog-specific configuration from Spark session
-    Map<String, String> catalogConfig = extractCatalogConfig(spark, catalogName);
+    // Extract catalog configuration using SparkConfigUtils
+    Map<String, String> catalogConfig = getCatalogConfig(spark, catalogName);
 
     // Validate that catalog exists and has configuration
     if (catalogConfig.isEmpty()) {
       throw new IllegalArgumentException(
           String.format(
               "Catalog '%s' not found in Spark session configurations. "
-                  + "Please ensure the catalog is configured with "
+                  + "Please ensure the catalog is configured as a Unity Catalog connector with "
                   + "'spark.sql.catalog.%s.uri' and 'spark.sql.catalog.%s.token'.",
               catalogName, catalogName, catalogName));
     }
 
-    // Extract and validate required URI
-    String uri = getRequiredConfig(catalogConfig, URI_CONFIG_KEY);
+    // Extract and validate URI
+    String uri = catalogConfig.get(URI_CONFIG_KEY);
+    if (uri == null || uri.trim().isEmpty()) {
+      throw new IllegalArgumentException(
+          String.format("URI configuration missing for catalog '%s'", catalogName));
+    }
     validateUri(uri, catalogName);
 
-    // Extract required token
-    String token = getRequiredConfig(catalogConfig, TOKEN_CONFIG_KEY);
+    // Extract token
+    String token = catalogConfig.get(TOKEN_CONFIG_KEY);
+    if (token == null || token.trim().isEmpty()) {
+      throw new IllegalArgumentException(
+          String.format("Token configuration missing for catalog '%s'", catalogName));
+    }
 
     // Delegate to UCTokenBasedRestClient - reuse existing implementation
     return new UCTokenBasedRestClient(uri, token);
