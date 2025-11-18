@@ -18,9 +18,13 @@ package io.delta.kernel.internal.deletionvectors;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.util.Tuple2;
 import java.io.IOException;
 import java.util.Optional;
+import java.util.Set;
 
 /** Utility methods regarding deletion vectors. */
 public class DeletionVectorUtils {
@@ -34,5 +38,21 @@ public class DeletionVectorUtils {
     } catch (IOException e) {
       throw new RuntimeException("Couldn't load dv", e);
     }
+  }
+
+  /**
+   * Check if deletion vectors are readable for the given protocol and metadata.
+   *
+   * @param protocol the protocol to check
+   * @param metadata the metadata to check
+   * @return true if deletion vectors are readable
+   */
+  public static boolean isReadable(Protocol protocol, Metadata metadata) {
+    Set<TableFeature> features = protocol.getImplicitlyAndExplicitlySupportedReaderWriterFeatures();
+    boolean featureSupported =
+        features.stream().anyMatch(f -> f.featureName().equals("deletionVectors"));
+    // Deletion vectors are only supported on parquet tables
+    boolean isParquetFormat = "parquet".equalsIgnoreCase(metadata.getFormat().getProvider());
+    return featureSupported && isParquetFormat;
   }
 }

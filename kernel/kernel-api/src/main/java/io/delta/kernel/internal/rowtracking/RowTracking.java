@@ -288,4 +288,60 @@ public class RowTracking {
   private static long getNumRecordsOrThrow(AddFile addFile) {
     return addFile.getNumRecords().orElseThrow(DeltaErrors::missingNumRecordsStatsForRowTracking);
   }
+
+  /**
+   * Check if row tracking is enabled for reading.
+   *
+   * @param protocol the protocol to check
+   * @param metadata the metadata to check
+   * @return true if row tracking is enabled
+   */
+  public static boolean isEnabled(Protocol protocol, Metadata metadata) {
+    boolean isEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+    if (isEnabled && !TableFeatures.isRowTrackingSupported(protocol)) {
+      throw new IllegalStateException(
+          "Table property 'delta.enableRowTracking' is set on the table but this table version "
+              + "doesn't support the 'rowTracking' table feature.");
+    }
+    return isEnabled;
+  }
+
+  /**
+   * Create the row tracking metadata struct fields for reading.
+   *
+   * @param protocol the protocol
+   * @param metadata the metadata
+   * @param nullableConstantFields whether constant fields should be nullable
+   * @param nullableGeneratedFields whether generated fields should be nullable
+   * @return list of struct fields for row tracking metadata
+   */
+  public static List<StructField> createMetadataStructFields(
+      Protocol protocol,
+      Metadata metadata,
+      boolean nullableConstantFields,
+      boolean nullableGeneratedFields) {
+    if (!isEnabled(protocol, metadata)) {
+      return new java.util.ArrayList<>();
+    }
+
+    List<StructField> fields = new java.util.ArrayList<>();
+
+    // Note: These fields are simplified for reading. The full metadata column spec
+    // management is handled by Spark's FileFormat layer.
+    fields.add(
+        new StructField(
+            "base_row_id", io.delta.kernel.types.LongType.LONG, nullableConstantFields));
+    fields.add(
+        new StructField(
+            "default_row_commit_version",
+            io.delta.kernel.types.LongType.LONG,
+            nullableConstantFields));
+    fields.add(
+        new StructField("row_id", io.delta.kernel.types.LongType.LONG, nullableGeneratedFields));
+    fields.add(
+        new StructField(
+            "row_commit_version", io.delta.kernel.types.LongType.LONG, nullableGeneratedFields));
+
+    return fields;
+  }
 }
