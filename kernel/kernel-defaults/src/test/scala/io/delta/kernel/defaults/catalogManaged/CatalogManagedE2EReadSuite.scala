@@ -27,7 +27,7 @@ import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, IN_COMMIT_TIMESTAMP_W_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_RW_FEATURE, IN_COMMIT_TIMESTAMP_W_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -67,7 +67,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
     testFx(tablePath, parsedLogData)
   }
 
-  test("simple e2e read of catalogOwned-preview table with staged ratified commits") {
+  test("simple e2e read of catalogManaged table with staged ratified commits") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       // ===== WHEN =====
       val snapshot = TableManager
@@ -85,8 +85,8 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
       val protocol = snapshot.getProtocol
       assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
       assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
-      assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
-      assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
+      assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_RW_FEATURE.featureName()))
+      assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_RW_FEATURE.featureName()))
       assert(protocol.getWriterFeatures.contains(IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()))
 
       val actualResult = readSnapshot(snapshot)
@@ -95,7 +95,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
     }
   }
 
-  test("e2e DeltaHistoryManager.getActiveCommitAtTimestamp with catalogOwned-preview table " +
+  test("e2e DeltaHistoryManager.getActiveCommitAtTimestamp with catalogManaged table " +
     "with staged ratified commits") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       val logPath = new Path(tablePath, "_delta_log")
@@ -167,7 +167,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
     }
   }
 
-  test("time-travel by ts read of catalogOwned-preview table with ratified commits") {
+  test("time-travel by ts read of catalogManaged table with ratified commits") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       val v0Ts = 1749830855993L // published commit
       val v1Ts = 1749830871085L // ratified staged commit
@@ -212,7 +212,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
     }
   }
 
-  test("e2e CommitRange test with catalogOwned-preview table with staged ratified commits") {
+  test("e2e CommitRange test with catalogManaged table with staged ratified commits") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       val v0Ts = 1749830855993L // published commit
       val v1Ts = 1749830871085L // staged commit
