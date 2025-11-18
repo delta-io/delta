@@ -460,7 +460,7 @@ public class TransactionMetadataFactory {
     }
 
     // Case 2: Txn is explicitly disabling ICT on a catalogManaged table. Throw.
-    if (getEffectiveProtocol().supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+    if (getEffectiveProtocol().supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE)) {
       throw new KernelException("Cannot disable inCommitTimestamp on a catalogManaged table");
     }
 
@@ -788,7 +788,7 @@ public class TransactionMetadataFactory {
   private static void validateNotEnablingCatalogManagedOnReplace(
       Map<String, String> userInputTableProperties) {
     if (TableFeatures.isPropertiesManuallySupportingTableFeature(
-        userInputTableProperties, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+        userInputTableProperties, TableFeatures.CATALOG_MANAGED_RW_FEATURE)) {
       throw new UnsupportedOperationException(
           "Cannot enable the catalogManaged feature during a REPLACE command.");
     }

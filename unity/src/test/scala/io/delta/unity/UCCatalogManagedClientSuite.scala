@@ -23,7 +23,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_RW_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 import io.delta.unity.InMemoryUCClient.TableData
@@ -61,8 +61,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       assert(snapshot.getVersion == version)
       assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
       assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
-      assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
-      assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
+      assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_RW_FEATURE.featureName()))
+      assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_RW_FEATURE.featureName()))
       assert(ucClient.getNumGetCommitCalls == 1)
     }
   }
@@ -284,7 +284,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     // ===== THEN =====
     val builderTableProperties = createTableTxnBuilder.getTablePropertiesOpt.get()
-    assert(builderTableProperties.get("delta.feature.catalogOwned-preview") == "supported")
+    assert(builderTableProperties.get("delta.feature.catalogManaged") == "supported")
     assert(builderTableProperties.get("ucTableId") == "ucTableId")
     assert(builderTableProperties.get("foo") == "bar")
 
