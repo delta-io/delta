@@ -21,19 +21,19 @@ import Unidoc._
  * The Spark versions used for Delta is defined in the SparkVersionSpec object, and controlled by the sparkVersion property.
  * There are 2 keys labels assigned to the Spark versions: DEFAULT and MASTER.
  * - DEFAULT VERSION: This is the default when no sparkVersion property is specified
- *   Artifacts for this version have NO Spark version suffix (e.g., delta-spark_2.13).
+ *   Spark-dependent artifacts for this version have NO Spark version suffix (e.g., delta-spark_2.13).
  *
  * - MASTER VERSION: The Spark master/development branch version
  *   This is optional and typically 
  *   - set in the Delta master branch to a Spark released or snapshot version .
  *   - not set in the Delta release branches as we want to avoid building against Spark unreleased version.
  *   If MASTER is defined, then it can be selected by setting the sparkVersion property to "master".
- *   Artifacts for this version HAVE a Spark version suffix (e.g., delta-spark_4.0_2.13).
+ *   Spark-dependent artifacts for this version HAVE a Spark version suffix in their artifact names (e.g., delta-spark_4.0_2.13 if MASTER is defined as Spark 4.0 branch).
  *
  * - OTHER VERSIONS: Any non-default Spark version specified in ALL_SPECS.
- *   All non-default versions get a Spark version suffix in their artifact names.
+ *   Spark-dependent artifacts of all non-default versions get a Spark version suffix in their artifact names (e.g., delta-spark_4.1_2.13 if one of the other versions is defined as Spark 4.1 branch).
  *
- * To configure versions, update the SparkVersionSpec values (spark35, spark40, etc.) below.
+ * To configure versions, update the SparkVersionSpec values (e.g., spark35, spark40, etc.) below.
  *
  * ========================================================
  * The sparkVersion Property
@@ -45,8 +45,8 @@ import Unidoc._
  * 1. Full version string (e.g., "3.5.7", "4.0.2-SNAPSHOT")
  * 2. Short version string (e.g., "3.5", "4.0")
  * 3. Aliases:
- *    - "default" -> maps to DEFAULT version (spark35)
- *    - "master" -> maps to MASTER version (spark40), if configured
+ *    - "default" -> maps to DEFAULT version (e.g., spark35)
+ *    - "master" -> maps to MASTER version (e.g., spark40), if configured
  *
  * If not specified, it defaults to the DEFAULT version.
  *
@@ -104,12 +104,12 @@ import Unidoc._
  * Artifact Naming Convention
  * ========================================================
  * 
- * Default Spark version artifacts (no suffix):
+ * Default Spark version artifacts (no suffix, so does not change with Spark version):
  *   io.delta:delta-spark_2.13:3.4.0
  *   io.delta:delta-connect-server_2.13:3.4.0
  *   io.delta:delta-storage:3.4.0
  *
- * Other Spark version artifacts (with suffix):
+ * Other Spark version artifacts (with suffix, so changes with Spark version, e.g., for Spark 4.0):
  *   io.delta:delta-spark_4.0_2.13:3.4.0
  *   io.delta:delta-connect-server_4.0_2.13:3.4.0
  *   io.delta:delta-storage:3.4.0  (no change, Spark-independent)
