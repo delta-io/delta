@@ -208,12 +208,12 @@ public class TypeWideningChecker {
         protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE)
             || protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE);
 
-    // If TypeWidening is not supported, return early
+    // If TypeWidening is not supported, return early, as we assume there
+    // will be no way to add type widening metadata to the schema.
     if (!isTypeWideningSupported) {
       return;
     }
 
-    // Validate all type changes are supported
     for (SchemaIterable.SchemaElement element : new SchemaIterable(metadata.getSchema())) {
       StructField field = element.getField();
       for (TypeChange typeChange : field.getTypeChanges()) {
