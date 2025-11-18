@@ -2691,11 +2691,11 @@ class SchemaUtilsSuite extends QueryTest
     for (typeWideningMode <- Seq(
         TypeEvolution(
           uniformIcebergCompatibleOnly = false,
-          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+          allowAutomaticWidening = AllowAutomaticWideningMode.SAME_FAMILY_TYPE),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
         TypeEvolution(
           uniformIcebergCompatibleOnly = true,
-          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+          allowAutomaticWidening = AllowAutomaticWideningMode.SAME_FAMILY_TYPE),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       expectAnalysisErrorClass(
         "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
@@ -2731,7 +2731,7 @@ class SchemaUtilsSuite extends QueryTest
     for (typeWideningMode <- Seq(
         TypeEvolution(
           uniformIcebergCompatibleOnly = false,
-          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+          allowAutomaticWidening = AllowAutomaticWideningMode.ALWAYS),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false))) {
         // Unsupported type changes by Iceberg are allowed without Iceberg compatibility.
       val merged = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
@@ -2741,7 +2741,7 @@ class SchemaUtilsSuite extends QueryTest
     for (typeWideningMode <- Seq(
         TypeEvolution(
           uniformIcebergCompatibleOnly = true,
-          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+          allowAutomaticWidening = AllowAutomaticWideningMode.ALWAYS),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       // Widening is blocked for unsupported type changes with Iceberg compatibility.
       checkAnalysisException {
