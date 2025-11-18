@@ -414,6 +414,7 @@ lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
     name := "delta-suite-generator",
     commonSettings,
     scalaStyleSettings,
+    skipReleaseSettings, // Internal module - not published to Maven
     libraryDependencies ++= Seq(
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.11.0",
       "org.scalameta" %% "scalameta" % "4.13.5",
