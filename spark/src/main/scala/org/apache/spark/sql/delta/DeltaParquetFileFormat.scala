@@ -551,8 +551,6 @@ case class DeltaParquetFileFormat(
     tablePath = tablePath,
     isCDCRead = isCDCRead) {
 
-
-
   /**
    * We sometimes need to replace FileFormat within LogicalPlans, so we have to override
    * `equals` to ensure file format changes are captured
