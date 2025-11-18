@@ -209,6 +209,7 @@ public class SnapshotManager {
    * data.
    *
    * @param timeTravelVersionOpt the version to time-travel to for a time-travel query
+   * @param parsedLogDatas the parsed log data from the catalog
    * @param maxCatalogVersionOpt the maximum ratified version by the catalog for catalog managed
    *     tables. Empty for file-system managed tables.
    */
@@ -226,11 +227,12 @@ public class SnapshotManager {
     logger.info("Loading log segment for version {}", versionToLoadStr);
     final long logSegmentBuildingStartTimeMillis = System.currentTimeMillis();
 
-    ////////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 1: Find the latest checkpoint version. If timeTravelVersionOpt is empty, use the      //
-    //         version referenced by the _LAST_CHECKPOINT file. If timeTravelVersionOpt is present//
-    //         search for the previous latest complete checkpoint at or before the version to load//
-    ////////////////////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////////////////
+    // Step 1: Find the latest checkpoint version. If timeTravelVersionOpt is empty, use the //
+    //         version referenced by the _LAST_CHECKPOINT file. If timeTravelVersionOpt is   //
+    //         present search for the previous latest complete checkpoint at or before the   //
+    //         version to load                                                               //
+    ///////////////////////////////////////////////////////////////////////////////////////////
 
     final Optional<Long> startCheckpointVersionOpt =
         getStartCheckpointVersion(engine, timeTravelVersionOpt, maxCatalogVersionOpt);
@@ -605,16 +607,18 @@ public class SnapshotManager {
   }
 
   /**
-   * Determine the starting checkpoint version that is at or before the version to load. For
-   * time-travel queries this is the time-travel version. Otherwise, for catalog managed tables this
-   * is the max ratified catalog version, and for file-system managed tables this is the latest
-   * available version on the file-system. For non-time travel queries we will use the checkpoint
-   * pointed to by the _last_checkpoint file (except for when it is after the
-   * maxRatifiedCatalogVersion, in which case we will search backwards for a checkpoint).
+   * Determine the starting checkpoint version that is at or before the version to load.
+   *
+   * <p>For time-travel queries this is the time-travel version. For latest queries, for catalog
+   * managed tables this is the max ratified catalog version, and for file-system managed tables
+   * this is the latest available version on the file-system.
+   *
+   * <p>For non-time travel queries we will use the checkpoint pointed to by the _last_checkpoint
+   * file (except for when it is after the maxRatifiedCatalogVersion, in which case we will search
+   * backwards for a checkpoint).
    */
   private Optional<Long> getStartCheckpointVersion(
       Engine engine, Optional<Long> timeTravelVersionOpt, Optional<Long> maxCatalogVersionOpt) {
-
     // This is a "latest" query, let's try to use the _last_checkpoint file if possible
     if (!timeTravelVersionOpt.isPresent()) {
       logger.info("Reading the _last_checkpoint file for 'latest' query");
@@ -634,7 +638,12 @@ public class SnapshotManager {
       } else {
         // When there is a maxCatalogVersion we only want to return the version from the
         // _last_checkpoint file if it is less than or equal to the maxCatalogVersion. Otherwise,
-        // we should revert to listing backwards from the version to load
+        // we should revert to listing backwards from the version to load.
+
+        // This situation is possible due to race conditions. Since fetching the maxCatalogVersion
+        // from the catalog, it is possible that a concurrent writer has committed, published
+        // and checkpointed before this listing code is executed. Thus, it is possible that the
+        // _last_checkpoint file points to a checkpoint later than the maxCatalogVersion.
         if (lastCheckpointFileVersion <= maxCatalogVersionOpt.get()) {
           return Optional.of(lastCheckpointFileVersion);
         }
