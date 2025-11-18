@@ -39,6 +39,8 @@ case class ScanPlan(
  * Interface for planning table scans via server-side planning (e.g., Iceberg REST catalog).
  * This interface is intentionally simple and has no dependencies
  * on Iceberg libraries, allowing it to live in delta-spark module.
+ *
+ * Note: Server-side planning only supports reading the current snapshot.
  */
 trait ServerSidePlanningClient {
   /**
