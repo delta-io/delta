@@ -18,121 +18,61 @@ package io.delta.kernel.spark.utils;
 import static java.util.Objects.requireNonNull;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
+import scala.Tuple3;
+import scala.collection.JavaConverters;
 
 /**
- * Utility helpers for extracting Unity Catalog client configuration from Spark session
- * configurations.
+ * Utility class for extracting Unity Catalog configuration from Spark session.
  *
- * <p>Unity Catalog clients require connection parameters (URI, authentication tokens) that are
- * stored in Spark's catalog configuration namespace. This helper centralizes the logic for
- * extracting and validating those configurations so the UcClientFactory can construct properly
- * configured clients.
+ * <p>This is a thin wrapper around {@link
+ * org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder#getCatalogConfigs}
+ * that provides a Java-friendly API for accessing catalog configurations.
  *
- * <p>Configuration keys follow the pattern: {@code spark.sql.catalog.<catalog_name>.<key>}
- *
- * <p>Example configurations:
- *
- * <ul>
- *   <li>{@code spark.sql.catalog.my_catalog.uri} - Base URI for Unity Catalog service
- *   <li>{@code spark.sql.catalog.my_catalog.token} - Authentication token
- *   <li>{@code spark.sql.catalog.my_catalog.warehouse} - Default warehouse/catalog context
- * </ul>
+ * <p>Delegates to UCCommitCoordinatorBuilder for all validation logic (URI parsing, connector
+ * class filtering, etc.) to avoid code duplication.
  */
 public final class SparkConfigUtils {
-
-  private static final String CATALOG_CONFIG_PREFIX = "spark.sql.catalog.";
-  private static final String CONFIG_SEPARATOR = ".";
 
   private SparkConfigUtils() {}
 
   /**
-   * Extracts all Unity Catalog configuration properties for the specified catalog from the Spark
-   * session.
+   * Extracts Unity Catalog configuration for the specified catalog from Spark session.
    *
-   * <p>Searches for all configuration keys matching the pattern {@code
-   * spark.sql.catalog.<catalogName>.*} and returns them in a map with the prefix stripped.
+   * <p>Delegates to {@link
+   * org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder#getCatalogConfigs}
+   * which filters for Unity Catalog connectors and validates URIs.
    *
-   * <p>For example, if the catalog name is "my_catalog" and the config contains: {@code
-   * spark.sql.catalog.my_catalog.uri=https://uc-server.com
-   * spark.sql.catalog.my_catalog.token=abc123}
-   *
-   * <p>This method will return a map: {@code {"uri": "https://uc-server.com", "token": "abc123"}}
-   *
-   * @param spark the Spark session to extract configuration from
-   * @param catalogName name of the catalog to extract configuration for
-   * @return map of configuration keys (without catalog prefix) to their values
+   * @param spark the Spark session containing catalog configuration
+   * @param catalogName the catalog name to extract configuration for
+   * @return map of configuration keys and values (uri, token, etc.)
    * @throws NullPointerException if spark or catalogName is null
    */
-  public static Map<String, String> extractCatalogConfig(SparkSession spark, String catalogName) {
+  public static Map<String, String> getCatalogConfig(SparkSession spark, String catalogName) {
     requireNonNull(spark, "spark is null");
     requireNonNull(catalogName, "catalogName is null");
 
-    String prefix = CATALOG_CONFIG_PREFIX + catalogName + CONFIG_SEPARATOR;
-    Map<String, String> catalogConfig = new HashMap<>();
+    // Delegate to UCCommitCoordinatorBuilder for catalog config extraction
+    scala.collection.immutable.List<Tuple3<String, String, String>> catalogConfigs =
+        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigs(spark);
 
-    // Iterate through all Spark configurations and filter by catalog prefix
-    scala.collection.immutable.Map<String, String> allConfigs = spark.conf().getAll();
-    scala.collection.Iterator<scala.Tuple2<String, String>> iterator = allConfigs.iterator();
+    // Convert Scala List to Java and find matching catalog
+    List<Tuple3<String, String, String>> javaCatalogConfigs =
+        JavaConverters.seqAsJavaList(catalogConfigs);
 
-    while (iterator.hasNext()) {
-      scala.Tuple2<String, String> entry = iterator.next();
-      String key = entry._1();
-      String value = entry._2();
-
-      if (key.startsWith(prefix)) {
-        // Strip the prefix and store the remaining key
-        String configKey = key.substring(prefix.length());
-        catalogConfig.put(configKey, value);
+    for (Tuple3<String, String, String> config : javaCatalogConfigs) {
+      if (config._1().equals(catalogName)) {
+        Map<String, String> result = new HashMap<>();
+        result.put("uri", config._2());
+        result.put("token", config._3());
+        return result;
       }
     }
 
-    return catalogConfig;
-  }
-
-  /**
-   * Retrieves a required configuration value from the config map.
-   *
-   * <p>This method enforces that required configurations are present and non-empty.
-   *
-   * @param config map of configuration properties
-   * @param key configuration key to retrieve
-   * @return the configuration value
-   * @throws NullPointerException if config or key is null
-   * @throws IllegalArgumentException if the key is missing or has an empty value
-   */
-  public static String getRequiredConfig(Map<String, String> config, String key) {
-    requireNonNull(config, "config is null");
-    requireNonNull(key, "key is null");
-
-    String value = config.get(key);
-    if (value == null || value.trim().isEmpty()) {
-      throw new IllegalArgumentException(
-          String.format("Required configuration key '%s' is missing or empty", key));
-    }
-    return value;
-  }
-
-  /**
-   * Retrieves an optional configuration value from the config map, returning a default if not
-   * present.
-   *
-   * @param config map of configuration properties
-   * @param key configuration key to retrieve
-   * @param defaultValue default value to return if key is not present or has empty value
-   * @return the configuration value or default if not present/empty
-   * @throws NullPointerException if config or key is null (defaultValue may be null)
-   */
-  public static String getOptionalConfig(
-      Map<String, String> config, String key, String defaultValue) {
-    requireNonNull(config, "config is null");
-    requireNonNull(key, "key is null");
-
-    String value = config.get(key);
-    if (value == null || value.trim().isEmpty()) {
-      return defaultValue;
-    }
-    return value;
+    // Catalog not found
+    return new HashMap<>();
   }
 }
