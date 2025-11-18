@@ -1,3 +1,18 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.kernel.spark.utils;
 
 import static java.util.Objects.requireNonNull;
@@ -57,17 +72,13 @@ public final class CatalogTableUtils {
   }
 
   /**
-   * Returns the catalog storage properties published with a {@link CatalogTable}.
+   * Checks whether the given feature key is enabled in the table properties.
    *
-   * @param table Spark {@link CatalogTable} descriptor
-   * @return Java map view of the storage properties
+   * @param tableProperties The table properties
+   * @param featureKey The feature key
+   * @return {@code true} when the feature key is set to {@code supported}
    */
-  public static Map<String, String> getStorageProperties(CatalogTable table) {
-    requireNonNull(table, "table is null");
-    return ScalaUtils.toJavaMap(table.storage().properties());
-  }
-
-  public static boolean isCatalogManagedFeatureEnabled(
+  private static boolean isCatalogManagedFeatureEnabled(
       Map<String, String> tableProperties, String featureKey) {
     requireNonNull(tableProperties, "tableProperties is null");
     requireNonNull(featureKey, "featureKey is null");
@@ -76,5 +87,16 @@ public final class CatalogTableUtils {
       return false;
     }
     return featureValue.equalsIgnoreCase(SUPPORTED);
+  }
+
+  /**
+   * Returns the catalog storage properties published with a {@link CatalogTable}.
+   *
+   * @param table Spark {@link CatalogTable} descriptor
+   * @return Java map view of the storage properties
+   */
+  private static Map<String, String> getStorageProperties(CatalogTable table) {
+    requireNonNull(table, "table is null");
+    return ScalaUtils.toJavaMap(table.storage().properties());
   }
 }
