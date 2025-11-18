@@ -53,7 +53,7 @@ class CatalogManagedWithIcebergWriterCompatV1Suite
         .withCommitter(committerUsingPutIfAbsent)
         .withTableProperties(
           Map(
-            "delta.feature.catalogOwned-preview" -> "supported",
+            "delta.feature.catalogManaged" -> "supported",
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true").asJava)
         .build(engine)
 
@@ -63,7 +63,7 @@ class CatalogManagedWithIcebergWriterCompatV1Suite
       // ===== THEN =====
       verifyIcebergWriterCompatV1Enabled(tablePath, engine)
       val protocol = getProtocol(engine, tablePath)
-      assert(protocol.supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW))
+      assert(protocol.supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE))
     }
   }
 
