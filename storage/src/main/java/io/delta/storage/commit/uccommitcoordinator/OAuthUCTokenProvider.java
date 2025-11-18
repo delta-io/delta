@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 
-public class OAuthUCTokenProvider implements UCTokenProvider, AutoCloseable{
+public class OAuthUCTokenProvider implements UCTokenProvider{
     public static final long renewLeadTimeMillis = 30_000L;
     private final String uri;
     private final String clientId;
@@ -63,7 +63,7 @@ public class OAuthUCTokenProvider implements UCTokenProvider, AutoCloseable{
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() throws IOException {
         httpClient.close();
     }
 
@@ -92,9 +92,14 @@ public class OAuthUCTokenProvider implements UCTokenProvider, AutoCloseable{
     }
 
     private static String mapToUrlEncoded(Map<String, String> params) {
-        return params.entrySet().stream()
-                .map(entry -> entry.getKey() + "=" + entry.getValue())
-                .reduce((a, b) -> a + "&" + b).orElse("");
+        StringBuilder sb = new StringBuilder();
+        for(Map.Entry<String, String> e : params.entrySet()) {
+            if(sb.length() > 0) {
+                sb.append("&");
+            }
+            sb.append(e.getKey()).append('=').append(e.getValue());
+        }
+        return sb.toString();
     }
 
     public static class TemporaryToken {

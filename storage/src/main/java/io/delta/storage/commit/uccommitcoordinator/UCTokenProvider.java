@@ -1,5 +1,7 @@
 package io.delta.storage.commit.uccommitcoordinator;
 
-public interface UCTokenProvider {
+import java.io.Closeable;
+
+public interface UCTokenProvider extends Closeable {
     String accessToken();
 }

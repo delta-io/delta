@@ -23,7 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{FixedUCTokenProvider, UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient, UCTokenProvider}
+import io.delta.storage.commit.uccommitcoordinator.{FixedUCTokenProvider, OAuthUCTokenProvider, UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient, UCTokenProvider}
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 
@@ -51,13 +51,22 @@ object UCCommitCoordinatorBuilder
   /** Suffix for the token configuration of a catalog. */
   final private val TOKEN_SUFFIX = "token"
 
+  /** Suffix for the OAuth URI configuration of a catalog */
+  final private val OAUTH_URI_SUFFIX = "oauthUri"
+
+  /** Suffix for the OAuth client id configuration of a catalog */
+  final private val OAUTH_CLIENT_ID_SUFFIX = "oauthClientId"
+
+  /** Suffix for the OAuth client secret configuration of a catalog */
+  final private val OAUTH_CLIENT_SECRET_SUFFIX = "oauthClientSecret"
+
   /** Cache for UCCommitCoordinatorClient instances. */
   private val commitCoordinatorClientCache =
     new ConcurrentHashMap[String, UCCommitCoordinatorClient]()
 
   // Helper cache for (uri, token) to metastoreId to avoid redundant calls to getMetastoreId
   // catalog.
-  private val uriTokenToMetastoreIdCache = new ConcurrentHashMap[(String, String), String]()
+  private val ucClientParamsToMetastoreIdCache = new ConcurrentHashMap[UCClientParams, String]()
 
   // Use a var instead of val for ease of testing by injecting different UCClientFactory.
   private[delta] var ucClientFactory: UCClientFactory = UCTokenBasedRestClientFactory
@@ -79,7 +88,7 @@ object UCCommitCoordinatorBuilder
   override def buildForCatalog(
       spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
     val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, token)) => ucClientFactory.createUCClient(uri, token)
+      case Some((_, ucClientParams)) => ucClientParams.buildUCClient()
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
@@ -97,15 +106,15 @@ object UCCommitCoordinatorBuilder
    * appropriate exception.
    */
   private def getMatchingUCClient(spark: SparkSession, metastoreId: String): UCClient = {
-    val matchingClients: List[(String, String)] = getCatalogConfigs(spark)
-      .map { case (name, uri, token) => (uri, token) }
+    val matchingClients: List[UCClientParams] = getCatalogConfigs(spark)
+      .map { case (_, ucClientParams: UCClientParams) => ucClientParams }
       .distinct // Remove duplicates since multiple catalogs can have the same uri and token
-      .filter { case (uri, token) => getMetastoreId(uri, token).contains(metastoreId) }
+      .filter { case ucClientParams => getMetastoreId(ucClientParams).contains(metastoreId) }
 
     matchingClients match {
       case Nil => throw noMatchingCatalogException(metastoreId)
-      case (uri, token) :: Nil => ucClientFactory.createUCClient(uri, token)
-      case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_._1))
+      case ucClientParams :: Nil => ucClientParams.buildUCClient()
+      case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_.uri.get))
     }
   }
 
@@ -116,12 +125,13 @@ object UCCommitCoordinatorBuilder
    * ID. The result is cached to avoid unnecessary getMetastoreId requests in future calls. If
    * there's an error, it returns None and logs a warning.
    */
-  private def getMetastoreId(uri: String, token: String): Option[String] = {
+  private def getMetastoreId(ucClientParams: UCClientParams): Option[String] = {
+    val uri = ucClientParams.uri.get
     try {
-      val metastoreId = uriTokenToMetastoreIdCache.computeIfAbsent(
-        (uri, token),
+      val metastoreId = ucClientParamsToMetastoreIdCache.computeIfAbsent(
+        ucClientParams,
         _ => {
-          val ucClient = ucClientFactory.createUCClient(uri, token)
+          val ucClient = ucClientParams.buildUCClient()
           try {
             ucClient.getMetastoreId
           } finally {
@@ -192,7 +202,7 @@ object UCCommitCoordinatorBuilder
    * @return
    *   A list of tuples containing (catalogName, uri, token) for each properly configured catalog
    */
-  private[delta] def getCatalogConfigs(spark: SparkSession): List[(String, String, String)] = {
+  private[delta] def getCatalogConfigs(spark: SparkSession): List[(String, UCClientParams)] = {
     val catalogConfigs = spark.conf.getAll.filterKeys(_.startsWith(SPARK_SQL_CATALOG_PREFIX))
 
     catalogConfigs
@@ -206,22 +216,24 @@ object UCCommitCoordinatorBuilder
       .flatMap { catalogName: String =>
         val uri = catalogConfigs.get(s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$URI_SUFFIX")
         val token = catalogConfigs.get(s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$TOKEN_SUFFIX")
-        (uri, token) match {
-          case (Some(u), Some(t)) =>
-            try {
-              new URI(u) // Validate the URI
-              Some((catalogName, u, t))
-            } catch {
-              case _: URISyntaxException =>
-                logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
-                  log"does not have a valid URI ${MDC(DeltaLogKeys.URI, u)}.")
-                None
-            }
+        val oauthUri = catalogConfigs.get(
+          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_URI_SUFFIX"
+        )
+        val oauthClientId = catalogConfigs.get(
+          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_CLIENT_ID_SUFFIX"
+        )
+        val oauthClientSecret = catalogConfigs.get(
+          s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$OAUTH_CLIENT_SECRET_SUFFIX"
+        )
+
+        UCClientParams.create(catalogName, uri, token, oauthUri, oauthClientId, oauthClientSecret)
+        match {
+          case Some(ucClientParams) =>
+            Some(catalogName, ucClientParams)
           case _ =>
-            logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it does " +
-              "not have both uri and token configured in Spark Session.")
             None
-        }}
+        }
+      }
       .toList
   }
 
@@ -236,7 +248,7 @@ object UCCommitCoordinatorBuilder
 
   def clearCache(): Unit = {
     commitCoordinatorClientCache.clear()
-    uriTokenToMetastoreIdCache.clear()
+    ucClientParamsToMetastoreIdCache.clear()
   }
 }
 
@@ -250,4 +262,72 @@ trait UCClientFactory {
 object UCTokenBasedRestClientFactory extends UCClientFactory {
   override def createUCClient(uri: String, provider: UCTokenProvider): UCClient =
     new UCTokenBasedRestClient(uri, provider)
+}
+
+case class UCClientParams(uri: Option[String],
+                          token: Option[String] = None,
+                          oauthUri: Option[String] = None,
+                          oauthClientId: Option[String] = None,
+                          oauthClientSecret: Option[String] = None) {
+  def buildUCClient(): UCClient = {
+    (uri, token, oauthUri, oauthClientId, oauthClientSecret) match {
+      case (Some(u), Some(t), _, _, _) =>
+        UCTokenBasedRestClientFactory.createUCClient(u, t)
+      case (Some(u), _, Some(oUri), Some(oClientId), Some(oClientSecret)) =>
+        val provider = new OAuthUCTokenProvider(oUri, oClientId, oClientSecret)
+        UCTokenBasedRestClientFactory.createUCClient(u, provider)
+      case _ =>
+        throw new IllegalStateException(
+          "Invalid UCClientParams, missing token or oauth credentials")
+    }
+  }
+}
+
+object UCClientParams extends DeltaLogging {
+  def create(catalogName: String,
+             uri: Option[String],
+              token: Option[String] = None,
+              oauthUri: Option[String] = None,
+              oauthClientId: Option[String] = None,
+              oauthClientSecret: Option[String] = None
+  ): Option[UCClientParams] = {
+    // Validate the uri.
+    uri match {
+      case Some(u) =>
+        try {
+          new URI(u)
+        } catch {
+          case _: URISyntaxException =>
+            logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
+              log"does not have a valid URI ${MDC(DeltaLogKeys.URI, u)}.")
+        }
+      case None => return None
+    }
+
+    (uri, token, oauthUri, oauthClientId, oauthClientSecret) match {
+      case (Some(_), Some(_), _, _, _) =>
+        // Use fixed token to build the UCClientParams.
+        Some(UCClientParams(uri = uri, token = token))
+      case (Some(_), _, Some(oUri), Some(_), Some(_)) =>
+        // Validate the OAuth URI.
+        try {
+          new URI(oUri)
+        } catch {
+          case _: URISyntaxException =>
+            logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} " +
+              log"as it does not have a valid OAuth URI")
+            return None
+        }
+        // Use OAuth credentials to build the UCClientParams.
+        Some(UCClientParams(
+          uri = uri,
+          oauthUri = oauthUri,
+          oauthClientId = oauthClientId,
+          oauthClientSecret = oauthClientSecret))
+      case _ =>
+        logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it does " +
+          "not have configured fixed token or oauth credential in Spark Session.")
+        None
+    }
+  }
 }

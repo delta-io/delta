@@ -67,7 +67,7 @@ import java.util.Optional;
  *   <li>Fetching unbackfilled commit histories</li>
  * </ul>
  *
- * <p>All requests are authenticated using a Bearer token and communicate using JSON payloads.
+ * <p>All requests are authenticated using a {@link UCTokenProvider} and communicate using JSON payloads.
  * The client automatically handles JSON serialization/deserialization and HTTP header management.
  *
  * <p>Usage example:
@@ -291,6 +291,7 @@ public class UCTokenBasedRestClient implements UCClient {
 
   @Override
   public void close() throws IOException {
+    ucTokenProvider.close();
     httpClient.close();
   }
 }
