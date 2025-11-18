@@ -246,7 +246,6 @@ class TypeWideningCheckerSuite extends AnyFunSuite {
     assert(exception.getMessage.contains("The table contains an unsupported type change"))
   }
 
-  // Parameterized tests for supported type widenings
   Seq(
     ("int to long", "value", LongType.LONG, IntegerType.INTEGER, LongType.LONG),
     ("float to double", "value", DoubleType.DOUBLE, FloatType.FLOAT, DoubleType.DOUBLE),
