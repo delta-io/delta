@@ -21,7 +21,13 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.types.StructType
 
-/** Helpers for constructing [[CatalogTable]] instances inside Java tests. */
+/**
+ * Helpers for constructing [[CatalogTable]] instances inside Java tests.
+ *
+ * Spark's [[CatalogTable]] is defined in Scala and its constructor signature shifts between Spark
+ * releases. Centralising the construction in Scala keeps the kernel tests insulated from those
+ * binary changes and saves Java tests from manually wiring the many optional parameters.
+ */
 object CatalogTableTestUtils {
 
   def catalogTableWithProperties(
