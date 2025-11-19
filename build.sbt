@@ -878,9 +878,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     ),
     assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
-      // This includes both root-level and versioned module-info.class files (for multi-release JARs)
       case "module-info.class" => MergeStrategy.discard
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
