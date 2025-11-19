@@ -1,8 +1,8 @@
-name: "Delta Unity"
+name: "Kernel Unity Catalog"
 on: [push, pull_request]
 jobs:
   test:
-    name: "Delta Unity Tests"
+    name: "Kernel Unit Catalog Tests"
     runs-on: ubuntu-24.04
     env:
       SCALA_VERSION: 2.13.16
@@ -26,5 +26,5 @@ jobs:
         if: steps.git-diff.outputs.diff
       - name: Run Unity tests with coverage
         run: |
-          ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage unity/test coverageAggregate coverageOff -v
+          ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v
         if: steps.git-diff.outputs.diff

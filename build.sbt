@@ -905,12 +905,12 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
     ),
   )
 
-lazy val unity = (project in file("unity"))
+lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(storage)
   .settings (
-    name := "delta-unity",
+    name := "delta-kernel-unitycatalog",
     commonSettings,
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
