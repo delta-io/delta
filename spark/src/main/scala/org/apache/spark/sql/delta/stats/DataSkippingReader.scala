@@ -753,7 +753,7 @@ trait DataSkippingReaderBase
       // Date and time arithmetic.
       case _: AddMonthsBase | _: DateAdd | _: DateAddInterval | _: DateDiff | _: DateSub |
            _: DatetimeSub | _: LastDay | _: MonthsBetween | _: NextDay | _: SubtractDates |
-           _: SubtractTimestamps | _: TimeAdd | _: TimestampAdd | _: TimestampAddYMInterval |
+           _: SubtractTimestamps | _: TimestampAdd | _: TimestampAddYMInterval |
            _: TimestampDiff | _: TruncInstant => true
       // String expressions.
       case _: Base64 | _: BitLength | _: Chr | _: ConcatWs | _: Decode | _: Elt | _: Empty2Null |
@@ -1058,11 +1058,19 @@ trait DataSkippingReaderBase
           //
           // There is a longer term task SC-22825 to fix the serialization problem that caused this.
           // But we need the adjustment in any case to correctly read stats written by old versions.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
+          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
+          Column(Cast(TimestampAdd(
+            "",  // unit not needed for interval literal
+            oneMillisecondLiteralExpr,
+            statCol.expr), TimestampType))
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
           // We also apply the same adjustment of max stats that was applied to Timestamp
           // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
+          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
+          Column(Cast(TimestampAdd(
+            "",  // unit not needed for interval literal
+            oneMillisecondLiteralExpr,
+            statCol.expr), TimestampNTZType))
         case (statCol, _, _) =>
           statCol
       }
