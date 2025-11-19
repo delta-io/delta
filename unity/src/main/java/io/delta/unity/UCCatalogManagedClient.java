@@ -149,7 +149,7 @@ public class UCCatalogManagedClient {
                                 .timeChecked(
                                     () ->
                                         loadLatestSnapshotForTimestampResolution(
-                                            engine, ucTableId, tablePath, logData));
+                                            engine, ucTableId, tablePath, logData, ucTableVersion));
                         snapshotBuilder =
                             snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
                       }
@@ -158,6 +158,7 @@ public class UCCatalogManagedClient {
                           snapshotBuilder
                               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
                               .withLogData(logData)
+                              .withMaxCatalogVersion(ucTableVersion)
                               .build(engine);
                       metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
                       return snapshot;
@@ -272,7 +273,9 @@ public class UCCatalogManagedClient {
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
     final Lazy<Snapshot> latestSnapshot =
         new Lazy<>(
-            () -> loadLatestSnapshotForTimestampResolution(engine, ucTableId, tablePath, logData));
+            () ->
+                loadLatestSnapshotForTimestampResolution(
+                    engine, ucTableId, tablePath, logData, ucTableVersion));
 
     return timeUncheckedOperation(
         logger,
@@ -495,7 +498,11 @@ public class UCCatalogManagedClient {
    * and were not queried with an endVersion).
    */
   private Snapshot loadLatestSnapshotForTimestampResolution(
-      Engine engine, String ucTableId, String tablePath, List<ParsedLogData> logData) {
+      Engine engine,
+      String ucTableId,
+      String tablePath,
+      List<ParsedLogData> logData,
+      long ucTableVersion) {
     // TODO: We can remove timeUncheckedOperation when the commitRange code integrates with metrics
     return timeUncheckedOperation(
         logger,
@@ -505,6 +512,7 @@ public class UCCatalogManagedClient {
             TableManager.loadSnapshot(tablePath)
                 .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
                 .withLogData(logData)
+                .withMaxCatalogVersion(ucTableVersion)
                 .build(engine));
   }
 }
