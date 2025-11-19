@@ -65,6 +65,11 @@ public class OAuthUCTokenProvider implements UCTokenProvider {
 
   @Override
   public String accessToken() {
+    TemporaryToken token = accessTempToken();
+    return token.token;
+  }
+
+  TemporaryToken accessTempToken() {
     if (tempToken == null || tempToken.isReadyToRenew()) {
       synchronized (this) {
         if (tempToken == null || tempToken.isReadyToRenew()) {
@@ -76,7 +81,7 @@ public class OAuthUCTokenProvider implements UCTokenProvider {
         }
       }
     }
-    return tempToken.token;
+    return tempToken;
   }
 
   @Override
