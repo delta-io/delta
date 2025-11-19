@@ -40,7 +40,7 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala213 = "2.13.16"
+val scala213 = "2.13.17"
 val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage

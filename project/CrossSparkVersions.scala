@@ -333,7 +333,7 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   // Scala version constant (Scala 2.12 support was dropped)
-  private val scala213 = "2.13.16"
+  private val scala213 = "2.13.17"
 
   /**
    * Common Spark version-specific settings used by all Spark-aware modules.
