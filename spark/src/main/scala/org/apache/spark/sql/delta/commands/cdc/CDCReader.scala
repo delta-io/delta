@@ -605,37 +605,6 @@ trait CDCReaderImpl extends CDCReaderBase {
   }
 
   /**
-   * Builds a map from commit versions to associated commit timestamps where the timestamp
-   * is the modification time of the commit file. Note that this function will not return
-   * InCommitTimestamps, it is up to the consumer of this function to decide whether the
-   * file modification time is the correct commit timestamp or whether they need to read the ICT.
-   *
-   * @param start  start commit version
-   * @param end  end commit version (inclusive)
-   */
-  def getNonICTTimestampsByVersion(
-      deltaLog: DeltaLog,
-      start: Long,
-      end: Long): Map[Long, Timestamp] = {
-    // Correct timestamp values are only available through DeltaHistoryManager.getCommits(). Commit
-    // info timestamps are wrong, and file modification times are wrong because they need to be
-    // monotonized first. This just performs a list (we don't read the contents of the files in
-    // getCommits()) so the performance overhead is minimal.
-    val monotonizationStart =
-      math.max(start - DeltaHistoryManager.POTENTIALLY_UNMONOTONIZED_TIMESTAMPS, 0)
-    val commits = DeltaHistoryManager.getCommitsWithNonIctTimestamps(
-      deltaLog.store,
-      deltaLog.logPath,
-      monotonizationStart,
-      Some(end + 1),
-      deltaLog.newDeltaHadoopConf())
-
-    // Note that the timestamps come from filesystem modification timestamps, so they're
-    // milliseconds since epoch and we don't need to deal with timezones.
-    commits.map(f => (f.version -> new Timestamp(f.timestamp))).toMap
-  }
-
-  /**
    * Get the block of change data from start to end Delta log versions (both sides inclusive).
    * The returned DataFrame has isStreaming set to false.
    *

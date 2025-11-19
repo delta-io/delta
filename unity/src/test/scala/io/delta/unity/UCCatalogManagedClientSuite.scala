@@ -19,14 +19,11 @@ package io.delta.unity
 import java.util.Optional
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
-import io.delta.storage.commit.Commit
-import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
-import io.delta.unity.InMemoryUCClient.TableData
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_RW_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -34,6 +31,8 @@ import org.scalatest.funsuite.AnyFunSuite
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
   import UCCatalogManagedClientSuite._
+
+  private val testUcTableId = "testUcTableId"
 
   /**
    * If present, loads the given `versionToLoad`, else loads the maxRatifiedVersion of 2.
@@ -61,8 +60,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       assert(snapshot.getVersion == version)
       assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
       assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
-      assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
-      assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
+      assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_RW_FEATURE.featureName()))
+      assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_RW_FEATURE.featureName()))
       assert(ucClient.getNumGetCommitCalls == 1)
     }
   }
@@ -240,7 +239,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val hadoopFS = ucCommit.getFileStatus
 
     val kernelParsedDeltaData = UCCatalogManagedClient
-      .getSortedKernelParsedDeltaDataFromRatifiedCommits("ucTableId", Seq(ucCommit).asJava)
+      .getSortedKernelParsedDeltaDataFromRatifiedCommits(testUcTableId, Seq(ucCommit).asJava)
       .get(0)
     val kernelFS = kernelParsedDeltaData.getFileStatus
 
@@ -254,7 +253,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val ucCommitsUnsorted = Seq(createCommit(1), createCommit(2), createCommit(3)).asJava
 
     val kernelParsedLogData = UCCatalogManagedClient
-      .getSortedKernelParsedDeltaDataFromRatifiedCommits("ucTableId", ucCommitsUnsorted)
+      .getSortedKernelParsedDeltaDataFromRatifiedCommits(testUcTableId, ucCommitsUnsorted)
 
     assert(kernelParsedLogData.size() == 3)
     assert(kernelParsedLogData.get(0).getVersion == 1)
@@ -278,14 +277,14 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     // ===== WHEN =====
     val createTableTxnBuilder = ucCatalogManagedClient
-      .buildCreateTableTransaction("ucTableId", baseTestTablePath, testSchema, "test-engine")
+      .buildCreateTableTransaction(testUcTableId, baseTestTablePath, testSchema, "test-engine")
       .withTableProperties(Map("foo" -> "bar").asJava)
       .asInstanceOf[CreateTableTransactionBuilderImpl]
 
     // ===== THEN =====
     val builderTableProperties = createTableTxnBuilder.getTablePropertiesOpt.get()
-    assert(builderTableProperties.get("delta.feature.catalogOwned-preview") == "supported")
-    assert(builderTableProperties.get("ucTableId") == "ucTableId")
+    assert(builderTableProperties.get("delta.feature.catalogManaged") == "supported")
+    assert(builderTableProperties.get("catalogManaged.unityCatalog.tableId") == testUcTableId)
     assert(builderTableProperties.get("foo") == "bar")
 
     val committerOpt = createTableTxnBuilder.getCommitterOpt
