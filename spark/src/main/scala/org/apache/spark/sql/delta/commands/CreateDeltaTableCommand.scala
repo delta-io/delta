@@ -331,6 +331,7 @@ case class CreateDeltaTableCommand(
     }
     val updatedConfiguration = UniversalFormat.enforceDependenciesInConfiguration(
       sparkSession,
+      tableWithLocation,
       deltaWriter.configuration,
       txn.snapshot
     )
@@ -398,6 +399,7 @@ case class CreateDeltaTableCommand(
         newMetadata = newMetadata.copy(configuration =
           UniversalFormat.enforceDependenciesInConfiguration(
             sparkSession,
+            tableWithLocation,
             newMetadata.configuration,
             txn.snapshot
           ))
@@ -727,6 +729,7 @@ case class CreateDeltaTableCommand(
       var newMetadata = getProvidedMetadata(table, schema.json)
       val updatedConfig = UniversalFormat.enforceDependenciesInConfiguration(
         sparkSession,
+        tableDesc,
         newMetadata.configuration,
         txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)

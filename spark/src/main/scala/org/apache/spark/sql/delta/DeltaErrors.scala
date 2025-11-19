@@ -356,6 +356,39 @@ trait DeltaErrorsBase
     )
   }
 
+  def checkConstraintReferToWrongColumns(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
+      messageParameters = Array(colName)
+    )
+  }
+
+  def checkConstraintUDF(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UDF_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintNonDeterministicExpression(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintAggregateExpression(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AGGREGATE_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintUnsupportedExpression(expr: Expression): Throwable = {
+    val expressionSql = expr.sql
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT",
+      messageParameters = Array(expressionSql, expressionSql)
+    )
+  }
+
   def deltaRelationPathMismatch(
       relationPath: Seq[String],
       targetType: String,
@@ -1186,6 +1219,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def readSourceSchemaConflictException: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_READ_SOURCE_SCHEMA_CONFLICT",
+      messageParameters = Array.empty
+    )
+  }
+
   def schemaNotProvidedException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_SCHEMA_NOT_PROVIDED",
@@ -1512,10 +1552,10 @@ trait DeltaErrorsBase
   case class TimestampEarlierThanCommitRetentionException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
-      timestampString: String) extends AnalysisException(
-    s"""The provided timestamp ($userTimestamp) is before the earliest version available to this
-         |table ($commitTs). Please use a timestamp after $timestampString.
-         """.stripMargin)
+      timestampString: String) extends DeltaAnalysisException(
+    errorClass = "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION",
+    messageParameters = Array(userTimestamp.toString, commitTs.toString, timestampString)
+  )
 
   def timestampGreaterThanLatestCommit(
       userTs: java.sql.Timestamp,
@@ -3854,10 +3894,10 @@ class ConcurrentWriteException(message: String)
 case class VersionNotFoundException(
     userVersion: Long,
     earliest: Long,
-    latest: Long) extends AnalysisException(
-      s"Cannot time travel Delta table to version $userVersion. " +
-      s"Available versions: [$earliest, $latest]."
-    )
+    latest: Long) extends DeltaAnalysisException(
+  errorClass = "DELTA_VERSION_NOT_FOUND",
+  messageParameters = Array(userVersion.toString, earliest.toString, latest.toString)
+)
 
 /**
  * This class is kept for backward compatibility.

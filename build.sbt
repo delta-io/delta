@@ -538,7 +538,6 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 // ============================================================
 lazy val sparkV2 = (project in file("kernel-spark"))
   .dependsOn(sparkV1Filtered)
-  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(goldenTables % "test")
   .settings(
@@ -549,6 +548,15 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
     Test / javaOptions ++= Seq("-ea"),
+    // make sure shaded kernel-api jar exists before compiling/testing
+    Compile / compile := (Compile / compile)
+      .dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test := (Test / test)
+      .dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+    Compile / unmanagedJars ++= Seq(
+      (kernelApi / Compile / packageBin).value
+    ),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
@@ -807,6 +815,11 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     Compile / classDirectory := target.value / "scala-2.13" / "kernel-api-classes",
 
     Test / javaOptions ++= Seq("-ea"),
+
+    // Also publish a test-jar (classifier = "tests") so consumers (e.g. kernelDefault)
+    // can depend on test utilities via a published artifact instead of depending on raw class directories.
+    Test / publishArtifact := true,
+    Test / packageBin / artifactClassifier := Some("tests"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
@@ -815,6 +828,9 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+
+      // JSR-305 annotations for @Nullable
+      "com.google.code.findbugs" % "jsr305" % "3.0.2",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -887,8 +903,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelApi)
-  .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
   .dependsOn(goldenTables % "test")
@@ -907,7 +921,18 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
+
+    // Put the shaded kernel-api JAR on the classpath (compile & test)
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
     libraryDependencies ++= Seq(
+      "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
@@ -936,9 +961,27 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
+lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelDefaults % "test->test")
+  .dependsOn(kernelApi % "test->test")
+  .dependsOn(storage % "test->test")
+  .settings(
+    name := "delta-kernel-benchmarks",
+    commonSettings,
+    skipReleaseSettings,
+    exportJars := false,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
+    
+    libraryDependencies ++= Seq(
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
+    ),
+  )
+
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelApi % "compile->compile;test->test")
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(storage)
   .settings (
@@ -949,6 +992,16 @@ lazy val unity = (project in file("unity"))
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     scalaStyleSettings,
     scalafmtCheckSettings,
+
+    // Put the shaded kernel-api JAR on the classpath (compile & test)
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -1144,7 +1197,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll
     ),
     assembly / assemblyExcludedJars := {
-      val cp = (fullClasspath in assembly).value
+      val cp = (assembly / fullClasspath).value
       cp.filter { jar =>
         val doExclude = jar.data.getName.contains("jackson-annotations") ||
           jar.data.getName.contains("RoaringBitmap")
@@ -1540,7 +1593,7 @@ lazy val icebergGroup = project
   )
 
 lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefaults)
+  .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

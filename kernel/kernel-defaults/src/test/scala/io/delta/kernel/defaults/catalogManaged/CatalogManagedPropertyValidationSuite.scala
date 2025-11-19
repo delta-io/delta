@@ -32,7 +32,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
 
-  val catalogManagedFeaturePropMap = Map("delta.feature.catalogOwned-preview" -> "supported")
+  val catalogManagedFeaturePropMap = Map("delta.feature.catalogManaged" -> "supported")
   val validRequiredCatalogPropMap = Map(
     customCatalogCommitter.REQUIRED_PROPERTY_KEY -> customCatalogCommitter.REQUIRED_PROPERTY_VALUE)
   val invalidRequiredCatalogPropMap = Map(
@@ -65,7 +65,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
       testName = "ILLEGAL CREATE: set catalogManaged=supported and explicitly disable ICT => THROW",
       operationType = "CREATE",
       transactionProperties = Map(
-        "delta.feature.catalogOwned-preview" -> "supported",
+        "delta.feature.catalogManaged" -> "supported",
         "delta.enableInCommitTimestamps" -> "false"),
       expectedSuccess = false,
       expectedExceptionMessage =
@@ -92,7 +92,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
       operationType = "UPDATE",
       initialTableProperties = Map.empty,
       transactionProperties = Map(
-        "delta.feature.catalogOwned-preview" -> "supported",
+        "delta.feature.catalogManaged" -> "supported",
         "delta.enableInCommitTimestamps" -> "false"),
       expectedSuccess = false,
       expectedExceptionMessage =
@@ -262,7 +262,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
               .withMaxCatalogVersionIfApplicable(
                 isCatalogManaged = TableFeatures.isPropertiesManuallySupportingTableFeature(
                   testCase.initialTableProperties.asJava,
-                  TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
+                  TableFeatures.CATALOG_MANAGED_RW_FEATURE),
                 maxCatalogVersion = 0)
               .build(defaultEngine)
               .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
@@ -283,7 +283,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
               .withMaxCatalogVersionIfApplicable(
                 isCatalogManaged = TableFeatures.isPropertiesManuallySupportingTableFeature(
                   testCase.initialTableProperties.asJava,
-                  TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
+                  TableFeatures.CATALOG_MANAGED_RW_FEATURE),
                 maxCatalogVersion = 0)
               .build(defaultEngine)
               .asInstanceOf[SnapshotImpl]
@@ -307,7 +307,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
 
           // Check if catalogManaged feature is supported
           val catalogManagedSupported = protocol
-            .supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)
+            .supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE)
           assert(catalogManagedSupported == testCase.expectedCatalogManagedSupported)
 
           // Check if ICT is enabled in metadata

@@ -60,10 +60,8 @@ class SnapshotBuilderSuite extends AnyFunSuite
   // ===== Version Tests ===== //
 
   test("atVersion: negative version throws IllegalArgumentException") {
-    val builder = TableManager.loadSnapshot(dataPath.toString).atVersion(-1)
-
     val exMsg = intercept[IllegalArgumentException] {
-      builder.build(emptyMockEngine)
+      TableManager.loadSnapshot(dataPath.toString).atVersion(-1)
     }.getMessage
 
     assert(exMsg === "version must be >= 0")
@@ -75,17 +73,6 @@ class SnapshotBuilderSuite extends AnyFunSuite
     assertThrows[NullPointerException] {
       TableManager.loadSnapshot(dataPath.toString).atTimestamp(1000L, null)
     }
-  }
-
-  test("atTimestamp: negative timestamp throws IllegalArgumentException") {
-    val builder =
-      TableManager.loadSnapshot(dataPath.toString).atTimestamp(-1L, mockSnapshotAtTimestamp0)
-
-    val exMsg = intercept[IllegalArgumentException] {
-      builder.build(emptyMockEngine)
-    }.getMessage
-
-    assert(exMsg === "timestamp must be >= 0")
   }
 
   test("atTimestamp: timestamp greater than latest snapshot throws IllegalArgumentException") {

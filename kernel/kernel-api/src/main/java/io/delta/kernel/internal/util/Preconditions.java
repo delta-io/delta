@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.util.function.Supplier;
+
 /**
  * Static convenience methods that help a method or constructor check whether it was invoked
  * correctly (that is, whether its preconditions were met).
@@ -45,6 +47,21 @@ public class Preconditions {
       throws IllegalArgumentException {
     if (!isValid) {
       throw new IllegalArgumentException(message);
+    }
+  }
+
+  /**
+   * Precondition-style validation that throws {@link IllegalArgumentException}. The message is only
+   * evaluated if the validation fails.
+   *
+   * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+   * @param messageSupplier A supplier that provides the exception message (evaluated lazily)
+   * @throws IllegalArgumentException if {@code isValid} is false
+   */
+  public static void checkArgument(boolean isValid, Supplier<String> messageSupplier)
+      throws IllegalArgumentException {
+    if (!isValid) {
+      throw new IllegalArgumentException(messageSupplier.get());
     }
   }
 

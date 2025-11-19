@@ -62,7 +62,7 @@ class DefaultCommitterSuite extends AnyFunSuite
         .withProtocolAndMetadata(readProtocol, metadata)
         .atVersion(1)
         .withMaxCatalogVersionIfApplicable(
-          readProtocol.supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW),
+          readProtocol.supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE),
           1).build(emptyMockEngine)
         .getCommitter
 

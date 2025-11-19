@@ -71,6 +71,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
 
   @Override
   public SnapshotBuilderImpl atVersion(long version) {
+    checkArgument(version >= 0, "version must be >= 0");
     ctx.versionOpt = Optional.of(version);
     return this;
   }
@@ -124,8 +125,6 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   ////////////////////////////
 
   private void validateInputOnBuild(Engine engine) {
-    validateVersionNonNegative();
-    validateTimestampNonNegative();
     validateTimestampNotGreaterThanLatestSnapshot(engine);
     validateVersionAndTimestampMutuallyExclusive();
     validateProtocolAndMetadataOnlyIfVersionProvided();
@@ -135,14 +134,6 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
     validateMaxCatalogVersionCompatibleWithTimeTravelParams();
     validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad();
-  }
-
-  private void validateVersionNonNegative() {
-    ctx.versionOpt.ifPresent(x -> checkArgument(x >= 0, "version must be >= 0"));
-  }
-
-  private void validateTimestampNonNegative() {
-    ctx.timestampQueryContextOpt.ifPresent(x -> checkArgument(x._2 >= 0, "timestamp must be >= 0"));
   }
 
   /**

@@ -270,6 +270,35 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
 
   /* --------------- Without catalog commits --------------- */
 
+  // Test with negative timestamps - manually create FileStatus with negative timestamps
+  testStartAndEndBoundaryCombinations(
+    description = "deltaFiles=(0, 1) with negative timestamps", // v0 -> -100, v1 -> -50
+    fileStatuses = Seq(
+      FileStatus.of(FileNames.deltaFile(logPath, 0L), 0L, -100L),
+      FileStatus.of(FileNames.deltaFile(logPath, 1L), 1L, -50L)),
+    startBoundaries = Seq(
+      VersionBoundaryDef(0L),
+      VersionBoundaryDef(1L),
+      TimestampBoundaryDef(-150, resolvedVersion = 0L), // before v0
+      TimestampBoundaryDef(-100, resolvedVersion = 0L), // at v0
+      TimestampBoundaryDef(-75, resolvedVersion = 1), // between v0, v1
+      TimestampBoundaryDef(-50, resolvedVersion = 1), // at v1
+      DefaultBoundaryDef(resolvedVersion = 0), // default to 0
+      TimestampBoundaryDef(-40, resolvedVersion = -1, expectsError = true), // after v1
+      VersionBoundaryDef(2L, expectsError = true) // version DNE
+    ),
+    endBoundaries = Seq(
+      VersionBoundaryDef(0L),
+      VersionBoundaryDef(1L),
+      TimestampBoundaryDef(-150, resolvedVersion = -1, expectsError = true), // before v0
+      TimestampBoundaryDef(-100, resolvedVersion = 0L), // at v0
+      TimestampBoundaryDef(-75, resolvedVersion = 0), // between v0, v1
+      TimestampBoundaryDef(-50, resolvedVersion = 1), // at v1
+      TimestampBoundaryDef(-40, resolvedVersion = 1), // after v1
+      DefaultBoundaryDef(resolvedVersion = 1), // default to latest
+      VersionBoundaryDef(2L, expectsError = true) // version DNE
+    ))
+
   // The below test cases mimic the cases in TableImplSuite for the timestamp-resolution
   testStartAndEndBoundaryCombinations(
     description = "deltaFiles=(0, 1)", // (version -> timestamp) = v0 -> 0, v1 -> 10
@@ -277,6 +306,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     startBoundaries = Seq(
       VersionBoundaryDef(0L),
       VersionBoundaryDef(1L),
+      TimestampBoundaryDef(-5, resolvedVersion = 0L), // before v0, negative timestamp
       TimestampBoundaryDef(0, resolvedVersion = 0L), // at v0
       TimestampBoundaryDef(5, resolvedVersion = 1), // between v0, v1
       TimestampBoundaryDef(10, resolvedVersion = 1), // at v1
@@ -287,6 +317,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     endBoundaries = Seq(
       VersionBoundaryDef(0L),
       VersionBoundaryDef(1L),
+      TimestampBoundaryDef(-5, resolvedVersion = -1, expectsError = true), // before v0, negative
       TimestampBoundaryDef(0, resolvedVersion = 0L), // at v0
       TimestampBoundaryDef(5, resolvedVersion = 0), // between v0, v1
       TimestampBoundaryDef(10, resolvedVersion = 1), // at v1

@@ -43,15 +43,7 @@ class UCCatalogManagedCommitterSuite
     with VectorTestUtils
     with MockFileSystemClientUtils {
 
-  private def catalogManagedWriteCommitMetadata(
-      version: Long,
-      logPath: String = baseTestLogPath): CommitMetadata = createCommitMetadata(
-    version = version,
-    logPath = logPath,
-    readPandMOpt = Optional.of(
-      new KernelTuple2[Protocol, Metadata](
-        protocolWithCatalogManagedSupport,
-        basicPartitionedMetadata)))
+  private val testUcTableId = "testUcTableId"
 
   // ============================================================
   // ===================== Misc. Unit Tests =====================
@@ -61,19 +53,19 @@ class UCCatalogManagedCommitterSuite
     val ucClient = new InMemoryUCClient("ucMetastoreId")
 
     assertThrows[NullPointerException] {
-      new UCCatalogManagedCommitter(null, "ucTableId", baseTestTablePath)
+      new UCCatalogManagedCommitter(null, testUcTableId, baseTestTablePath)
     }
     assertThrows[NullPointerException] {
       new UCCatalogManagedCommitter(ucClient, null, baseTestTablePath)
     }
     assertThrows[NullPointerException] {
-      new UCCatalogManagedCommitter(ucClient, "ucTableId", null)
+      new UCCatalogManagedCommitter(ucClient, testUcTableId, null)
     }
   }
 
   test("commit throws on null inputs") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
+    val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, baseTestTablePath)
 
     // Null engine
     assertThrows[NullPointerException] {
@@ -93,7 +85,7 @@ class UCCatalogManagedCommitterSuite
 
   test("commit throws if CommitMetadata is for a different table") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
+    val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, baseTestTablePath)
     val badCommitMetadata = catalogManagedWriteCommitMetadata(
       version = 1,
       "/path/to/different/table/_delta_log")
@@ -138,7 +130,7 @@ class UCCatalogManagedCommitterSuite
   unsupportedCommitTypesTestCases.foreach { testCase =>
     test(s"commit throws UnsupportedOperationException for ${testCase.expectedCommitType}") {
       val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, baseTestTablePath)
 
       // version > 0 for updates, version = 0 for creates
       val version = if (testCase.readPandMOpt.isPresent) 1L else 0L
@@ -190,7 +182,7 @@ class UCCatalogManagedCommitterSuite
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
       val testValue = "TEST_FILE_STATUS_DATA"
       val actionsIterator = getSingleElementRowIter(testValue)
 
@@ -218,8 +210,9 @@ class UCCatalogManagedCommitterSuite
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", new TableData(-1, ArrayBuffer[Commit]()))
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      ucClient
+        .createTableIfNotExistsOrThrow(testUcTableId, new TableData(-1, ArrayBuffer[Commit]()))
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
 
       // ===== WHEN =====
       val protocolUpgrade = protocolWithCatalogManagedSupport
@@ -239,7 +232,7 @@ class UCCatalogManagedCommitterSuite
       committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
 
       // ===== THEN =====
-      val updatedTableData = ucClient.getTablesCopy.get("ucTableId").get
+      val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
       val latestProtocol = updatedTableData.getCurrentProtocolOpt.get
       val latestMetadata = updatedTableData.getCurrentMetadataOpt.get
       assert(latestProtocol.getReaderFeatures === protocolUpgrade.getReaderFeatures)
@@ -255,11 +248,11 @@ class UCCatalogManagedCommitterSuite
       // represents a table that was just created and at version 0. We will then commit version 1.
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val tableData = new TableData(-1, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
 
       val testValue = "TEST_COMMIT_DATA_12345"
       val actionsIterator = getSingleElementRowIter(testValue)
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(version = 1, logPath = logPath)
 
       // ===== WHEN =====
@@ -283,7 +276,7 @@ class UCCatalogManagedCommitterSuite
       assert(stagedCommitFilePath.matches(expectedPattern))
 
       // Verify UC client was invoked and table was updated.
-      val updatedTable = ucClient.getTablesCopy.get("ucTableId").get
+      val updatedTable = ucClient.getTablesCopy.get(testUcTableId).get
       assert(updatedTable.getMaxRatifiedVersion == 1)
       assert(updatedTable.getCommits.size == 1)
 
@@ -311,8 +304,8 @@ class UCCatalogManagedCommitterSuite
 
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
 
       // ===== WHEN =====
@@ -338,8 +331,8 @@ class UCCatalogManagedCommitterSuite
             null)
       }
       val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
       // ===== WHEN =====
       val ex = intercept[CommitFailedException] {
@@ -359,8 +352,8 @@ class UCCatalogManagedCommitterSuite
         override def forceThrowInCommitMethod(): Unit = throw new IOException("UC network error")
       }
       val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
 
       // ===== WHEN =====
@@ -384,7 +377,7 @@ class UCCatalogManagedCommitterSuite
         }
       }
       val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
       val committer = new UCCatalogManagedCommitter(ucClient, "unknownTableId", tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
 
@@ -410,7 +403,7 @@ class UCCatalogManagedCommitterSuite
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val testValue = "CREATE_TABLE_DATA_12345"
       val actionsIterator = getSingleElementRowIter(testValue)
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
 
       val commitMetadata = createCommitMetadata(
         version = 0,
@@ -438,7 +431,7 @@ class UCCatalogManagedCommitterSuite
 
       // Validate that UC was not updated for v0
       // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-      assert(!ucClient.getTablesCopy.contains("ucTableId"))
+      assert(!ucClient.getTablesCopy.contains(testUcTableId))
     }
   }
 
@@ -453,7 +446,7 @@ class UCCatalogManagedCommitterSuite
             overwrite: Boolean): Unit =
           throw new IOException("Network hiccup")
       })
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
 
       val commitMetadata = createCommitMetadata(
         version = 0,
