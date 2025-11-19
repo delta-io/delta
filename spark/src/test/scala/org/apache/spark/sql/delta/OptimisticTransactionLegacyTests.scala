@@ -708,4 +708,56 @@ trait OptimisticTransactionLegacyTests
       }
     }
   }
+
+  test("block concurrent set-txns with the same app id but lower version") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir)
+      // Initialize the log.
+      log.startTransaction().commitManually()
+
+      val setupTxn = log.startTransaction()
+      setupTxn.commit(SetTransaction("t1", 5, Some(1234L)) :: Nil, ManualUpdate)
+
+      val txn = log.startTransaction()
+      val initialVersion = txn.txnVersion("t1")
+      assert(initialVersion === 5L)
+
+      val winningTxn = log.startTransaction()
+      winningTxn.commit(SetTransaction("t1", 3, Some(1234L)) :: Nil, ManualUpdate) // Lower version
+
+      val txn2 = log.startTransaction()
+      val versionAfterCommit = txn2.txnVersion("t1")
+      assert(versionAfterCommit === 3L)
+
+      intercept[ConcurrentTransactionException] {
+        txn.commit(Nil, ManualUpdate)
+      }
+    }
+  }
+
+  test("block concurrent set-txns with the same app id but higher version") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir)
+      // Initialize the log.
+      log.startTransaction().commitManually()
+
+      val setupTxn = log.startTransaction()
+      setupTxn.commit(SetTransaction("t1", 3, Some(1234L)) :: Nil, ManualUpdate)
+
+      val txn = log.startTransaction()
+      val initialVersion = txn.txnVersion("t1")
+      assert(initialVersion === 3L)
+
+      val winningTxn = log.startTransaction()
+      winningTxn.commit(SetTransaction("t1", 5, Some(1234L)) :: Nil, ManualUpdate) // Higher version
+
+      val txn2 = log.startTransaction()
+      val versionAfterCommit = txn2.txnVersion("t1")
+      assert(versionAfterCommit === 5L)
+
+      intercept[ConcurrentTransactionException] {
+        txn.commit(Nil, ManualUpdate)
+      }
+    }
+  }
 }
