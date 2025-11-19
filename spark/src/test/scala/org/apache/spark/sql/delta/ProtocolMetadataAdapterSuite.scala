@@ -289,4 +289,3 @@ class ProtocolMetadataAdapterV1Suite extends ProtocolMetadataAdapterSuiteBase {
     ProtocolMetadataAdapterV1(protocol, metadata)
   }
 }
-
