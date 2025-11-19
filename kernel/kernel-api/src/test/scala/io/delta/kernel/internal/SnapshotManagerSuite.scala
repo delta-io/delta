@@ -783,7 +783,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedLastCommitTimestamp = 200L)
   }
 
-  test("catalog managed: latest query, when _last_checkpoint does exist we use it") {
+  test("catalog managed: latest query, when _last_checkpoint exists and " +
+    "is <= maxCatalogVersion we use it") {
     val deltas = deltaFileStatuses(0L to 30)
     val checkpoints = singularCheckpointFileStatuses(Seq(10, 20, 25))
     val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)

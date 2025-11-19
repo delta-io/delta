@@ -210,7 +210,7 @@ public class SnapshotManager {
    *
    * @param timeTravelVersionOpt the version to time-travel to for a time-travel query
    * @param parsedLogDatas the parsed log data from the catalog
-   * @param maxCatalogVersionOpt the maximum ratified version by the catalog for catalog managed
+   * @param maxCatalogVersionOpt the maximum version ratified by the catalog for catalog managed
    *     tables. Empty for file-system managed tables.
    */
   public LogSegment getLogSegmentForVersion(
@@ -230,7 +230,7 @@ public class SnapshotManager {
     ///////////////////////////////////////////////////////////////////////////////////////////
     // Step 1: Find the latest checkpoint version. If timeTravelVersionOpt is empty, use the //
     //         version referenced by the _LAST_CHECKPOINT file. If timeTravelVersionOpt is   //
-    //         present search for the previous latest complete checkpoint at or before the   //
+    //         present, search for the previous latest complete checkpoint at or before the  //
     //         version to load                                                               //
     ///////////////////////////////////////////////////////////////////////////////////////////
 
@@ -609,9 +609,9 @@ public class SnapshotManager {
   /**
    * Determine the starting checkpoint version that is at or before the version to load.
    *
-   * <p>For time-travel queries this is the time-travel version. For latest queries, for catalog
-   * managed tables this is the max ratified catalog version, and for file-system managed tables
-   * this is the latest available version on the file-system.
+   * <p>Version to load: For time-travel queries, this is the time-travel version. For latest
+   * queries on catalog maanged tables, this is the max ratified catalog version. For latest queries
+   * on file-system managed tables, this is the latest available version on the file-system.
    *
    * <p>For non-time travel queries we will use the checkpoint pointed to by the _last_checkpoint
    * file (except for when it is after the maxRatifiedCatalogVersion, in which case we will search
