@@ -168,6 +168,29 @@ def runTaskOnlyOnSparkMaster[T](
   }
 }
 
+/**
+ * Run a task only when Spark short version matches the required version (e.g., "4.0").
+ */
+def runTaskOnlyOnSparkShortVersion[T](
+    task: sbt.TaskKey[T],
+    taskName: String,
+    projectName: String,
+    requiredShortVersion: String,
+    emptyValue: => T): Def.Initialize[Task[T]] = {
+  if (CrossSparkVersions.getSparkVersionSpec().shortVersion == requiredShortVersion) {
+    Def.task(task.value)
+  } else {
+    Def.task {
+      // scalastyle:off println
+      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
+        s"${CrossSparkVersions.getSparkVersion()} (${CrossSparkVersions.getSparkVersionSpec().shortVersion}) " +
+        s"does not match required short version $requiredShortVersion.")
+      // scalastyle:on println
+      emptyValue
+    }
+  }
+}
+
 lazy val connectCommon = (project in file("spark-connect/common"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
@@ -714,6 +737,14 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
+
+    // Only run tests with Spark 4.0 (Unity Catalog 0.3.0 requires Spark 4.0)
+    Test / test := runTaskOnlyOnSparkShortVersion(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-spark-unitycatalog",
+      requiredShortVersion = "4.0",
+      emptyValue = ()).value,
 
     libraryDependencies ++= Seq(
       // Unity Catalog dependencies - matching UC's own spark connector config
