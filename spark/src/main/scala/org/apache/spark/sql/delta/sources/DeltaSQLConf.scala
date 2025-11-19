@@ -1452,12 +1452,12 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "during schema evolution. This flag is guarded by the flag 'delta.enableTypeWidening'" +
         "All supported widenings are enabled with 'always' selected, which allows some " +
         "conversions between integer types and floating numbers. The value 'same_family_type' " +
-        "fallbacks to the default behavior of the guarding flag. 'never' allows no widenings.")
+        "was the historical behavior. 'never' allows no widenings.")
       .internal()
       .stringConf
       .transform(_.toUpperCase(Locale.ROOT))
       .checkValues(AllowAutomaticWideningMode.values.map(_.toString))
-      .createWithDefault(AllowAutomaticWideningMode.SAME_FAMILY_TYPE.toString)
+      .createWithDefault(AllowAutomaticWideningMode.ALWAYS.toString)
 
   val DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING =
     buildConf("typeWidening.enableStreamingSchemaTracking")
@@ -1701,6 +1701,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH =
+    buildConf("skipping.enhancedIsNullPushdownExprs.maxDepth")
+      .doc("The maximum number of times a complex expression like Or or And would have an IsNull " +
+        "pushed down in it for data skipping.")
+      .internal()
+      .intConf
+      .createWithDefault(8)
 
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
