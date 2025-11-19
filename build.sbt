@@ -720,6 +720,10 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
+
+val unityCatalogVersion = "0.3.0"
+val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
+
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -746,43 +750,41 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       requiredShortVersion = "4.0",
       emptyValue = ()).value,
 
+    // Force ALL Jackson dependencies to match Spark's Jackson version
+    // This overrides Jackson from Unity Catalog's transitive dependencies (e.g., Armeria)
+    dependencyOverrides ++= Seq(
+      "com.fasterxml.jackson.core" % "jackson-core" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-annotations" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
+    ),
+
     libraryDependencies ++= Seq(
-      // Unity Catalog dependencies - matching UC's own spark connector config
-      "io.unitycatalog" %% "unitycatalog-spark" % "0.3.0" % "test",
-      "io.unitycatalog" % "unitycatalog-server" % "0.3.0" % "test" excludeAll(
-        ExclusionRule(organization = "com.fasterxml.jackson.core"),
-        ExclusionRule(organization = "com.fasterxml.jackson.module")
-      ),
-      "io.unitycatalog" % "unitycatalog-client" % "0.3.0" % "test",
-      
       // Standard test dependencies
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13.2" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
+
+      // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
+      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+      "io.unitycatalog" % "unitycatalog-server" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
 
       // Spark test dependencies
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
     ),
-
-    // Unity Catalog server needs to be built locally to avoid Jackson dependency conflicts
-    // Build it with: cd /path/to/unitycatalog && build/sbt serverShaded/assembly
-    Test / unmanagedJars += {
-      val ucHome = sys.env.getOrElse("UC_HOME", "/Users/tdas/Projects/unitycatalog")
-      val ucServerShadedJar = file(ucHome) / "server-shaded/target" /
-        "unitycatalog-server-shaded-assembly-0.3.0-SNAPSHOT.jar"
-      if (!ucServerShadedJar.exists()) {
-        throw new RuntimeException(
-          s"Unity Catalog server-shaded JAR not found at ${ucServerShadedJar}. " +
-          s"Please build it first by running: cd $ucHome && build/sbt serverShaded/assembly " +
-          s"Or set UC_HOME environment variable to point to your Unity Catalog checkout."
-        )
-      }
-      ucServerShadedJar
-    },
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
@@ -876,8 +878,9 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     ),
     assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
-      // TODO Upgrade SBT to 1.5 which will do this automatically
+      // This includes both root-level and versioned module-info.class files (for multi-release JARs)
       case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
