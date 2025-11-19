@@ -2,7 +2,7 @@ name: "Kernel Unity Catalog"
 on: [push, pull_request]
 jobs:
   test:
-    name: "Kernel Unit Catalog Tests"
+    name: "Kernel Unity Catalog Tests"
     runs-on: ubuntu-24.04
     env:
       SCALA_VERSION: 2.13.16
