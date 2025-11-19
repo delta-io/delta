@@ -44,6 +44,7 @@ public class SparkTable implements Table, SupportsRead {
           EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
 
   private final Identifier identifier;
+  private final String tablePath;
   private final Map<String, String> options;
   private final DeltaSnapshotManager snapshotManager;
   /** Snapshot created during connector setup */
@@ -117,6 +118,7 @@ public class SparkTable implements Table, SupportsRead {
       Map<String, String> userOptions,
       Optional<CatalogTable> catalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
@@ -197,9 +199,20 @@ public class SparkTable implements Table, SupportsRead {
     return catalogTable;
   }
 
+  /**
+   * Returns the table name in a format compatible with DeltaTableV2.
+   *
+   * <p>For catalog-based tables, returns the fully qualified table name (e.g.,
+   * "spark_catalog.default.table_name"). For path-based tables, returns the path-based identifier
+   * (e.g., "delta.`/path/to/table`").
+   *
+   * @return the table name string
+   */
   @Override
   public String name() {
-    return identifier.name();
+    return catalogTable
+        .map(ct -> ct.identifier().unquotedString())
+        .orElse("delta.`" + tablePath + "`");
   }
 
   @Override

@@ -53,7 +53,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
     String tableName =
         "test_" + testCase.name.toLowerCase().replace(" ", "_") + "_" + method.name().toLowerCase();
     testCase.createTableSql.apply(tableName, path);
-    Identifier identifier = Identifier.of(new String[] {"test_namespace"}, tableName);
+    Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
 
     // Create SparkTable based on construction method
     SparkTable kernelTable;
@@ -73,7 +73,19 @@ public class SparkTableTest extends SparkDsv2TestBase {
     }
 
     // ===== Test table name =====
-    assertEquals(tableName, kernelTable.name());
+    String expectedName;
+    switch (method) {
+      case FROM_PATH:
+        expectedName = "delta.`" + path + "`";
+        break;
+      case FROM_CATALOG_TABLE:
+        // Catalog table should return fully qualified name: spark_catalog.default.tableName
+        expectedName = "spark_catalog.default." + tableName;
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown method: " + method);
+    }
+    assertEquals(expectedName, kernelTable.name());
 
     // ===== Test schema =====
     StructType sparkSchema = kernelTable.schema();
