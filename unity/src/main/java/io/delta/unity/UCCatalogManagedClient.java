@@ -59,7 +59,7 @@ public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
   /** Key for identifying Unity Catalog table ID. */
-  public static final String UC_TABLE_ID_KEY = "ucTableId";
+  public static final String UC_TABLE_ID_KEY = "catalogManaged.unityCatalog.tableId";
 
   protected final UCClient ucClient;
 
@@ -449,7 +449,7 @@ public class UCCatalogManagedClient {
     final Map<String, String> requiredProperties = new HashMap<>();
 
     requiredProperties.put(
-        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.getTableFeatureSupportKey(),
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey(),
         TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
     requiredProperties.put(UC_TABLE_ID_KEY, ucTableId);
 
