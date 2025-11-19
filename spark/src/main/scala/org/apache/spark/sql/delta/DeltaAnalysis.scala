@@ -237,7 +237,7 @@ class DeltaAnalysis(session: SparkSession)
           //   - Filter CatalogOwned table feature out since target table is not enabling
           //     CatalogOwned explicitly.
           // - CREATE TABLE t1 LIKE t2 TBLPROPERTIES (
-          //     'delta.feature.catalogOwned-preview' = 'supported'
+          //     'delta.feature.catalogManaged' = 'supported'
           //   )
           //   - Do not filter CatalogOwned table feature out if target table is enabling
           //     CatalogOwned.
