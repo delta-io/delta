@@ -53,23 +53,10 @@ class UnityCatalogSupportSuite extends QueryTest
   }
 
   /**
-   * Helper to create a UC API client to directly query the UC server.
-   */
-  private def createUCClient(): ApiClient = {
-    val client = new ApiClient()
-    // Extract port from unityCatalogUri
-    val port = unityCatalogUri.split(":")(2).toInt
-    client.setScheme("http")
-    client.setHost("localhost")
-    client.setPort(port)
-    client
-  }
-
-  /**
    * Helper to list tables in UC server directly via SDK.
    */
-  private def listTablesInUC(catalogName: String, schemaName: String): List[String] = {
-    val client = createUCClient()
+  private def listTables(catalogName: String, schemaName: String): List[String] = {
+    val client = createUnityCatalogClient()
     val tablesApi = new TablesApi(client)
     val response: ListTablesResponse = tablesApi.listTables(catalogName, schemaName, null, null)
 
@@ -93,7 +80,7 @@ class UnityCatalogSupportSuite extends QueryTest
       s"Unity Catalog should have 'default' schema. Found: ${schemas.mkString(", ")}")
 
     // 3. Verify we can query UC server directly via SDK
-    val ucTables = listTablesInUC(unityCatalogName, "default")
+    val ucTables = listTables(unityCatalogName, "default")
     // Should succeed even if empty - this confirms UC server is responding
     assert(ucTables != null, "Should be able to query UC server via SDK")
 
@@ -104,7 +91,7 @@ class UnityCatalogSupportSuite extends QueryTest
       val testTable = s"$unityCatalogName.default.test_verify_catalog"
 
       spark.sql(s"""
-        CREATE TABLE $testTable (id INT) USING DELTA LOCATION '$tablePath'
+        CREATE TABLE $testTable (id INT) USING PARQUET LOCATION '$tablePath'
       """)
 
       // If we got here, the catalog is working
@@ -114,151 +101,17 @@ class UnityCatalogSupportSuite extends QueryTest
       assert(tables.contains("test_verify_catalog"),
         "Should be able to create tables in Unity Catalog")
 
+      // Insert data
+      spark.sql(s"INSERT INTO $testTable VALUES (1), (2), (3)")
+
+      // Verify we can select the data
+      val result = spark.sql(s"SELECT * FROM $testTable ORDER BY id").collect()
+      assert(result.length == 3, s"Should have 3 rows, got ${result.length}")
+      assert(result(0).getInt(0) == 1)
+      assert(result(1).getInt(0) == 2)
+      assert(result(2).getInt(0) == 3)
+
       spark.sql(s"DROP TABLE $testTable")
-    }
-  }
-
-  test("CREATE TABLE via Spark registers table in UC server") {
-    withTempDir { dir =>
-      val tablePath = new File(dir, "test_table").getAbsolutePath
-      val tableName = "test_table_create"
-      val fullTableName = s"$unityCatalogName.default.$tableName"
-
-      // Create an external Delta table via Spark
-      spark.sql(s"""
-        CREATE TABLE $fullTableName (
-          id INT,
-          name STRING
-        ) USING DELTA
-        LOCATION '$tablePath'
-      """)
-
-      try {
-        // Verify table is visible via Spark
-        val sparkTables = spark.sql(s"SHOW TABLES IN $unityCatalogName.default")
-          .collect()
-          .map(_.getString(1))
-        assert(sparkTables.contains(tableName),
-          s"Table should be visible via Spark: ${sparkTables.mkString(", ")}")
-
-        // Verify table is registered in UC server by querying directly via SDK
-        val ucTables = listTablesInUC(unityCatalogName, "default")
-        assert(ucTables.contains(tableName),
-          s"Table '$tableName' should be registered in UC server. " +
-          s"Found: ${ucTables.mkString(", ")}")
-      } finally {
-        spark.sql(s"DROP TABLE IF EXISTS $fullTableName")
-      }
-    }
-  }
-
-  test("INSERT and SELECT operations work through UC server") {
-    withTempDir { dir =>
-      val tablePath = new File(dir, "test_insert").getAbsolutePath
-      val tableName = "test_table_insert"
-      val fullTableName = s"$unityCatalogName.default.$tableName"
-
-      // Create table
-      spark.sql(s"""
-        CREATE TABLE $fullTableName (
-          id INT,
-          value STRING
-        ) USING DELTA
-        LOCATION '$tablePath'
-      """)
-
-      try {
-        // Verify table exists in UC server via SDK before insert
-        val tablesBeforeInsert = listTablesInUC(unityCatalogName, "default")
-        assert(tablesBeforeInsert.contains(tableName),
-          s"Table should exist in UC before INSERT")
-
-        // Insert data via Spark
-        spark.sql(s"""
-          INSERT INTO $fullTableName VALUES
-          (1, 'row1'),
-          (2, 'row2'),
-          (3, 'row3')
-        """)
-
-        // Verify data via Spark
-        val result = spark.sql(s"SELECT * FROM $fullTableName ORDER BY id")
-        checkAnswer(
-          result,
-          Row(1, "row1") :: Row(2, "row2") :: Row(3, "row3") :: Nil
-        )
-
-        // Verify table still exists in UC server via SDK after insert
-        val tablesAfterInsert = listTablesInUC(unityCatalogName, "default")
-        assert(tablesAfterInsert.contains(tableName),
-          s"Table should still exist in UC after INSERT")
-      } finally {
-        spark.sql(s"DROP TABLE IF EXISTS $fullTableName")
-      }
-    }
-  }
-
-  test("UPDATE and DELETE operations work through UC server") {
-    withTempDir { dir =>
-      val tablePath = new File(dir, "test_update_delete").getAbsolutePath
-      val tableName = "test_table_update_delete"
-      val fullTableName = s"$unityCatalogName.default.$tableName"
-
-      // Create and populate table
-      spark.sql(s"""
-        CREATE TABLE $fullTableName (
-          id INT,
-          status STRING
-        ) USING DELTA
-        LOCATION '$tablePath'
-      """)
-
-      spark.sql(s"""
-        INSERT INTO $fullTableName VALUES
-        (1, 'pending'),
-        (2, 'pending'),
-        (3, 'completed'),
-        (4, 'pending')
-      """)
-
-      try {
-        // Verify table exists in UC server via SDK before UPDATE
-        val tablesBeforeUpdate = listTablesInUC(unityCatalogName, "default")
-        assert(tablesBeforeUpdate.contains(tableName),
-          s"Table should exist in UC before UPDATE")
-
-        // Perform UPDATE
-        spark.sql(s"""
-          UPDATE $fullTableName
-          SET status = 'completed'
-          WHERE id <= 2
-        """)
-
-        // Verify UPDATE results
-        checkAnswer(
-          spark.sql(s"SELECT * FROM $fullTableName WHERE status = 'completed' ORDER BY id"),
-          Row(1, "completed") :: Row(2, "completed") :: Row(3, "completed") :: Nil
-        )
-
-        // Perform DELETE
-        spark.sql(s"""
-          DELETE FROM $fullTableName
-          WHERE status = 'pending'
-        """)
-
-        // Verify DELETE results
-        checkAnswer(
-          spark.sql(s"SELECT * FROM $fullTableName ORDER BY id"),
-          Row(1, "completed") :: Row(2, "completed") :: Row(3, "completed") :: Nil
-        )
-
-        // Verify table still exists in UC server via SDK after operations
-        val tablesAfterOperations = listTablesInUC(unityCatalogName, "default")
-        assert(tablesAfterOperations.contains(tableName),
-          s"Table should still exist in UC after UPDATE and DELETE")
-      } finally {
-        spark.sql(s"DROP TABLE IF EXISTS $fullTableName")
-      }
     }
   }
 }

@@ -28,6 +28,7 @@ import io.unitycatalog.server.UnityCatalogServer
 import io.unitycatalog.server.utils.ServerProperties
 
 import org.apache.spark.SparkConf
+import org.apache.spark.internal.Logging
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
 /**
@@ -58,7 +59,7 @@ import org.scalatest.{BeforeAndAfterAll, Suite}
  * }
  * }}}
  */
-trait UnityCatalogSupport extends BeforeAndAfterAll { self: Suite =>
+trait UnityCatalogSupport extends BeforeAndAfterAll with Logging { self: Suite =>
 
   /**
    * The Unity Catalog server instance. Set during beforeAll().
@@ -92,6 +93,18 @@ trait UnityCatalogSupport extends BeforeAndAfterAll { self: Suite =>
    * Currently using a test token; in production scenarios this would be more secure.
    */
   protected def unityCatalogToken: String = "not-a-token"
+
+  /**
+   * Creates a Unity Catalog API client configured for this server.
+   */
+  def createUnityCatalogClient(): ApiClient = {
+    val port = unityCatalogUri.split(":")(2).toInt
+    val client = new ApiClient()
+    client.setScheme("http")
+    client.setHost("localhost")
+    client.setPort(port)
+    client
+  }
 
   /**
    * Finds an available port for the UC server.
@@ -134,8 +147,32 @@ trait UnityCatalogSupport extends BeforeAndAfterAll { self: Suite =>
     server.start()
     ucServer = Some(server)
 
-    // Wait longer for server to be fully ready (including HTTP endpoints)
-    Thread.sleep(5000)
+    // Poll for server readiness by checking if we can create an API client and query catalogs
+    val maxRetries = 30
+    val retryDelayMs = 500
+    var serverReady = false
+    var retries = 0
+
+    while (!serverReady && retries < maxRetries) {
+      try {
+        val testClient = new ApiClient()
+        testClient.setScheme("http")
+        testClient.setHost("localhost")
+        testClient.setPort(ucPort)
+        val catalogsApi = new CatalogsApi(testClient)
+        catalogsApi.listCatalogs(null, null) // This will throw if server is not ready
+        serverReady = true
+      } catch {
+        case _: Exception =>
+          Thread.sleep(retryDelayMs)
+          retries += 1
+      }
+    }
+
+    if (!serverReady) {
+      throw new RuntimeException(
+        s"Unity Catalog server did not become ready after ${maxRetries * retryDelayMs}ms")
+    }
 
     // Create the catalog and default schema in the UC server
     val client = new ApiClient()
@@ -161,10 +198,8 @@ trait UnityCatalogSupport extends BeforeAndAfterAll { self: Suite =>
         .catalogName(unityCatalogName)
     )
 
-    // scalastyle:off println
-    println(s"Unity Catalog server started and ready at $unityCatalogUri")
-    println(s"Created catalog '$unityCatalogName' with schema 'default'")
-    // scalastyle:on println
+    logInfo(s"Unity Catalog server started and ready at $unityCatalogUri")
+    logInfo(s"Created catalog '$unityCatalogName' with schema 'default'")
 
     // Call super.beforeAll() AFTER starting UC server
     // This ensures the UC server is running when SharedSparkSession creates the SparkSession
@@ -178,9 +213,7 @@ trait UnityCatalogSupport extends BeforeAndAfterAll { self: Suite =>
     try {
       ucServer.foreach { server =>
         server.stop()
-        // scalastyle:off println
-        println(s"Unity Catalog server stopped")
-        // scalastyle:on println
+        logInfo("Unity Catalog server stopped")
       }
       ucServer = None
 

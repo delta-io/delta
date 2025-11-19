@@ -749,6 +749,10 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     libraryDependencies ++= Seq(
       // Unity Catalog dependencies - matching UC's own spark connector config
       "io.unitycatalog" %% "unitycatalog-spark" % "0.3.0" % "test",
+      "io.unitycatalog" % "unitycatalog-server" % "0.3.0" % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module")
+      ),
       "io.unitycatalog" % "unitycatalog-client" % "0.3.0" % "test",
       
       // Standard test dependencies
@@ -764,15 +768,17 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
     ),
 
-    // Add Unity Catalog server-shaded JAR for tests (with all dependencies shaded)
-    // This JAR is built from local Unity Catalog repository
+    // Unity Catalog server needs to be built locally to avoid Jackson dependency conflicts
+    // Build it with: cd /path/to/unitycatalog && build/sbt serverShaded/assembly
     Test / unmanagedJars += {
-      val ucServerShadedJar = file("/Users/tdas/Projects/unitycatalog/server-shaded/target") / 
+      val ucHome = sys.env.getOrElse("UC_HOME", "/Users/tdas/Projects/unitycatalog")
+      val ucServerShadedJar = file(ucHome) / "server-shaded/target" /
         "unitycatalog-server-shaded-assembly-0.3.0-SNAPSHOT.jar"
       if (!ucServerShadedJar.exists()) {
         throw new RuntimeException(
           s"Unity Catalog server-shaded JAR not found at ${ucServerShadedJar}. " +
-          "Please build it first by running: cd /Users/tdas/Projects/unitycatalog && build/sbt serverShaded/assembly"
+          s"Please build it first by running: cd $ucHome && build/sbt serverShaded/assembly " +
+          s"Or set UC_HOME environment variable to point to your Unity Catalog checkout."
         )
       }
       ucServerShadedJar
