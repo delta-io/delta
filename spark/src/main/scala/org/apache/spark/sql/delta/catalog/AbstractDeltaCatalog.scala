@@ -735,7 +735,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
               Option(col.position()).map(UnresolvedFieldPosition),
               Option(col.defaultValue()).map(v =>
                 DefaultValueExpression(
-                  org.apache.spark.sql.catalyst.parser.CatalystSqlParser.parseExpression(v.getSql()),
+                  org.apache.spark.sql.catalyst.parser.CatalystSqlParser.parseExpression(
+                    v.getSql()),
                   v.getSql()))
             )
           }).run(spark)

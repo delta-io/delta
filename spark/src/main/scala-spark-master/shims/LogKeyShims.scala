@@ -68,4 +68,7 @@ package org.apache.spark.internal
  *   </li>
  * </ul>
  */
-trait LogKeyShims extends LogKey
+// LogKey is part of Spark's Structured Logging API and is not available in Spark 3.5.
+trait LogKeyShims extends LogKey {
+  def name: String = ""
+}
