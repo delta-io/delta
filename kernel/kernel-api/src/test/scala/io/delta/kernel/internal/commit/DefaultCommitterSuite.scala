@@ -26,6 +26,7 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{FileNames, Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{ActionUtils, BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
@@ -60,7 +61,9 @@ class DefaultCommitterSuite extends AnyFunSuite
         .asInstanceOf[SnapshotBuilderImpl]
         .withProtocolAndMetadata(readProtocol, metadata)
         .atVersion(1)
-        .build(emptyMockEngine)
+        .withMaxCatalogVersionIfApplicable(
+          readProtocol.supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE),
+          1).build(emptyMockEngine)
         .getCommitter
 
       assert(committer.isInstanceOf[DefaultFileSystemManagedTableOnlyCommitter])
