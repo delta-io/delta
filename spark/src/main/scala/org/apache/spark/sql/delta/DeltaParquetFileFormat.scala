@@ -57,7 +57,7 @@ import org.apache.spark.util.SerializableConfiguration
  *    of this scan can use the column values to filter out the deleted rows.
  */
 abstract class DeltaParquetFileFormatBase(
-    protected val protocolMetadataWrapper: ProtocolMetadataAdapter,
+    protected val protocolMetadataAdapter: ProtocolMetadataAdapter,
     protected val nullableRowTrackingConstantFields: Boolean = false,
     protected val nullableRowTrackingGeneratedFields: Boolean = false,
     protected val optimizationsEnabled: Boolean = true,
@@ -76,13 +76,13 @@ abstract class DeltaParquetFileFormatBase(
   }
 
   SparkSession.getActiveSession.ifDefined { session =>
-    protocolMetadataWrapper.assertTableReadable(session)
+    protocolMetadataAdapter.assertTableReadable(session)
   }
 
   require(!nullableRowTrackingConstantFields || nullableRowTrackingGeneratedFields)
 
-  val columnMappingMode: DeltaColumnMappingMode = protocolMetadataWrapper.columnMappingMode
-  val referenceSchema: StructType = protocolMetadataWrapper.getReferenceSchema
+  val columnMappingMode: DeltaColumnMappingMode = protocolMetadataAdapter.columnMappingMode
+  val referenceSchema: StructType = protocolMetadataAdapter.getReferenceSchema
 
   if (columnMappingMode == IdMapping) {
     val requiredReadConf = SQLConf.PARQUET_FIELD_ID_READ_ENABLED
@@ -139,23 +139,6 @@ abstract class DeltaParquetFileFormatBase(
     path: Path): Boolean = optimizationsEnabled
 
   def hasTablePath: Boolean = tablePath.isDefined
-
-  /**
-   * We sometimes need to replace FileFormat within LogicalPlans, so we have to override
-   * `equals` to ensure file format changes are captured
-   */
-  override def equals(other: Any): Boolean = {
-    other match {
-      case ff: DeltaParquetFileFormatBase if ff.getClass == getClass =>
-        ff.columnMappingMode == columnMappingMode &&
-        ff.referenceSchema == referenceSchema &&
-        ff.nullableRowTrackingConstantFields == nullableRowTrackingConstantFields &&
-        ff.optimizationsEnabled == optimizationsEnabled
-      case _ => false
-    }
-  }
-
-  override def hashCode(): Int = getClass.getCanonicalName.hashCode()
 
   override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,
@@ -255,12 +238,12 @@ abstract class DeltaParquetFileFormatBase(
     // not strictly required. We do expose it when Row Tracking or DVs are enabled.
     // In general, having 2b+ rows in a single rowgroup is not a common use case. When the issue is
     // hit an exception is thrown.
-    if (protocolMetadataWrapper.isRowIdEnabled && !isCDCRead) {
+    if (protocolMetadataAdapter.isRowIdEnabled && !isCDCRead) {
       // We should not expose row tracking fields for CDC reads.
-      val extraFields = protocolMetadataWrapper.createRowTrackingMetadataFields(
+      val extraFields = protocolMetadataAdapter.createRowTrackingMetadataFields(
         nullableRowTrackingConstantFields, nullableRowTrackingGeneratedFields)
       super.metadataSchemaFields ++ extraFields
-    } else if (protocolMetadataWrapper.isDeletionVectorReadable) {
+    } else if (protocolMetadataAdapter.isDeletionVectorReadable) {
       super.metadataSchemaFields
     } else {
       super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
@@ -275,11 +258,11 @@ abstract class DeltaParquetFileFormatBase(
     val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
     val conf = ContextUtil.getConfiguration(job)
     // Always write timestamp as TIMESTAMP_MICROS for IcebergCompat based on Iceberg spec
-    if (protocolMetadataWrapper.isIcebergCompatAnyEnabled) {
+    if (protocolMetadataAdapter.isIcebergCompatAnyEnabled) {
       conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
         SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
     }
-    if (protocolMetadataWrapper.isIcebergCompatGeqEnabled(2)) {
+    if (protocolMetadataAdapter.isIcebergCompatGeqEnabled(2)) {
       // Starting from IcebergCompatV2, we need to write nested field IDs for list and map
       // types to the parquet schema. Spark currently does not support it so we hook in our
       // own write support class.
@@ -544,7 +527,7 @@ case class DeltaParquetFileFormat(
     override val tablePath: Option[String] = None,
     override val isCDCRead: Boolean = false)
   extends DeltaParquetFileFormatBase(
-    protocolMetadataWrapper = ProtocolMetadataAdapterV1(protocol, metadata),
+    protocolMetadataAdapter = ProtocolMetadataAdapterV1(protocol, metadata),
     nullableRowTrackingConstantFields = nullableRowTrackingConstantFields,
     nullableRowTrackingGeneratedFields = nullableRowTrackingGeneratedFields,
     optimizationsEnabled = optimizationsEnabled,
@@ -557,7 +540,11 @@ case class DeltaParquetFileFormat(
    */
   override def equals(other: Any): Boolean = {
     other match {
-      case that: DeltaParquetFileFormat => super.equals(that)
+      case ff: DeltaParquetFileFormat =>
+        ff.columnMappingMode == columnMappingMode &&
+          ff.referenceSchema == referenceSchema &&
+          ff.nullableRowTrackingConstantFields == nullableRowTrackingConstantFields &&
+          ff.optimizationsEnabled == optimizationsEnabled
       case _ => false
     }
   }

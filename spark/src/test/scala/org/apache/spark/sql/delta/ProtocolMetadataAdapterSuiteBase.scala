@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructField, StructType}
@@ -256,5 +258,35 @@ abstract class ProtocolMetadataAdapterSuiteBase
     }
   }
 
+}
+
+/**
+ * Unit tests for ProtocolMetadataAdapterV1.
+ *
+ * This suite tests the V1 wrapper implementation that adapts delta-spark's Protocol and Metadata
+ * to the ProtocolMetadataAdapter interface.
+ */
+class ProtocolMetadataAdapterV1Suite extends ProtocolMetadataAdapterSuiteBase {
+
+  override protected def createWrapper(
+      minReaderVersion: Int = 1,
+      minWriterVersion: Int = 2,
+      readerFeatures: Option[Set[String]] = None,
+      writerFeatures: Option[Set[String]] = None,
+      schema: StructType = new StructType().add("id", IntegerType),
+      configuration: Map[String, String] = Map.empty): ProtocolMetadataAdapter = {
+
+    val protocol = Protocol(
+      minReaderVersion = minReaderVersion,
+      minWriterVersion = minWriterVersion,
+      readerFeatures = readerFeatures,
+      writerFeatures = writerFeatures)
+
+    val metadata = Metadata(
+      schemaString = schema.json,
+      configuration = configuration)
+
+    ProtocolMetadataAdapterV1(protocol, metadata)
+  }
 }
 
