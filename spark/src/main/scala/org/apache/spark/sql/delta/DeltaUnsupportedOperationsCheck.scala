@@ -103,7 +103,7 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
       // OK
       return
 
-    case DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _) if !tbl.tableExists =>
+    case DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _, _) if !tbl.tableExists =>
       throw DeltaErrors.pathNotExistsException(tbl.deltaLog.dataPath.toString)
 
     case r: ResolvedTable if r.table.isInstanceOf[DeltaTableV2] &&

@@ -202,7 +202,7 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
         // is table
         case LogicalRelationWithTable(HadoopFsRelation(_, _, _, _, _, _), Some(_)) => true
         // is iceberg table
-        case DataSourceV2Relation(_: IcebergTablePlaceHolder, _, _, _, _) => false
+        case DataSourceV2Relation(_: IcebergTablePlaceHolder, _, _, _, _, _) => false
         // could not resolve table/db
         case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
