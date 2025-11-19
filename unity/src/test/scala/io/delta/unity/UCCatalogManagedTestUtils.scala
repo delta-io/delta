@@ -89,8 +89,8 @@ trait UCCatalogManagedTestUtils
   def loadSnapshot(
       ucCatalogManagedClient: UCCatalogManagedClient,
       engine: Engine = defaultEngine,
-      ucTableId: String = "ucTableId",
-      tablePath: String = "tablePath",
+      ucTableId: String = "testUcTableId",
+      tablePath: String = "testUcTablePath",
       versionToLoad: Optional[java.lang.Long] = emptyLongOpt,
       timestampToLoad: Optional[java.lang.Long] = emptyLongOpt): SnapshotImpl = {
     ucCatalogManagedClient.loadSnapshot(
@@ -189,7 +189,7 @@ trait UCCatalogManagedTestUtils
           fileStatus.getModificationTime)
       }
     val tableData = new TableData(maxRatifiedVersion, ArrayBuffer(catalogCommits: _*))
-    ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+    ucClient.createTableIfNotExistsOrThrow("testUcTableId", tableData)
     textFx(ucClient, tablePath, maxRatifiedVersion)
   }
 
@@ -199,7 +199,7 @@ trait UCCatalogManagedTestUtils
    * UC is -1. This is a special edge case.
    */
   def createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne(
-      ucTableId: String = "ucTableId"): UCCatalogManagedClient = {
+      ucTableId: String = "testUcTableId"): UCCatalogManagedClient = {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val tableData = new TableData(-1, ArrayBuffer[Commit]())
     ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)

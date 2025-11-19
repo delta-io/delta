@@ -34,7 +34,7 @@ class UCPublishingSuite
 
   private def createCommitter(tablePath: String): UCCatalogManagedCommitter = {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+    new UCCatalogManagedCommitter(ucClient, "testUcTableId", tablePath)
   }
 
   private def toFile(path: String): java.io.File = {
