@@ -39,9 +39,23 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 
+/**
+ * OAuth-based implementation of {@link UCTokenProvider} that manages Unity Catalog access tokens
+ * using OAuth 2.0 client credentials flow.
+ *
+ * <p>This provider automatically handles token renewal when tokens are about to expire,
+ * with thread-safe caching to minimize token requests.
+ *
+ * <p>Thread Safety: This class is thread-safe. Multiple threads can safely call
+ * {@link #accessToken()} concurrently.
+ */
 public class OAuthUCTokenProvider implements UCTokenProvider {
 
-  public static final long renewLeadTimeMillis = 30_000L;
+  /**
+   * Lead time before token expiration to trigger renewal (30 seconds)
+   */
+  public static final long RENEW_LEAD_TIME_MILLIS = 30_000L;
+
   private final String uri;
   private final String clientId;
   private final String clientSecret;
@@ -50,7 +64,21 @@ public class OAuthUCTokenProvider implements UCTokenProvider {
 
   private volatile TemporaryToken tempToken;
 
+  /**
+   * Creates a new OAuth token provider.
+   *
+   * @param uri          OAuth token endpoint URI
+   * @param clientId     OAuth client ID
+   * @param clientSecret OAuth client secret
+   * @throws IllegalArgumentException if any parameter is null or empty
+   */
   public OAuthUCTokenProvider(String uri, String clientId, String clientSecret) {
+    checkArg(uri != null && !uri.trim().isEmpty(), "URI cannot be null or empty");
+    checkArg(clientId != null && !clientId.trim().isEmpty(),
+        "Client ID cannot be null or empty");
+    checkArg(clientSecret != null && !clientSecret.trim().isEmpty(),
+        "Client secret cannot be null or empty");
+
     this.uri = uri;
     this.clientId = clientId;
     this.clientSecret = clientSecret;
@@ -62,6 +90,7 @@ public class OAuthUCTokenProvider implements UCTokenProvider {
         .setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
   }
+
 
   @Override
   public String accessToken() {
@@ -76,7 +105,7 @@ public class OAuthUCTokenProvider implements UCTokenProvider {
           try {
             tempToken = requestToken();
           } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new RuntimeException("Failed to obtain OAuth token", e);
           }
         }
       }
@@ -89,6 +118,12 @@ public class OAuthUCTokenProvider implements UCTokenProvider {
     httpClient.close();
   }
 
+  /**
+   * Requests a new token from the OAuth server.
+   *
+   * @return a new temporary token
+   * @throws IOException if the request fails
+   */
   private TemporaryToken requestToken() throws IOException {
     HttpPost request = new HttpPost(uri);
     request.setHeader(HttpHeaders.CONTENT_TYPE,
@@ -105,30 +140,71 @@ public class OAuthUCTokenProvider implements UCTokenProvider {
       if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
         Map<String, String> result = mapper.readValue(body, new TypeReference<>() {
         });
+
+        // Parse and validate the access token.
         String accessToken = result.get("access_token");
-        long expiresInSeconds = Long.parseLong(result.get("expires_in"));
-        return new TemporaryToken(accessToken, expiresInSeconds * 1000L);
+        checkIOArg(accessToken != null && !accessToken.isEmpty(),
+            "Response missing 'access_token' field");
+
+        // Parse and validate the expires duration.
+        String expiresInStr = result.get("expires_in");
+        checkIOArg(expiresInStr != null && !expiresInStr.isEmpty(),
+            "Response missing 'expires_in' field");
+
+        // Parse and validate the expires duration.
+        long expiresInSeconds;
+        try {
+          expiresInSeconds = Long.parseLong(expiresInStr);
+        } catch (NumberFormatException e) {
+          throw new IOException("Invalid 'expires_in' value: " + expiresInStr, e);
+        }
+
+        long expirationTimeMillis = System.currentTimeMillis() + (expiresInSeconds * 1000L);
+        return new TemporaryToken(accessToken, expirationTimeMillis);
       } else {
         throw new IOException(
-            String.format("Failed to obtain access token from %s, status code: %s, body: %s", uri,
-                statusLine.getStatusCode(), body));
+            String.format(
+                "Failed to obtain access token from OAuth endpoint %s, status code: %s, body: %s",
+                uri, statusLine.getStatusCode(), body));
       }
     }
   }
 
-  private String encodeCredentials() {
-    String credentials = String.format("%s:%s", clientId, clientSecret);
-    Base64.Encoder encoder = Base64.getEncoder();
-    return encoder.encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+  private static void checkArg(boolean expression, String message) {
+    if (!expression) {
+      throw new IllegalArgumentException(message);
+    }
   }
 
+  private static void checkIOArg(boolean expression, String message) throws IOException {
+    if (!expression) {
+      throw new IOException(message);
+    }
+  }
+
+  /**
+   * Encodes client credentials for Basic authentication.
+   *
+   * @return Base64-encoded credentials
+   */
+  private String encodeCredentials() {
+    String credentials = String.format("%s:%s", clientId, clientSecret);
+    return Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+  }
+
+  /**
+   * Converts a map of parameters to URL-encoded form data.
+   *
+   * @param params parameters to encode
+   * @return URL-encoded string
+   */
   private static String toUrlEncoded(Map<String, String> params) {
     StringBuilder sb = new StringBuilder();
-    for (Map.Entry<String, String> e : params.entrySet()) {
+    for (Map.Entry<String, String> entry : params.entrySet()) {
       if (sb.length() > 0) {
         sb.append("&");
       }
-      sb.append(e.getKey()).append('=').append(e.getValue());
+      sb.append(entry.getKey()).append("=").append(entry.getValue());
     }
     return sb.toString();
   }
@@ -143,8 +219,14 @@ public class OAuthUCTokenProvider implements UCTokenProvider {
       this.expirationTimeMillis = expirationTimeMillis;
     }
 
+    /**
+     * Checks if the token is ready to be renewed. Returns true if the current time plus the renewal
+     * lead time is at or past the expiration.
+     *
+     * @return true if the token should be renewed
+     */
     public boolean isReadyToRenew() {
-      return System.currentTimeMillis() + renewLeadTimeMillis >= expirationTimeMillis;
+      return System.currentTimeMillis() + RENEW_LEAD_TIME_MILLIS >= expirationTimeMillis;
     }
   }
 }
