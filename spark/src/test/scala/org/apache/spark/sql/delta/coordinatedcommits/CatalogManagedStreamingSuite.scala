@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.execution.streaming.runtime.MemoryStream
 import org.apache.spark.sql.streaming.StreamTest
 
 /**

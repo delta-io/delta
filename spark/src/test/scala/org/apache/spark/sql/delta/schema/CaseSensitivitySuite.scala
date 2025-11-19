@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
-import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.execution.streaming.runtime.MemoryStream
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException}
