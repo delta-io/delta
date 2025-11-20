@@ -7,7 +7,7 @@ jobs:
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
-        scala: [2.13.16]
+        scala: [2.13.17]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
@@ -24,7 +24,7 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "11"
+          java-version: "17"
       - name: Cache Scala, SBT
         uses: actions/cache@v3
         with:
@@ -48,6 +48,6 @@ jobs:
         # Thus, we need to publishM2 first so those jars are locally accessible.
         run: |
           build/sbt clean
-          build/sbt -DsparkVersion=master spark/publishM2
+          build/sbt -DsparkVersion=master publishM2
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff
