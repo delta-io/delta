@@ -64,14 +64,17 @@ public interface TableManager {
   /**
    * Creates a builder for loading a CommitRange at a given path.
    *
-   * <p>The returned builder can be configured with start version or timestamp and an end version or
-   * timestamp, and with additional metadata to optimize the loading process.
+   * <p>The returned builder can be configured with an end version or timestamp, and with additional
+   * metadata to optimize the loading process.
    *
    * @param path the file system path to the Delta table
+   * @param startBoundary the boundary specification for the start of the commit range, must not be
+   *     null
    * @return a {@link CommitRangeBuilder} that can be used to load a {@link CommitRange} at the
    *     given path
    */
-  static CommitRangeBuilder loadCommitRange(String path) {
-    return new CommitRangeBuilderImpl(path);
+  static CommitRangeBuilder loadCommitRange(
+      String path, CommitRangeBuilder.CommitBoundary startBoundary) {
+    return new CommitRangeBuilderImpl(path, startBoundary);
   }
 }

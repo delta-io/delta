@@ -29,24 +29,14 @@ import java.util.Optional;
  * A builder for creating {@link CommitRange} instances that define a contiguous range of commits in
  * a Delta Lake table.
  *
- * <p>If no start specification is provided, the range defaults to starting at version 0. If no end
- * specification is provided, the range defaults to the latest available version.
+ * <p>The start boundary is required and provided via {@link TableManager#loadCommitRange(String,
+ * CommitBoundary)}. If no end specification is provided, the range defaults to the latest available
+ * version.
  *
  * @since 3.4.0
  */
 @Experimental
 public interface CommitRangeBuilder {
-
-  /**
-   * Configures the builder to start the commit range at a specific version or timestamp.
-   *
-   * <p>If not specified, the commit range will default to starting at version 0.
-   *
-   * @param startBoundary the boundary specification for the start of the commit range, must not be
-   *     null
-   * @return this builder instance configured with the specified start boundary
-   */
-  CommitRangeBuilder withStartBoundary(CommitBoundary startBoundary);
 
   /**
    * Configures the builder to end the commit range at a specific version or timestamp.
