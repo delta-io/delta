@@ -50,7 +50,8 @@ public final class CatalogTableUtils {
           + TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName();
 
   /**
-   * Property key for the preview catalog-owned feature flag ({@code delta.feature.catalogOwned-preview}).
+   * Property key for the preview catalog-owned feature flag ({@code
+   * delta.feature.catalogOwned-preview}).
    */
   public static final String FEATURE_CATALOG_OWNED_PREVIEW =
       TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + "catalogOwned-preview";
