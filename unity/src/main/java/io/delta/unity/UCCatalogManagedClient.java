@@ -245,6 +245,9 @@ public class UCCatalogManagedClient {
     checkArgument(
         !endVersionOpt.isPresent() || !endTimestampOpt.isPresent(),
         "Cannot provide both an end timestamp and start version");
+    checkArgument(
+        startVersionOpt.isPresent() || startTimestampOpt.isPresent(),
+        "Must provide either a start timestamp or start version");
     if (startVersionOpt.isPresent() && endVersionOpt.isPresent()) {
       checkArgument(
           startVersionOpt.get() <= endVersionOpt.get(),
@@ -282,19 +285,20 @@ public class UCCatalogManagedClient {
         "TableManager.loadCommitRange",
         ucTableId,
         () -> {
-          CommitRangeBuilder commitRangeBuilder = TableManager.loadCommitRange(tablePath);
-
+          // Determine the start boundary (required - validated above)
+          CommitRangeBuilder.CommitBoundary startBoundary;
           if (startVersionOpt.isPresent()) {
-            commitRangeBuilder =
-                commitRangeBuilder.withStartBoundary(
-                    CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get()));
+            startBoundary = CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get());
+          } else {
+            // startTimestampOpt must be present due to validation above
+            startBoundary =
+                CommitRangeBuilder.CommitBoundary.atTimestamp(
+                    startTimestampOpt.get(), latestSnapshot.get());
           }
-          if (startTimestampOpt.isPresent()) {
-            commitRangeBuilder =
-                commitRangeBuilder.withStartBoundary(
-                    CommitRangeBuilder.CommitBoundary.atTimestamp(
-                        startTimestampOpt.get(), latestSnapshot.get()));
-          }
+
+          CommitRangeBuilder commitRangeBuilder =
+              TableManager.loadCommitRange(tablePath, startBoundary);
+
           if (endVersionOpt.isPresent()) {
             commitRangeBuilder =
                 commitRangeBuilder.withEndBoundary(
