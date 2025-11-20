@@ -65,10 +65,10 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
       startVersion: Long,
       endVersion: Long,
       actionSet: Set[DeltaAction]): Seq[ColumnarBatch] = {
-    val commitRange = TableManager.loadCommitRange(tablePath)
-      .withStartBoundary(CommitBoundary.atVersion(startVersion))
-      .withEndBoundary(CommitBoundary.atVersion(endVersion))
-      .build(defaultEngine)
+    val commitRange =
+      TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(startVersion))
+        .withEndBoundary(CommitBoundary.atVersion(endVersion))
+        .build(defaultEngine)
     commitRange.getActions(
       defaultEngine,
       getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, startVersion),
@@ -80,10 +80,10 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
       (0 to 4).foreach { _ =>
         spark.range(10).write.format("delta").mode("append").save(tempDir.getCanonicalPath)
       }
-      val commitRange = TableManager.loadCommitRange(tempDir.getCanonicalPath)
-        .withStartBoundary(CommitBoundary.atVersion(0))
-        .withEndBoundary(CommitBoundary.atVersion(4))
-        .build(defaultEngine)
+      val commitRange =
+        TableManager.loadCommitRange(tempDir.getCanonicalPath, CommitBoundary.atVersion(0))
+          .withEndBoundary(CommitBoundary.atVersion(4))
+          .build(defaultEngine)
       val e = intercept[IllegalArgumentException] {
         commitRange.getActions(
           defaultEngine,
@@ -94,13 +94,14 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
     }
   }
 
-  test("No boundaries provided uses defaults") {
+  test("No end boundary provided defaults to latest") {
     withTempDir { tempDir =>
       (0 to 4).foreach { _ =>
         spark.range(10).write.format("delta").mode("append").save(tempDir.getCanonicalPath)
       }
-      val commitRange = TableManager.loadCommitRange(tempDir.getCanonicalPath)
-        .build(defaultEngine)
+      val commitRange =
+        TableManager.loadCommitRange(tempDir.getCanonicalPath, CommitBoundary.atVersion(0))
+          .build(defaultEngine)
       assert(commitRange.getStartVersion == 0 && commitRange.getEndVersion == 4)
       // Just double check the changes are correct
       testGetChangesVsSpark(tempDir.getCanonicalPath, 0, 4, FULL_ACTION_SET)
@@ -129,14 +130,17 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
 
       val latestSnapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
       def checkStartBoundary(timestamp: Long, expectedVersion: Long): Unit = {
-        assert(TableManager.loadCommitRange(tablePath)
-          .withStartBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
-          .build(defaultEngine).getStartVersion == expectedVersion)
+        assert(TableManager.loadCommitRange(
+          tablePath,
+          CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine)
+          .getStartVersion == expectedVersion)
       }
       def checkEndBoundary(timestamp: Long, expectedVersion: Long): Unit = {
-        assert(TableManager.loadCommitRange(tablePath)
+        assert(TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
           .withEndBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
-          .build(defaultEngine).getEndVersion == expectedVersion)
+          .build(defaultEngine)
+          .getEndVersion == expectedVersion)
       }
 
       // startTimestamp is before the earliest available version
@@ -206,14 +210,17 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
       val latestSnapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
 
       def checkStartBoundary(timestamp: Long, expectedVersion: Long): Unit = {
-        assert(TableManager.loadCommitRange(tablePath)
-          .withStartBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
-          .build(defaultEngine).getStartVersion == expectedVersion)
+        assert(TableManager.loadCommitRange(
+          tablePath,
+          CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine)
+          .getStartVersion == expectedVersion)
       }
       def checkEndBoundary(timestamp: Long, expectedVersion: Long): Unit = {
-        assert(TableManager.loadCommitRange(tablePath)
+        assert(TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
           .withEndBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
-          .build(defaultEngine).getEndVersion == expectedVersion)
+          .build(defaultEngine)
+          .getEndVersion == expectedVersion)
       }
 
       // Test that timestamp resolution is done using ICT. Since the file modification times for
@@ -283,8 +290,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
       delta1.setLastModified(2000)
       delta2.setLastModified(3000)
 
-      val commitRange = TableManager.loadCommitRange(tablePath)
-        .withStartBoundary(CommitBoundary.atVersion(0))
+      val commitRange = TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
         .withEndBoundary(CommitBoundary.atVersion(2))
         .build(defaultEngine)
 
@@ -355,8 +361,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
         clock = clock)
 
-      val commitRange = TableManager.loadCommitRange(tablePath)
-        .withStartBoundary(CommitBoundary.atVersion(0))
+      val commitRange = TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
         .withEndBoundary(CommitBoundary.atVersion(2))
         .build(defaultEngine)
 
@@ -404,8 +409,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         spark.range(10).write.format("delta").mode("append").save(tablePath)
       }
 
-      val commitRange = TableManager.loadCommitRange(tablePath)
-        .withStartBoundary(CommitBoundary.atVersion(0))
+      val commitRange = TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
         .withEndBoundary(CommitBoundary.atVersion(2))
         .build(defaultEngine)
 
@@ -484,8 +488,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
       val txn = deltaLog.startTransaction()
       txn.commitUnsafe(tablePath, 1)
 
-      val commitRange = TableManager.loadCommitRange(tablePath)
-        .withStartBoundary(CommitBoundary.atVersion(0))
+      val commitRange = TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
         .withEndBoundary(CommitBoundary.atVersion(1))
         .build(defaultEngine)
 
