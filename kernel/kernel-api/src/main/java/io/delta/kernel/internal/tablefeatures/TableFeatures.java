@@ -82,11 +82,8 @@ public class TableFeatures {
     }
   }
 
-  // TODO: [delta-io/delta#4763] Support `catalogManaged` when the RFC is formally accepted into the
-  //       protocol.
-
-  public static final TableFeature CATALOG_MANAGED_R_W_FEATURE_PREVIEW =
-      new CatalogManagedFeatureBase("catalogOwned-preview");
+  public static final TableFeature CATALOG_MANAGED_RW_FEATURE =
+      new CatalogManagedFeatureBase("catalogManaged");
 
   private static class CatalogManagedFeatureBase extends TableFeature.ReaderWriterFeature {
     CatalogManagedFeatureBase(String featureName) {
@@ -519,7 +516,7 @@ public class TableFeatures {
           Arrays.asList(
               ALLOW_COLUMN_DEFAULTS_W_FEATURE,
               APPEND_ONLY_W_FEATURE,
-              CATALOG_MANAGED_R_W_FEATURE_PREVIEW,
+              CATALOG_MANAGED_RW_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
               CLUSTERING_W_FEATURE,
@@ -726,7 +723,7 @@ public class TableFeatures {
   /////////////////////////////
 
   public static boolean isCatalogManagedSupported(Protocol protocol) {
-    return protocol.supportsFeature(CATALOG_MANAGED_R_W_FEATURE_PREVIEW);
+    return protocol.supportsFeature(CATALOG_MANAGED_RW_FEATURE);
   }
 
   public static boolean isRowTrackingSupported(Protocol protocol) {

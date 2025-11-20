@@ -38,6 +38,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.unity.metrics.UcLoadSnapshotTelemetry;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
@@ -58,7 +59,7 @@ public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
   /** Key for identifying Unity Catalog table ID. */
-  public static final String UC_TABLE_ID_KEY = "ucTableId";
+  public static final String UC_TABLE_ID_KEY = "catalogManaged.unityCatalog.tableId";
 
   protected final UCClient ucClient;
 
@@ -106,37 +107,72 @@ public class UCCatalogManagedClient {
         "[{}] Loading Snapshot at {}",
         ucTableId,
         getVersionOrTimestampString(versionOpt, timestampOpt));
-    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, versionOpt);
-    final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
-    versionOpt.ifPresent(
-        version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));
-    final List<ParsedLogData> logData =
-        getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
 
-    return timeUncheckedOperation(
-        logger,
-        "TableManager.loadSnapshot",
-        ucTableId,
-        () -> {
-          SnapshotBuilder snapshotBuilder = TableManager.loadSnapshot(tablePath);
+    final UcLoadSnapshotTelemetry telemetry =
+        new UcLoadSnapshotTelemetry(ucTableId, tablePath, versionOpt, timestampOpt);
 
-          if (versionOpt.isPresent()) {
-            snapshotBuilder = snapshotBuilder.atVersion(versionOpt.get());
-          }
+    final UcLoadSnapshotTelemetry.MetricsCollector metricsCollector =
+        telemetry.getMetricsCollector();
 
-          if (timestampOpt.isPresent()) {
-            // If timestampOpt is present, we know versionOpt is not ==> logData was not requested
-            // with an endVersion and thus can be re-used to load the latest snapshot
-            Snapshot latestSnapshot =
-                loadLatestSnapshotForTimestampResolution(engine, ucTableId, tablePath, logData);
-            snapshotBuilder = snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
-          }
+    try {
+      final Snapshot result =
+          metricsCollector.totalSnapshotLoadTimer.timeChecked(
+              () -> {
+                final GetCommitsResponse response =
+                    metricsCollector.getCommitsTimer.timeChecked(
+                        () -> getRatifiedCommitsFromUC(ucTableId, tablePath, versionOpt));
 
-          return snapshotBuilder
-              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
-              .withLogData(logData)
-              .build(engine);
-        });
+                metricsCollector.setNumCatalogCommits(response.getCommits().size());
+
+                final long ucTableVersion =
+                    getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
+                versionOpt.ifPresent(
+                    version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));
+                final List<ParsedLogData> logData =
+                    getSortedKernelParsedDeltaDataFromRatifiedCommits(
+                        ucTableId, response.getCommits());
+
+                return metricsCollector.kernelSnapshotBuildTimer.timeChecked(
+                    () -> {
+                      SnapshotBuilder snapshotBuilder = TableManager.loadSnapshot(tablePath);
+
+                      if (versionOpt.isPresent()) {
+                        snapshotBuilder = snapshotBuilder.atVersion(versionOpt.get());
+                      }
+
+                      if (timestampOpt.isPresent()) {
+                        // If timestampOpt is present, we know versionOpt is not present. This means
+                        // logData was not requested with an endVersion and thus it can be re-used
+                        // to load the latest snapshot
+                        Snapshot latestSnapshot =
+                            metricsCollector.loadLatestSnapshotForTimestampTimeTravelTimer
+                                .timeChecked(
+                                    () ->
+                                        loadLatestSnapshotForTimestampResolution(
+                                            engine, ucTableId, tablePath, logData, ucTableVersion));
+                        snapshotBuilder =
+                            snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
+                      }
+
+                      Snapshot snapshot =
+                          snapshotBuilder
+                              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
+                              .withLogData(logData)
+                              .withMaxCatalogVersion(ucTableVersion)
+                              .build(engine);
+                      metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
+                      return snapshot;
+                    });
+              });
+
+      final UcLoadSnapshotTelemetry.Report successReport = telemetry.createSuccessReport();
+      engine.getMetricsReporters().forEach(r -> r.report(successReport));
+      return result;
+    } catch (Exception e) {
+      final UcLoadSnapshotTelemetry.Report failureReport = telemetry.createFailureReport(e);
+      engine.getMetricsReporters().forEach(r -> r.report(failureReport));
+      throw e;
+    }
   }
 
   /**
@@ -237,7 +273,9 @@ public class UCCatalogManagedClient {
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
     final Lazy<Snapshot> latestSnapshot =
         new Lazy<>(
-            () -> loadLatestSnapshotForTimestampResolution(engine, ucTableId, tablePath, logData));
+            () ->
+                loadLatestSnapshotForTimestampResolution(
+                    engine, ucTableId, tablePath, logData, ucTableVersion));
 
     return timeUncheckedOperation(
         logger,
@@ -337,6 +375,7 @@ public class UCCatalogManagedClient {
         ucTableId,
         getVersionString(versionOpt));
 
+    // TODO: We can remove timeUncheckedOperation when the commitRange code integrates with metrics
     final GetCommitsResponse response =
         timeUncheckedOperation(
             logger,
@@ -413,7 +452,7 @@ public class UCCatalogManagedClient {
     final Map<String, String> requiredProperties = new HashMap<>();
 
     requiredProperties.put(
-        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.getTableFeatureSupportKey(),
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey(),
         TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
     requiredProperties.put(UC_TABLE_ID_KEY, ucTableId);
 
@@ -459,7 +498,12 @@ public class UCCatalogManagedClient {
    * and were not queried with an endVersion).
    */
   private Snapshot loadLatestSnapshotForTimestampResolution(
-      Engine engine, String ucTableId, String tablePath, List<ParsedLogData> logData) {
+      Engine engine,
+      String ucTableId,
+      String tablePath,
+      List<ParsedLogData> logData,
+      long ucTableVersion) {
+    // TODO: We can remove timeUncheckedOperation when the commitRange code integrates with metrics
     return timeUncheckedOperation(
         logger,
         "TableManager.loadSnapshot at latest for time-travel query",
@@ -468,6 +512,7 @@ public class UCCatalogManagedClient {
             TableManager.loadSnapshot(tablePath)
                 .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
                 .withLogData(logData)
+                .withMaxCatalogVersion(ucTableVersion)
                 .build(engine));
   }
 }
