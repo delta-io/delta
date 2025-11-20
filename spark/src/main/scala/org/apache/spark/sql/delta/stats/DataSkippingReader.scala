@@ -1060,16 +1060,16 @@ trait DataSkippingReaderBase
           // But we need the adjustment in any case to correctly read stats written by old versions.
           // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
           Column(Cast(TimestampAdd(
-            "",  // unit not needed for interval literal
-            oneMillisecondLiteralExpr,
+            "MILLISECOND",
+            new Literal(1L, LongType),
             statCol.expr), TimestampType))
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
           // We also apply the same adjustment of max stats that was applied to Timestamp
           // for TimestampNTZ because these 2 types have the same precision in terms of time.
           // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
           Column(Cast(TimestampAdd(
-            "",  // unit not needed for interval literal
-            oneMillisecondLiteralExpr,
+            "MILLISECOND",
+            new Literal(1L, LongType),
             statCol.expr), TimestampNTZType))
         case (statCol, _, _) =>
           statCol

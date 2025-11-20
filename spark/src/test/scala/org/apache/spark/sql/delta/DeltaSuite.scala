@@ -2664,7 +2664,7 @@ class DeltaSuite extends QueryTest
       runDelete(1)
       assertTable(4)
       // run delete (1), table should have 3 rows (2,0),(3,0),(4,0)
-      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "idempotent write: valid txnVersion3")
       runDelete(1)
       assertTable(3)
 
@@ -2681,8 +2681,7 @@ class DeltaSuite extends QueryTest
         "spark.databricks.delta.write.txnVersion", "someVersion")
     }
     assert(e.getMessage == "spark.databricks.delta.write.txnVersion should be " +
-      "long, but was someVersion")
-
+      "long, but was someVersion" || e.getMessage.contains("INVALID_CONF_VALUE.TYPE_MISMATCH"))
     // clean up
     spark.conf.unset("spark.databricks.delta.write.txnAppId")
     spark.conf.unset("spark.databricks.delta.write.txnVersion")
