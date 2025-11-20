@@ -149,6 +149,22 @@ class CatalogTableUtilsTest {
         "Null storage properties should not be considered Unity managed");
   }
 
+  @Test
+  void testGetCatalogName_NullTable_ThrowsException() {
+    assertThrows(
+        NullPointerException.class,
+        () -> CatalogTableUtils.getCatalogName(null, null),
+        "Null table should throw NullPointerException");
+  }
+
+  @Test
+  void testGetUCCatalogConfig_NullTable_ThrowsException() {
+    assertThrows(
+        NullPointerException.class,
+        () -> CatalogTableUtils.getUCCatalogConfig(null, null),
+        "Null table should throw NullPointerException");
+  }
+
   private static CatalogTable catalogTable(
       Map<String, String> properties, Map<String, String> storageProperties) {
     return CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(properties, storageProperties);

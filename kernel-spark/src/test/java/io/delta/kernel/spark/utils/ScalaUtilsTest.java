@@ -17,6 +17,7 @@ package io.delta.kernel.spark.utils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
@@ -48,5 +49,13 @@ class ScalaUtilsTest {
     Map<String, String> javaMap = ScalaUtils.toJavaMap(scalaMap);
 
     assertEquals(Map.of("foo", "bar"), javaMap, "Scala map entries should be preserved");
+  }
+
+  @Test
+  void testGetUCCatalogConfigs_NullSpark_ThrowsException() {
+    assertThrows(
+        NullPointerException.class,
+        () -> ScalaUtils.getUCCatalogConfigs(null),
+        "Null spark should throw NullPointerException");
   }
 }
