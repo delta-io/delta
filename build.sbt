@@ -961,12 +961,31 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
-lazy val unity = (project in file("unity"))
+lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelDefaults % "test->test")
+  .dependsOn(kernelApi % "test->test")
+  .dependsOn(storage % "test->test")
+  .settings(
+    name := "delta-kernel-benchmarks",
+    commonSettings,
+    skipReleaseSettings,
+    exportJars := false,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
+    
+    libraryDependencies ++= Seq(
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
+    ),
+  )
+
+lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(storage)
   .settings (
-    name := "delta-unity",
+    name := "delta-kernel-unitycatalog",
     commonSettings,
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
