@@ -134,5 +134,10 @@ override.tf.json
 .netlify
 
 # Ignore kernel benchmark report
-kernel/kernel-benchmarks/benchmark_report.json
+kernel/kernel-defaults/benchmark_report.json
 
+# Claude Code
+.claude/
+
+# Bazel BSP
+.bazelbsp/

@@ -29,10 +29,26 @@ case class ScanFile(
 )
 
 /**
+ * Temporary credentials for accessing cloud storage.
+ * Optional - only present when the server vends credentials.
+ */
+case class StorageCredentials(
+  accessKeyId: String,
+  secretAccessKey: String,
+  sessionToken: String
+)
+
+/**
  * Result of a table scan plan operation.
+ *
+ * @param files List of files to scan
+ * @param credentials Optional storage credentials. When present, these should be used
+ *                    to access the files. When absent, credentials must be provided
+ *                    through other means (e.g., IAM roles, environment variables).
  */
 case class ScanPlan(
-  files: Seq[ScanFile]
+  files: Seq[ScanFile],
+  credentials: Option[StorageCredentials] = None
 )
 
 /**
