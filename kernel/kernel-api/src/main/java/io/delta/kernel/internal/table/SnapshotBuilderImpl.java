@@ -29,6 +29,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.Collections;
@@ -51,6 +52,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     public Optional<Committer> committerOpt = Optional.empty();
     public List<ParsedLogData> logDatas = Collections.emptyList();
     public Optional<Tuple2<Protocol, Metadata>> protocolAndMetadataOpt = Optional.empty();
+    public Optional<Long> maxCatalogVersion = Optional.empty();
 
     public Context(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
@@ -106,6 +108,13 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   }
 
   @Override
+  public SnapshotBuilderImpl withMaxCatalogVersion(long version) {
+    checkArgument(version >= 0, "A valid version must be >= 0");
+    ctx.maxCatalogVersion = Optional.of(version);
+    return this;
+  }
+
+  @Override
   public SnapshotImpl build(Engine engine) {
     validateInputOnBuild(engine);
     return new SnapshotFactory(engine, ctx).create(engine);
@@ -123,6 +132,8 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     // TODO: delta-io/delta#4765 support other types
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
+    validateMaxCatalogVersionCompatibleWithTimeTravelParams();
+    validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad();
   }
 
   /**
@@ -161,5 +172,54 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   private void validateProtocolRead() {
     ctx.protocolAndMetadataOpt.ifPresent(
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
+  }
+
+  /**
+   * For catalog managed tables we cannot time-travel to a version after the max catalog version. We
+   * also require that the latestSnapshot provided for timestamp-based queries has the max catalog
+   * version.
+   */
+  private void validateMaxCatalogVersionCompatibleWithTimeTravelParams() {
+    ctx.maxCatalogVersion.ifPresent(
+        maxVersion -> {
+          ctx.versionOpt.ifPresent(
+              version ->
+                  checkArgument(
+                      version <= maxVersion,
+                      String.format(
+                          "Cannot time-travel to version %s after the max catalog version %s",
+                          version, maxVersion)));
+          ctx.timestampQueryContextOpt.ifPresent(
+              queryContext ->
+                  checkArgument(
+                      queryContext._1.getVersion() == maxVersion,
+                      "The latestSnapshot provided for timestamp-based time-travel queries "
+                          + "must have version = maxCatalogVersion"));
+        });
+  }
+
+  /**
+   * When a catalog implementation has provided catalog commits we require that they provide up to
+   * and including the version that we will load (which for a latest query is the max catalog
+   * version, and for a time-travel-by-version query is the version to load). This is to validate
+   * that the catalog has queried and provided sufficient catalog commits to correctly read the
+   * table.
+   */
+  private void validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad() {
+    ctx.maxCatalogVersion.ifPresent(
+        maxVersion -> {
+          if (!ctx.logDatas.isEmpty()) {
+            ParsedLogData tailLogData = ListUtils.getLast(ctx.logDatas);
+            if (ctx.versionOpt.isPresent()) {
+              checkArgument(
+                  tailLogData.getVersion() >= ctx.versionOpt.get(),
+                  "Provided catalog commits must include versionToLoad for time-travel queries");
+            } else {
+              checkArgument(
+                  maxVersion == tailLogData.getVersion(),
+                  "Provided catalog commits must end with max catalog version");
+            }
+          }
+        });
   }
 }
