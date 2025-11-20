@@ -214,14 +214,14 @@ public class UCCatalogManagedClient {
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
    * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
    * @param tablePath The path to the Delta table in the underlying storage system.
-   * @param startVersionOpt The optional start version boundary. This must be mutually exclusive with
-   *     startTimestampOpt. Either this or startTimestampOpt must be provided.
+   * @param startVersionOpt The optional start version boundary. This must be mutually exclusive
+   *     with startTimestampOpt. Either this or startTimestampOpt must be provided.
    * @param startTimestampOpt The optional start timestamp boundary. This must be mutually exclusive
    *     with startVersionOpt. Either this or startVersionOpt must be provided.
    * @param endVersionOpt The optional end version boundary. This must be mutually exclusive with
    *     endTimestampOpt.
-   * @param endTimestampOpt The optional end timestamp boundary. This must be mutually exclusive with
-   *     endVersionOpt.
+   * @param endTimestampOpt The optional end timestamp boundary. This must be mutually exclusive
+   *     with endVersionOpt.
    * @throws IllegalArgumentException if neither startVersionOpt nor startTimestampOpt is provided
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined

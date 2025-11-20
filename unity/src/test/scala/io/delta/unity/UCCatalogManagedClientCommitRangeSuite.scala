@@ -198,8 +198,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
     testLoadCommitRange(
       expectedStartVersion = 0,
       expectedEndVersion = 2,
-      startVersionOpt = Optional.of(0L),
-    )
+      startVersionOpt = Optional.of(0L))
   }
 
   test("loadCommitRange loads with version boundaries") {
