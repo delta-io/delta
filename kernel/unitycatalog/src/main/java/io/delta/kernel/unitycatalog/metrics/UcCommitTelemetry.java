@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity.metrics;
+package io.delta.kernel.unitycatalog.metrics;
 
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.internal.metrics.MetricsReportSerializer;

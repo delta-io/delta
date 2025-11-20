@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity
+package io.delta.kernel.unitycatalog
 
 import java.io.IOException
 import java.util.Optional
@@ -32,8 +32,8 @@ import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, Tes
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
-import io.delta.unity.InMemoryUCClient.TableData
 
+import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
 
 class UCCatalogManagedCommitterSuite

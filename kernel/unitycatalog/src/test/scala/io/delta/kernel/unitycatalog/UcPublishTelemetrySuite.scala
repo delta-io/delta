@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-package io.delta.unity
+package io.delta.kernel.unitycatalog
 
 import io.delta.kernel.Operation
 import io.delta.kernel.commit.PublishFailedException
 import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.unitycatalog.metrics.UcPublishTelemetry
 import io.delta.kernel.utils.CloseableIterable
-import io.delta.unity.metrics.UcPublishTelemetry
 
 import org.scalatest.funsuite.AnyFunSuite
 

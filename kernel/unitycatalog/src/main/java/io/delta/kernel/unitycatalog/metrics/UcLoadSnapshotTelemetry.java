@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity.metrics;
+package io.delta.kernel.unitycatalog.metrics;
 
 import io.delta.kernel.internal.metrics.MetricsReportSerializer;
 import io.delta.kernel.internal.metrics.Timer;

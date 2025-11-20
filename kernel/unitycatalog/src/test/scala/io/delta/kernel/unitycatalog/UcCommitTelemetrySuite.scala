@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity
+package io.delta.kernel.unitycatalog
 
 import java.util.Optional
 
@@ -24,8 +24,8 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.exceptions.MaxCommitRetryLimitReachedException
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils}
+import io.delta.kernel.unitycatalog.metrics.UcCommitTelemetry
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
-import io.delta.unity.metrics.UcCommitTelemetry
 
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite

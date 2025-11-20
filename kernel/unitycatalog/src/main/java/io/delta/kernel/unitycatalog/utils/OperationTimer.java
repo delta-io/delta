@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity.utils;
+package io.delta.kernel.unitycatalog.utils;
 
 import java.util.function.Supplier;
 import org.slf4j.Logger;

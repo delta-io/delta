@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity
+package io.delta.kernel.unitycatalog
 
 import java.util.Optional
 
@@ -28,8 +28,8 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
-import io.delta.unity.InMemoryUCClient.TableData
 
+import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
 
 class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {

@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-package io.delta.unity;
+package io.delta.kernel.unitycatalog;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.unity.utils.OperationTimer.timeUncheckedOperation;
+import static io.delta.kernel.unitycatalog.utils.OperationTimer.timeUncheckedOperation;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
@@ -34,11 +34,11 @@ import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.unitycatalog.metrics.UcLoadSnapshotTelemetry;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
-import io.delta.unity.metrics.UcLoadSnapshotTelemetry;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;

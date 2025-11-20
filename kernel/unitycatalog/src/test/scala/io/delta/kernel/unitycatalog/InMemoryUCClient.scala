@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity
+package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI

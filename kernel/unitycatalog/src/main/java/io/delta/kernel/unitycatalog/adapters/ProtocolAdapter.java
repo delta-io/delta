@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity.adapters;
+package io.delta.kernel.unitycatalog.adapters;
 
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.storage.commit.actions.AbstractProtocol;

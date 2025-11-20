@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity
+package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
@@ -39,8 +39,8 @@ import io.delta.kernel.metrics.MetricsReport
 import io.delta.kernel.test.{ActionUtils, TestFixtures}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
-import io.delta.unity.InMemoryUCClient.TableData
 
+import InMemoryUCClient.TableData
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, FileSystem, Path}
 

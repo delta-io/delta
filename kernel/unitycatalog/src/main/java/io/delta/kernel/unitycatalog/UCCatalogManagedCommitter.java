@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-package io.delta.unity;
+package io.delta.kernel.unitycatalog;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
-import static io.delta.unity.UCCatalogManagedClient.UC_TABLE_ID_KEY;
+import static io.delta.kernel.unitycatalog.UCCatalogManagedClient.UC_TABLE_ID_KEY;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.commit.*;
@@ -29,15 +29,15 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.unitycatalog.adapters.MetadataAdapter;
+import io.delta.kernel.unitycatalog.adapters.ProtocolAdapter;
+import io.delta.kernel.unitycatalog.metrics.UcCommitTelemetry;
+import io.delta.kernel.unitycatalog.metrics.UcPublishTelemetry;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
-import io.delta.unity.adapters.MetadataAdapter;
-import io.delta.unity.adapters.ProtocolAdapter;
-import io.delta.unity.metrics.UcCommitTelemetry;
-import io.delta.unity.metrics.UcPublishTelemetry;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.unity.adapters
+package io.delta.kernel.unitycatalog.adapters
 
 import scala.jdk.CollectionConverters._
 
