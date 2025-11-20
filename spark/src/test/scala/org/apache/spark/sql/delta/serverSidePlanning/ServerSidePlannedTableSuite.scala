@@ -177,6 +177,84 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
+  test("S3 credential injection via CredentialTestFileSystem") {
+    // This test verifies that credentials from server-side planning response
+    // are correctly injected into Hadoop configuration for S3 access.
+    //
+    // Flow:
+    // 1. Configure fs.s3a.impl to use S3CredentialTestFileSystem
+    // 2. TestServerSidePlanningClient returns ScanPlan with test credentials
+    // 3. TestServerSidePlanningClient rewrites file:// paths to s3a://
+    // 4. ServerSidePlannedTable injects credentials into Hadoop config
+    // 5. S3CredentialTestFileSystem validates credentials before allowing file access
+    // 6. Query succeeds if credentials are valid
+
+    val originalFsImpl = spark.conf.getOption("fs.s3a.impl")
+    val originalConfig = spark.conf.getOption(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+
+    try {
+      // Configure S3 to use our test filesystem
+      spark.conf.set("fs.s3a.impl",
+        "org.apache.spark.sql.delta.serverSidePlanning.S3CredentialTestFileSystem")
+
+      // Create test credentials
+      val testCredentials = Some(StorageCredentials(
+        accessKeyId = "test-access-key",
+        secretAccessKey = "test-secret-key",
+        sessionToken = "test-session-token"
+      ))
+
+      // Set expected credentials for validation
+      // The filesystem will verify these exact values match what's in Hadoop config
+      S3CredentialTestFileSystem.setExpectedCredentials(
+        accessKey = "test-access-key",
+        secretKey = "test-secret-key",
+        sessionToken = "test-session-token"
+      )
+
+      // Set up factory that returns clients with credentials
+      // pathRewriteScheme = "s3a" causes file:// paths to be rewritten to s3a://
+      ServerSidePlanningClientFactory.setFactory(
+        new TestServerSidePlanningClientFactoryWithCredentials(
+          credentials = testCredentials,
+          pathRewriteScheme = Some("s3a")
+        )
+      )
+      spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "true")
+
+      // Query the shared test table
+      // This will:
+      // - Load table via DeltaCatalog
+      // - Get ServerSidePlannedTable
+      // - Call planScan() which returns s3a:// paths with credentials
+      // - Inject credentials into Hadoop config
+      // - Access files via S3CredentialTestFileSystem
+      // - S3CredentialTestFileSystem validates exact credential values
+      checkAnswer(
+        sql("SELECT id, name, value FROM test_db.shared_test ORDER BY id"),
+        Seq(
+          Row(1, "alpha", 10),
+          Row(2, "beta", 20),
+          Row(3, "gamma", 30)
+        )
+      )
+
+      // If we got here, credentials were successfully injected and validated!
+    } finally {
+      // Cleanup
+      S3CredentialTestFileSystem.clearExpectedCredentials()
+      ServerSidePlanningClientFactory.clearFactory()
+      originalConfig match {
+        case Some(value) => spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, value)
+        case None => spark.conf.unset(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+      }
+      originalFsImpl match {
+        case Some(value) => spark.conf.set("fs.s3a.impl", value)
+        case None => spark.conf.unset("fs.s3a.impl")
+      }
+    }
+  }
+
   test("UnityCatalogMetadata constructs IRC endpoint from UC URI") {
     val ucUri = "https://my-workspace.cloud.databricks.com"
     val metadata = UnityCatalogMetadata(
