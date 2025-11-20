@@ -17,6 +17,7 @@ package io.delta.kernel.spark.utils;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
 import java.util.Map;
@@ -40,9 +41,17 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  * </ul>
  */
 public final class CatalogTableUtils {
-  static final String FEATURE_CATALOG_MANAGED = "delta.feature.catalogManaged";
-  static final String FEATURE_CATALOG_OWNED_PREVIEW = "delta.feature.catalogOwned-preview";
-  private static final String SUPPORTED = "supported";
+  /**
+   * Property key for catalog-managed feature flag.
+   * Constructed from {@link TableFeatures#CATALOG_MANAGED_RW_FEATURE} (delta.feature.catalogManaged)
+   * and preview variant (delta.feature.catalogOwned-preview)
+   */
+  static final String FEATURE_CATALOG_MANAGED =
+      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
+          + TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName();
+  static final String FEATURE_CATALOG_OWNED_PREVIEW =
+      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + "catalogOwned-preview";
+  private static final String SUPPORTED = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE;
 
   private CatalogTableUtils() {}
 
