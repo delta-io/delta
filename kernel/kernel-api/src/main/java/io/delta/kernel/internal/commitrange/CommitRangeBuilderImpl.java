@@ -81,7 +81,8 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
   ////////////////////////////
 
   private void validateInputOnBuild() {
-    // Validate that start boundary is less than or equal to end boundary if end boundary is provided
+    // Validate that start boundary is less than or equal to end boundary if end boundary is
+    // provided
     if (ctx.endBoundaryOpt.isPresent()) {
       CommitBoundary startBoundary = ctx.startBoundary;
       CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
