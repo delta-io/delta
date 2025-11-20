@@ -586,7 +586,10 @@ lazy val spark = (project in file("spark-unified"))
         override def transform(n: Node): Seq[Node] = n match {
           case e: Elem if e.label == "dependency" =>
             val artifactId = (e \ "artifactId").text
-            if (internalModules.contains(artifactId)) Seq.empty else Seq(n)
+            // Check if artifactId starts with any internal module name
+            // (e.g., "delta-spark-v1_4.1_2.13" starts with "delta-spark-v1")
+            val isInternal = internalModules.exists(module => artifactId.startsWith(module))
+            if (isInternal) Seq.empty else Seq(n)
           case _ => Seq(n)
         }
       }).transform(node).head
