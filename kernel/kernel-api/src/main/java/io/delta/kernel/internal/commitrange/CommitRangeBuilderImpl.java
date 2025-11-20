@@ -38,30 +38,25 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
 
   public static class Context {
     public final String unresolvedPath;
-    public Optional<CommitBoundary> startBoundaryOpt = Optional.empty();
+    public final CommitBoundary startBoundary;
     public Optional<CommitBoundary> endBoundaryOpt = Optional.empty();
     public List<ParsedLogData> logDatas = Collections.emptyList();
 
-    public Context(String unresolvedPath) {
+    public Context(String unresolvedPath, CommitBoundary startBoundary) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
+      this.startBoundary = requireNonNull(startBoundary, "startBoundary is null");
     }
   }
 
   private final Context ctx;
 
-  public CommitRangeBuilderImpl(String unresolvedPath) {
-    ctx = new Context(unresolvedPath);
+  public CommitRangeBuilderImpl(String unresolvedPath, CommitBoundary startBoundary) {
+    ctx = new Context(unresolvedPath, startBoundary);
   }
 
   ///////////////////////////////////////
   // Public CommitRangeBuilder Methods //
   ///////////////////////////////////////
-
-  @Override
-  public CommitRangeBuilderImpl withStartBoundary(CommitBoundary startBoundary) {
-    ctx.startBoundaryOpt = Optional.of(requireNonNull(startBoundary, "startBoundary is null"));
-    return this;
-  }
 
   @Override
   public CommitRangeBuilderImpl withEndBoundary(CommitBoundary endBoundary) {
@@ -86,9 +81,9 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
   ////////////////////////////
 
   private void validateInputOnBuild() {
-    // Validate that start boundary is less than or equal to end boundary if both are provided
-    if (ctx.startBoundaryOpt.isPresent() && ctx.endBoundaryOpt.isPresent()) {
-      CommitBoundary startBoundary = ctx.startBoundaryOpt.get();
+    // Validate that start boundary is less than or equal to end boundary if end boundary is provided
+    if (ctx.endBoundaryOpt.isPresent()) {
+      CommitBoundary startBoundary = ctx.startBoundary;
       CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
 
       // If both are version-based, compare versions
