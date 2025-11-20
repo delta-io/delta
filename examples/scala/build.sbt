@@ -18,7 +18,7 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala213 = "2.13.16"
+val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
@@ -132,7 +132,7 @@ def getLibraryDependencies(
     deltaArtifactName: String,
     icebergSparkRuntimeArtifactName: String): Seq[ModuleID] = {
   Seq(
-    "io.delta" %% deltaArtifactName % deltaVersion,
+    "io.delta" %% "delta-spark_4.1" % deltaVersion,
     "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
       getMajorMinor(deltaVersion)
     ),

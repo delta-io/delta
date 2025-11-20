@@ -48,6 +48,6 @@ jobs:
         # Thus, we need to publishM2 first so those jars are locally accessible.
         run: |
           build/sbt clean
-          build/sbt publishM2
+          build/sbt -DsparkVersion=master spark/publishM2
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff
