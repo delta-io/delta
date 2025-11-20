@@ -2664,7 +2664,7 @@ class DeltaSuite extends QueryTest
       runDelete(1)
       assertTable(4)
       // run delete (1), table should have 3 rows (2,0),(3,0),(4,0)
-      spark.conf.set("spark.databricks.delta.write.txnVersion", "idempotent write: valid txnVersion3")
+      spark.conf.set("spark.databricks.delta.write.txnVersion", "3")
       runDelete(1)
       assertTable(3)
 
