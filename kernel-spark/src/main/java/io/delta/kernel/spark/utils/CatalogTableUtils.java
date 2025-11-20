@@ -41,16 +41,19 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  * </ul>
  */
 public final class CatalogTableUtils {
+
   /**
-   * Property key for catalog-managed feature flag. Constructed from {@link
-   * TableFeatures#CATALOG_MANAGED_RW_FEATURE} (delta.feature.catalogManaged) and preview variant
-   * (delta.feature.catalogOwned-preview)
+   * Property key for catalog-managed feature flag constructed from {@link
+   * TableFeatures#CATALOG_MANAGED_RW_FEATURE} ({@code delta.feature.catalogManaged}).
    */
-  static final String FEATURE_CATALOG_MANAGED =
+  public static final String FEATURE_CATALOG_MANAGED =
       TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
           + TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName();
 
-  static final String FEATURE_CATALOG_OWNED_PREVIEW =
+  /**
+   * Property key for the preview catalog-owned feature flag ({@code delta.feature.catalogOwned-preview}).
+   */
+  public static final String FEATURE_CATALOG_OWNED_PREVIEW =
       TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + "catalogOwned-preview";
   private static final String SUPPORTED = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE;
 
