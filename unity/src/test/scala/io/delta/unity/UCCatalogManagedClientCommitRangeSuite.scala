@@ -178,6 +178,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       testLoadCommitRange(
         expectedStartVersion = 0,
         expectedEndVersion = 2,
+        startVersionOpt = Optional.of(0L),
         endVersionOpt = Optional.of(9L))
     }
     assert(ex.getMessage.contains(
@@ -260,6 +261,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       testLoadCommitRange(
         expectedStartVersion = 1L,
         expectedEndVersion = 1L,
+        startVersionOpt = Optional.of(0),
         endTimestampOpt = Optional.of(v0Ts - 10))
     }
   }
