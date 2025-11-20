@@ -55,6 +55,7 @@ public final class CatalogTableUtils {
    */
   public static final String FEATURE_CATALOG_OWNED_PREVIEW =
       TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + "catalogOwned-preview";
+
   private static final String SUPPORTED = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE;
 
   private CatalogTableUtils() {}
