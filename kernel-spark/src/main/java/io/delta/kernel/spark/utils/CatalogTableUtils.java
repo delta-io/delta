@@ -41,7 +41,6 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  * </ul>
  */
 public final class CatalogTableUtils {
-
   /**
    * Property key for catalog-managed feature flag constructed from {@link
    * TableFeatures#CATALOG_MANAGED_RW_FEATURE} ({@code delta.feature.catalogManaged}).
