@@ -186,19 +186,19 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   /** Visible for testing. Can be overridden to force an exception in commit method. */
   protected def forceThrowInCommitMethod(): Unit = {}
 
-  private[unity] def createTableIfNotExistsOrThrow(
+  private[unitycatalog] def createTableIfNotExistsOrThrow(
       ucTableId: String,
       tableData: TableData): Unit = {
     Option(tables.putIfAbsent(ucTableId, tableData))
       .foreach(_ => throw new IllegalArgumentException(s"Table $ucTableId already exists"))
   }
 
-  private[unity] def getTablesCopy: Map[String, TableData] = {
+  private[unitycatalog] def getTablesCopy: Map[String, TableData] = {
     tables.asScala.toMap
   }
 
   /** Retrieves table data for the given table ID or throws an exception if not found. */
-  private[unity] def getTableDataElseThrow(tableId: String): TableData = {
+  private[unitycatalog] def getTableDataElseThrow(tableId: String): TableData = {
     Option(tables.get(tableId))
       .getOrElse(throw new InvalidTargetTableException(s"Table not found: $tableId"))
   }
