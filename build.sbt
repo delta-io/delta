@@ -462,7 +462,6 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 lazy val sparkV2 = (project in file("kernel-spark"))
   .dependsOn(sparkV1Filtered)
   .dependsOn(kernelDefaults)
-  .dependsOn(unity)
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-spark-v2",
@@ -586,10 +585,7 @@ lazy val spark = (project in file("spark-unified"))
         override def transform(n: Node): Seq[Node] = n match {
           case e: Elem if e.label == "dependency" =>
             val artifactId = (e \ "artifactId").text
-            // Check if artifactId starts with any internal module name
-            // (e.g., "delta-spark-v1_4.1_2.13" starts with "delta-spark-v1")
-            val isInternal = internalModules.exists(module => artifactId.startsWith(module))
-            if (isInternal) Seq.empty else Seq(n)
+            if (internalModules.contains(artifactId)) Seq.empty else Seq(n)
           case _ => Seq(n)
         }
       }).transform(node).head
@@ -909,12 +905,12 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
     ),
   )
 
-lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
+lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(storage)
   .settings (
-    name := "delta-kernel-unitycatalog",
+    name := "delta-unity",
     commonSettings,
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
