@@ -209,6 +209,6 @@ if __name__ == "__main__":
         # packages locally instead of downloading from Maven.
         delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
                                   "org.apache.spark:spark-connect_2.13:4.0.0",
-                                  get_local_package("delta-connect-server", use_spark_master)]
+                                  get_local_package("delta-connect-server_4.1", use_spark_master)]
 
         test(root_dir, path.join("delta", "connect"), delta_connect_packages)
