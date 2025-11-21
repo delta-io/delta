@@ -16,12 +16,8 @@
 package io.delta.kernel.spark.utils;
 
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
-import org.apache.spark.sql.SparkSession;
 import scala.Tuple2;
-import scala.Tuple3;
 import scala.collection.immutable.Map$;
 import scala.collection.mutable.Builder;
 import scala.jdk.javaapi.CollectionConverters;
@@ -51,32 +47,5 @@ public final class ScalaUtils {
       return Collections.emptyMap();
     }
     return CollectionConverters.asJava(scalaMap);
-  }
-
-  /**
-   * Retrieves all Unity Catalog configurations from the SparkSession.
-   *
-   * <p>This method bridges to Scala code that extracts UC catalog configurations from Spark's
-   * catalog manager settings. The Scala implementation is in {@link
-   * org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder#getCatalogConfigs}.
-   *
-   * @param spark the SparkSession containing catalog configurations
-   * @return list of UC catalog configurations (catalog name, URI, token)
-   * @throws NullPointerException if spark is null
-   */
-  public static List<UCCatalogConfig> getUCCatalogConfigs(SparkSession spark) {
-    if (spark == null) {
-      throw new NullPointerException("spark is null");
-    }
-
-    // Call Scala code to get catalog configs
-    scala.collection.immutable.List<Tuple3<String, String, String>> scalaConfigs =
-        org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$.MODULE$
-            .getCatalogConfigs(spark);
-
-    // Convert Scala List<Tuple3> to Java List<UCCatalogConfig>
-    return CollectionConverters.asJava(scalaConfigs).stream()
-        .map(tuple -> new UCCatalogConfig(tuple._1(), tuple._2(), tuple._3()))
-        .collect(Collectors.toList());
   }
 }

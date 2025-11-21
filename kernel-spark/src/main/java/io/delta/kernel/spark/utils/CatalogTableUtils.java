@@ -20,10 +20,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 
 /**
@@ -116,51 +113,5 @@ public final class CatalogTableUtils {
     }
     Map<String, String> javaStorageProperties = ScalaUtils.toJavaMap(table.storage().properties());
     return javaStorageProperties == null ? Collections.emptyMap() : javaStorageProperties;
-  }
-
-  /**
-   * Extracts the catalog name from a {@link CatalogTable}.
-   *
-   * <p>If the table identifier contains a catalog name, that is returned. Otherwise, falls back to
-   * the current catalog name from the SparkSession.
-   *
-   * @param table Spark {@link CatalogTable} descriptor
-   * @param spark the SparkSession to use for fallback catalog resolution
-   * @return the catalog name
-   */
-  public static String getCatalogName(CatalogTable table, SparkSession spark) {
-    requireNonNull(table, "table is null");
-    requireNonNull(spark, "spark is null");
-
-    scala.Option<String> catalogOption = table.identifier().catalog();
-    if (catalogOption.isDefined()) {
-      return catalogOption.get();
-    }
-
-    // Fall back to current catalog if not specified in table identifier
-    return spark.sessionState().catalogManager().currentCatalog().name();
-  }
-
-  /**
-   * Retrieves Unity Catalog configuration for the catalog owning this table.
-   *
-   * <p>Resolves the catalog name from the table identifier and looks up the corresponding Unity
-   * Catalog configuration from the SparkSession.
-   *
-   * @param table Spark {@link CatalogTable} descriptor
-   * @param spark the SparkSession containing catalog configurations
-   * @return UC catalog configuration if found, empty otherwise
-   */
-  public static Optional<UCCatalogConfig> getUCCatalogConfig(
-      CatalogTable table, SparkSession spark) {
-    requireNonNull(table, "table is null");
-    requireNonNull(spark, "spark is null");
-
-    String catalogName = getCatalogName(table, spark);
-    List<UCCatalogConfig> allConfigs = ScalaUtils.getUCCatalogConfigs(spark);
-
-    return allConfigs.stream()
-        .filter(config -> config.getCatalogName().equals(catalogName))
-        .findFirst();
   }
 }
