@@ -1,5 +1,7 @@
 # Materialize Partition Columns
 
+**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/5555**
+
 ## Overview
 
 Currently, Delta tables store partition column values primarily in the table metadata (specifically in the `partitionValues` field of `AddFile` actions), and by default these columns are not physically written into the Parquet data files themselves.
@@ -13,8 +15,6 @@ This feature provides a mechanism to require partition column materialization at
 Materializing partition columns enhances compatibility with Parquet readers that access Parquet files directly and do not interpret Delta’s AddFile metadata, as well as with Iceberg readers, which expect partition columns to be stored within the data files.
 
 Additionally, having partition information embedded in the data files themselves enables more flexible data reorganization strategies, as files can be physically rearranged without strict partition directory constraints while still maintaining partition information.
-
-**For further discussions about this protocol change, please refer to the Github issue - https://github.com/delta-io/delta/issues/5555**
 
 --------
 
