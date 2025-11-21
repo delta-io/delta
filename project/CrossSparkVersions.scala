@@ -258,7 +258,7 @@ object SparkVersionSpec {
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
     ),
-    jacksonVersion = "2.20.0"
+    jacksonVersion = "2.20"
   )
 
   // TODO 4.2.0-SNAPSHOT (actual master)
