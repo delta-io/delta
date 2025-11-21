@@ -22,6 +22,7 @@ import io.delta.kernel.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
+import java.util.Optional;
 import org.openjdk.jmh.infra.Blackhole;
 
 /**
@@ -57,12 +58,8 @@ public class ReadMetadataRunner extends WorkloadRunner {
 
   @Override
   public void setup() throws Exception {
-    String workloadTableRoot = workloadSpec.getTableInfo().getResolvedTableRoot();
-    SnapshotBuilder builder = TableManager.loadSnapshot(workloadTableRoot);
-    if (workloadSpec.getVersion() != null) {
-      builder.atVersion(workloadSpec.getVersion());
-    }
-    Snapshot snapshot = builder.build(engine);
+    Optional<Long> versionOpt = Optional.ofNullable(workloadSpec.getVersion());
+    Snapshot snapshot = loadSnapshot(engine, workloadSpec.getTableInfo(), versionOpt);
     scan = snapshot.getScanBuilder().build();
   }
 
