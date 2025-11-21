@@ -57,7 +57,6 @@ import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.Seq;
 
@@ -301,7 +300,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     List<PartitionedFile> partitionedFiles = new ArrayList<>();
     long totalBytesToRead = 0;
     try (CloseableIterator<IndexedFile> fileChanges =
-        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Option.apply(endOffset))) {
+        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
       while (fileChanges.hasNext()) {
         IndexedFile indexedFile = fileChanges.next();
         if (!indexedFile.hasFileAction() || indexedFile.getAddFile() == null) {

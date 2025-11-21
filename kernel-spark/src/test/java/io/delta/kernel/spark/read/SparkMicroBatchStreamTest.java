@@ -27,14 +27,20 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.connector.read.InputPartition;
+import org.apache.spark.sql.connector.read.PartitionReader;
+import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.connector.read.streaming.ReadLimit;
 import org.apache.spark.sql.delta.DeltaLog;
@@ -44,10 +50,7 @@ import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
-import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.StructType;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -82,27 +85,6 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     IllegalStateException exception =
         assertThrows(IllegalStateException.class, () -> microBatchStream.latestOffset());
-  }
-
-  @Test
-  public void testPlanInputPartitions_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    Offset start = null;
-    Offset end = null;
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> microBatchStream.planInputPartitions(start, end));
-    assertEquals("planInputPartitions is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testCreateReaderFactory_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class, () -> microBatchStream.createReaderFactory());
-    assertEquals("createReaderFactory is not supported", exception.getMessage());
   }
 
   @Test
@@ -1057,7 +1039,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         "test_plan_partitions_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
     createEmptyTestTable(testTablePath, testTableName);
 
-    insertVersions(testTableName, /* numVersions= */ 5, /* rowsPerVersion= */ 10);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ false);
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSourceOffset startOffset =
