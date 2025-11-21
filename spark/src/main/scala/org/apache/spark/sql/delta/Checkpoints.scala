@@ -253,11 +253,6 @@ trait Checkpoints extends DeltaLogging {
   def dataPath: Path
   protected def store: LogStore
 
-  /** Returns the truncated table ID for logging purposes. Resolves #5445 */
-  private def checkpointTableIdentifier: String = {
-    tableId.split("-").head
-  }
-
   /** Used to clean up stale log files. */
   protected def doLogCleanup(
     snapshotToCleanup: Snapshot,
@@ -475,7 +470,7 @@ trait Checkpoints extends DeltaLogging {
         .filterNot(cv => cv.version < 0 || cv.version == CheckpointInstance.MaxValue.version)
         .getOrElse {
           logInfo(
-            log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, checkpointTableIdentifier)}] Try to " +
+            log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Try to " +
             log"find Delta last complete checkpoint")
           eventData("listingFromZero") = true.toString
           return findLastCompleteCheckpoint()
@@ -485,7 +480,7 @@ trait Checkpoints extends DeltaLogging {
     eventData("upperBoundCheckpointType") = upperBoundCv.format.name
     var iterations: Long = 0L
     var numFilesScanned: Long = 0L
-    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, checkpointTableIdentifier)}] Try to find " +
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Try to find " +
       log"Delta last complete checkpoint before version " +
       log"${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     var listingEndVersion = upperBoundCv.version
@@ -531,7 +526,7 @@ trait Checkpoints extends DeltaLogging {
       eventData("numFilesScanned") = numFilesScanned.toString
       if (lastCheckpoint.isDefined) {
         logInfo(
-          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, checkpointTableIdentifier)}] Delta " +
+          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Delta " +
           log"checkpoint is found at version " +
           log"${MDC(DeltaLogKeys.VERSION, lastCheckpoint.get.version)}")
         return lastCheckpoint
@@ -539,7 +534,7 @@ trait Checkpoints extends DeltaLogging {
       listingEndVersion = listingEndVersion - 1000
     }
     logInfo(
-      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, checkpointTableIdentifier)}] No checkpoint " +
+      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] No checkpoint " +
       log"found for Delta table before version ${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     None
   }
