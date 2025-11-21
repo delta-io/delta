@@ -690,14 +690,11 @@ trait DeltaSourceBase extends Source
       // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
       // will cause the stream to fail with a retryable exception, and the stream will restart using
       // the new schema.
-      val typeWideningMode =
-        if (typeWideningEnabled && !enableSchemaTrackingForTypeWidening) {
-          TypeWideningMode.AllTypeWidening
-        } else {
-         TypeWideningMode.NoTypeWidening
-        }
+      val allowWideningTypeChanges = typeWideningEnabled && !enableSchemaTrackingForTypeWidening
+
       if (!SchemaUtils.isReadCompatible(
-          schemaChange, schema,
+          existingSchema = schemaChange,
+          readSchema = schema,
           forbidTightenNullability = shouldForbidTightenNullability,
           // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
           // column mapping schema changes, we can allow the standard check to allow missing columns
@@ -710,7 +707,13 @@ trait DeltaSourceBase extends Source
             isStreamingFromColumnMappingTable &&
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
               backfilling,
-          typeWideningMode = typeWideningMode,
+          // When backfilling after a type change, allow processing the data using the new, wider
+          // type.
+          typeWideningMode = if (allowWideningTypeChanges && backfilling) {
+              TypeWideningMode.AllTypeWidening
+            } else {
+              TypeWideningMode.NoTypeWidening
+            },
           // Partition column change will be ignored if user enable the unsafe flag
           newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
             else newMetadata.partitionColumns,
@@ -726,10 +729,15 @@ trait DeltaSourceBase extends Source
         // and if it works (including that `schemaChange` should not tighten the nullability
         // constraint from `schema`), it is a retryable exception.
         val retryable = !backfilling && SchemaUtils.isReadCompatible(
-          schema,
-          schemaChange,
+          existingSchema = schema,
+          readSchema = schemaChange,
           forbidTightenNullability = shouldForbidTightenNullability,
-          typeWideningMode = typeWideningMode
+          // Check for widening type changes that would succeed on retry when we backfill batches.
+          typeWideningMode = if (allowWideningTypeChanges) {
+              TypeWideningMode.AllTypeWidening
+            } else {
+              TypeWideningMode.NoTypeWidening
+            }
         )
         throw DeltaErrors.schemaChangedException(
           schema,
