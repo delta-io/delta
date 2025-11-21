@@ -14,7 +14,7 @@ Materializing partition columns enhances compatibility with Parquet readers that
 
 Additionally, having partition information embedded in the data files themselves enables more flexible data reorganization strategies, as files can be physically rearranged without strict partition directory constraints while still maintaining partition information.
 
-**For further discussions about this protocol change, please refer to the Github issue - https://github.com/delta-io/delta/issues/XXXX**
+**For further discussions about this protocol change, please refer to the Github issue - https://github.com/delta-io/delta/issues/5555**
 
 --------
 
