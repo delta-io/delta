@@ -322,7 +322,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         PartitionedFile partitionedFile =
             new PartitionedFile(
                 partitionRow,
-                SparkPath.fromUrlString(tablePath + addFile.getPath()),
+                SparkPath.fromUrlString(tablePath + "/" + addFile.getPath()),
                 /* start= */ 0L,
                 /* length= */ addFile.getSize(),
                 preferredLocations,

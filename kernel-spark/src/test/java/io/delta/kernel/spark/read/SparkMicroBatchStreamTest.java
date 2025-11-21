@@ -27,6 +27,8 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -42,6 +44,10 @@ import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.types.StructType;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -1032,17 +1038,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         Arguments.of(0L, 1L, BASE_INDEX, "Latest version index=0, no new data"));
   }
 
-
-  // Tests for planInputPartitions - Data Parity between DSv1 and DSv2
+  // ================================================================================================
+  // Tests for planInputPartitions
   // ================================================================================================
 
-  /**
-   * End-to-end test that verifies data parity between DSv1's getBatch() and DSv2's
-   * planInputPartitions() + createReaderFactory().
-   *
-   * <p>This test compares the actual data returned by both implementations to ensure they produce
-   * identical results.
-   */
   @ParameterizedTest
   @MethodSource("planInputPartitionsParameters")
   public void testPlanInputPartitions_DataParity(
@@ -1058,47 +1057,95 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         "test_plan_partitions_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
     createEmptyTestTable(testTablePath, testTableName);
 
-    // Create 5 versions with 10 rows each (versions 1-5)
     insertVersions(testTableName, /* numVersions= */ 5, /* rowsPerVersion= */ 10);
 
-    // Create offsets
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSourceOffset startOffset =
         new DeltaSourceOffset(
             deltaLog.tableId(), fromVersion, DeltaSourceOffset.BASE_INDEX(), false);
-    DeltaSourceOffset endOffset =
+
+    DeltaSourceOffset planPartitionsEndOffset =
         new DeltaSourceOffset(deltaLog.tableId(), toVersion, DeltaSourceOffset.END_INDEX(), false);
 
-    // === DSv1: getBatch returns DataFrame ===
-    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
-    Dataset<Row> dsv1Data = deltaSource.getBatch(startOffset, endOffset);
-    List<Row> dsv1Rows = dsv1Data.collectAsList();
+    // Ground truth: Read directly from Delta table
+    List<Row> expectedRows = new ArrayList<>();
+    for (long version = fromVersion; version <= toVersion; version++) {
+      Dataset<Row> versionData =
+          spark.read().format("delta").option("versionAsOf", version).load(testTablePath);
 
-    // === DSv2: planInputPartitions + createReaderFactory ===
+      // For streaming, we only want the NEW rows added in each version
+      // Subtract the previous version's data to get only newly added rows
+      if (version == fromVersion && fromVersion > 0) {
+        // At the start version, exclude rows that existed before fromVersion
+        Dataset<Row> previousData =
+            spark.read().format("delta").option("versionAsOf", version - 1).load(testTablePath);
+        versionData = versionData.except(previousData);
+      } else if (version > fromVersion) {
+        // For subsequent versions, get the diff from previous version
+        Dataset<Row> previousData =
+            spark.read().format("delta").option("versionAsOf", version - 1).load(testTablePath);
+        versionData = versionData.except(previousData);
+      }
+
+      expectedRows.addAll(versionData.collectAsList());
+    }
+
+    // DSv2: planInputPartitions + createReaderFactory
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
-    SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(snapshotManager, spark.sessionState().newHadoopConf());
 
-    InputPartition[] partitions = stream.planInputPartitions(startOffset, endOffset);
+    org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
+    StructType dataSchema = deltaSnapshot.metadata().schema();
+    StructType partitionSchema = deltaSnapshot.metadata().partitionSchema();
+
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager,
+            spark.sessionState().newHadoopConf(),
+            spark,
+            new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf()),
+            testTablePath,
+            dataSchema,
+            partitionSchema,
+            dataSchema, // readDataSchema = dataSchema for this test
+            new org.apache.spark.sql.sources.Filter[0],
+            Map$.MODULE$.empty());
+
+    InputPartition[] partitions = stream.planInputPartitions(startOffset, planPartitionsEndOffset);
     PartitionReaderFactory readerFactory = stream.createReaderFactory();
-    StructType schema = stream.readSchema();
 
     // Read all partitions
     List<Row> dsv2Rows = new ArrayList<>();
     for (InputPartition partition : partitions) {
-      PartitionReader<InternalRow> reader = readerFactory.createReader(partition);
-      while (reader.next()) {
-        InternalRow internalRow = reader.get();
-        // Convert InternalRow to Row for comparison
-        Row row = convertInternalRowToRow(internalRow, schema);
-        dsv2Rows.add(row);
+      if (readerFactory.supportColumnarReads(partition)) {
+        PartitionReader<org.apache.spark.sql.vectorized.ColumnarBatch> reader =
+            readerFactory.createColumnarReader(partition);
+        while (reader.next()) {
+          org.apache.spark.sql.vectorized.ColumnarBatch batch = reader.get();
+          // Convert ColumnarBatch to Rows
+          org.apache.spark.sql.catalyst.expressions.UnsafeProjection projection =
+              org.apache.spark.sql.catalyst.expressions.UnsafeProjection.create(dataSchema);
+          for (int rowId = 0; rowId < batch.numRows(); rowId++) {
+            InternalRow internalRow = batch.getRow(rowId);
+            Row row = convertInternalRowToRow(internalRow, dataSchema);
+            dsv2Rows.add(row);
+          }
+        }
+        reader.close();
+      } else {
+        PartitionReader<InternalRow> reader = readerFactory.createReader(partition);
+        while (reader.next()) {
+          InternalRow internalRow = reader.get();
+          // Convert InternalRow to Row for comparison using the dataSchema we already have
+          Row row = convertInternalRowToRow(internalRow, dataSchema);
+          dsv2Rows.add(row);
+        }
+        reader.close();
       }
-      reader.close();
     }
 
     // Compare results
-    compareDataResults(dsv1Rows, dsv2Rows, testDescription);
+    compareDataResults(expectedRows, dsv2Rows, testDescription);
   }
 
   /** Provides test parameters for the planInputPartitions data parity test. */
@@ -1114,7 +1161,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         Arguments.of(2L, 4L, noMaxFiles, noMaxBytes, "Mid-range versions (2 to 4)"),
 
         // Rate limiting tests
-        Arguments.of(1L, 5L, Optional.of(5), noMaxBytes, "With maxFiles limit"),
+        Arguments.of(1L, 5L, Optional.of(5), noMaxFiles, "With maxFiles limit"),
         Arguments.of(1L, 5L, noMaxFiles, Optional.of(5000L), "With maxBytes limit"),
         Arguments.of(1L, 5L, Optional.of(10), Optional.of(10000L), "With both limits"),
 
@@ -1131,24 +1178,26 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    */
   private Row convertInternalRowToRow(InternalRow internalRow, StructType schema) {
     // Use Spark's built-in conversion from InternalRow to Row
-    return new org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema(
-        internalRow.toSeq(schema), schema);
+    scala.collection.Seq<Object> seq = internalRow.toSeq(schema);
+    Object[] values = scala.collection.JavaConverters.seqAsJavaList(seq).toArray();
+    return new org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema(values, schema);
   }
 
   /**
-   * Helper method to compare data results between DSv1 and DSv2.
+   * Helper method to compare data results between expected (ground truth) and DSv2.
    *
-   * @param dsv1Rows Rows from DSv1's getBatch()
+   * @param expectedRows Rows from ground truth (batch read from Delta table)
    * @param dsv2Rows Rows from DSv2's planInputPartitions()
    * @param testDescription Description of the test case for error messages
    */
-  private void compareDataResults(List<Row> dsv1Rows, List<Row> dsv2Rows, String testDescription) {
+  private void compareDataResults(
+      List<Row> expectedRows, List<Row> dsv2Rows, String testDescription) {
     assertEquals(
-        dsv1Rows.size(),
+        expectedRows.size(),
         dsv2Rows.size(),
         String.format(
-            "[%s] Number of rows should match: DSv1=%d, DSv2=%d",
-            testDescription, dsv1Rows.size(), dsv2Rows.size()));
+            "[%s] Number of rows should match: Expected=%d, DSv2=%d",
+            testDescription, expectedRows.size(), dsv2Rows.size()));
 
     // Sort both lists for consistent comparison (order may differ due to partitioning)
     Comparator<Row> rowComparator =
@@ -1159,32 +1208,37 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
           return Integer.compare(id1, id2);
         };
 
-    List<Row> sortedDsv1 = dsv1Rows.stream().sorted(rowComparator).collect(Collectors.toList());
+    List<Row> sortedExpected =
+        expectedRows.stream().sorted(rowComparator).collect(Collectors.toList());
     List<Row> sortedDsv2 = dsv2Rows.stream().sorted(rowComparator).collect(Collectors.toList());
 
     // Compare each row
-    for (int i = 0; i < sortedDsv1.size(); i++) {
-      Row dsv1Row = sortedDsv1.get(i);
+    for (int i = 0; i < sortedExpected.size(); i++) {
+      Row expectedRow = sortedExpected.get(i);
       Row dsv2Row = sortedDsv2.get(i);
 
       assertEquals(
-          dsv1Row.length(),
+          expectedRow.length(),
           dsv2Row.length(),
           String.format(
-              "[%s] Row %d length mismatch: DSv1=%d, DSv2=%d",
-              testDescription, i, dsv1Row.length(), dsv2Row.length()));
+              "[%s] Row %d length mismatch: Expected=%d, DSv2=%d",
+              testDescription, i, expectedRow.length(), dsv2Row.length()));
 
       // Compare each field
-      for (int fieldIdx = 0; fieldIdx < dsv1Row.length(); fieldIdx++) {
-        Object dsv1Value = dsv1Row.get(fieldIdx);
+      for (int fieldIdx = 0; fieldIdx < expectedRow.length(); fieldIdx++) {
+        Object expectedValue = expectedRow.get(fieldIdx);
         Object dsv2Value = dsv2Row.get(fieldIdx);
 
+        // Convert both values to strings for comparison to handle UTF8String vs String
+        String expectedStr = expectedValue == null ? null : expectedValue.toString();
+        String dsv2Str = dsv2Value == null ? null : dsv2Value.toString();
+
         assertEquals(
-            dsv1Value,
-            dsv2Value,
+            expectedStr,
+            dsv2Str,
             String.format(
-                "[%s] Row %d, field %d mismatch: DSv1=%s, DSv2=%s",
-                testDescription, i, fieldIdx, dsv1Value, dsv2Value));
+                "[%s] Row %d, field %d mismatch: Expected=%s, DSv2=%s",
+                testDescription, i, fieldIdx, expectedStr, dsv2Str));
       }
     }
   }
