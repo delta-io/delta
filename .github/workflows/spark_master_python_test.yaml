@@ -83,6 +83,7 @@ jobs:
           pipenv run pip install protobuf==6.33.1
           pipenv run pip install googleapis-common-protos-stubs==2.2.0
           pipenv run pip install grpc-stubs==1.24.11
+          pipenv run pip install zstandard==0.25.0
           pipenv run pip install pyspark==4.1.0.dev4
         if: steps.git-diff.outputs.diff
       - name: Run Python tests
