@@ -142,6 +142,11 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           // This is to avoid returning `update_preimage` and `update_postimage` in separate
           // batches.
           if (admissionControl.admit(filteredFiles)) {
+            deltaAssert(
+              check = filteredFiles.isEmpty || cdcFiles.size == filteredFiles.size,
+              name = "streaming.cdc.processWholeCommitOnly",
+              msg = s"CDC files were filtered from ${cdcFiles.size} to ${filteredFiles.size}. " +
+                "This violates the all-or-nothing guarantee for CDC commits.")
             filteredFiles.toIterator
           } else {
             Iterator()
