@@ -155,7 +155,7 @@ def setup_pyspark_scala213_compatibility():
 def run_python_tests(root_dir):
     print("##### Running Python tests #####")
     # Setup PySpark Scala 2.13 compatibility if needed
-    setup_pyspark_scala213_compatibility()
+    # setup_pyspark_scala213_compatibility()
     python_test_script = path.join(root_dir, path.join("python", "run-tests.py"))
     print("Calling script %s", python_test_script)
     run_cmd(["python3", python_test_script], env={'DELTA_TESTING': '1'}, stream_output=True)
