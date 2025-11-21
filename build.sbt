@@ -894,7 +894,7 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage % "test->test")
-  .dependsOn(unity % "test->test")
+  .dependsOn(kernelUnityCatalog % "test->test")
   .settings(
     name := "delta-kernel-benchmarks",
     commonSettings,
