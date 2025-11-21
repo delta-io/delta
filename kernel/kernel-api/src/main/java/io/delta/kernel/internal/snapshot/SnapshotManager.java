@@ -201,7 +201,10 @@ public class SnapshotManager {
    */
   public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
     return getLogSegmentForVersion(
-        engine, versionToLoadOpt, Collections.emptyList(), Optional.empty());
+        engine,
+        versionToLoadOpt,
+        Collections.emptyList() /* parsedLogDatas */,
+        Optional.empty() /* maxCatalogVersionOpt */);
   }
 
   /**
@@ -648,7 +651,8 @@ public class SnapshotManager {
           return Optional.of(lastCheckpointFileVersion);
         }
         logger.info(
-            "Found checkpoint at version {} in _last_checkpoint file, but maxCatalogVersion = {}.",
+            "Found checkpoint at version {} in _last_checkpoint file but cannot be used because "
+                + "maxCatalogVersion = {}.",
             lastCheckpointFileVersion,
             maxCatalogVersionOpt.get());
       }
