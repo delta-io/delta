@@ -240,7 +240,7 @@ object SparkVersionSpec {
   )
 
   private val spark41Snapshot = SparkVersionSpec(
-    fullVersion = "4.1.0-SNAPSHOT",
+    fullVersion = "4.1.0-preview4",
     targetJvm = "17",
     additionalSourceDir = Some("scala-spark-master"),
     antlr4Version = "4.13.1",
@@ -258,7 +258,7 @@ object SparkVersionSpec {
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
     ),
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.20.0"
   )
 
   // TODO 4.2.0-SNAPSHOT (actual master)
