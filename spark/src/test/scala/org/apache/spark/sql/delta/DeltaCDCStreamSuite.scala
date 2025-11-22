@@ -44,8 +44,13 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
   import testImplicits._
   import io.delta.implicits._
 
+  /**
+   * Returns the appropriate DeltaConfig
+   */
+  protected def cdcConfig: DeltaConfig[Boolean] = DeltaConfigs.CHANGE_DATA_FEED
+
   override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
+    .set(cdcConfig.defaultTablePropertyKey, "true")
 
   /**
    * Create two tests for maxFilesPerTrigger and maxBytesPerTrigger
@@ -64,7 +69,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
   testQuietly("no startingVersion should result fetch the entire snapshot") {
     withTempDir { inputDir =>
-      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "false") {
+      withSQLConf(cdcConfig.defaultTablePropertyKey -> "false") {
         // version 0
         Seq(1, 9).toDF("value").write.format("delta").save(inputDir.getAbsolutePath)
 
@@ -79,7 +84,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       }
       // enable cdc - version 3
       sql(s"ALTER TABLE delta.`${inputDir.getAbsolutePath}` SET TBLPROPERTIES " +
-        s"(${DeltaConfigs.CHANGE_DATA_FEED.key}=true)")
+        s"(${cdcConfig.key}=true)")
 
       val df = spark.readStream
         .option(DeltaOptions.CDC_READ_OPTION, "true")
@@ -87,22 +92,23 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         .load(inputDir.getCanonicalPath)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
+      val version = 3
       val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
       testStream(df) (
         ProcessAllAvailable(),
-        CheckAnswer((1, "insert", 3), (2, "insert", 3)),
+        CheckAnswer((1, "insert", version), (2, "insert", version)),
         Execute { _ =>
           deltaTable.delete("value = 1") // version 4
         },
         ProcessAllAvailable(),
-        CheckAnswer((1, "insert", 3), (2, "insert", 3), (1, "delete", 4))
+        CheckAnswer((1, "insert", version), (2, "insert", version), (1, "delete", version + 1))
       )
     }
   }
 
   testQuietly("CDC initial snapshot should end at base index of next version") {
     withTempDir { inputDir =>
-      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+      withSQLConf(cdcConfig.defaultTablePropertyKey -> "true") {
         // version 0
         Seq(5, 6).toDF("value").write.format("delta").save(inputDir.getAbsolutePath)
 
@@ -384,7 +390,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
   test("cdc streams with noop merge") {
     withSQLConf(
-      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
+      cdcConfig.defaultTablePropertyKey -> "true"
     ) {
       withTempDirs { (srcDir, targetDir, checkpointDir) =>
         // write source table
@@ -441,7 +447,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
   Seq(true, false).foreach { readChangeFeed =>
     test(s"streams updating latest offset with readChangeFeed=$readChangeFeed") {
       withTempDirs { (inputDir, checkpointDir, outputDir) =>
-        withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+        withSQLConf(cdcConfig.defaultTablePropertyKey -> "true") {
 
           sql(s"CREATE TABLE delta.`$inputDir` (id BIGINT, value STRING) USING DELTA")
           // save some rows to input table.
@@ -946,6 +952,9 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           withMetadata(deltaLog, StructType.fromDDL("value int"))
           true
         },
+        // Force processing of stream to prevent race condition between DeltaSource.getBatch and
+        // DeltaSource.checkReadIncompatibleSchemaChanges
+        ProcessAllAvailable(),
         AssertOnQuery { _ =>
           withMetadata(deltaLog, StructType.fromDDL("id int, value string"))
           true
