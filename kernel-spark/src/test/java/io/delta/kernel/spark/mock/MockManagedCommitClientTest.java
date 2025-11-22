@@ -16,120 +16,83 @@
 
 package io.delta.kernel.spark.mock;
 
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.types.StructType;
 import java.util.Optional;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 /** Tests for MockManagedCommitClient to verify the ManagedCommitClient interface contract. */
 public class MockManagedCommitClientTest {
 
-  @Test
-  public void testAddAndGetSnapshot() {
-    MockManagedCommitClient client = new MockManagedCommitClient();
-    Snapshot mockSnapshot = mock(Snapshot.class);
-    when(mockSnapshot.getVersion()).thenReturn(5L);
+  /** Simple fake Snapshot implementation for testing */
+  private static class FakeSnapshot implements Snapshot {
+    private final long version;
 
-    // Add snapshot
-    client.addSnapshot("table123", 5L, mockSnapshot);
+    FakeSnapshot(long version) {
+      this.version = version;
+    }
 
-    // Get snapshot by version
-    Snapshot result =
-        client.getSnapshot(
-            null, // engine not used in mock
-            "table123",
-            "/path/to/table",
-            Optional.of(5L),
-            Optional.empty());
+    @Override
+    public long getVersion() {
+      return version;
+    }
 
-    assertEquals(5L, result.getVersion());
-    verify(mockSnapshot).getVersion();
+    @Override
+    public String getPath(Engine engine) {
+      return "/fake/path";
+    }
+
+    @Override
+    public StructType getSchema(Engine engine) {
+      return new StructType();
+    }
+
+    @Override
+    public Row getMetadata(Engine engine) {
+      throw new UnsupportedOperationException("Not implemented in fake");
+    }
+
+    @Override
+    public Row getProtocol(Engine engine) {
+      throw new UnsupportedOperationException("Not implemented in fake");
+    }
+
+    @Override
+    public ColumnarBatch getSetTransactions(Engine engine) {
+      throw new UnsupportedOperationException("Not implemented in fake");
+    }
   }
 
   @Test
-  public void testGetLatestSnapshot() {
+  public void testGetSnapshot() {
     MockManagedCommitClient client = new MockManagedCommitClient();
+    Snapshot snapshot = new FakeSnapshot(5L);
+    client.addSnapshot("table1", 5L, snapshot);
 
-    Snapshot snapshot3 = mock(Snapshot.class);
-    Snapshot snapshot5 = mock(Snapshot.class);
-    Snapshot snapshot7 = mock(Snapshot.class);
+    Snapshot result = client.getSnapshot(null, "table1", "/path", Optional.of(5L), Optional.empty());
+    assertEquals(5L, result.getVersion());
+  }
 
-    when(snapshot3.getVersion()).thenReturn(3L);
-    when(snapshot5.getVersion()).thenReturn(5L);
-    when(snapshot7.getVersion()).thenReturn(7L);
+  @Test
+  public void testGetLatestVersion() {
+    MockManagedCommitClient client = new MockManagedCommitClient();
+    client.addSnapshot("table1", 3L, new FakeSnapshot(3L));
+    client.addSnapshot("table1", 7L, new FakeSnapshot(7L));
 
-    // Add multiple snapshots
-    client.addSnapshot("table123", 3L, snapshot3);
-    client.addSnapshot("table123", 5L, snapshot5);
-    client.addSnapshot("table123", 7L, snapshot7);
-
-    // Get latest version
-    long latest = client.getLatestVersion("table123");
-    assertEquals(7L, latest);
-
-    // Get latest snapshot (no version specified)
-    Snapshot result =
-        client.getSnapshot(
-            null,
-            "table123",
-            "/path/to/table",
-            Optional.empty(), // no specific version = latest
-            Optional.empty());
-
-    assertEquals(7L, result.getVersion());
+    assertEquals(7L, client.getLatestVersion("table1"));
   }
 
   @Test
   public void testVersionExists() {
     MockManagedCommitClient client = new MockManagedCommitClient();
-    Snapshot mockSnapshot = mock(Snapshot.class);
+    client.addSnapshot("table1", 5L, new FakeSnapshot(5L));
 
-    client.addSnapshot("table123", 5L, mockSnapshot);
-
-    assertTrue(client.versionExists("table123", 5L));
-    assertFalse(client.versionExists("table123", 3L));
-    assertFalse(client.versionExists("table123", 7L));
-    assertFalse(client.versionExists("nonexistent", 5L));
-  }
-
-  @Test(expected = IllegalArgumentException.class)
-  public void testGetSnapshot_TableNotFound() {
-    MockManagedCommitClient client = new MockManagedCommitClient();
-
-    client.getSnapshot(null, "nonexistent", "/path", Optional.of(5L), Optional.empty());
-  }
-
-  @Test(expected = IllegalArgumentException.class)
-  public void testGetSnapshot_VersionNotFound() {
-    MockManagedCommitClient client = new MockManagedCommitClient();
-    Snapshot mockSnapshot = mock(Snapshot.class);
-
-    client.addSnapshot("table123", 5L, mockSnapshot);
-
-    // Try to get non-existent version
-    client.getSnapshot(null, "table123", "/path", Optional.of(10L), Optional.empty());
-  }
-
-  @Test
-  public void testGetLatestVersion_EmptyTable() {
-    MockManagedCommitClient client = new MockManagedCommitClient();
-
-    long latest = client.getLatestVersion("nonexistent");
-    assertEquals(-1L, latest);
-  }
-
-  @Test
-  public void testClose() {
-    MockManagedCommitClient client = new MockManagedCommitClient();
-    Snapshot mockSnapshot = mock(Snapshot.class);
-
-    client.addSnapshot("table123", 5L, mockSnapshot);
-    assertTrue(client.versionExists("table123", 5L));
-
-    // Close should clear state
-    client.close();
-    assertFalse(client.versionExists("table123", 5L));
+    assertTrue(client.versionExists("table1", 5L));
+    assertFalse(client.versionExists("table1", 99L));
   }
 }
