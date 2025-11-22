@@ -164,15 +164,25 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   }
 
   /**
-   * Horrible hack to differentiate between DataFrameWriterV1 and V2 so that we can decide
+   * Hack to differentiate between DataFrameWriterV1 and V2 so that we can decide
    * what to do with table metadata. In DataFrameWriterV1, mode("overwrite").saveAsTable,
    * behaves as a CreateOrReplace table, but we have asked for "overwriteSchema" as an
    * explicit option to overwrite partitioning or schema information. With DataFrameWriterV2,
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
+   *
+   * In Spark 4.1, DataFrameWriter provides the option "isDataFrameWriterV1", because the stack
+   * trace does not indicate the calling API anymore in connect mode - planning and execution
+   * has been separated.
+   * An older horrible hack depended on the stack trace, where eager execution of the command
+   * pointed to the calling API.
    */
   protected def isV1Writer: Boolean = {
-    Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      Relocated.dataFrameWriterClassName + "."))
+    if (table.storage.properties.get("isdataframewriterv1").contains("true")) {
+      true
+    } else {
+      Thread.currentThread().getStackTrace.exists(_.toString.contains(
+        Relocated.dataFrameWriterClassName + "."))
+    }
   }
 }
