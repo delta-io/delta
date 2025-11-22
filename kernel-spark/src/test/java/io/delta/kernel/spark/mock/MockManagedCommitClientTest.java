@@ -25,8 +25,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Tests for MockManagedCommitClient.
  *
- * <p>These tests verify the mock's storage/retrieval logic. We use a minimal SnapshotStub that
- * only implements getVersion() since that's all the mock client calls.
+ * <p>These tests verify the mock's storage/retrieval logic. We use a minimal SnapshotStub that only
+ * implements getVersion() since that's all the mock client calls.
  */
 public class MockManagedCommitClientTest {
 
@@ -109,7 +109,8 @@ public class MockManagedCommitClientTest {
 
     client.addSnapshot("table1", 5L, snapshot);
 
-    Snapshot result = client.getSnapshot(null, "table1", "/path", Optional.of(5L), Optional.empty());
+    Snapshot result =
+        client.getSnapshot(null, "table1", "/path", Optional.of(5L), Optional.empty());
 
     assertSame(snapshot, result, "Should return the same snapshot object");
     assertEquals(5L, result.getVersion());
@@ -133,8 +134,7 @@ public class MockManagedCommitClientTest {
 
     assertTrue(client.versionExists("table1", 5L), "Added version should exist");
     assertFalse(client.versionExists("table1", 99L), "Non-existent version should not exist");
-    assertFalse(
-        client.versionExists("nonexistent", 5L), "Non-existent table should return false");
+    assertFalse(client.versionExists("nonexistent", 5L), "Non-existent table should return false");
   }
 
   @Test
