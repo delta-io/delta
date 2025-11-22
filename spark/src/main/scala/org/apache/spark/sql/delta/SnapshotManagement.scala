@@ -65,11 +65,6 @@ case class CapturedSnapshot(snapshot: Snapshot, updateTimestamp: Long)
 trait SnapshotManagement { self: DeltaLog =>
   import SnapshotManagement.verifyDeltaVersions
 
-  /** Returns the truncated table ID for logging purposes. */
-  private def snapshotTableIdentifier: String = {
-    tableId.split("-").head
-  }
-
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
   /** Use ReentrantLock to allow us to call `lockInterruptibly` */
@@ -749,7 +744,7 @@ trait SnapshotManagement { self: DeltaLog =>
       log" starting from checkpoint version " +
       log"${MDC(DeltaLogKeys.START_VERSION, initSegment.checkpointProvider.version)}."
     } else log"."
-    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, snapshotTableIdentifier)}] Loading version " +
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Loading version " +
       log"${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
     createSnapshotFromGivenOrEquivalentLogSegment(
         initSegment, tableCommitCoordinatorClientOpt, catalogTableOpt) { segment =>
