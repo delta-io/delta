@@ -15,10 +15,12 @@
  */
 package io.delta.kernel.spark.utils;
 
+import java.util.Collections;
 import java.util.Map;
 import scala.Tuple2;
 import scala.collection.immutable.Map$;
 import scala.collection.mutable.Builder;
+import scala.jdk.javaapi.CollectionConverters;
 
 public final class ScalaUtils {
   public static scala.collection.immutable.Map<String, String> toScalaMap(
@@ -34,5 +36,16 @@ public final class ScalaUtils {
       b.$plus$eq(new Tuple2<>(e.getKey(), e.getValue()));
     }
     return b.result();
+  }
+
+  public static Map<String, String> toJavaMap(
+      scala.collection.immutable.Map<String, String> scalaMap) {
+    if (scalaMap == null) {
+      return null;
+    }
+    if (scalaMap.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    return CollectionConverters.asJava(scalaMap);
   }
 }
