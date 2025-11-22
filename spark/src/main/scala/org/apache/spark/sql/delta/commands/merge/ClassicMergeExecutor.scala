@@ -82,13 +82,22 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     val touchedFilesAccum = new SetAccumulator[String]()
     spark.sparkContext.register(touchedFilesAccum, TOUCHED_FILES_ACCUM_NAME)
 
-    // Prune non-matching files if we don't need to collect them for NOT MATCHED BY SOURCE clauses.
-    val dataSkippedFiles =
-      if (notMatchedBySourceClauses.isEmpty) {
-        deltaTxn.filterFiles(getTargetOnlyPredicates(spark), keepNumRecords = true)
-      } else {
-        deltaTxn.filterFiles(filters = Seq(Literal.TrueLiteral), keepNumRecords = true)
-      }
+    // Prune non-matching files
+    var dataSkippingFilters = getTargetOnlyPredicates(spark)
+    if (notMatchedBySourceClauses.nonEmpty) {
+      // We need all files matching any notMatchedBySource condition,
+      // and we know the conditions only reference target attributes.
+      val notMatchedBySourcePredicate = notMatchedBySourceClauses
+        .map(_.condition.getOrElse(Literal.TrueLiteral))
+        .reduce(Or)
+
+      // Combine all the matched predicates back into a single expression, but it needs to be
+      // Or'd with the not matched by source columns as a single filter. No matched filters
+      // means match everything with true literal
+      val matchedPredicate = dataSkippingFilters.reduceOption(And).getOrElse(Literal.TrueLiteral)
+      dataSkippingFilters = Seq(Or(matchedPredicate, notMatchedBySourcePredicate))
+    }
+    val dataSkippedFiles = deltaTxn.filterFiles(dataSkippingFilters, keepNumRecords = true)
 
     // Join the source and target table using the merge condition to find touched files. An inner
     // join collects all candidate files for MATCHED clauses, a right outer join also includes
