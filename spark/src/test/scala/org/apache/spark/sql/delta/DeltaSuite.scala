@@ -42,7 +42,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
-import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.execution.streaming.runtime.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
@@ -2681,8 +2681,7 @@ class DeltaSuite extends QueryTest
         "spark.databricks.delta.write.txnVersion", "someVersion")
     }
     assert(e.getMessage == "spark.databricks.delta.write.txnVersion should be " +
-      "long, but was someVersion")
-
+      "long, but was someVersion" || e.getMessage.contains("INVALID_CONF_VALUE.TYPE_MISMATCH"))
     // clean up
     spark.conf.unset("spark.databricks.delta.write.txnAppId")
     spark.conf.unset("spark.databricks.delta.write.txnVersion")

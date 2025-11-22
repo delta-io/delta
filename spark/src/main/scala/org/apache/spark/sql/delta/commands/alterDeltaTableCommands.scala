@@ -46,7 +46,7 @@ import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.{Filter, IgnoreCachedData, QualifiedColType}
+import org.apache.spark.sql.catalyst.plans.logical.{DefaultValueExpression, Filter, IgnoreCachedData, QualifiedColType}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, SparkCharVarcharUtils}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
@@ -684,7 +684,14 @@ case class AlterTableAddColumnsDeltaCommand(
       val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
       col.default.map { value =>
-        Some((col.name.init, field.withCurrentDefaultValue(value), col.position.map(toV2Position)))
+        // DefaultValueExpression API changed in Spark 4.1
+        val defaultStr = value match {
+          case DefaultValueExpression(_, originalSQL, _) => originalSQL
+          case _ => value.toString
+        }
+        Some((col.name.init,
+          field.withCurrentDefaultValue(defaultStr),
+          col.position.map(toV2Position)))
       }.getOrElse {
         Some((col.name.init, field, col.position.map(toV2Position)))
       }

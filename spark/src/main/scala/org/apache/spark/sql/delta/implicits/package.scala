@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.implicits.RichSparkClasses
 import org.apache.spark.sql.delta.util.DeltaEncoders
 
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
