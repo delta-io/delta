@@ -27,14 +27,24 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 
 /**
- * [[SQLConf]] entries for Delta features.
+ * Utility trait providing common configuration building methods for Delta SQL configs.
+ *
+ * This trait contains only utility methods and constants, no actual config entries.
+ * It is designed to be extended by multiple configuration objects without causing
+ * duplicate config registration.
  */
-trait DeltaSQLConfBase {
+trait DeltaSQLConfUtils {
   val SQL_CONF_PREFIX = "spark.databricks.delta"
 
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"$SQL_CONF_PREFIX.$key")
   def buildStaticConf(key: String): ConfigBuilder =
     SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
+}
+
+/**
+ * [[SQLConf]] entries for Delta features.
+ */
+trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
     buildConf("timeTravel.resolveOnIdentifier.enabled")
