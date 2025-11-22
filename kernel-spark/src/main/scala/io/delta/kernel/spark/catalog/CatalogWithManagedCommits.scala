@@ -16,9 +16,10 @@
 
 package io.delta.kernel.spark.catalog
 
+import java.util.Optional
+
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.CatalogPlugin
-import java.util.Optional
 
 /**
  * Extension trait for catalogs that support Delta catalog-managed commits.
