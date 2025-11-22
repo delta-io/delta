@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-package io.delta.catalog
+package io.delta.kernel.spark.catalog
 
-import io.delta.kernel.spark.catalog.ManagedCommitClient
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import java.util.Optional
