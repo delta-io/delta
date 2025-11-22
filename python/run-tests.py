@@ -195,7 +195,7 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     use_spark_master = os.getenv("USE_SPARK_MASTER") or False
     prepare(root_dir, use_spark_master)
-    delta_spark_package = get_local_package("delta-spark", use_spark_master)
+    delta_spark_package = get_local_package("delta-spark_4.1", use_spark_master)
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
