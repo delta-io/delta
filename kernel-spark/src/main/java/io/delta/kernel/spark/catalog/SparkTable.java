@@ -21,7 +21,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
-import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManagerFactory;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -138,9 +138,11 @@ public class SparkTable implements Table, SupportsRead {
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
 
-    this.hadoopConf =
-        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkSession spark = SparkSession.active();
+    this.hadoopConf = spark.sessionState().newHadoopConfWithOptions(toScalaMap(options));
+    // Use factory to create appropriate snapshot manager (UC-managed vs path-based)
+    this.snapshotManager =
+        DeltaSnapshotManagerFactory.create(tablePath, catalogTable, spark, hadoopConf);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
