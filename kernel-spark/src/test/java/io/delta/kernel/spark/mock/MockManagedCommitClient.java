@@ -27,8 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Mock implementation of ManagedCommitClient for testing.
  *
- * This proves that the interface is complete and usable without
- * any actual catalog dependencies.
+ * <p>This proves that the interface is complete and usable without any actual catalog dependencies.
  */
 public class MockManagedCommitClient implements ManagedCommitClient {
 
@@ -42,8 +41,7 @@ public class MockManagedCommitClient implements ManagedCommitClient {
    * @param snapshot the snapshot to store
    */
   public void addSnapshot(String tableId, long version, Snapshot snapshot) {
-    tableSnapshots.computeIfAbsent(tableId, k -> new HashMap<>())
-                  .put(version, snapshot);
+    tableSnapshots.computeIfAbsent(tableId, k -> new HashMap<>()).put(version, snapshot);
   }
 
   @Override

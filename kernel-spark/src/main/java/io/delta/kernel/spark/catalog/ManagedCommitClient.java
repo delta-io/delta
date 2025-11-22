@@ -23,12 +23,11 @@ import java.util.Optional;
 /**
  * Generic interface for catalog-managed commit coordination.
  *
- * This interface abstracts catalog-specific implementations (Unity Catalog,
- * AWS Glue, Apache Polaris) and provides a uniform API for loading snapshots
- * and checking versions.
+ * <p>This interface abstracts catalog-specific implementations (Unity Catalog, AWS Glue, Apache
+ * Polaris) and provides a uniform API for loading snapshots and checking versions.
  *
- * Implementations are provided by catalog modules and discovered through
- * Spark's catalog system via the CatalogWithManagedCommits trait.
+ * <p>Implementations are provided by catalog modules and discovered through Spark's catalog system
+ * via the CatalogWithManagedCommits trait.
  */
 public interface ManagedCommitClient extends AutoCloseable {
 
@@ -66,9 +65,7 @@ public interface ManagedCommitClient extends AutoCloseable {
    */
   long getLatestVersion(String tableId);
 
-  /**
-   * Releases catalog client resources.
-   */
+  /** Releases catalog client resources. */
   @Override
   void close() throws Exception;
 }

@@ -16,16 +16,14 @@
 
 package io.delta.kernel.spark.mock;
 
-import io.delta.kernel.Snapshot;
-import org.junit.Test;
-import java.util.Optional;
-
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
-/**
- * Tests for MockManagedCommitClient to verify the ManagedCommitClient interface contract.
- */
+import io.delta.kernel.Snapshot;
+import java.util.Optional;
+import org.junit.Test;
+
+/** Tests for MockManagedCommitClient to verify the ManagedCommitClient interface contract. */
 public class MockManagedCommitClientTest {
 
   @Test
@@ -38,12 +36,13 @@ public class MockManagedCommitClientTest {
     client.addSnapshot("table123", 5L, mockSnapshot);
 
     // Get snapshot by version
-    Snapshot result = client.getSnapshot(
-        null, // engine not used in mock
-        "table123",
-        "/path/to/table",
-        Optional.of(5L),
-        Optional.empty());
+    Snapshot result =
+        client.getSnapshot(
+            null, // engine not used in mock
+            "table123",
+            "/path/to/table",
+            Optional.of(5L),
+            Optional.empty());
 
     assertEquals(5L, result.getVersion());
     verify(mockSnapshot).getVersion();
@@ -71,12 +70,13 @@ public class MockManagedCommitClientTest {
     assertEquals(7L, latest);
 
     // Get latest snapshot (no version specified)
-    Snapshot result = client.getSnapshot(
-        null,
-        "table123",
-        "/path/to/table",
-        Optional.empty(), // no specific version = latest
-        Optional.empty());
+    Snapshot result =
+        client.getSnapshot(
+            null,
+            "table123",
+            "/path/to/table",
+            Optional.empty(), // no specific version = latest
+            Optional.empty());
 
     assertEquals(7L, result.getVersion());
   }
@@ -98,12 +98,7 @@ public class MockManagedCommitClientTest {
   public void testGetSnapshot_TableNotFound() {
     MockManagedCommitClient client = new MockManagedCommitClient();
 
-    client.getSnapshot(
-        null,
-        "nonexistent",
-        "/path",
-        Optional.of(5L),
-        Optional.empty());
+    client.getSnapshot(null, "nonexistent", "/path", Optional.of(5L), Optional.empty());
   }
 
   @Test(expected = IllegalArgumentException.class)
@@ -114,12 +109,7 @@ public class MockManagedCommitClientTest {
     client.addSnapshot("table123", 5L, mockSnapshot);
 
     // Try to get non-existent version
-    client.getSnapshot(
-        null,
-        "table123",
-        "/path",
-        Optional.of(10L),
-        Optional.empty());
+    client.getSnapshot(null, "table123", "/path", Optional.of(10L), Optional.empty());
   }
 
   @Test
