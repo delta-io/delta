@@ -16,14 +16,16 @@
 
 package io.delta.kernel.spark.catalog
 
+import java.io.IOException
+import java.net.URI
+import java.util.Optional
+
 import io.delta.kernel.Snapshot
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
 import io.delta.storage.commit.uccommitcoordinator.UCClient
-import java.io.IOException
-import java.net.URI
-import java.util.Optional
+
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
@@ -98,7 +100,6 @@ class UCManagedCommitClientAdapterSuite extends AnyFunSuite {
     }
   }
 
-
   test("constructor validates non-null ucClient") {
     val testUCClient = new TestUCClient()
     assertThrows[NullPointerException] {
@@ -133,7 +134,7 @@ class UCManagedCommitClientAdapterSuite extends AnyFunSuite {
       testUCClient,
       "/tmp/test/table")
 
-    val mockEngine = null.asInstanceOf[Engine]  // Not used by test double
+    val mockEngine = null.asInstanceOf[Engine] // Not used by test double
     adapter.getSnapshot(
       mockEngine,
       "test-table-id",
@@ -195,7 +196,7 @@ class UCManagedCommitClientAdapterSuite extends AnyFunSuite {
 
   test("getLatestVersion converts -1 to 0 for newly created tables") {
     val testUCClient = new TestUCClient()
-    testUCClient.latestVersionToReturn = -1  // UC returns -1 when only 0.json exists
+    testUCClient.latestVersionToReturn = -1 // UC returns -1 when only 0.json exists
 
     val testUCCatalogClient = new TestUCCatalogManagedClient(testUCClient)
     val adapter = new UCManagedCommitClientAdapter(
@@ -204,7 +205,7 @@ class UCManagedCommitClientAdapterSuite extends AnyFunSuite {
       "/tmp/test/table")
 
     val result = adapter.getLatestVersion("test-table-id")
-    assert(result == 0)  // Should convert -1 to 0
+    assert(result == 0) // Should convert -1 to 0
   }
 
   test("getLatestVersion throws RuntimeException when UCClient fails") {

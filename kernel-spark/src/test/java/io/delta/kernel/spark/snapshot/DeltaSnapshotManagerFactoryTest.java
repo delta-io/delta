@@ -149,7 +149,8 @@ public class DeltaSnapshotManagerFactoryTest {
     registerCatalog("simple_catalog", SimpleCatalog.class);
 
     // Create a minimal catalog table
-    CatalogTable catalogTable = CatalogTableTestUtils.createMockCatalogTable("simple_catalog");
+    CatalogTable catalogTable =
+        CatalogTableTestUtils$.MODULE$.createMockCatalogTable("simple_catalog");
 
     // Act: Create manager with non-managed catalog
     DeltaSnapshotManager manager =
@@ -167,7 +168,8 @@ public class DeltaSnapshotManagerFactoryTest {
     registerCatalog("managed_catalog", ManagedCommitsCatalog.class);
 
     // Create a minimal catalog table
-    CatalogTable catalogTable = CatalogTableTestUtils.createMockCatalogTable("managed_catalog");
+    CatalogTable catalogTable =
+        CatalogTableTestUtils$.MODULE$.createMockCatalogTable("managed_catalog");
 
     // Note: In a real scenario, we'd need to register the catalog with Spark
     // For this test, we're verifying the factory logic conceptually
