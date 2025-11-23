@@ -7,6 +7,11 @@ import { Aside, Tabs, TabItem } from "@astrojs/starlight/components";
 
 Change Data Feed (CDF) feature allows Delta tables to track row-level changes between versions of a Delta table. When enabled on a Delta table, the runtime records "change events" for all the data written into the table. This includes the row data along with metadata indicating whether the specified row was inserted, deleted, or updated.
 
+<Aside type="caution" title="Important">
+Change data feed only tracks `UPDATE`, `DELETE`, and `MERGE` operations.
+Simple `WRITE` operations are not tracked by CDF.
+</Aside>
+
 You can read the change events in batch queries using DataFrame APIs (that is, `df.read`) and in streaming queries using DataFrame APIs (that is, `df.readStream`).
 
 ## Use cases
@@ -66,6 +71,16 @@ You must explicitly enable the change data feed option using one of the followin
 ### Change data storage
 
 Delta Lake records change data for `UPDATE`, `DELETE`, and `MERGE` operations in the `_change_data` folder under the Delta table directory. These records may be skipped when Delta Lake detects it can efficiently compute the change data feed directly from the transaction log. In particular, insert-only operations and full partition deletes will not generate data in the `_change_data` directory.
+
+<Aside type="note" title="Operations tracked">
+  Change data feed DOES track:
+  - `UPDATE` - Generates both preimage (before) and postimage (after) records
+  - `DELETE` - Generates delete records  
+  - `MERGE` - Generates appropriate insert, update, and/or delete records based on the merge logic
+  
+  Change data feed DOES NOT track:
+  - `WRITE` operations
+</Aside>
 
 The files in the `_change_data` folder follow the retention policy of the table. Therefore, if you run the [VACUUM](/delta-utility/#remove-files-no-longer-referenced-by-a-delta-table) command, change data feed data is also deleted.
 
