@@ -131,6 +131,11 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         // Checkpoint 0 is corrupted. Verify that we can still create the snapshot using
         // existing json files.
         DeltaLog.forTable(spark, path).snapshot
+        
+        // GitHub issue #5458: Verify that we can still READ the table data even with
+        // corrupted checkpoint. Delta should fall back to JSON logs.
+        val count = spark.read.format("delta").load(path).count()
+        assert(count === 10, s"Expected 10 rows, got $count")
       }
     }
   }
