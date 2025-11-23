@@ -162,6 +162,9 @@ class DeltaLog private(
   /** The unique identifier for this table. */
   def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
 
+  /** Returns the truncated table ID for logging purposes. */
+  private[delta] def truncatedTableId: String = tableId.split("-").head
+
   def getInitialCatalogTable: Option[CatalogTable] = initialCatalogTable
   /**
    * Combines the tableId with the path of the table to ensure uniqueness. Normally `tableId`
