@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static io.delta.kernel.internal.util.ColumnMapping.*;
 import static io.delta.kernel.internal.util.ColumnMapping.getColumnId;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -27,6 +28,8 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
@@ -43,15 +46,20 @@ public class SchemaUtils {
 
   /**
    * Validate the schema. This method checks if the schema has no duplicate columns, the names
-   * contain only valid characters and the data types are supported.
+   * contain only valid characters, the data types are supported, and the column metadata is valid.
    *
    * @param schema the schema to validate
    * @param isColumnMappingEnabled whether column mapping is enabled. When column mapping is
    *     enabled, the column names in the schema can contain special characters that are allowed as
    *     column names in the Parquet file
+   * @param isColumnDefaultEnabled whether column defaults is enabled
    * @throws IllegalArgumentException if the schema is invalid
    */
-  public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
+  public static void validateSchema(
+      StructType schema,
+      boolean isColumnMappingEnabled,
+      boolean isColumnDefaultEnabled,
+      boolean isIcebergCompatV3Enabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
 
     List<String> flattenColNames =
@@ -92,6 +100,7 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
+    ColumnDefaults.validateSchema(schema, isColumnDefaultEnabled, isIcebergCompatV3Enabled);
   }
 
   /**
@@ -116,13 +125,18 @@ public class SchemaUtils {
   public static Optional<StructType> validateUpdatedSchemaAndGetUpdatedSchema(
       Metadata currentMetadata,
       Metadata newMetadata,
+      Protocol newProtocol,
       Set<String> clusteringColumnPhysicalNames,
       boolean allowNewRequiredFields) {
     checkArgument(
         isColumnMappingModeEnabled(
             ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
         "Cannot validate updated schema when column mapping is disabled");
-    validateSchema(newMetadata.getSchema(), true /*columnMappingEnabled*/);
+    validateSchema(
+        newMetadata.getSchema(),
+        true /*columnMappingEnabled*/,
+        newProtocol.supportsFeature(ALLOW_COLUMN_DEFAULTS_W_FEATURE),
+        TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(newMetadata));
     validatePartitionColumns(
         newMetadata.getSchema(), new ArrayList<>(newMetadata.getPartitionColNames()));
     int currentMaxFieldId =
@@ -344,7 +358,12 @@ public class SchemaUtils {
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
-  /* Compute the SchemaChanges using field IDs */
+  /**
+   * Compute the SchemaChanges using field IDs
+   *
+   * @throws KernelException if any existing fields have been illegally moved outside their parent
+   *     struct
+   */
   static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
     SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
     findAndAddRemovedFields(currentSchema, newSchema, schemaDiff);
@@ -356,6 +375,12 @@ public class SchemaUtils {
     // <"value", 1> : StructField("value", StructType),
     // <"", 2>: StructField("b", IntegerType)}
     Map<SchemaElementId, StructField> currentFieldIdToField = fieldsByElementId(currentSchema);
+    // This map only contains struct field keys (does not include complex type elements).
+    // Using the earlier example, this map would contain:
+    // {1: Optional.empty(),
+    //  2: Optional.of(StructField("a", MapType), "value"))}
+    Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>> currentFieldIdToParent =
+        mapStructFieldsToParent(currentSchema);
     Set<Integer> addedFieldIds = new HashSet<>();
     SchemaIterable newSchemaIterable = new SchemaIterable(newSchema);
     Iterator<SchemaIterable.MutableSchemaElement> newSchemaIterator =
@@ -365,6 +390,27 @@ public class SchemaUtils {
     while (newSchemaIterator.hasNext()) {
       SchemaIterable.MutableSchemaElement newElement = newSchemaIterator.next();
       SchemaElementId id = getSchemaElementId(newElement);
+
+      // If the element is a struct field we need to validate that it has not been moved out of
+      // its parent struct. To do this, we check that in the old schema and the new schema
+      // its parent struct field (and the path to it) is unchanged.
+      if (newElement.isStructField()) {
+        int columnId = getColumnId(newElement.getField());
+        if (currentFieldIdToParent.containsKey(columnId)) { // If it's an existing field
+          // We need both the parent struct field and the path to it in case of nested arrays/maps
+          Optional<SchemaIterable.ParentStructFieldInfo> currentParent =
+              currentFieldIdToParent.get(columnId);
+          Optional<SchemaIterable.ParentStructFieldInfo> newParent =
+              newElement.getParentStructFieldAndPath();
+          Optional<SchemaElementId> currentParentId =
+              currentParent.map(SchemaUtils::getSchemaElementId);
+          Optional<SchemaElementId> newParentId = newParent.map(SchemaUtils::getSchemaElementId);
+          if (!Objects.equals(currentParentId, newParentId)) {
+            throw DeltaErrors.invalidFieldMove(columnId, currentParent, newParent);
+          }
+        }
+      }
+
       if (addedFieldIds.contains(id.getId())) {
         // Skip early if this is a descendant of an added field.
         continue;
@@ -458,9 +504,30 @@ public class SchemaUtils {
     return fieldIdToField;
   }
 
+  private static Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>>
+      mapStructFieldsToParent(StructType schema) {
+    Map<Integer, Optional<SchemaIterable.ParentStructFieldInfo>> fieldIdToParent = new HashMap<>();
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+      if (element.isStructField()) {
+        StructField elementField = element.getField();
+        int columnId = getColumnId(elementField);
+        Optional<SchemaIterable.ParentStructFieldInfo> parentInfo =
+            element.getParentStructFieldAndPath();
+        fieldIdToParent.put(columnId, parentInfo);
+      }
+    }
+    return fieldIdToParent;
+  }
+
   private static SchemaElementId getSchemaElementId(SchemaIterable.SchemaElement element) {
     int columnId = getColumnId(element.getNearestStructFieldAncestor());
     return new SchemaElementId(element.getPathFromNearestStructFieldAncestor(""), columnId);
+  }
+
+  private static SchemaElementId getSchemaElementId(
+      SchemaIterable.ParentStructFieldInfo parentInfo) {
+    int columnId = getColumnId(parentInfo.getParentField());
+    return new SchemaElementId(parentInfo.getPathFromParent(), columnId);
   }
 
   private static void findAndAddRemovedFields(

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.redirect
 
-import java.util.UUID
+import java.util.{Locale, UUID}
 
 import scala.reflect.ClassTag
 import scala.util.DynamicVariable
@@ -516,6 +516,20 @@ object RedirectFeature {
         RedirectWriterOnly.isUpdateProperty(snapshot, propertyKeys)
       case _ => false
     }
+  }
+
+  /**
+   * Determine whether the operation `op` is dropping either the redirect-reader-writer or
+   * redirect-writer-only table feature.
+   */
+  def isDropFeature(op: DeltaOperations.Operation): Boolean = op match {
+    case DeltaOperations.DropTableFeature(featureName, _) => isRedirectFeature(featureName)
+    case _ => false
+  }
+
+  def isRedirectFeature(name: String): Boolean = {
+    name.toLowerCase(Locale.ROOT) == RedirectReaderWriterFeature.name.toLowerCase(Locale.ROOT) ||
+    name.toLowerCase(Locale.ROOT) == RedirectWriterOnlyFeature.name.toLowerCase(Locale.ROOT)
   }
 
   /**

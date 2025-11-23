@@ -406,19 +406,19 @@ public class LogSegment {
   private void validateDeltasAreDeltas(List<FileStatus> deltas) {
     checkArgument(
         deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
-        "deltas must all be actual delta (commit) files");
+        () -> "deltas must all be actual delta (commit) files: " + deltas);
   }
 
   private void validateCompactionsAreCompactions(List<FileStatus> compactions) {
     checkArgument(
         compactions.stream().allMatch(fs -> FileNames.isLogCompactionFile(fs.getPath())),
-        "compactions must all be actual log compaction files");
+        () -> "compactions must all be actual log compaction files: " + compactions);
   }
 
   private void validateCheckpointsAreCheckpoints(List<FileStatus> checkpoints) {
     checkArgument(
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
-        "checkpoints must all be actual checkpoint files");
+        () -> "checkpoints must all be actual checkpoint files: " + checkpoints);
   }
 
   private void validateIndividualCompactionVersions(List<FileStatus> compactions) {
@@ -429,7 +429,7 @@ public class LogSegment {
                   Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
                   return versions._1 < versions._2;
                 }),
-        "compactions must have start version less than end version");
+        () -> "compactions must have start version less than end version: " + compactions);
   }
 
   private void validateCheckpointVersionsAreSame(
@@ -439,7 +439,7 @@ public class LogSegment {
           checkpoints.stream()
               .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
               .allMatch(v -> checkpointVersionOpt.get().equals(v)),
-          "All checkpoint files must have the same version");
+          () -> "All checkpoint files must have the same version: " + checkpoints);
     }
   }
 
@@ -450,13 +450,15 @@ public class LogSegment {
           long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
           checkArgument(
               checksumVersion <= version,
-              "checksum file's version should be less than or equal to logSegment's version");
+              "checksum version (%d) should be less than or equal to LogSegment version (%d)",
+              checksumVersion,
+              version);
           checkpointVersionOpt.ifPresent(
               checkpointVersion ->
                   checkArgument(
                       checksumVersion >= checkpointVersion,
-                      "checksum file's version %s should be greater than or equal to "
-                          + "checkpoint version %s",
+                      "checksum version (%d) should be greater than or equal to checkpoint "
+                          + "version (%d)",
                       checksumVersion,
                       checkpointVersion));
         });
@@ -468,22 +470,25 @@ public class LogSegment {
         checkpointVersion -> {
           checkArgument(
               deltaVersions.get(0) == checkpointVersion + 1,
-              "First delta file version must equal checkpointVersion + 1");
+              "First delta file version (%d) must equal checkpointVersion + 1 (%d)",
+              deltaVersions.get(0),
+              checkpointVersion + 1);
         });
   }
 
   private void validateLastDeltaVersionIsLogSegmentVersion(List<Long> deltaVersions, long version) {
     checkArgument(
         ListUtils.getLast(deltaVersions) == version,
-        "Last delta file version must equal the version of this LogSegment");
+        "Last delta file version (%d) must equal LogSegment version (%d)",
+        ListUtils.getLast(deltaVersions),
+        version);
   }
 
   private void validateDeltaVersionsAreContiguous(List<Long> deltaVersions) {
     for (int i = 1; i < deltaVersions.size(); i++) {
-      if (deltaVersions.get(i) != deltaVersions.get(i - 1) + 1) {
-        throw new IllegalArgumentException(
-            String.format("Delta versions must be contiguous: %s", deltaVersions));
-      }
+      checkArgument(
+          deltaVersions.get(i) == deltaVersions.get(i - 1) + 1,
+          () -> "Delta versions must be contiguous: " + deltaVersions);
     }
   }
 
@@ -500,7 +505,11 @@ public class LogSegment {
                           .orElse(true);
                   return checkpointVersionOkay && versions._2 <= version;
                 }),
-        "compactions must have start version > checkpointVersion AND end version <= version");
+        () ->
+            String.format(
+                "compactions must have startVersion > checkpointVersion (%d) AND endVersion <= "
+                    + "version (%d): %s",
+                checkpointVersionOpt.orElse(-1L), version, compactions));
   }
 
   private void validateCheckpointVersionEqualsLogSegmentVersion(
@@ -509,18 +518,23 @@ public class LogSegment {
         checkpointVersion -> {
           checkArgument(
               checkpointVersion == version,
-              "If there are no deltas, then checkpointVersion must equal the version "
-                  + "of this LogSegment");
+              "If no deltas, then checkpointVersion (%d) must equal LogSegment version (%d)",
+              checkpointVersion,
+              version);
         });
   }
 
   private void validateDeltaAtEndVersion(long version, FileStatus deltaAtEndVersion) {
     checkArgument(
         FileNames.isCommitFile(deltaAtEndVersion.getPath()),
-        "deltaAtEndVersion must be a delta file");
+        "deltaAtEndVersion must be a delta file: " + deltaAtEndVersion);
+
+    final long deltaVersion = FileNames.deltaVersion(deltaAtEndVersion.getPath());
     checkArgument(
-        FileNames.deltaVersion(deltaAtEndVersion.getPath()) == version,
-        "deltaAtEndVersion must have version equal to the version of this LogSegment");
+        deltaVersion == version,
+        "deltaAtEndVersion (%d) must be equal to LogSegment version (%d)",
+        deltaVersion,
+        version);
   }
 
   //////////////////////////

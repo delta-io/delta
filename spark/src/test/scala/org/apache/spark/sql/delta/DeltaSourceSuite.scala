@@ -28,7 +28,7 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
-import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSource, DeltaSourceOffset}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -45,7 +45,7 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{NullType, StringType, StructType}
+import org.apache.spark.sql.types.{IntegerType, NullType, StringType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
@@ -156,7 +156,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .format("delta")
           .load(inputDir.getCanonicalPath)
       }
-      for (msg <- Seq("Delta does not support specifying the schema at read time")) {
+      for (
+        msg <- Seq(
+          "The schema provided for the source read doesn't match the schema of the Delta table")
+      ) {
         assert(e.getMessage.contains(msg))
       }
 
@@ -185,6 +188,64 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         className = "delta",
         options = Map("path" -> inputDir.getCanonicalPath))
       DataFrameUtils.ofRows(spark, StreamingRelation(v1DataSource))
+    }
+  }
+
+  test("createSource should create source with empty or matching table schema provided") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+
+      sql(s"CREATE TABLE delta.`$path` (id INT NOT NULL, name STRING) USING delta")
+
+      val deltaSource = new DeltaDataSource()
+      val parameters = Map("path" -> path)
+      val metadataPath = tempDir.getCanonicalPath + "/_metadata"
+
+      val tableSchema = StructType(Seq(
+        StructField("id", IntegerType, false),
+        StructField("name", StringType, true)
+      ))
+      val emptySchema = new StructType()
+      val allowedCreationSchemas = Seq(emptySchema, tableSchema)
+      for (schema <- allowedCreationSchemas) {
+        val source = deltaSource.createSource(
+          sqlContext,
+          metadataPath = metadataPath,
+          schema = Some(schema),
+          providerName = "delta",
+          parameters = parameters
+        )
+
+        val actualSchema = source.asInstanceOf[DeltaSource].schema
+        assert(actualSchema.fields.map(_.name).toSet == Set("id", "name"))
+      }
+
+      val conflictingSchemas = Seq(
+        StructType(Seq(
+          StructField("id", IntegerType, true)
+          // missing field "name"
+        )),
+        StructType(Seq(
+          StructField("id", IntegerType, false),
+          StructField("name", StringType, true),
+          StructField("age", IntegerType, true) // extra field
+        ))
+      )
+
+      for (schema <- conflictingSchemas) {
+        val e = intercept[Exception] {
+          deltaSource.createSource(
+            sqlContext,
+            metadataPath = metadataPath,
+            schema = Some(schema),
+            providerName = "delta",
+            parameters = parameters
+          )
+        }
+        assert(e.getMessage.contains(
+          "[DELTA_READ_SOURCE_SCHEMA_CONFLICT] " +
+            "The schema provided for the source read doesn't match the schema of the Delta table"))
+      }
     }
   }
 

@@ -27,7 +27,6 @@ import org.apache.spark.sql.delta.fuzzer.{PhaseLockingTransactionExecutionObserv
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import io.delta.tables.{DeltaTable => IODeltaTable}
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
@@ -120,14 +119,7 @@ trait ConflictResolutionTestUtils
         ctx.trackTransaction(this) {
           unblockCommit(observer.get)
           waitForCommit(observer.get)
-          try {
-            ThreadUtils.awaitResult(future.get, Duration.Inf)
-          } catch {
-            case e: SparkException if e.getCause.isInstanceOf[ExecutionException] =>
-              throw e.getCause
-            case e: SparkException =>
-              throw e
-          }
+          ThreadUtils.awaitResult(future.get, Duration.Inf)
         }
       }
 

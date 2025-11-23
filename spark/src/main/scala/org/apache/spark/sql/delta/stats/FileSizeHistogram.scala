@@ -18,8 +18,6 @@ package org.apache.spark.sql.delta.stats
 
 import java.util.Arrays
 
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.types.StructType
 
@@ -32,17 +30,9 @@ import org.apache.spark.sql.types.StructType
  * @param totalBytes - an array of Long representing total number of bytes in different bins
  */
 case class FileSizeHistogram(
-    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     sortedBinBoundaries: IndexedSeq[Long],
     fileCounts: Array[Long],
-    totalBytes: Array[Long]) {
-
-  require(sortedBinBoundaries.nonEmpty)
-  require(sortedBinBoundaries.head == 0, "The first bin should start from 0")
-  require(sortedBinBoundaries.length == fileCounts.length, "number of binBoundaries should be" +
-    " same as size of fileCounts")
-  require(sortedBinBoundaries.length == totalBytes.length, "number of binBoundaries should be" +
-    " same as size of totalBytes")
+    totalBytes: Array[Long]) extends FileStatsHistogram {
 
   /**
    * Not intended to be used for [[Map]] structure keys. Implemented for the sole purpose of having
@@ -52,10 +42,7 @@ case class FileSizeHistogram(
   override def hashCode(): Int = Arrays.hashCode(totalBytes)
 
   override def equals(that: Any): Boolean = that match {
-    case FileSizeHistogram(thatSB, thatFC, thatTB) =>
-      sortedBinBoundaries == thatSB &&
-      java.util.Arrays.equals(fileCounts, thatFC) &&
-      java.util.Arrays.equals(totalBytes, thatTB)
+    case h: FileSizeHistogram => equalsHistogram(h)
     case _ => false
   }
 
@@ -90,17 +77,7 @@ private[delta] object FileSizeHistogram {
    * belongs to any bin
    */
   def getBinIndex(fileSize: Long, sortedBinBoundaries: IndexedSeq[Long]): Int = {
-    import scala.collection.Searching._
-    // The search function on IndexedSeq uses binary search.
-    val searchResult = sortedBinBoundaries.search(fileSize)
-    searchResult match {
-      case Found(index) =>
-        index
-      case InsertionPoint(insertionPoint) =>
-        // insertionPoint=0 means that fileSize is lesser than min bucket of histogram
-        // return -1 in that case
-        insertionPoint - 1
-    }
+    FileStatsHistogram.getBinIndex(fileSize, sortedBinBoundaries)
   }
 
   def apply(sortedBinBoundaries: IndexedSeq[Long]): FileSizeHistogram = {

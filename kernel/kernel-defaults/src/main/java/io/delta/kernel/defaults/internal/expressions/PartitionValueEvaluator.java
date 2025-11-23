@@ -17,6 +17,7 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -79,10 +80,11 @@ class PartitionValueEvaluator {
       public long getLong(int rowId) {
         if (partitionType.equivalent(LongType.LONG)) {
           return Long.parseLong(input.getString(rowId));
-        } else if (partitionType.equivalent(TimestampType.TIMESTAMP)
-            || partitionType.equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
-          // Both the timestamp and timestamp_ntz have no timezone info,
-          // so they are interpreted in local time zone.
+        } else if (partitionType.equivalent(TimestampType.TIMESTAMP)) {
+          // For TIMESTAMP type the format could be standard format or ISO8601
+          return PartitionUtils.tryParseTimestamp(input.getString(rowId));
+        } else if (partitionType.equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
+          // For TIMESTAMP_NTZ the format should never have timezone info
           return InternalUtils.microsSinceEpoch(Timestamp.valueOf(input.getString(rowId)));
         }
         throw new UnsupportedOperationException("Invalid value request for data type");

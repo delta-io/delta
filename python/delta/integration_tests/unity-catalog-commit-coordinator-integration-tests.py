@@ -80,6 +80,11 @@ class UnityCatalogManagedTableTestBase(unittest.TestCase):
     def read(self, table_name: str) -> DataFrame:
         return spark.read.table(table_name)
 
+    def current_version(self, table_name: str) -> int:
+        # Access the delta table's max version.
+        dt = DeltaTable.forName(spark, table_name)
+        return dt.history().selectExpr("max(version)").collect()[0][0]
+
     def read_with_cdf_timestamp(self, timestamp: str, table_name: str) -> DataFrame:
         return spark.read.option('readChangeFeed', 'true').option(
             "startingTimestamp", timestamp).table(table_name)
@@ -460,7 +465,7 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
             # DESCRIBE HISTORY is currently unsupported on catalog owned tables.
             self.get_table_history(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).collect()
         except py4j.protocol.Py4JJavaError as error:
-            assert("Path based access is not supported for Catalog-Owned table" in str(error))
+            assert("catalog-managed" in str(error).lower())
 
     def test_vacuum(self) -> None:
         try:
@@ -470,12 +475,15 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
             assert("DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" in str(error))
 
     def test_restore(self) -> None:
+        # Intentionally add a new data change commit.
+        self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
         try:
+            current_version = self.current_version(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
             # Restore is currently unsupported on catalog owned tables.
-            spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO VERSION AS OF 0")
+            spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO "
+                      f"VERSION AS OF {current_version-1}")
         except py4j.protocol.Py4JJavaError as error:
-            assert("A table's Delta metadata can only be changed from a cluster or warehouse"
-                   in str(error))
+            assert("UPDATE_DELTA_METADATA" in str(error))
 
 
 class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
@@ -516,13 +524,15 @@ class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
             assert("Path based access is not supported for Catalog-Owned table" in str(error))
 
     def test_change_data_feed_with_version(self) -> None:
+        # Intentionally add a new data change commit.
         self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
         try:
+            current_version = self.current_version(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
             self.read_with_cdf_version(
-                0,
+                current_version - 1,
                 MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).select("id", "_change_type")
         except py4j.protocol.Py4JJavaError as error:
-            assert("Path based access is not supported for Catalog-Owned table" in str(error))
+            assert("UPDATE_DELTA_METADATA" in str(error))
 
     def test_delta_table_for_path(self) -> None:
         tbl_path = spark.sql(

@@ -1,0 +1,12 @@
+{
+  "uc_table_id": "12345678-1234-1234-1234-123456789abc",
+  "max_ratified_version": 3,
+  "log_tail": [
+    {
+      "staged_commit_file_name": "00000000000000000002.a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d.json"
+    },
+    {
+      "staged_commit_file_name": "00000000000000000003.f7e8d9c0-b1a2-4536-9748-5a6b7c8d9e0f.json"
+    }
+  ]
+}

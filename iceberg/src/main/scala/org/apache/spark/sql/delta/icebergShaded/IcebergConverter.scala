@@ -457,10 +457,12 @@ class IcebergConverter(spark: SparkSession)
       table.properties().getOrDefault(
         TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
 
-    if (snapshotToConvert.path.toString == writeMetadataLocation) {
+    val shouldKeepPhysicalFiles =
       // Don't attempt any file cleanup in the edge-case configuration
       // that the data location (in Uniform the table root location)
       // is the same as the Iceberg metadata location
+      (snapshotToConvert.path.toString == writeMetadataLocation)
+    if (shouldKeepPhysicalFiles) {
       expireSnapshotHelper.cleanExpiredFiles(false)
     } else {
       expireSnapshotHelper.deleteWith(path => {

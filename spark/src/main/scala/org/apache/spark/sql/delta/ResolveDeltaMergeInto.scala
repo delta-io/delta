@@ -299,7 +299,13 @@ object ResolveDeltaMergeInto {
       (resolvedExprs, target.output.map(_.name))
         .zipped
         .map { (resolvedExpr, targetColName) =>
-          DeltaMergeAction(Seq(targetColName), resolvedExpr, targetColNameResolved = true)
+          DeltaMergeAction(
+            targetColNameParts = Seq(targetColName),
+            expr = resolvedExpr,
+            // Schema evolution is disabled, so the action expression should already be aligned
+            // with the target schema.
+            targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.TARGET_ALIGNED,
+            targetColNameResolved = true)
         }
     } else {
       clause match {
@@ -308,17 +314,38 @@ object ResolveDeltaMergeInto {
           // column name. Target columns not present in the source will be filled in
           // with null later.
           source.output.map { attr =>
-            DeltaMergeAction(Seq(attr.name), attr, targetColNameResolved = true)
+            DeltaMergeAction(
+              targetColNameParts = Seq(attr.name),
+              expr = attr,
+              // INSERT sets target-only struct fields to null since there is no existing target
+              // row to preserve values from.
+              targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.NULLIFY,
+              targetColNameResolved = true)
           }
         case _: DeltaMergeIntoMatchedUpdateClause =>
           // Expand `*` into seq of [ `columnName = sourceColumnBySameName` ] for every source
           // column name. Target columns not present in the source will be filled in with
           // no-op actions later.
-          // Nested columns are unfolded to accommodate the case where a source struct has a
-          // subset of the nested columns in the target. If a source struct (a, b) is writing
-          // into a target (a, b, c), the final struct after filling in the no-op actions will
-          // be (s.a, s.b, t.c).
-          getLeafActionsForSchema(source.schema, Seq.empty, source, conf)
+          if (UpdateExpressionsSupport.isUpdateStarPreserveNullSourceStructsEnabled(conf)) {
+            // Expand `*` into column-level actions to fix null expansion in UPDATE *, i.e. a null
+            // source struct is expanded into a non-null struct with all fields set to null.
+            source.output.map { attr =>
+              DeltaMergeAction(
+                targetColNameParts = Seq(attr.name),
+                expr = attr,
+                // Preserve the original value of target-only struct fields to be consistent with
+                // the behavior without the null expansion fix. This avoids the breaking change that
+                // causes data loss.
+                targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.PRESERVE,
+                targetColNameResolved = true)
+            }
+          } else {
+            // Nested columns are unfolded to accommodate the case where a source struct has a
+            // subset of the nested columns in the target. If a source struct (a, b) is writing
+            // into a target (a, b, c), the final struct after filling in the no-op actions will
+            // be (s.a, s.b, t.c).
+            getLeafActionsForSchema(source.schema, Seq.empty, source, conf)
+          }
       }
     }
   }
@@ -352,7 +379,13 @@ object ResolveDeltaMergeInto {
             messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
           )
         }
-        Seq(DeltaMergeAction(nameParts, sourceExpr, targetColNameResolved = true))
+        Seq(
+          DeltaMergeAction(
+            targetColNameParts = nameParts,
+            expr = sourceExpr,
+            // Leaf-level operations are aligned with the target schema naturally.
+            targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.TARGET_ALIGNED,
+            targetColNameResolved = true))
     }
   }
 

@@ -37,6 +37,7 @@ import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElemen
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
 import io.delta.kernel.types.ByteType.BYTE
@@ -1143,7 +1144,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // we need to compare stats after removing the tightBounds field from Kernel stats
       val kernelStatsWithoutTightBounds = kernelStats.map { node =>
         val objectNode =
-          node.deepCopy().asInstanceOf[com.fasterxml.jackson.databind.node.ObjectNode]
+          node.deepCopy().asInstanceOf[ObjectNode]
         objectNode.remove("tightBounds")
         objectNode
       }

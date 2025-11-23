@@ -327,7 +327,15 @@ public final class MaterializedRowTrackingColumn {
     return dataBatch;
   }
 
-  private String getPhysicalColumnName(Map<String, String> configuration) {
+  /**
+   * Gets the physical column name from the table configuration.
+   *
+   * @param configuration the table configuration map
+   * @return the physical column name
+   * @throws IllegalArgumentException if the materialized column name is missing from the
+   *     configuration
+   */
+  public String getPhysicalColumnName(Map<String, String> configuration) {
     return Optional.ofNullable(configuration.get(getMaterializedColumnNameProperty()))
         .orElseThrow(
             () ->

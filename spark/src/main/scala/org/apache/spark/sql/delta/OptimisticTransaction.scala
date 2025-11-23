@@ -1399,6 +1399,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (!RedirectFeature.isFeatureSupported(snapshot)) return
     // If this transaction tried to unset redirect feature, then skips validation.
     if (RedirectFeature.isUpdateProperty(snapshot, op)) return
+    // If this transaction tried to drop redirect feature, then skips validation.
+    if (RedirectFeature.isDropFeature(op)) return
     // Get the redirect configuration from current snapshot.
     val redirectConfigOpt = RedirectFeature.getRedirectConfiguration(snapshot)
     redirectConfigOpt.foreach { redirectConfig =>
@@ -1933,7 +1935,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
-    deltaLog.checkpoint(currentSnapshot)
+    deltaLog.checkpoint(currentSnapshot, catalogTable)
     currentSnapshot
   }
 
@@ -2029,6 +2031,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val (protocolUpdate1, metadataUpdate1) =
       UniversalFormat.enforceInvariantsAndDependencies(
         spark,
+        catalogTable,
         // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
         snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`

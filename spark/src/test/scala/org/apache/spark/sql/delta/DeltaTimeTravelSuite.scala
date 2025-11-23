@@ -827,8 +827,11 @@ class DeltaTimeTravelSuite extends QueryTest
         val ex = intercept[VersionNotFoundException] {
           spark.sql(s"SELECT * from $tableName FOR VERSION AS OF 2")
         }
-        assert(ex.getMessage contains
-          "Cannot time travel Delta table to version 2. Available versions: [0, 1]")
+        checkError(
+          ex,
+          "DELTA_VERSION_NOT_FOUND",
+          sqlState = "22003",
+          parameters = Map("userVersion" -> "2", "earliest" -> "0", "latest" -> "1"))
 
         val timeAtVersion0 = new Timestamp(start).toString
         val timeAtVersion1 = new Timestamp(start + 20.minutes).toString

@@ -35,6 +35,9 @@ trait DeltaInsertIntoImplicitCastBase extends DeltaInsertIntoTest {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
+    // Enable the null expansion fix by preserving NULL source structs in INSERT operations.
+    // Without this fix, NULL source structs are incorrectly expanded to structs with NULL fields.
+    spark.conf.set(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -180,7 +183,7 @@ trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImpl
   for { (inserts: Set[Insert], expectedAnswer) <- Seq(
     // Only few INSERT types correctly handle null structs and keep the whole struct null
     // instead of expanding it to a struct of null fields.
-    Set(SQLInsertColList(SaveMode.Append)) ->
+    Set(SQLInsertColList(SaveMode.Append), StreamingInsert) ->
       TestData("a long, s struct <x int, y: int>",
         Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": null }""")),
     Set(SQLInsertColList(SaveMode.Overwrite),
@@ -190,7 +193,7 @@ trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImpl
 
     // For all other INSERT types, the null struct gets incorrectly expanded to
     // `struct<null, null>
-    insertsAppend - SQLInsertColList(SaveMode.Append) ->
+    insertsAppend - SQLInsertColList(SaveMode.Append) - StreamingInsert ->
       TestData("a long, s struct <x int, y: int>",
         Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""",
         """{ "a": 1, "s": { "x": null, "y": null } }""")),

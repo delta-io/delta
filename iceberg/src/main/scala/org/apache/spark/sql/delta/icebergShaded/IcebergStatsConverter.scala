@@ -150,6 +150,9 @@ case class IcebergStatsConverter(statsRow: InternalRow, statsSchema: StructType)
   private def generateIcebergLongMetricMap(
       stats: InternalRow,
       statsSchema: StructType): Map[Integer, JLong] = {
+    // If the entire Delta stats struct is missing, then the Iceberg stats would be empty map.
+    if (stats == null) return Map.empty
+
     statsSchema.fields.zipWithIndex.flatMap { case (field, idx) =>
       field.dataType match {
         // If the stats schema contains a struct type, there is a corresponding struct in the data
@@ -158,7 +161,9 @@ case class IcebergStatsConverter(statsRow: InternalRow, statsSchema: StructType)
         case st: StructType =>
           generateIcebergLongMetricMap(stats.getStruct(idx, st.fields.length), st)
         case lt: LongType =>
-          if (DeltaColumnMapping.hasColumnId(field)) {
+          // Skip null values - InternalRow.getLong returns 0 for nulls, which would incorrectly
+          // add 0 to Iceberg stats instead of omitting them
+          if (!stats.isNullAt(idx) && DeltaColumnMapping.hasColumnId(field)) {
             Map[Integer, JLong](Integer.valueOf(DeltaColumnMapping.getColumnId(field)) ->
               new JLong(stats.getLong(idx)))
           } else {
