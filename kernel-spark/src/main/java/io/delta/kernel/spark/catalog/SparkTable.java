@@ -21,7 +21,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
-import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManagerFactory;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -138,9 +138,13 @@ public class SparkTable implements Table, SupportsRead {
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
 
-    this.hadoopConf =
-        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkSession spark = SparkSession.active();
+    this.hadoopConf = spark.sessionState().newHadoopConfWithOptions(toScalaMap(options));
+    // Ensure catalog storage properties flow into Hadoop conf before factory detection
+    mergeCatalogStoragePropertiesIntoHadoopConf(catalogTable, hadoopConf);
+
+    this.snapshotManager =
+        DeltaSnapshotManagerFactory.create(tablePath, catalogTable, spark, hadoopConf);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
@@ -188,6 +192,19 @@ public class SparkTable implements Table, SupportsRead {
    */
   private static String getDecodedPath(java.net.URI location) {
     return new java.io.File(location).getPath();
+  }
+
+  private static void mergeCatalogStoragePropertiesIntoHadoopConf(
+      Optional<CatalogTable> catalogTable, Configuration hadoopConf) {
+    catalogTable.ifPresent(
+        table ->
+            scala.collection.JavaConverters.mapAsJavaMap(table.storage().properties())
+                .forEach(
+                    (key, value) -> {
+                      if (hadoopConf.get(key) == null) {
+                        hadoopConf.set(key, value);
+                      }
+                    }));
   }
 
   /**
