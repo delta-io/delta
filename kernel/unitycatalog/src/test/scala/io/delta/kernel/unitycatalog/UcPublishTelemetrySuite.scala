@@ -46,8 +46,7 @@ class UcPublishTelemetrySuite
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable())
 
-      val tableData0 = new TableData(0, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow("testUcTableId", tableData0)
+      ucClient.insertTableDataAfterCreate("testUcTableId")
 
       val resultV1 = result0.getPostCommitSnapshot.get()
         .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)

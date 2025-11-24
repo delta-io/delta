@@ -44,7 +44,7 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
   }
 
   test("TableData::appendCommit handles commit version 1 (since CREATE does not go through UC)") {
-    val tableData = new InMemoryUCClient.TableData(0, ArrayBuffer.empty[Commit])
+    val tableData = InMemoryUCClient.TableData.afterCreate()
     assert(tableData.getMaxRatifiedVersion == 0L)
 
     tableData.appendCommit(createCommit(1L))
@@ -55,7 +55,7 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
   }
 
   test("TableData::appendCommit throws if commit version is not maxRatifiedVersion + 1") {
-    val tableData = new InMemoryUCClient.TableData(0, ArrayBuffer.empty[Commit])
+    val tableData = InMemoryUCClient.TableData.afterCreate()
     tableData.appendCommit(createCommit(1L))
 
     val exMsg = intercept[CommitFailedException] {
@@ -66,7 +66,7 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
   }
 
   test("TableData::appendCommit appends the commit and updates the maxRatifiedVersion") {
-    val tableData = new InMemoryUCClient.TableData(0, ArrayBuffer.empty[Commit])
+    val tableData = InMemoryUCClient.TableData.afterCreate()
     tableData.appendCommit(createCommit(1L))
 
     assert(tableData.getMaxRatifiedVersion == 1L)

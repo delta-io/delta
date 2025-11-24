@@ -179,15 +179,14 @@ trait UCCatalogManagedTestUtils
           fileStatus.getModificationTime)
       }
     val tableData = new TableData(maxRatifiedVersion, ArrayBuffer(catalogCommits: _*))
-    ucClient.createTableIfNotExistsOrThrow("testUcTableId", tableData)
+    ucClient.insertTableData("testUcTableId", tableData)
     textFx(ucClient, tablePath, maxRatifiedVersion)
   }
 
   def createUCCatalogManagedClientForTableAfterCreate(
       ucTableId: String = "testUcTableId"): UCCatalogManagedClient = {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableData = new TableData(0, ArrayBuffer.empty[Commit])
-    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
+    ucClient.insertTableDataAfterCreate(ucTableId)
     new UCCatalogManagedClient(ucClient)
   }
 

@@ -210,8 +210,7 @@ class UCCatalogManagedCommitterSuite
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
-      ucClient
-        .createTableIfNotExistsOrThrow(testUcTableId, new TableData(0, ArrayBuffer[Commit]()))
+      ucClient.insertTableDataAfterCreate(testUcTableId)
       val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
 
       // ===== WHEN =====
@@ -245,8 +244,7 @@ class UCCatalogManagedCommitterSuite
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val tableData = new TableData(0, ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
+      ucClient.insertTableDataAfterCreate(testUcTableId)
 
       val testValue = "TEST_COMMIT_DATA_12345"
       val actionsIterator = getSingleElementRowIter(testValue)
@@ -302,7 +300,7 @@ class UCCatalogManagedCommitterSuite
 
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
+      ucClient.insertTableData(testUcTableId, tableData)
       val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
 
@@ -329,7 +327,7 @@ class UCCatalogManagedCommitterSuite
             null)
       }
       val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
+      ucClient.insertTableData(testUcTableId, tableData)
       val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
       // ===== WHEN =====
@@ -350,7 +348,7 @@ class UCCatalogManagedCommitterSuite
         override def forceThrowInCommitMethod(): Unit = throw new IOException("UC network error")
       }
       val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
+      ucClient.insertTableData(testUcTableId, tableData)
       val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
 
@@ -375,7 +373,7 @@ class UCCatalogManagedCommitterSuite
         }
       }
       val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
-      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
+      ucClient.insertTableData(testUcTableId, tableData)
       val committer = new UCCatalogManagedCommitter(ucClient, "unknownTableId", tablePath)
       val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
 

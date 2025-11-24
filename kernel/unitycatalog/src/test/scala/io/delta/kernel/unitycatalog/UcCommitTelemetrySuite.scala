@@ -51,8 +51,7 @@ class UcCommitTelemetrySuite
         .buildCreateTableTransaction("testUcTableId", tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable() /* dataActions */ )
-      val tableData0 = new TableData(0, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow("testUcTableId", tableData0)
+      ucClient.insertTableDataAfterCreate("testUcTableId")
 
       // Verify CREATE metrics
       assert(reporter.reports.size === 1)

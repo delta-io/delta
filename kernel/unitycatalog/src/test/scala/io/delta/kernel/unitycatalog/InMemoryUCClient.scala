@@ -101,6 +101,10 @@ object InMemoryUCClient {
       }
     }
   }
+
+  object TableData {
+    def afterCreate(): TableData = new TableData(0, ArrayBuffer.empty[Commit])
+  }
 }
 
 /**
@@ -184,9 +188,12 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   /** Visible for testing. Can be overridden to force an exception in commit method. */
   protected def forceThrowInCommitMethod(): Unit = {}
 
-  private[unitycatalog] def createTableIfNotExistsOrThrow(
-      ucTableId: String,
-      tableData: TableData): Unit = {
+  private[unitycatalog] def insertTableDataAfterCreate(ucTableId: String): Unit = {
+    Option(tables.putIfAbsent(ucTableId, TableData.afterCreate()))
+      .foreach(_ => throw new IllegalArgumentException(s"Table $ucTableId already exists"))
+  }
+
+  private[unitycatalog] def insertTableData(ucTableId: String, tableData: TableData): Unit = {
     Option(tables.putIfAbsent(ucTableId, tableData))
       .foreach(_ => throw new IllegalArgumentException(s"Table $ucTableId already exists"))
   }
@@ -203,6 +210,6 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
   /** Retrieves the table data for the given table ID, creating it if it does not exist. */
   private def getOrCreateTableIfNotExists(tableId: String): TableData = {
-    tables.computeIfAbsent(tableId, _ => new TableData(0, ArrayBuffer.empty))
+    tables.computeIfAbsent(tableId, _ => TableData.afterCreate())
   }
 }

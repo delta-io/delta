@@ -45,8 +45,7 @@ class UcLoadSnapshotTelemetrySuite
       .build(engine)
       .commit(engine, CloseableIterable.emptyIterable())
 
-    val tableData = new InMemoryUCClient.TableData(0, scala.collection.mutable.ArrayBuffer())
-    ucClient.createTableIfNotExistsOrThrow("testUcTableId", tableData)
+    ucClient.insertTableDataAfterCreate("testUcTableId")
 
     val result1 = result0.getPostCommitSnapshot.get()
       .buildUpdateTableTransaction("engineInfo", io.delta.kernel.Operation.MANUAL_UPDATE)

@@ -64,8 +64,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable() /* dataActions */ )
-      val tableData0 = new TableData(0, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData0)
+      ucClient.insertTableDataAfterCreate(testUcTableId)
       result0.getPostCommitSnapshot.get().publish(engine) // Should be no-op!
 
       // Step 2: WRITE -- v1.uuid.json
@@ -131,8 +130,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable())
-      val tableData0 = new TableData(0, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData0)
+      ucClient.insertTableDataAfterCreate(testUcTableId)
 
       var currentSnapshot = result0.getPostCommitSnapshot.get()
 
@@ -198,8 +196,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable())
-      val tableData0 = new TableData(0, ArrayBuffer[Commit]())
-      ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData0)
+      ucClient.insertTableDataAfterCreate(testUcTableId)
 
       // Step 2: WRITE and commit data up to version 2
       val postCommitSnapshot1 = writeDataAndVerify(
