@@ -469,5 +469,46 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
         Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"), Row(2L, "DROP FEATURE"))
       )
     }
-  }  
+  }
+
+  test("DataFrameWriter V1 overwrite preserves partitioning information") {
+    val data = Seq(
+      (1, "Alice", 29),
+      (2, "Bob", 35),
+      (3, "Charlie", 23)
+    )
+    val df = spark.createDataFrame(data).toDF("id", "name", "age")
+    df.write.partitionBy("age").format("delta").saveAsTable("foo")
+    val overwriteData = Seq(
+      (4, "Flip", 11),
+      (5, "Flap", 11),
+      (6, "Flop", 13)
+    )
+    val df1 = spark.createDataFrame(overwriteData).toDF("id", "name", "age")
+    df1.write
+      .format("delta")
+      .mode("overwrite")
+      .saveAsTable("foo")
+  }
+
+  test("DataFrameWriter V1 replaceWhere preserves non-overwritten partitions") {
+    withTable("foo") {
+      val data = Seq(
+        (1, "Alice", 29),
+        (2, "Bob", 35),
+        (3, "Charlie", 23)
+      )
+      val df = spark.createDataFrame(data).toDF("id", "name", "age")
+      df.write.partitionBy("age").format("delta").saveAsTable("foo")
+      val overwriteData = Seq((1, "Alice", 30))
+      val df1 = spark.createDataFrame(overwriteData).toDF("id", "name", "age")
+      df1.write
+        .format("delta")
+        .option("replaceWhere", "age = 29")
+        .mode("overwrite")
+        .saveAsTable("foo")
+
+      assert(spark.sql("SHOW PARTITIONS foo").count() == 3)
+    }
+  }
 }
