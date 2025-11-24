@@ -49,9 +49,14 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.*;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Implementation of {@link Scan} */
 public class ScanImpl implements Scan {
+
+  private static final Logger logger = LoggerFactory.getLogger(ScanImpl.class);
+
   /**
    * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
    * with metadata properties to derive the physical schema.
@@ -140,9 +145,14 @@ public class ScanImpl implements Scan {
     accessedScanFiles = true;
 
     // Generate data skipping filter and decide if we should read the stats column
+    logger.info(
+        "Trying to generate data skipping filter for data filter = {} and data schema = {}",
+        getDataFilters(),
+        metadata.getDataSchema());
     Optional<DataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter();
     boolean hasDataSkippingFilter = dataSkippingFilter.isPresent();
     boolean shouldReadStats = hasDataSkippingFilter || includeStats;
+    logger.info("Generated data skipping filter = {}", dataSkippingFilter);
 
     Timer.Timed planningDuration = scanMetrics.totalPlanningTimer.start();
     // ScanReportReporter stores the current context and can be invoked (in the future) with
@@ -368,6 +378,7 @@ public class ScanImpl implements Scan {
         DataSkippingUtils.pruneStatsSchema(
             getStatsSchema(metadata.getDataSchema(), dataSkippingFilter.getReferencedCollations()),
             dataSkippingFilter.getReferencedCols());
+    logger.info("For stats JSON parsing: prunedStatsSchema={}", prunedStatsSchema);
 
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
