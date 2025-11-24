@@ -18,7 +18,6 @@ package com.sparkuctest
 
 import java.io.File
 
-import io.unitycatalog.client.ApiClient
 import io.unitycatalog.client.api.TablesApi
 import io.unitycatalog.client.model.ListTablesResponse
 
