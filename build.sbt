@@ -508,6 +508,7 @@ lazy val sparkV2 = (project in file("kernel-spark"))
 lazy val spark = (project in file("spark-unified"))
   .dependsOn(sparkV1)
   .dependsOn(sparkV2)
+  .dependsOn(sparkV2 % "test->test")  // Add test dependency for TestCatalog
   .dependsOn(storage)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
