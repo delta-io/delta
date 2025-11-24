@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -98,11 +98,10 @@ trait UnityCatalogSupport extends BeforeAndAfterAll with Logging { self: Suite =
    * Creates a Unity Catalog API client configured for this server.
    */
   def createUnityCatalogClient(): ApiClient = {
-    val port = unityCatalogUri.split(":")(2).toInt
     val client = new ApiClient()
     client.setScheme("http")
     client.setHost("localhost")
-    client.setPort(port)
+    client.setPort(ucPort)
     client
   }
 
