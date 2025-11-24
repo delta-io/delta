@@ -17,69 +17,58 @@ package io.delta.kernel.spark.snapshot;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import io.delta.kernel.spark.utils.CatalogTableTestUtils$;
-import java.util.Collections;
-import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.junit.jupiter.api.Test;
 
 /** Tests for {@link CatalogManagedSnapshotManager}. */
 class CatalogManagedSnapshotManagerTest {
 
   @Test
-  void testConstructor_NullCatalogTable_ThrowsException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> new CatalogManagedSnapshotManager(null, null, new Configuration()),
-        "Null catalogTable should throw NullPointerException");
-  }
-
-  @Test
-  void testConstructor_NullSpark_ThrowsException() {
-    CatalogTable table = catalogTable(Collections.emptyMap(), Collections.emptyMap());
-
-    assertThrows(
-        NullPointerException.class,
-        () -> new CatalogManagedSnapshotManager(table, null, new Configuration()),
-        "Null spark should throw NullPointerException");
-  }
-
-  @Test
   void testConstructor_NullHadoopConf_ThrowsException() {
-    CatalogTable table = catalogTable(Collections.emptyMap(), Collections.emptyMap());
-
     assertThrows(
         NullPointerException.class,
-        () -> new CatalogManagedSnapshotManager(table, null, null),
+        () -> new CatalogManagedSnapshotManager(new NoOpClient(), null),
         "Null hadoopConf should throw NullPointerException");
   }
 
-  // Note: Additional constructor validation tests require integration test setup.
-  // The following tests cannot be implemented as unit tests because they require
-  // a real SparkSession to properly test UC table validation logic:
-  //
-  // - testConstructor_NonUCTable_ThrowsException: Verify non-UC table rejection
-  // - testConstructor_CatalogManagedWithoutUCTableId_ThrowsException: Verify UC table ID
-  // requirement
-  //
-  // These validations happen after null checks, so passing null SparkSession causes
-  // NullPointerException before reaching the UC validation logic. Cannot mock SparkSession
-  // effectively for these tests.
-  //
-  // Note: Full integration tests for CatalogManagedSnapshotManager require:
-  // 1. Real SparkSession with Unity Catalog configured
-  // 2. Unity Catalog tables with proper feature flags and table IDs
-  // 3. Unity Catalog endpoint available for snapshot loading
-  //
-  // Such tests should be added when integration test infrastructure is available:
-  // - testConstructor_ValidUCTable_Success: Happy path with valid UC table and config
-  // - testLoadLatestSnapshot_Success: Test snapshot loading from UC
-  // - testLoadSnapshotAt_Success: Test version-specific snapshot loading
-  // - testClose_Success: Test UC client cleanup
+  @Test
+  void testConstructor_NullClient_ThrowsException() {
+    assertThrows(
+        NullPointerException.class,
+        () -> new CatalogManagedSnapshotManager(null, new Configuration()),
+        "Null commitClient should throw NullPointerException");
+  }
 
-  private static CatalogTable catalogTable(
-      Map<String, String> properties, Map<String, String> storageProperties) {
-    return CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(properties, storageProperties);
+  private static final class NoOpClient implements ManagedCommitClient {
+    @Override
+    public String getTableId() {
+      return "dummy";
+    }
+
+    @Override
+    public String getTablePath() {
+      return "/tmp/dummy";
+    }
+
+    @Override
+    public io.delta.kernel.Snapshot loadSnapshot(
+        io.delta.kernel.engine.Engine engine,
+        java.util.Optional<Long> versionOpt,
+        java.util.Optional<Long> timestampOpt) {
+      throw new UnsupportedOperationException("noop");
+    }
+
+    @Override
+    public io.delta.kernel.CommitRange loadCommitRange(
+        io.delta.kernel.engine.Engine engine,
+        java.util.Optional<Long> startVersionOpt,
+        java.util.Optional<Long> startTimestampOpt,
+        java.util.Optional<Long> endVersionOpt,
+        java.util.Optional<Long> endTimestampOpt) {
+      throw new UnsupportedOperationException("noop");
+    }
+
+    @Override
+    public void close() {}
   }
 }

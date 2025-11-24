@@ -17,6 +17,7 @@ package io.delta.kernel.spark.snapshot;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.spark.snapshot.uc.UnityCatalogManagedCommitClient;
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
@@ -56,20 +57,15 @@ public final class DeltaSnapshotManagerFactory {
   // Utility class - no instances
   private DeltaSnapshotManagerFactory() {}
 
-  /**
-   * Creates the appropriate snapshot manager for a Delta table.
-   *
+ /**
+  * Creates the appropriate snapshot manager for a Delta table.
+  *
    * <p><strong>Selection logic:</strong>
    *
    * <ul>
-   *   <li>If {@code catalogTable} is present and Unity Catalog managed → {@link
-   *       CatalogManagedSnapshotManager}
+   *   <li>If {@code catalogTable} is present and UC-managed → {@link CatalogManagedSnapshotManager}
    *   <li>Otherwise → {@link PathBasedSnapshotManager}
    * </ul>
-   *
-   * <p>Unity Catalog managed tables are identified by checking for catalog-managed feature flags
-   * and the presence of a Unity Catalog table ID. See {@link
-   * CatalogTableUtils#isUnityCatalogManagedTable(CatalogTable)} for details.
    *
    * @param tablePath filesystem path to the Delta table root
    * @param catalogTable optional Spark catalog table metadata
@@ -90,10 +86,10 @@ public final class DeltaSnapshotManagerFactory {
     requireNonNull(spark, "spark is null");
     requireNonNull(hadoopConf, "hadoopConf is null");
 
-    // Check if table is Unity Catalog managed
-    if (catalogTable.isPresent()
-        && CatalogTableUtils.isUnityCatalogManagedTable(catalogTable.get())) {
-      return new CatalogManagedSnapshotManager(catalogTable.get(), spark, hadoopConf);
+    if (catalogTable.isPresent() && CatalogTableUtils.isUnityCatalogManagedTable(catalogTable.get())) {
+      ManagedCommitClient client =
+          UnityCatalogManagedCommitClient.fromCatalog(catalogTable.get(), spark);
+      return new CatalogManagedSnapshotManager(client, hadoopConf);
     }
 
     // Default to path-based snapshot manager
