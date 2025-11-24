@@ -32,8 +32,7 @@ public interface ManagedCommitClient extends AutoCloseable {
   /** @return physical table path used by Delta Kernel. */
   String getTablePath();
 
-  Snapshot loadSnapshot(
-      Engine engine, Optional<Long> versionOpt, Optional<Long> timestampOpt);
+  Snapshot loadSnapshot(Engine engine, Optional<Long> versionOpt, Optional<Long> timestampOpt);
 
   CommitRange loadCommitRange(
       Engine engine,

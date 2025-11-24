@@ -38,8 +38,7 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
   private final UCClient ucClient;
   private final UCCatalogManagedClient ucManagedClient;
 
-  public UnityCatalogManagedCommitClient(
-      String tableId, String tablePath, UCClient ucClient) {
+  public UnityCatalogManagedCommitClient(String tableId, String tablePath, UCClient ucClient) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.ucClient = requireNonNull(ucClient, "ucClient is null");
@@ -103,8 +102,9 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
     java.util.Map<String, String> storageProperties =
         scala.collection.JavaConverters.mapAsJavaMap(catalogTable.storage().properties());
 
-    String ucTableId = storageProperties.get(io.delta.storage.commit.uccommitcoordinator
-        .UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    String ucTableId =
+        storageProperties.get(
+            io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     if (ucTableId == null || ucTableId.isEmpty()) {
       throw new IllegalArgumentException(
           "Cannot extract ucTableId from table " + catalogTable.identifier());
@@ -131,7 +131,8 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
             : spark.sessionState().catalogManager().currentCatalog().name();
 
     Map<String, CatalogEntry> entries = new HashMap<>();
-    spark.conf()
+    spark
+        .conf()
         .getAll()
         .forEach(
             (k, v) -> {

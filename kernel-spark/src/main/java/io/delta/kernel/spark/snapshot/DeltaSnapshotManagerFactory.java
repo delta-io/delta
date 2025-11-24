@@ -57,9 +57,9 @@ public final class DeltaSnapshotManagerFactory {
   // Utility class - no instances
   private DeltaSnapshotManagerFactory() {}
 
- /**
-  * Creates the appropriate snapshot manager for a Delta table.
-  *
+  /**
+   * Creates the appropriate snapshot manager for a Delta table.
+   *
    * <p><strong>Selection logic:</strong>
    *
    * <ul>
@@ -86,7 +86,8 @@ public final class DeltaSnapshotManagerFactory {
     requireNonNull(spark, "spark is null");
     requireNonNull(hadoopConf, "hadoopConf is null");
 
-    if (catalogTable.isPresent() && CatalogTableUtils.isUnityCatalogManagedTable(catalogTable.get())) {
+    if (catalogTable.isPresent()
+        && CatalogTableUtils.isUnityCatalogManagedTable(catalogTable.get())) {
       ManagedCommitClient client =
           UnityCatalogManagedCommitClient.fromCatalog(catalogTable.get(), spark);
       return new CatalogManagedSnapshotManager(client, hadoopConf);

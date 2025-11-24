@@ -71,8 +71,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   @Override
   public Snapshot loadSnapshotAt(long version) {
     checkArgument(version >= 0, "version must be non-negative");
-    return commitClient.loadSnapshot(
-        kernelEngine, Optional.of(version), Optional.empty());
+    return commitClient.loadSnapshot(kernelEngine, Optional.of(version), Optional.empty());
   }
 
   /**
@@ -154,7 +153,8 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
       commitClient.close();
       logger.info("Closed CatalogManagedSnapshotManager for table {}", commitClient.getTableId());
     } catch (Exception e) {
-      logger.warn("Error closing catalog-managed client for table {}", commitClient.getTableId(), e);
+      logger.warn(
+          "Error closing catalog-managed client for table {}", commitClient.getTableId(), e);
     }
   }
 }
