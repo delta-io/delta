@@ -767,7 +767,7 @@ trait DataSkippingReaderBase
       // Date and time arithmetic.
       case _: AddMonthsBase | _: DateAdd | _: DateAddInterval | _: DateDiff | _: DateSub |
            _: DatetimeSub | _: LastDay | _: MonthsBetween | _: NextDay | _: SubtractDates |
-           _: SubtractTimestamps | _: TimeAdd | _: TimestampAdd | _: TimestampAddYMInterval |
+           _: SubtractTimestamps | _: TimestampAdd | _: TimestampAddYMInterval |
            _: TimestampDiff | _: TruncInstant => true
       // String expressions.
       case _: Base64 | _: BitLength | _: Chr | _: ConcatWs | _: Decode | _: Elt | _: Empty2Null |
@@ -1063,20 +1063,6 @@ trait DataSkippingReaderBase
       // Filter out non-leaf columns -- they lack stats so skipping predicates can't use them.
       .filterNot(_._2.isInstanceOf[StructType])
       .map {
-        case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
-          // SC-22824: For timestamps, JSON serialization will truncate to milliseconds. This means
-          // that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
-          // records that differ only in microsecond precision. (For example, a file containing only
-          // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
-          // to contain the range from 01:02:03.456 to 01:02:03.457.)
-          //
-          // There is a longer term task SC-22825 to fix the serialization problem that caused this.
-          // But we need the adjustment in any case to correctly read stats written by old versions.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
-        case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
-          // We also apply the same adjustment of max stats that was applied to Timestamp
-          // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
         case (statCol, _, _) =>
           statCol
       }
