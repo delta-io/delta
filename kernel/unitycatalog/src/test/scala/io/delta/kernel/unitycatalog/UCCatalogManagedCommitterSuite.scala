@@ -211,7 +211,7 @@ class UCCatalogManagedCommitterSuite
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       ucClient
-        .createTableIfNotExistsOrThrow(testUcTableId, new TableData(-1, ArrayBuffer[Commit]()))
+        .createTableIfNotExistsOrThrow(testUcTableId, new TableData(0, ArrayBuffer[Commit]()))
       val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
 
       // ===== WHEN =====
@@ -244,10 +244,8 @@ class UCCatalogManagedCommitterSuite
   test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API (no P&M change") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
-      // Set up UC client with initial table with maxRatifiedVersion = -1, numCommits = 0. This
-      // represents a table that was just created and at version 0. We will then commit version 1.
       val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val tableData = new TableData(-1, ArrayBuffer[Commit]())
+      val tableData = new TableData(0, ArrayBuffer.empty[Commit])
       ucClient.createTableIfNotExistsOrThrow(testUcTableId, tableData)
 
       val testValue = "TEST_COMMIT_DATA_12345"

@@ -16,11 +16,15 @@
 
 package io.delta.kernel.unitycatalog
 
+import scala.collection.mutable.ArrayBuffer
+
 import io.delta.kernel.Operation
 import io.delta.kernel.commit.PublishFailedException
 import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.unitycatalog.InMemoryUCClient.TableData
 import io.delta.kernel.unitycatalog.metrics.UcPublishTelemetry
 import io.delta.kernel.utils.CloseableIterable
+import io.delta.storage.commit.Commit
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -38,11 +42,12 @@ class UcPublishTelemetrySuite
       val (ucClient, ucCatalogManagedClient) = createUCClientAndCatalogManagedClient()
 
       val result0 = ucCatalogManagedClient
-        .buildCreateTableTransaction("ucTableId", tablePath, testSchema, "test-engine")
+        .buildCreateTableTransaction("testUcTableId", tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable())
 
-      initializeUCTable(ucClient, "ucTableId")
+      val tableData0 = new TableData(0, ArrayBuffer[Commit]())
+      ucClient.createTableIfNotExistsOrThrow("testUcTableId", tableData0)
 
       val resultV1 = result0.getPostCommitSnapshot.get()
         .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
@@ -65,7 +70,7 @@ class UcPublishTelemetrySuite
 
       val firstPublish = reporter.reports(0)
       assert(firstPublish.operationType === "UcPublish")
-      assert(firstPublish.ucTableId === "ucTableId")
+      assert(firstPublish.ucTableId === "testUcTableId")
       assert(firstPublish.snapshotVersion === 1)
       assert(firstPublish.numCommitsToPublish === 1)
       assert(firstPublish.metrics.numCommitsPublished === 1)
@@ -73,7 +78,7 @@ class UcPublishTelemetrySuite
 
       val secondPublish = reporter.reports(1)
       assert(secondPublish.operationType === "UcPublish")
-      assert(secondPublish.ucTableId === "ucTableId")
+      assert(secondPublish.ucTableId === "testUcTableId")
       assert(secondPublish.snapshotVersion === 2)
       assert(secondPublish.numCommitsToPublish === 2) // Both 01.uuid.json and 02.uuid.json
       assert(secondPublish.metrics.numCommitsPublished === 1) // Only 02.uuid.json
@@ -82,7 +87,7 @@ class UcPublishTelemetrySuite
   }
 
   test("JSON serialization: success report") {
-    val telemetry = new UcPublishTelemetry("ucTableId", "ucTablePath", 5, 3)
+    val telemetry = new UcPublishTelemetry("testUcTableId", "ucTablePath", 5, 3)
     val collector = telemetry.getMetricsCollector
     collector.totalPublishTimer.record(500)
     collector.incrementCommitsPublished()
@@ -96,7 +101,7 @@ class UcPublishTelemetrySuite
       s"""
          |{"operationType":"UcPublish",
          |"reportUUID":"${report.reportUUID}",
-         |"ucTableId":"ucTableId",
+         |"ucTableId":"testUcTableId",
          |"ucTablePath":"ucTablePath",
          |"snapshotVersion":5,
          |"numCommitsToPublish":3,
@@ -109,7 +114,7 @@ class UcPublishTelemetrySuite
   }
 
   test("JSON serialization: failure report") {
-    val telemetry = new UcPublishTelemetry("ucTableId", "ucTablePath", 3, 2)
+    val telemetry = new UcPublishTelemetry("testUcTableId", "ucTablePath", 3, 2)
     val collector = telemetry.getMetricsCollector
     collector.totalPublishTimer.record(300)
     collector.incrementCommitsPublished()
@@ -122,7 +127,7 @@ class UcPublishTelemetrySuite
       s"""
          |{"operationType":"UcPublish",
          |"reportUUID":"${report.reportUUID}",
-         |"ucTableId":"ucTableId",
+         |"ucTableId":"testUcTableId",
          |"ucTablePath":"ucTablePath",
          |"snapshotVersion":3,
          |"numCommitsToPublish":2,

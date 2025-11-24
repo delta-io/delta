@@ -41,12 +41,12 @@ class UcLoadSnapshotTelemetrySuite
       ucClient: InMemoryUCClient,
       ucCatalogManagedClient: UCCatalogManagedClient): Long = {
     val result0 = ucCatalogManagedClient
-      .buildCreateTableTransaction("ucTableId", tablePath, testSchema, "test-engine")
+      .buildCreateTableTransaction("testUcTableId", tablePath, testSchema, "test-engine")
       .build(engine)
       .commit(engine, CloseableIterable.emptyIterable())
 
-    val tableData = new InMemoryUCClient.TableData(-1, scala.collection.mutable.ArrayBuffer())
-    ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+    val tableData = new InMemoryUCClient.TableData(0, scala.collection.mutable.ArrayBuffer())
+    ucClient.createTableIfNotExistsOrThrow("testUcTableId", tableData)
 
     val result1 = result0.getPostCommitSnapshot.get()
       .buildUpdateTableTransaction("engineInfo", io.delta.kernel.Operation.MANUAL_UPDATE)
@@ -78,7 +78,7 @@ class UcLoadSnapshotTelemetrySuite
       // ===== WHEN =====
       ucCatalogManagedClient.loadSnapshot(
         engine,
-        "ucTableId",
+        "testUcTableId",
         tablePath,
         Optional.empty(),
         Optional.empty())
@@ -87,7 +87,7 @@ class UcLoadSnapshotTelemetrySuite
       assert(reporter.reports.size === 1)
       val report = reporter.reports.head
       assert(report.operationType === "UcLoadSnapshot")
-      assert(report.ucTableId === "ucTableId")
+      assert(report.ucTableId === "testUcTableId")
       assert(report.ucTablePath === tablePath)
       assert(report.versionOpt.isEmpty)
       assert(report.timestampOpt.isEmpty)
@@ -121,7 +121,7 @@ class UcLoadSnapshotTelemetrySuite
       // Time travel to timestamp between v1 and v2 - should resolve to v1
       ucCatalogManagedClient.loadSnapshot(
         engine,
-        "ucTableId",
+        "testUcTableId",
         tablePath,
         Optional.empty(),
         Optional.of(timestampBetweenV1AndV2))
@@ -130,7 +130,7 @@ class UcLoadSnapshotTelemetrySuite
       assert(reporter.reports.size === 1)
       val report = reporter.reports.head
       assert(report.operationType === "UcLoadSnapshot")
-      assert(report.ucTableId === "ucTableId")
+      assert(report.ucTableId === "testUcTableId")
       assert(report.ucTablePath === tablePath)
       assert(report.versionOpt.isEmpty)
       assert(report.timestampOpt.isPresent)
@@ -181,7 +181,7 @@ class UcLoadSnapshotTelemetrySuite
 
   test("JSON serialization: success report for latest version") {
     val telemetry = new UcLoadSnapshotTelemetry(
-      "ucTableId",
+      "testUcTableId",
       "ucTablePath",
       Optional.empty(), // versionOpt
       Optional.empty() // timestampOpt
@@ -200,7 +200,7 @@ class UcLoadSnapshotTelemetrySuite
       s"""
          |{"operationType":"UcLoadSnapshot",
          |"reportUUID":"${report.reportUUID}",
-         |"ucTableId":"ucTableId",
+         |"ucTableId":"testUcTableId",
          |"ucTablePath":"ucTablePath",
          |"versionOpt":null,
          |"timestampOpt":null,
@@ -214,7 +214,7 @@ class UcLoadSnapshotTelemetrySuite
 
   test("JSON serialization: failure report") {
     val telemetry = new UcLoadSnapshotTelemetry(
-      "ucTableId",
+      "testUcTableId",
       "ucTablePath",
       Optional.empty(), // versionOpt
       Optional.of(123456789L) // timestampOpt
@@ -231,7 +231,7 @@ class UcLoadSnapshotTelemetrySuite
       s"""
          |{"operationType":"UcLoadSnapshot",
          |"reportUUID":"${report.reportUUID}",
-         |"ucTableId":"ucTableId",
+         |"ucTableId":"testUcTableId",
          |"ucTablePath":"ucTablePath",
          |"versionOpt":null,
          |"timestampOpt":123456789,

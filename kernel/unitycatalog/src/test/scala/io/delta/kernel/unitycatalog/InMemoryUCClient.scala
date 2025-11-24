@@ -38,14 +38,14 @@ object InMemoryUCClient {
    * concurrently.
    */
   class TableData(
-      private var maxRatifiedVersion: Long = -1L,
-      private val commits: ArrayBuffer[Commit] = ArrayBuffer.empty) {
+      private var maxRatifiedVersion: Long,
+      private val commits: ArrayBuffer[Commit]) {
 
     // For test only, since UC doesn't store these as top-level entities.
     private var currentProtocolOpt: Option[AbstractProtocol] = None
     private var currentMetadataOpt: Option[AbstractMetadata] = None
 
-    /** @return the maximum ratified version, or -1 if no commits have been made. */
+    /** @return the maximum ratified version. */
     def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
 
     /** @return An immutable list of all commits. */
@@ -74,9 +74,7 @@ object InMemoryUCClient {
         commit: Commit,
         newProtocol: Optional[AbstractProtocol] = Optional.empty(),
         newMetadata: Optional[AbstractMetadata] = Optional.empty()): Unit = synchronized {
-      // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-      // For UC, commit 0 is expected to go through the filesystem
-      val expectedCommitVersion = if (maxRatifiedVersion == -1L) 1 else maxRatifiedVersion + 1
+      val expectedCommitVersion = maxRatifiedVersion + 1
 
       if (commit.getVersion != expectedCommitVersion) {
         throw new CommitFailedException(
@@ -205,6 +203,6 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
   /** Retrieves the table data for the given table ID, creating it if it does not exist. */
   private def getOrCreateTableIfNotExists(tableId: String): TableData = {
-    tables.computeIfAbsent(tableId, _ => new TableData)
+    tables.computeIfAbsent(tableId, _ => new TableData(0, ArrayBuffer.empty))
   }
 }
