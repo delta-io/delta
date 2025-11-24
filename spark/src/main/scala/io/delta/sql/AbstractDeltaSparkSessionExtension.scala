@@ -56,6 +56,9 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
       PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
+      MarkDataFrameWriterV1(session)
+    }
+    extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support
       // id column mapping mode for Delta.
       // Spark has the read flag default off, so we have to turn it on manually for Delta.

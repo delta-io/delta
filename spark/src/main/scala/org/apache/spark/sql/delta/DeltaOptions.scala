@@ -144,6 +144,13 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
       modeIsDynamic
     }
   }
+
+  /**
+   * Whether this write is coming from DataFrameWriter V1 saveAsTable.
+   */
+  def isDataFrameWriterV1: Boolean = {
+    options.get(DeltaOptions.IS_DATAFRAME_WRITER_V1).exists(toBoolean(_, IS_DATAFRAME_WRITER_V1))
+  }
 }
 
 trait DeltaReadOptions extends DeltaOptionParser {
@@ -236,6 +243,10 @@ class DeltaOptions(
 }
 
 object DeltaOptions extends DeltaLogging {
+  /**
+   * An option, specifying that this write is coming from DataFrameWriter V1 saveAsTable.
+   */
+  val IS_DATAFRAME_WRITER_V1 = "isDataFrameWriterV1"
 
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
@@ -306,6 +317,7 @@ object DeltaOptions extends DeltaLogging {
   val WRITE_PARTITION_COLUMNS = "writePartitionColumns"
 
   val validOptionKeys : Set[String] = Set(
+    IS_DATAFRAME_WRITER_V1,
     REPLACE_WHERE_OPTION,
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,
