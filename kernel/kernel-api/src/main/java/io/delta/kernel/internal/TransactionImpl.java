@@ -542,6 +542,12 @@ public class TransactionImpl implements Transaction {
       }
 
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
+      boolean isCdfEnabled = TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
+
+      // Track CDF validation state: whether we've seen adds and removes with enableChangeDataFeed=true
+      // This is wrapped in an array to allow modification from within the lambda
+      final boolean[] hasAddWithDataChange = {false};
+      final boolean[] hasRemoveWithDataChange = {false};
 
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
@@ -555,6 +561,25 @@ public class TransactionImpl implements Transaction {
                       RemoveFile removeFile = new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
                       if (isAppendOnlyTable && removeFile.getDataChange()) {
                         throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
+                      }
+                      // Track removes with enableChangeDataFeed=true for table creation validation
+                      if (isCdfEnabled && removeFile.getDataChange()) {
+                        hasRemoveWithDataChange[0] = true;
+                        // Check if we've already seen adds with enableChangeDataFeed=true
+                        if (hasAddWithDataChange[0]) {
+                          throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
+                        }
+                      }
+                    }
+                    if (!action.isNullAt(ADD_FILE_ORDINAL)) {
+                      AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
+                      // Track adds with enableChangeDataFeed=true for table creation validation
+                      if (isCdfEnabled && addFile.getDataChange()) {
+                        hasAddWithDataChange[0] = true;
+                        // Check if we've already seen removes with enableChangeDataFeed=true
+                        if (hasRemoveWithDataChange[0]) {
+                          throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
+                        }
                       }
                     }
                     return action;
