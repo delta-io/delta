@@ -23,10 +23,12 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.spark.snapshot.ManagedCommitClient;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
-import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
 
 /** UC-backed implementation of {@link ManagedCommitClient}. */
 public final class UnityCatalogManagedCommitClient implements ManagedCommitClient {
@@ -119,19 +121,43 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
   }
 
   private static UCClient createUCClient(CatalogTable catalogTable, SparkSession spark) {
+    final String SPARK_SQL_CATALOG_PREFIX = "spark.sql.catalog.";
+    final String UC_CONNECTOR_CLASS = "io.unitycatalog.spark.UCSingleCatalog";
+
     scala.Option<String> catalogOption = catalogTable.identifier().catalog();
     String catalogName =
         catalogOption.isDefined()
             ? catalogOption.get()
             : spark.sessionState().catalogManager().currentCatalog().name();
 
-    scala.collection.immutable.List<scala.Tuple3<String, String, String>> scalaConfigs =
-        org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$.MODULE$
-            .getCatalogConfigs(spark);
+    Map<String, CatalogEntry> entries = new HashMap<>();
+    spark.conf()
+        .getAll()
+        .forEach(
+            (k, v) -> {
+              if (!k.startsWith(SPARK_SQL_CATALOG_PREFIX)) {
+                return;
+              }
+              String remainder = k.substring(SPARK_SQL_CATALOG_PREFIX.length());
+              int dotIdx = remainder.indexOf('.');
+              String name = dotIdx == -1 ? remainder : remainder.substring(0, dotIdx);
+              String keySuffix = dotIdx == -1 ? "" : remainder.substring(dotIdx + 1);
+              CatalogEntry entry = entries.computeIfAbsent(name, CatalogEntry::new);
+              if (keySuffix.isEmpty()) {
+                entry.connectorClass = v;
+              } else if ("uri".equals(keySuffix)) {
+                entry.uri = v;
+              } else if ("token".equals(keySuffix)) {
+                entry.token = v;
+              }
+            });
 
-    Optional<scala.Tuple3<String, String, String>> configTuple =
-        scala.jdk.javaapi.CollectionConverters.asJava(scalaConfigs).stream()
-            .filter(tuple -> tuple._1().equals(catalogName))
+    Optional<CatalogEntry> configTuple =
+        entries.values().stream()
+            .filter(e -> catalogName.equals(e.name))
+            .filter(e -> UC_CONNECTOR_CLASS.equals(e.connectorClass))
+            .filter(e -> e.uri != null && !e.uri.isEmpty())
+            .filter(e -> e.token != null && !e.token.isEmpty())
             .findFirst();
 
     if (!configTuple.isPresent()) {
@@ -141,10 +167,21 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
               + "'.");
     }
 
-    scala.Tuple3<String, String, String> config = configTuple.get();
-    String uri = config._2();
-    String token = config._3();
+    CatalogEntry config = configTuple.get();
+    String uri = config.uri;
+    String token = config.token;
 
-    return new UCTokenBasedRestClient(uri, token);
+    return UCTokenBasedRestClientFactory$.MODULE$.createUCClient(uri, token);
+  }
+
+  private static final class CatalogEntry {
+    final String name;
+    String connectorClass;
+    String uri;
+    String token;
+
+    CatalogEntry(String name) {
+      this.name = name;
+    }
   }
 }
