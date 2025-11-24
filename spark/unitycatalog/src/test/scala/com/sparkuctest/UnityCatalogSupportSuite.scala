@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package com.sparkuctest
 
 import java.io.File
 
-import io.unitycatalog.client.ApiClient
 import io.unitycatalog.client.api.TablesApi
 import io.unitycatalog.client.model.ListTablesResponse
 
@@ -61,11 +60,7 @@ class UnityCatalogSupportSuite extends QueryTest
     val response: ListTablesResponse = tablesApi.listTables(catalogName, schemaName, null, null)
 
     import scala.jdk.CollectionConverters._
-    if (response.getTables != null) {
-      response.getTables.asScala.map(_.getName).toList
-    } else {
-      List.empty
-    }
+    response.getTables.asScala.map(_.getName).toList
   }
 
   test("UnityCatalogSupport trait starts UC server and configures Spark correctly") {
@@ -82,7 +77,6 @@ class UnityCatalogSupportSuite extends QueryTest
     // 3. Verify we can query UC server directly via SDK
     val ucTables = listTables(unityCatalogName, "default")
     // Should succeed even if empty - this confirms UC server is responding
-    assert(ucTables != null, "Should be able to query UC server via SDK")
 
     // 4. Verify we can create a table in the UC catalog (will be cleaned up in next test)
     // This is the ultimate test that the catalog is properly configured
@@ -105,11 +99,10 @@ class UnityCatalogSupportSuite extends QueryTest
       spark.sql(s"INSERT INTO $testTable VALUES (1), (2), (3)")
 
       // Verify we can select the data
-      val result = spark.sql(s"SELECT * FROM $testTable ORDER BY id").collect()
-      assert(result.length == 3, s"Should have 3 rows, got ${result.length}")
-      assert(result(0).getInt(0) == 1)
-      assert(result(1).getInt(0) == 2)
-      assert(result(2).getInt(0) == 3)
+      checkAnswer(
+        spark.sql(s"SELECT * FROM $testTable ORDER BY id"),
+        Seq(Row(1), Row(2), Row(3))
+      )
 
       spark.sql(s"DROP TABLE $testTable")
     }
