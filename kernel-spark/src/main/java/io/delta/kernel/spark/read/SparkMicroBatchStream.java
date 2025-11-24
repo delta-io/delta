@@ -86,7 +86,31 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   // Tracks whether this is the first batch for this stream (no checkpointed offset).
   private boolean isFirstBatch = false;
 
-  /** Test-only constructor. */
+  // Cached starting version to ensure idempotent behavior for "latest" starting version.
+  // getStartingVersion() must return the same value across multiple calls.
+  private volatile Optional<Long> cachedStartingVersion = null;
+
+  /** Test-only constructor with minimal parameters. */
+  public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
+    this(
+        snapshotManager,
+        hadoopConf,
+        SparkSession.active(),
+        new DeltaOptions(
+            scala.collection.immutable.Map$.MODULE$.empty(),
+            SparkSession.active().sessionState().conf()),
+        /* tablePath= */ "",
+        /* dataSchema= */ new StructType(),
+        /* partitionSchema= */ new StructType(),
+        /* readDataSchema= */ new StructType(),
+        /* dataFilters= */ new Filter[0],
+        /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
+  }
+
+  /**
+   * Test-only constructor with spark, options parameters for testing getStartingVersion and other
+   * option-dependent behavior.
+   */
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Configuration hadoopConf,
@@ -140,6 +164,8 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
     this.shouldValidateOffsets =
         (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
+
+    logger.info("DSv2: SparkMicroBatchStream initialized for table: {}", tablePath);
   }
 
   ////////////
@@ -208,13 +234,39 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
       DeltaSourceOffset.validateOffsets(deltaStartOffset, endOffset.get());
     }
 
+    // Spark requires start != end for planInputPartitions.
+    if (endOffset.isPresent() && endOffset.get().equals(deltaStartOffset)) {
+      return null;
+    }
+
     // endOffset is null: no data is available to read for this batch.
     return endOffset.orElse(null);
   }
 
   @Override
   public Offset deserializeOffset(String json) {
-    throw new UnsupportedOperationException("deserializeOffset is not supported");
+    // Parse JSON to DeltaSourceOffset using JsonUtils.mapper, similar to how
+    // DeltaSourceOffset.apply(reservoirId, offset) works internally.
+    // This is needed when Spark internally serializes/deserializes offsets between micro-batches.
+    try {
+      DeltaSourceOffset offset =
+          org.apache.spark.sql.delta.util.JsonUtils.mapper()
+              .readValue(json, DeltaSourceOffset.class);
+
+      // Validate that the tableId matches (similar to DeltaSourceOffset.apply validation)
+      if (!offset.reservoirId().equals(tableId)) {
+        throw new RuntimeException(
+            String.format(
+                "Offset tableId mismatch: expected '%s' but got '%s'",
+                tableId, offset.reservoirId()));
+      }
+
+      return offset;
+    } catch (RuntimeException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to deserialize DeltaSourceOffset from JSON: " + json, e);
+    }
   }
 
   @Override
@@ -351,12 +403,14 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public void commit(Offset end) {
-    throw new UnsupportedOperationException("commit is not supported");
+    // No-op. Delta Lake doesn't require committing offsets since they're tracked in the checkpoint.
+    // Spark will call this after successfully processing a batch.
   }
 
   @Override
   public void stop() {
-    throw new UnsupportedOperationException("stop is not supported");
+    // No-op. Delta Lake doesn't maintain state that needs cleanup on stop.
+    // Spark will call this when the streaming query is stopped.
   }
 
   ///////////////////////
@@ -371,7 +425,11 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
    *
    * <p>This is the DSv2 Kernel-based implementation of DeltaSource.getStartingVersion.
    */
-  Optional<Long> getStartingVersion() {
+  synchronized Optional<Long> getStartingVersion() {
+    if (cachedStartingVersion != null) {
+      return cachedStartingVersion;
+    }
+
     // TODO(#5319): DeltaSource.scala uses `allowOutOfRange` parameter from
     // DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.
     if (options.startingVersion().isDefined()) {
@@ -379,7 +437,8 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
       if (startingVersion instanceof StartingVersionLatest$) {
         Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
         // "latest": start reading from the next commit
-        return Optional.of(latestSnapshot.getVersion() + 1);
+        cachedStartingVersion = Optional.of(latestSnapshot.getVersion() + 1);
+        return cachedStartingVersion;
       } else if (startingVersion instanceof StartingVersion) {
         long version = ((StartingVersion) startingVersion).version();
         if (!validateProtocolAt(spark, snapshotManager, engine, version)) {
@@ -391,11 +450,13 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
           snapshotManager.checkVersionExists(
               version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
         }
-        return Optional.of(version);
+        cachedStartingVersion = Optional.of(version);
+        return cachedStartingVersion;
       }
     }
     // TODO(#5319): Implement startingTimestamp support
-    return Optional.empty();
+    cachedStartingVersion = Optional.empty();
+    return cachedStartingVersion;
   }
 
   /**
@@ -527,6 +588,17 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
 
+    // Cap endVersion to the latest available version. The offset might point to a version that
+    // doesn't exist yet (e.g., version 3 when only 0-2 exist), which happens when
+    // buildOffsetFromIndexedFile advances to the next version. getTableChanges requires
+    // endVersion to be an actual existing version or empty.
+    if (endVersionOpt.isPresent()) {
+      long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      if (endVersionOpt.get() > latestVersion) {
+        endVersionOpt = Optional.of(latestVersion);
+      }
+    }
+
     CommitRange commitRange;
     try {
       commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
@@ -537,7 +609,14 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     }
 
     // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
-    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
+    Snapshot startSnapshot;
+    try {
+      startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
+    } catch (io.delta.kernel.exceptions.KernelException e) {
+      // If startVersion doesn't exist (e.g., starting from "latest" when the next version
+      // hasn't been written yet), return empty iterator.
+      return Utils.toCloseableIterator(allIndexedFiles.iterator());
+    }
     String tablePath = startSnapshot.getPath();
     try (CloseableIterator<ColumnarBatch> actionsIter =
         commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
