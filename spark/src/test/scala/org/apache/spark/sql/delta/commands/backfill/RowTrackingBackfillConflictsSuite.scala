@@ -679,7 +679,7 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
   }
 
   testAllScenarios("OPTIMIZE") { () =>
-    sql(s"OPTIMIZE $testTableName WHERE $partitionColumnName < ($numFiles / 2)").collect()
+    sql(s"OPTIMIZE $testTableName WHERE $partitionColumnName < ($numFiles / 4)").collect()
   } { () =>
     tableCreationDF
   }
