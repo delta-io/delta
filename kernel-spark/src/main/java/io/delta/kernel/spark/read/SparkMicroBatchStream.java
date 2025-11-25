@@ -60,10 +60,13 @@ public class SparkMicroBatchStream implements MicroBatchStream {
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
   private final SparkSession spark;
+  private final Snapshot initialSnapshot;
 
-  public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
+  public SparkMicroBatchStream(
+      DeltaSnapshotManager snapshotManager, Snapshot initialSnapshot, Configuration hadoopConf) {
     this(
         snapshotManager,
+        initialSnapshot,
         hadoopConf,
         SparkSession.active(),
         new DeltaOptions(
@@ -73,11 +76,13 @@ public class SparkMicroBatchStream implements MicroBatchStream {
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
+      Snapshot initialSnapshot,
       Configuration hadoopConf,
       SparkSession spark,
       DeltaOptions options) {
     this.spark = spark;
     this.snapshotManager = snapshotManager;
+    this.initialSnapshot = initialSnapshot;
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = options;
   }
@@ -294,11 +299,12 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     Optional<Long> endVersionOpt =
         endOffset.isDefined() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
     CommitRange commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
-    // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
-    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
-    String tablePath = startSnapshot.getPath();
     try (CloseableIterator<ColumnarBatch> actionsIter =
-        commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
+        StreamingHelper.getActionsFromRangeUnsafe(
+            engine,
+            (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
+            initialSnapshot.getPath().toString(),
+            ACTION_SET)) {
       // Each ColumnarBatch belongs to a single commit version,
       // but a single version may span multiple ColumnarBatches.
       long currentVersion = -1;
@@ -324,7 +330,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
         // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
         // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
         // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-        validateCommit(batch, version, tablePath, endOffset);
+        validateCommit(batch, version, initialSnapshot.getPath().toString(), endOffset);
 
         currentVersion = version;
         currentIndex =
