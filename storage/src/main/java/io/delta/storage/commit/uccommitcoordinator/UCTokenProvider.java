@@ -18,7 +18,21 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import java.io.Closeable;
 
+/**
+ * Provider interface for Unity Catalog access tokens.
+ *
+ * <p>Implementations of this interface are responsible for providing valid access tokens
+ * for authenticating with Unity Catalog services. The interface extends {@link Closeable}
+ * to allow implementations to clean up resources such as HTTP clients or cached credentials.
+ *
+ * <p>Implementations may cache tokens and handle automatic renewal as needed.
+ */
 public interface UCTokenProvider extends Closeable {
 
+  /**
+   * Returns a valid access token for Unity Catalog authentication.
+   *
+   * @return a valid access token string
+   */
   String accessToken();
 }
