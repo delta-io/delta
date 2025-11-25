@@ -97,8 +97,9 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     // dsv2
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
+    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     SparkMicroBatchStream dsv2Stream =
-        new SparkMicroBatchStream(snapshotManager, new Configuration());
+        new SparkMicroBatchStream(snapshotManager, initialSnapshot, new Configuration());
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, Optional.empty(), "No options provided");
@@ -218,9 +219,14 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     // dsv2
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
+    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            snapshotManager, new Configuration(), spark, createDeltaOptions(startingVersion));
+            snapshotManager,
+            initialSnapshot,
+            new Configuration(),
+            spark,
+            createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(
@@ -257,9 +263,14 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     // DSv2: Create SparkMicroBatchStream and get starting version
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
+    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            snapshotManager, new Configuration(), spark, createDeltaOptions(startingVersion));
+            snapshotManager,
+            initialSnapshot,
+            new Configuration(),
+            spark,
+            createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);

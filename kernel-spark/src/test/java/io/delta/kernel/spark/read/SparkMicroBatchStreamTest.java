@@ -51,10 +51,15 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   @BeforeEach
   void setUp(@TempDir File tempDir) {
     String testPath = tempDir.getAbsolutePath();
+    String testTableName = "test_setup_" + System.nanoTime();
+    // Create an empty Delta table so we can load a valid snapshot
+    createEmptyTestTable(testPath, testTableName);
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
+    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     microBatchStream =
-        new SparkMicroBatchStream(snapshotManager, spark.sessionState().newHadoopConf());
+        new SparkMicroBatchStream(
+            snapshotManager, initialSnapshot, spark.sessionState().newHadoopConf());
   }
 
   @Test
@@ -174,7 +179,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv2 SparkMicroBatchStream
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, new Configuration());
+    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, initialSnapshot, new Configuration());
     Option<DeltaSourceOffset> endOffsetOption = scalaEndOffset;
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
@@ -285,7 +292,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv2 SparkMicroBatchStream
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, new Configuration());
+    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, initialSnapshot, new Configuration());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
     Option<DeltaSource.AdmissionLimits> dsv2Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
@@ -407,10 +416,12 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     deltaChanges.close();
 
     // Test DSv2 SparkMicroBatchStream
+    PathBasedSnapshotManager dsv2SnapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    io.delta.kernel.Snapshot dsv2InitialSnapshot = dsv2SnapshotManager.loadLatestSnapshot();
     SparkMicroBatchStream stream =
         new SparkMicroBatchStream(
-            new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf()),
-            spark.sessionState().newHadoopConf());
+            dsv2SnapshotManager, dsv2InitialSnapshot, spark.sessionState().newHadoopConf());
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -498,9 +509,12 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
     // Test DSv2 SparkMicroBatchStream
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
     SparkMicroBatchStream stream =
         new SparkMicroBatchStream(
-            new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf()),
+            snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
             spark.sessionState().newHadoopConf());
     UnsupportedOperationException dsv2Exception =
         assertThrows(
@@ -599,6 +613,62 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                   sql("DROP TABLE IF EXISTS %s", sourceTableName);
                 },
             "MERGE: Matched (REMOVE+ADD) and not matched (ADD)"));
+  }
+
+  @Test
+  public void testGetFileChanges_StartingVersionAfterCheckpointAndLogCleanup(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_checkpoint_cleanup_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Insert 5 versions
+    for (int i = 1; i <= 5; i++) {
+      sql("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, i, i);
+    }
+
+    // Create checkpoint at version 5
+    DeltaLog.forTable(spark, new Path(testTablePath)).checkpoint();
+
+    // Delete 0.json to simulate log cleanup
+    Path logPath = new Path(testTablePath, "_delta_log");
+    Path logFile0 = new Path(logPath, "00000000000000000000.json");
+    File file0 = new File(logFile0.toUri().getPath());
+    if (file0.exists()) {
+      file0.delete();
+    }
+
+    // Now test with startingVersion=1
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
+            spark.sessionState().newHadoopConf());
+
+    // Get file changes from version 1 onwards
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(
+            /* fromVersion= */ 1L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* endOffset= */ Option.empty())) {
+
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+
+      // Filter to get only actual data files (addFile != null)
+      long actualFileCount = kernelFilesList.stream().filter(f -> f.getAddFile() != null).count();
+
+      // Should be able to read 5 data files from versions 1-5
+      assertEquals(
+          5,
+          actualFileCount,
+          "Should read 5 data files from versions 1-5 even though version 0 log is deleted");
+    }
   }
 
   // ================================================================================================
