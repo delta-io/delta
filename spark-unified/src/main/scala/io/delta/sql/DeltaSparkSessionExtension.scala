@@ -127,7 +127,7 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
           new SparkTable(
             ident,
             catalogTable,
-            ScalaUtils.fromScalaMap(catalogTable.properties))
+            ScalaUtils.toJavaMap(catalogTable.properties))
 
         StreamingRelationV2(
           source = None,
