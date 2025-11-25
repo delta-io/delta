@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.function.Function;
 
 /**
@@ -267,5 +268,28 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
       throw new UncheckedIOException("Failed to close the CloseableIterator", e);
     }
     return result;
+  }
+
+  /**
+   * Returns the last element from this {@link CloseableIterator}, if present.
+   *
+   * <p>This method iterates through all elements of the iterator to find the last one. Once
+   * iteration is complete, the iterator is automatically closed to release any underlying
+   * resources.
+   *
+   * @return An {@link Optional} containing the last element, or {@link Optional#empty()} if the
+   *     iterator is empty.
+   * @throws UncheckedIOException If an {@link IOException} occurs while closing the iterator.
+   */
+  default Optional<T> last() {
+    try (CloseableIterator<T> iterator = this) {
+      T last = null;
+      while (iterator.hasNext()) {
+        last = iterator.next();
+      }
+      return Optional.ofNullable(last);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to close the CloseableIterator", e);
+    }
   }
 }
