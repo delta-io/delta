@@ -25,6 +25,7 @@ import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.*;
@@ -190,7 +191,7 @@ public class SparkTable implements Table, SupportsRead {
    * etc.), not just file:// URIs.
    */
   private static String getDecodedPath(java.net.URI location) {
-    return new org.apache.hadoop.fs.Path(location).toString();
+    return new Path(location).toString();
   }
 
   /**
