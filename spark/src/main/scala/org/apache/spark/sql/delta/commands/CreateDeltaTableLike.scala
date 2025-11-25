@@ -167,7 +167,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   }
 
   /**
-   * Hack to differentiate between DataFrameWriterV1 and V2 so that we can decide
+   * Differentiate between DataFrameWriterV1 and V2 so that we can decide
    * what to do with table metadata. In DataFrameWriterV1, mode("overwrite").saveAsTable,
    * behaves as a CreateOrReplace table, but we have asked for "overwriteSchema" as an
    * explicit option to overwrite partitioning or schema information. With DataFrameWriterV2,
