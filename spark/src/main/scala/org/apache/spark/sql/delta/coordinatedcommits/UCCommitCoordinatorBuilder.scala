@@ -18,16 +18,12 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.net.{URI, URISyntaxException}
 import java.util.concurrent.ConcurrentHashMap
-
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
-
-import org.apache.spark.internal.MDC
+import io.delta.storage.commit.uccommitcoordinator.{FixedUCTokenProvider, UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient, UCTokenProvider}
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 
@@ -245,10 +241,13 @@ object UCCommitCoordinatorBuilder
 }
 
 trait UCClientFactory {
-  def createUCClient(uri: String, token: String): UCClient
+  def createUCClient(uri: String, token: String): UCClient =
+    createUCClient(uri, new FixedUCTokenProvider(token))
+
+  def createUCClient(uri: String, provider: UCTokenProvider): UCClient
 }
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
-  override def createUCClient(uri: String, token: String): UCClient =
-    new UCTokenBasedRestClient(uri, token)
+  override def createUCClient(uri: String, provider: UCTokenProvider): UCClient =
+    new UCTokenBasedRestClient(uri, provider)
 }
