@@ -13,12 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.snapshot.uc;
+package io.delta.kernel.spark.snapshot.unitycatalog;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.spark.snapshot.ManagedCommitClient;
 import io.delta.kernel.spark.utils.CatalogTableUtils;
+import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import java.util.Map;
 import java.util.Optional;
@@ -27,12 +31,29 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
 
-/** Factory for UC-backed {@link ManagedCommitClient} instances. */
-public final class UnityCatalogManagedCommitClientFactory {
+/** UC-backed implementation of {@link ManagedCommitClient}. */
+public final class UnityCatalogManagedCommitClient implements ManagedCommitClient {
 
-  private UnityCatalogManagedCommitClientFactory() {}
+  private final String tableId;
+  private final String tablePath;
+  private final UCClient ucClient;
+  private final UCCatalogManagedClient ucManagedClient;
 
-  public static Optional<ManagedCommitClient> create(CatalogTable catalogTable, SparkSession spark) {
+  public UnityCatalogManagedCommitClient(String tableId, String tablePath, UCClient ucClient) {
+    this.tableId = requireNonNull(tableId, "tableId is null");
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
+    this.ucClient = requireNonNull(ucClient, "ucClient is null");
+    this.ucManagedClient = new UCCatalogManagedClient(ucClient);
+  }
+
+  /**
+   * Builds a UC-backed {@link ManagedCommitClient} for a UC-managed table.
+   *
+   * @throws IllegalArgumentException if the table lacks UC identifiers or catalog config is
+   *     missing
+   */
+  public static Optional<ManagedCommitClient> fromCatalog(
+      CatalogTable catalogTable, SparkSession spark) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
 
@@ -44,6 +65,48 @@ public final class UnityCatalogManagedCommitClientFactory {
     String tablePath = extractTablePath(catalogTable);
     UCClient client = createUCClient(catalogTable, spark);
     return Optional.of(new UnityCatalogManagedCommitClient(tableId, tablePath, client));
+  }
+
+  @Override
+  public String getTableId() {
+    return tableId;
+  }
+
+  @Override
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  @Override
+  public Snapshot loadSnapshot(
+      Engine engine, Optional<Long> versionOpt, Optional<Long> timestampOpt) {
+    return ucManagedClient.loadSnapshot(engine, tableId, tablePath, versionOpt, timestampOpt);
+  }
+
+  @Override
+  public CommitRange loadCommitRange(
+      Engine engine,
+      Optional<Long> startVersionOpt,
+      Optional<Long> startTimestampOpt,
+      Optional<Long> endVersionOpt,
+      Optional<Long> endTimestampOpt) {
+    return ucManagedClient.loadCommitRange(
+        engine,
+        tableId,
+        tablePath,
+        startVersionOpt,
+        startTimestampOpt,
+        endVersionOpt,
+        endTimestampOpt);
+  }
+
+  @Override
+  public void close() {
+    try {
+      ucClient.close();
+    } catch (Exception e) {
+      // Swallow close errors to avoid disrupting caller cleanup
+    }
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {

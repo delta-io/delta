@@ -17,7 +17,7 @@ package io.delta.kernel.spark.snapshot;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.spark.snapshot.uc.UnityCatalogManagedCommitClientFactory;
+import io.delta.kernel.spark.snapshot.unitycatalog.UnityCatalogManagedCommitClient;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
@@ -87,7 +87,7 @@ public final class DeltaSnapshotManagerFactory {
 
     if (catalogTable.isPresent()) {
       Optional<ManagedCommitClient> clientOpt =
-          UnityCatalogManagedCommitClientFactory.create(catalogTable.get(), spark);
+          UnityCatalogManagedCommitClient.fromCatalog(catalogTable.get(), spark);
       if (clientOpt.isPresent()) {
         return new CatalogManagedSnapshotManager(clientOpt.get(), hadoopConf);
       }
