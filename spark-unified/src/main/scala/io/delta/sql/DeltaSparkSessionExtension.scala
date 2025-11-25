@@ -19,7 +19,7 @@ package io.delta.sql
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.spark.table.SparkTable
-import io.delta.kernel.spark.utils.ScalaUtils
+import io.delta.kernel.spark.utils.{CatalogTableUtils, ScalaUtils}
 
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -112,9 +112,11 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
       // Check if this is a Delta streaming relation by examining:
       // 1. The source name (e.g., "delta" from .format("delta"))
       // 2. The catalog table's provider (e.g., "DELTA" from Unity Catalog)
+      // 3. Whether the table is a Unity Catalog managed table
       s.dataSource.catalogTable.isDefined && (
         DeltaSourceUtils.isDeltaDataSourceName(s.sourceName) ||
-        s.dataSource.catalogTable.get.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)
+        s.dataSource.catalogTable.get.provider.exists(DeltaSourceUtils.isDeltaDataSourceName) ||
+        CatalogTableUtils.isUnityCatalogManagedTable(s.dataSource.catalogTable.get)
       )
     }
 
