@@ -544,7 +544,7 @@ public class TransactionImpl implements Transaction {
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
       boolean isCdfEnabled = TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
 
-      // Track CDF validation state: whether we've seen adds and removes 
+      // Track CDF validation state: whether we've seen adds and removes
       // with enableChangeDataFeed=true
       // This is wrapped in an array to allow modification from within the lambda
       final boolean[] hasAddWithDataChange = {false};
