@@ -185,9 +185,12 @@ public class SparkTable implements Table, SupportsRead {
   /**
    * Helper method to decode URI path handling URL-encoded characters correctly. E.g., converts
    * "spark%25dir%25prefix" to "spark%dir%prefix"
+   *
+   * <p>Uses Hadoop's Path class to properly handle all URI schemes (file, s3, abfss, gs, hdfs,
+   * etc.), not just file:// URIs.
    */
   private static String getDecodedPath(java.net.URI location) {
-    return new java.io.File(location).getPath();
+    return new org.apache.hadoop.fs.Path(location).toString();
   }
 
   /**
