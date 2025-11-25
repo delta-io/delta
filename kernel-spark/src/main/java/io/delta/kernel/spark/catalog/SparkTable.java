@@ -140,7 +140,7 @@ public class SparkTable implements Table, SupportsRead {
 
     SparkSession spark = SparkSession.active();
     this.hadoopConf = spark.sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    // Use factory to create appropriate snapshot manager (UC-managed vs path-based)
+    // Use factory to create appropriate snapshot manager (catalog-managed vs path-based)
     this.snapshotManager =
         DeltaSnapshotManagerFactory.create(tablePath, catalogTable, spark, hadoopConf);
     // Load the initial snapshot through the manager
