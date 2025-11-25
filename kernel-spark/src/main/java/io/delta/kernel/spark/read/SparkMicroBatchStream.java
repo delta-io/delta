@@ -48,7 +48,8 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissionControl {
+public class SparkMicroBatchStream
+    implements MicroBatchStream, SupportsAdmissionControl, SupportsTriggerAvailableNow {
 
   private static final Logger logger = LoggerFactory.getLogger(SparkMicroBatchStream.class);
 
@@ -92,6 +93,44 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
     this.shouldValidateOffsets =
         (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
+  }
+
+  /**
+   * When AvailableNow is used, this offset will be the upper bound where this run of the query will
+   * process up. We may run multiple micro batches, but the query will stop itself when it reaches
+   * this offset.
+   */
+  protected Optional<DeltaSourceOffset> lastOffsetForTriggerAvailableNow = Optional.empty();
+
+  private boolean isLastOffsetForTriggerAvailableNowInitialized = false;
+
+  private boolean isTriggerAvailableNow = false;
+
+  @Override
+  public void prepareForTriggerAvailableNow() {
+    logger.info("The streaming query reports to use Trigger.AvailableNow.");
+    isTriggerAvailableNow = true;
+  }
+
+  /**
+   * initialize the internal states for AvailableNow if this method is called first time after
+   * prepareForTriggerAvailableNow.
+   */
+  protected void initForTriggerAvailableNowIfNeeded(Optional<DeltaSourceOffset> startOffsetOpt) {
+    if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
+      isLastOffsetForTriggerAvailableNowInitialized = true;
+      initLastOffsetForTriggerAvailableNow(startOffsetOpt);
+    }
+  }
+
+  protected void initLastOffsetForTriggerAvailableNow(Optional<DeltaSourceOffset> startOffsetOpt) {
+    Optional<DeltaSourceOffset> offset =
+        latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
+    lastOffsetForTriggerAvailableNow = offset;
+
+    lastOffsetForTriggerAvailableNow.ifPresent(
+        lastOffset ->
+            logger.info("lastOffset for Trigger.AvailableNow has set to " + lastOffset.json()));
   }
 
   ////////////
@@ -148,22 +187,28 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     if (startOffset == null) {
       return null;
     }
-    // TODO(#5318): init trigger available now support
+    Optional<DeltaSourceOffset> deltaStartOffset =
+        Optional.of(DeltaSourceOffset.apply(tableId, startOffset));
+    initForTriggerAvailableNowIfNeeded(deltaStartOffset);
+    DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
+    isInitialBatch = false;
+    return endOffset;
+  }
 
-    DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
+  protected Optional<DeltaSourceOffset> latestOffsetInternal(
+      Optional<DeltaSourceOffset> deltaStartOffset, ReadLimit limit) {
     Optional<DeltaSource.AdmissionLimits> limits =
         ScalaUtils.toJavaOptional(DeltaSource.AdmissionLimits$.MODULE$.apply(options, limit));
-    Optional<DeltaSourceOffset> endOffset =
-        getNextOffsetFromPreviousOffset(deltaStartOffset, limits);
 
-    if (shouldValidateOffsets && endOffset.isPresent()) {
-      DeltaSourceOffset.validateOffsets(deltaStartOffset, endOffset.get());
+    Optional<DeltaSourceOffset> endOffset =
+        deltaStartOffset.flatMap(offset -> getNextOffsetFromPreviousOffset(offset, limits));
+
+    if (shouldValidateOffsets && deltaStartOffset.isPresent() && endOffset.isPresent()) {
+      DeltaSourceOffset.validateOffsets(deltaStartOffset.get(), endOffset.get());
     }
 
-    isInitialBatch = false;
-
     // endOffset is null: no data is available to read for this batch.
-    return endOffset.orElse(null);
+    return endOffset;
   }
 
   @Override
@@ -393,9 +438,11 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
                 file.getVersion() > fromVersion
                     || (file.getVersion() == fromVersion && file.getIndex() > fromIndex));
 
+    Optional<DeltaSourceOffset> lastOffsetForThisScan =
+        endOffset.or(() -> lastOffsetForTriggerAvailableNow);
     // Check end boundary (inclusive)
-    if (endOffset.isPresent()) {
-      DeltaSourceOffset bound = endOffset.get();
+    if (lastOffsetForThisScan.isPresent()) {
+      DeltaSourceOffset bound = lastOffsetForThisScan.get();
       result =
           result.takeWhile(
               file ->
