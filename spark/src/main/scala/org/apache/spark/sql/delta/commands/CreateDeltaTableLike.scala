@@ -180,7 +180,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    * An older horrible hack depended on the stack trace, where eager execution of the command
    * pointed to the calling API.
    */
-  protected def isV1Writer: Boolean = {
+  protected def isV1WriterSaveAsTableOverwrite: Boolean = {
     val options = new DeltaOptions(table.storage.properties, conf)
     options.isDataFrameWriterV1SaveAsTableOverwrite ||
       // Horrible hack for Spark versions before 4.1.
