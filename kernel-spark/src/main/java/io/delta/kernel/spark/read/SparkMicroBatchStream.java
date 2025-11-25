@@ -86,27 +86,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   // Tracks whether this is the first batch for this stream (no checkpointed offset).
   private boolean isFirstBatch = false;
 
-  /** Test-only constructor with minimal parameters. */
-  public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
-    this(
-        snapshotManager,
-        hadoopConf,
-        SparkSession.active(),
-        new DeltaOptions(
-            scala.collection.immutable.Map$.MODULE$.empty(),
-            SparkSession.active().sessionState().conf()),
-        /* tablePath= */ "",
-        /* dataSchema= */ new StructType(),
-        /* partitionSchema= */ new StructType(),
-        /* readDataSchema= */ new StructType(),
-        /* dataFilters= */ new Filter[0],
-        /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
-  }
-
-  /**
-   * Test-only constructor with spark, options parameters for testing getStartingVersion and other
-   * option-dependent behavior.
-   */
+  /** Test-only constructor. */
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Configuration hadoopConf,
@@ -141,7 +121,10 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = Objects.requireNonNull(options, "options is null");
-    this.tablePath = Objects.requireNonNull(tablePath, "tablePath is null");
+    // Normalize tablePath to ensure it ends with "/" for consistent path construction
+    String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
+    this.tablePath =
+        normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -321,7 +304,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         PartitionedFile partitionedFile =
             new PartitionedFile(
                 partitionRow,
-                SparkPath.fromUrlString(tablePath + "/" + addFile.getPath()),
+                SparkPath.fromUrlString(tablePath + addFile.getPath()),
                 /* start= */ 0L,
                 /* length= */ addFile.getSize(),
                 preferredLocations,
@@ -333,7 +316,11 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         partitionedFiles.add(partitionedFile);
       }
     } catch (IOException e) {
-      throw new RuntimeException("Failed to get file changes", e);
+      throw new RuntimeException(
+          String.format(
+              "Failed to get file changes for table %s from version %d index %d to offset %s",
+              tablePath, fromVersion, fromIndex, endOffset),
+          e);
     }
 
     long maxSplitBytes =

@@ -73,11 +73,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     createEmptyTestTable(tablePath, tableName);
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    return new SparkMicroBatchStream(
-        snapshotManager,
-        hadoopConf,
-        spark,
-        new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf()));
+    return new SparkMicroBatchStream(snapshotManager, hadoopConf, spark, emptyDeltaOptions());
+  }
+
+  private DeltaOptions emptyDeltaOptions() {
+    return new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
   }
 
   @Test
@@ -147,7 +147,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     ReadLimit readLimit = limitConfig.toReadLimit();
     DeltaOptions options;
     if (startingVersion == null) {
-      options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+      options = emptyDeltaOptions();
     } else {
       scala.collection.immutable.Map<String, String> scalaMap =
           Map$.MODULE$.<String, String>empty().updated("startingVersion", startingVersion);
@@ -253,7 +253,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, hadoopConf, spark, emptyDeltaOptions());
     Optional<DeltaSourceOffset> endOffsetOption = ScalaUtils.toJavaOptional(scalaEndOffset);
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
@@ -348,7 +349,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
-    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    DeltaOptions options = emptyDeltaOptions();
 
     Optional<DeltaSource.AdmissionLimits> dsv1Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
@@ -369,7 +370,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, hadoopConf, spark, emptyDeltaOptions());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
     Optional<DeltaSource.AdmissionLimits> dsv2Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
@@ -494,7 +496,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, hadoopConf, spark, emptyDeltaOptions());
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(
             fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset))) {
@@ -586,7 +589,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, hadoopConf, spark, emptyDeltaOptions());
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
@@ -732,7 +736,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, hadoopConf, spark, emptyDeltaOptions());
     Offset v2EndOffset = stream.latestOffset(startOffset, readLimit);
 
     compareOffsets(v1EndOffset, v2EndOffset, testDescription);
@@ -850,7 +855,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, hadoopConf, spark, emptyDeltaOptions());
     List<Offset> dsv2Offsets =
         advanceOffsetSequenceDsv2(stream, startOffset, numIterations, readLimit);
 
@@ -975,7 +981,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(snapshotManager, hadoopConf, spark, emptyDeltaOptions());
     Offset dsv2Offset = stream.latestOffset(startOffset, readLimit);
 
     compareOffsets(dsv1Offset, dsv2Offset, testDescription);
@@ -1061,13 +1068,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
       // For streaming, we only want the NEW rows added in each version
       // Subtract the previous version's data to get only newly added rows
-      if (version == fromVersion && fromVersion > 0) {
-        // At the start version, exclude rows that existed before fromVersion
-        Dataset<Row> previousData =
-            spark.read().format("delta").option("versionAsOf", version - 1).load(testTablePath);
-        versionData = versionData.except(previousData);
-      } else if (version > fromVersion) {
-        // For subsequent versions, get the diff from previous version
+      // Note: Only applies when version > 0 (when there's a previous version to subtract)
+      if (version > 0) {
         Dataset<Row> previousData =
             spark.read().format("delta").option("versionAsOf", version - 1).load(testTablePath);
         versionData = versionData.except(previousData);
@@ -1089,7 +1091,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             snapshotManager,
             spark.sessionState().newHadoopConf(),
             spark,
-            new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf()),
+            emptyDeltaOptions(),
             testTablePath,
             dataSchema,
             partitionSchema,
@@ -1359,7 +1361,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     if (scalaMaxFiles.isEmpty() && scalaMaxBytes.isEmpty()) {
       return Optional.empty();
     }
-    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    DeltaOptions options = emptyDeltaOptions();
     return Optional.of(new DeltaSource.AdmissionLimits(options, scalaMaxFiles, scalaMaxBytes));
   }
 
@@ -1423,7 +1425,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   private DeltaSource createDeltaSource(DeltaLog deltaLog, String tablePath) {
-    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    DeltaOptions options = emptyDeltaOptions();
     return createDeltaSource(deltaLog, tablePath, options);
   }
 

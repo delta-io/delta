@@ -57,7 +57,9 @@ public class PartitionUtils {
     int minPartitionNum =
         minPartitionNumOption.isDefined()
             ? ((Number) minPartitionNumOption.get()).intValue()
-            : sparkSession.leafNodeDefaultParallelism();
+            : sqlConf
+                .getConf(SQLConf.LEAF_NODE_DEFAULT_PARALLELISM())
+                .getOrElse(() -> sparkSession.sparkContext().defaultParallelism());
     if (minPartitionNum <= 0) {
       minPartitionNum = 1;
     }
@@ -85,6 +87,13 @@ public class PartitionUtils {
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
     final int numPartCols = partitionSchema.fields().length;
+    assert partitionValues.getSize() == numPartCols
+        : String.format(
+            java.util.Locale.ROOT,
+            "Partition values size from add file %d != partition columns size %d",
+            partitionValues.getSize(),
+            numPartCols);
+
     final Object[] values = new Object[numPartCols];
 
     // Build field name -> index map once
