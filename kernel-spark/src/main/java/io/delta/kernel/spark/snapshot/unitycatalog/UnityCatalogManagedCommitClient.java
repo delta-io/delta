@@ -49,8 +49,7 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
   /**
    * Builds a UC-backed {@link ManagedCommitClient} for a UC-managed table.
    *
-   * @throws IllegalArgumentException if the table lacks UC identifiers or catalog config is
-   *     missing
+   * @throws IllegalArgumentException if the table lacks UC identifiers or catalog config is missing
    */
   public static Optional<ManagedCommitClient> fromCatalog(
       CatalogTable catalogTable, SparkSession spark) {
