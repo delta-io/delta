@@ -85,7 +85,7 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     // First register all the base Delta rules from the V1 implementation.
     super.apply(extensions)
 
-    // Register a rule that will (in the future) rewrite V1 StreamingRelation plans that
+    // Register a post-hoc resolution rule that rewrites V1 StreamingRelation plans that
     // read Delta tables into V2 StreamingRelationV2 plans backed by SparkTable.
     //
     // NOTE: The current implementation is a no-op placeholder to keep binary compatibility
@@ -96,20 +96,30 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
   }
 
   /**
-   * Placeholder rule for applying the V2 streaming path by rewriting V1 StreamingRelation
-   * with DeltaTableV2 to StreamingRelationV2 with SparkTable.
+   * Rule for applying the V2 streaming path by rewriting V1 StreamingRelation
+   * with Delta DataSource to StreamingRelationV2 with SparkTable.
    *
-   * This is intentionally a no-op for now; the actual rewrite logic will be implemented
-   * once the Spark V2 streaming integration for Delta is finalized.
+   * This rule handles the case where Spark's FindDataSourceTable rule has converted
+   * a StreamingRelationV2 (with DeltaTableV2) back to a StreamingRelation because
+   * DeltaTableV2 doesn't advertise STREAMING_READ capability. We convert it back to
+   * StreamingRelationV2 with SparkTable (from kernel-spark) which does support streaming.
    */
   class ApplyV2Streaming(
       @transient private val session: org.apache.spark.sql.SparkSession)
     extends Rule[LogicalPlan] {
 
+    private def isDeltaStreamingRelation(s: StreamingRelation): Boolean = {
+      // Check if this is a Delta streaming relation by examining:
+      // 1. The source name (e.g., "delta" from .format("delta"))
+      // 2. The catalog table's provider (e.g., "DELTA" from Unity Catalog)
+      s.dataSource.catalogTable.isDefined && (
+        DeltaSourceUtils.isDeltaDataSourceName(s.sourceName) ||
+        s.dataSource.catalogTable.get.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)
+      )
+    }
+
     override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
-      case s: StreamingRelation
-          if DeltaSourceUtils.isDeltaDataSourceName(s.sourceName) &&
-            s.dataSource.catalogTable.isDefined =>
+      case s: StreamingRelation if isDeltaStreamingRelation(s) =>
         val catalogTable = s.dataSource.catalogTable.get
         val ident =
           Identifier.of(catalogTable.identifier.database.toArray, catalogTable.identifier.table)
