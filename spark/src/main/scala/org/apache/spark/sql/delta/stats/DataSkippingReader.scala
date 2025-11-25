@@ -186,6 +186,21 @@ private[delta] object DataSkippingReader {
     val oneMillisecond = new CalendarInterval(0, 0, 1000 /* micros */)
     new Literal(oneMillisecond, CalendarIntervalType)
   }
+  // SC-22824 widened the max timestamp stats range by +1 ms to account for JSON truncation down to
+  // milliseconds. For tables written by Delta 3.3.2, timestamp stats in JSON may also be off by up
+  // to 59 seconds due to historical timezone offsets being truncated to minute resolution (see
+  // Delta issue 5249). To avoid incorrect data skipping (pruning files that may still contain
+  // matching rows), we treat these stats as approximate bounds and widen the range by up to
+  // 59 seconds on both sides for timestamp stats.
+  private val fiftyNineSecondsMicros: Long = 59L * 1000000L
+  val plusFiftyNineSecondsLiteralExpr: Literal = {
+    val interval = new CalendarInterval(0, 0, fiftyNineSecondsMicros)
+    new Literal(interval, CalendarIntervalType)
+  }
+  val minusFiftyNineSecondsLiteralExpr: Literal = {
+    val interval = new CalendarInterval(0, 0, -fiftyNineSecondsMicros)
+    new Literal(interval, CalendarIntervalType)
+  }
 
   lazy val sizeCollectorInputEncoders: Seq[Option[ExpressionEncoder[_]]] = Seq(
     Option(ExpressionEncoder[Boolean]()),
@@ -949,6 +964,18 @@ trait DataSkippingReaderBase
       // Filter out non-leaf columns -- they lack stats so skipping predicates can't use them.
       .filterNot(_._2.isInstanceOf[StructType])
       .map {
+        case (statCol, TimestampType, _) if pathToStatType.head == MIN =>
+          // Delta Spark 3.3.2 wrote timestamp stats to JSON using timezone offsets with seconds
+          // truncated down to minute resolution (e.g. +005328 -> +0053). When these values are
+          // parsed back as timestamps, they can be off by up to 59 seconds from the true value,
+          // which may cause incorrect data skipping (files being pruned even though they might
+          // contain matching rows).
+          //
+          // To avoid data loss for such tables, we treat the JSON stats for timestamps as
+          // approximate and widen the range by up to 59 seconds on both sides. For the min
+          // bound, subtract 59 seconds.
+          Column(
+            Cast(TimeAdd(statCol.expr, minusFiftyNineSecondsLiteralExpr), TimestampType))
         case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
           // SC-22824: For timestamps, JSON serialization will truncate to milliseconds. This means
           // that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
@@ -956,9 +983,19 @@ trait DataSkippingReaderBase
           // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
           // to contain the range from 01:02:03.456 to 01:02:03.457.)
           //
-          // There is a longer term task SC-22825 to fix the serialization problem that caused this.
-          // But we need the adjustment in any case to correctly read stats written by old versions.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
+          // Delta Spark 3.3.2 also truncated historical timezone offsets to minute resolution in
+          // JSON stats, which can make the recorded max timestamp up to 59 seconds earlier than
+          // the true value. To avoid incorrectly skipping files for such tables, we further widen
+          // the upper bound by 59 seconds.
+          //
+          // There is a longer term task SC-22825 to fix the serialization problem that caused the
+          // millisecond truncation, and Delta issue 5249 tracks the timezone offset truncation.
+          // We need this adjustment in any case to correctly read stats written by old versions.
+          val widened =
+            TimeAdd(
+              TimeAdd(statCol.expr, oneMillisecondLiteralExpr),
+              plusFiftyNineSecondsLiteralExpr)
+          Column(Cast(widened, TimestampType))
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
           // We also apply the same adjustment of max stats that was applied to Timestamp
           // for TimestampNTZ because these 2 types have the same precision in terms of time.
