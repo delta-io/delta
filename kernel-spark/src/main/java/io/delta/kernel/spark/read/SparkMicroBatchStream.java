@@ -166,7 +166,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
             previousOffset.isInitialSnapshot(),
             limits);
 
-    Optional<IndexedFile> lastFileChange = StreamingHelper.iteratorLast(changes);
+    Optional<IndexedFile> lastFileChange = changes.last();
 
     if (!lastFileChange.isPresent()) {
       return Optional.of(previousOffset);

@@ -24,8 +24,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.data.StructRow;
-import io.delta.kernel.utils.CloseableIterator;
-import java.io.IOException;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 
@@ -49,30 +47,12 @@ public class StreamingHelper {
   }
 
   /**
-   * Returns the last element from the iterator, if present. This method consumes all elements from
-   * the iterator and automatically closes it.
+   * Get the version from a {@link ColumnarBatch} of Delta log actions. Assumes all rows in the
+   * batch belong to the same commit version, so it reads the version from the first row (rowId=0).
    *
-   * @throws RuntimeException if an IOException occurs while closing the iterator
-   */
-  public static <T> Optional<T> iteratorLast(CloseableIterator<T> iterator) {
-    try {
-      T last = null;
-      while (iterator.hasNext()) {
-        last = iterator.next();
-      }
-      return Optional.ofNullable(last);
-    } finally {
-      try {
-        iterator.close();
-      } catch (IOException e) {
-        throw new RuntimeException("Failed to close iterator", e);
-      }
-    }
-  }
-
-  /**
-   * Get the version from a batch. Assumes all rows in the batch have the same version, so it reads
-   * from the first row (rowId=0).
+   * @param batch A {@link ColumnarBatch} representing zero or more rows of Delta log actions (e.g.,
+   *     AddFile, RemoveFile) from a single commit
+   * @return The version number of the commit that these actions belong to
    */
   public static long getVersion(ColumnarBatch batch) {
     int versionColIdx = getFieldIndex(batch, "version");
