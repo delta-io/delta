@@ -112,6 +112,9 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
+    if (schema.isDefined) {
+      return (shortName(), schema.get)
+    }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })

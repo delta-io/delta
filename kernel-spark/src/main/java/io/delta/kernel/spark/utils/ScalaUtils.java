@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.spark.utils;
 
+import java.util.HashMap;
 import java.util.Map;
 import scala.Tuple2;
 import scala.collection.immutable.Map$;
@@ -34,5 +35,18 @@ public final class ScalaUtils {
       b.$plus$eq(new Tuple2<>(e.getKey(), e.getValue()));
     }
     return b.result();
+  }
+
+  public static Map<String, String> fromScalaMap(
+      scala.collection.immutable.Map<String, String> scalaMap) {
+    if (scalaMap == null) throw new NullPointerException("options");
+
+    Map<String, String> javaMap = new HashMap<>();
+    scala.collection.Iterator<Tuple2<String, String>> it = scalaMap.iterator();
+    while (it.hasNext()) {
+      Tuple2<String, String> e = it.next();
+      javaMap.put(e._1(), e._2());
+    }
+    return javaMap;
   }
 }
