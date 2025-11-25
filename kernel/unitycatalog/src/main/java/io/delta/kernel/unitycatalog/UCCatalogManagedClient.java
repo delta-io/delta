@@ -58,8 +58,10 @@ import org.slf4j.LoggerFactory;
 public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
+  public static final String UC_PROPERTY_NAMESPACE_PREFIX = "io.unitycatalog.";
+
   /** Key for identifying Unity Catalog table ID. */
-  public static final String UC_TABLE_ID_KEY = "catalogManaged.unityCatalog.tableId";
+  public static final String UC_TABLE_ID_KEY = UC_PROPERTY_NAMESPACE_PREFIX + "tableId";
 
   protected final UCClient ucClient;
 

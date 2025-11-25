@@ -284,7 +284,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     // ===== THEN =====
     val builderTableProperties = createTableTxnBuilder.getTablePropertiesOpt.get()
     assert(builderTableProperties.get("delta.feature.catalogManaged") == "supported")
-    assert(builderTableProperties.get("catalogManaged.unityCatalog.tableId") == testUcTableId)
+    assert(builderTableProperties.get("io.unitycatalog.tableId") == testUcTableId)
     assert(builderTableProperties.get("foo") == "bar")
 
     val committerOpt = createTableTxnBuilder.getCommitterOpt

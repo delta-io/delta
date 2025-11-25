@@ -15,11 +15,12 @@
  */
 package io.delta.kernel.spark.utils;
 
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.Map;
 import scala.Tuple2;
 import scala.collection.immutable.Map$;
 import scala.collection.mutable.Builder;
+import scala.jdk.javaapi.CollectionConverters;
 
 public final class ScalaUtils {
   public static scala.collection.immutable.Map<String, String> toScalaMap(
@@ -37,16 +38,14 @@ public final class ScalaUtils {
     return b.result();
   }
 
-  public static Map<String, String> fromScalaMap(
+  public static Map<String, String> toJavaMap(
       scala.collection.immutable.Map<String, String> scalaMap) {
-    if (scalaMap == null) throw new NullPointerException("options");
-
-    Map<String, String> javaMap = new HashMap<>();
-    scala.collection.Iterator<Tuple2<String, String>> it = scalaMap.iterator();
-    while (it.hasNext()) {
-      Tuple2<String, String> e = it.next();
-      javaMap.put(e._1(), e._2());
+    if (scalaMap == null) {
+      return null;
     }
-    return javaMap;
+    if (scalaMap.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    return CollectionConverters.asJava(scalaMap);
   }
 }
