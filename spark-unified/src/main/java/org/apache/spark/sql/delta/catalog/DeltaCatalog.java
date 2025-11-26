@@ -127,11 +127,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
             .conf()
             .get(DeltaSQLConfV2.V2_ENABLE_MODE().key(),
                 DeltaSQLConfV2.V2_ENABLE_MODE().defaultValueString());
-    switch (mode.toUpperCase()) {
-      case "STRICT":
-        return v2ConnectorSupplier.get();
-      default:
-        return v1ConnectorSupplier.get();
-    }
+    return v2ConnectorSupplier.get();
   }
 }
