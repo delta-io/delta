@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.table;
+package io.delta.kernel.spark.catalog;
 
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -22,6 +22,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import java.io.File;
+import java.lang.reflect.Method;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -38,6 +40,7 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -53,7 +56,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
     String tableName =
         "test_" + testCase.name.toLowerCase().replace(" ", "_") + "_" + method.name().toLowerCase();
     testCase.createTableSql.apply(tableName, path);
-    Identifier identifier = Identifier.of(new String[] {"test_namespace"}, tableName);
+    Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
 
     // Create SparkTable based on construction method
     SparkTable kernelTable;
@@ -73,7 +76,19 @@ public class SparkTableTest extends SparkDsv2TestBase {
     }
 
     // ===== Test table name =====
-    assertEquals(tableName, kernelTable.name());
+    String expectedName;
+    switch (method) {
+      case FROM_PATH:
+        expectedName = "delta.`" + path + "`";
+        break;
+      case FROM_CATALOG_TABLE:
+        // Catalog table should return fully qualified name: spark_catalog.default.tableName
+        expectedName = "spark_catalog.default." + tableName;
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown method: " + method);
+    }
+    assertEquals(expectedName, kernelTable.name());
 
     // ===== Test schema =====
     StructType sparkSchema = kernelTable.schema();
@@ -254,5 +269,58 @@ public class SparkTableTest extends SparkDsv2TestBase {
             testCase ->
                 Stream.of(ConstructionMethod.FROM_PATH, ConstructionMethod.FROM_CATALOG_TABLE)
                     .map(method -> Arguments.of(testCase, method)));
+  }
+
+  /**
+   * Test that getDecodedPath handles various URI schemes correctly, not just file:// URIs. This
+   * verifies the fix for supporting cloud storage paths (s3, abfss, gs) and HDFS.
+   */
+  @ParameterizedTest(name = "URI scheme: {0}")
+  @MethodSource("uriSchemeTestCases")
+  public void testGetDecodedPathSupportsVariousUriSchemes(String scheme, String uriString)
+      throws Exception {
+    // Access the private static method via reflection
+    Method getDecodedPath =
+        SparkTable.class.getDeclaredMethod("getDecodedPath", java.net.URI.class);
+    getDecodedPath.setAccessible(true);
+
+    URI uri = new URI(uriString);
+    String result = (String) getDecodedPath.invoke(null, uri);
+
+    // Verify the path is decoded correctly
+    // The result should contain the path portion without URL encoding issues
+    assertTrue(
+        result.contains("/path/to/table"),
+        "Decoded path should contain the expected path. Got: " + result);
+  }
+
+  /** Test that URL-encoded characters are properly decoded */
+  @Test
+  public void testGetDecodedPathDecodesUrlEncodedCharacters() throws Exception {
+    // Access the private static method via reflection
+    Method getDecodedPath =
+        SparkTable.class.getDeclaredMethod("getDecodedPath", java.net.URI.class);
+    getDecodedPath.setAccessible(true);
+
+    // Test URL-encoded path: "spark%25dir%25prefix" should decode to "spark%dir%prefix"
+    // %25 is the URL encoding for %
+    URI uri = new URI("file:///data/spark%25dir%25prefix/table");
+    String result = (String) getDecodedPath.invoke(null, uri);
+
+    // Hadoop Path.toString() includes the scheme for file URIs
+    assertEquals(
+        "file:/data/spark%dir%prefix/table",
+        result, "URL-encoded characters should be properly decoded");
+  }
+
+  /** Provides test cases for different URI schemes */
+  static Stream<Arguments> uriSchemeTestCases() {
+    return Stream.of(
+        Arguments.of("file", "file:///path/to/table"),
+        Arguments.of("s3", "s3://bucket/path/to/table"),
+        Arguments.of("s3a", "s3a://bucket/path/to/table"),
+        Arguments.of("abfss", "abfss://container@account.dfs.core.windows.net/path/to/table"),
+        Arguments.of("gs", "gs://bucket/path/to/table"),
+        Arguments.of("hdfs", "hdfs://namenode:8020/path/to/table"));
   }
 }

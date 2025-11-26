@@ -18,7 +18,6 @@ package io.delta.kernel.spark.catalog;
 import io.delta.kernel.Operation;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.spark.table.SparkTable;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.ArrayList;
