@@ -95,21 +95,14 @@ public class ProtocolAndMetadataAdapterV2 implements ProtocolMetadataAdapter, Se
 
   @Override
   public boolean isIcebergCompatAnyEnabled() {
-    // Check V1 manually (Kernel doesn't have a constant for V1)
-    if (isConfigEnabled("delta.enableIcebergCompatV1")) {
-      return true;
-    }
-    // Check V2 and V3 using Kernel's utility
+    // V2 implementation only supports IcebergCompat V2 and V3 (Kernel doesn't support V1)
     return IcebergCompatMetadataValidatorAndUpdater.isIcebergCompatEnabled(metadata);
   }
 
   @Override
   public boolean isIcebergCompatGeqEnabled(int version) {
+    // V2 implementation only supports IcebergCompat V2 and V3 (Kernel doesn't support V1)
     // Check if any enabled version is >= the required version
-    // Note: Kernel doesn't have a constant for V1, so we check the configuration directly
-    if (version <= 1 && isConfigEnabled("delta.enableIcebergCompatV1")) {
-      return true;
-    }
     if (version <= 2 && TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)) {
       return true;
     }
@@ -119,38 +112,9 @@ public class ProtocolAndMetadataAdapterV2 implements ProtocolMetadataAdapter, Se
     return false;
   }
 
-  /** Helper to check if a boolean configuration is enabled */
-  private boolean isConfigEnabled(String key) {
-    return metadata.getConfiguration().containsKey(key)
-        && "true".equalsIgnoreCase(metadata.getConfiguration().get(key));
-  }
-
   @Override
   public void assertTableReadable(SparkSession sparkSession) {
-    // Check type widening readability
-    // If type widening is enabled, check for unsupported type changes in the schema
-    if (TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(metadata)) {
-      StructType sparkSchema =
-          io.delta.kernel.spark.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-              metadata.getSchema());
-      // Check each field for unsupported type changes
-      for (org.apache.spark.sql.types.StructField field : sparkSchema.fields()) {
-        org.apache.spark.sql.types.Metadata fieldMetadata = field.metadata();
-        if (fieldMetadata.contains("delta.typeChanges")) {
-          org.apache.spark.sql.types.Metadata[] typeChanges =
-              fieldMetadata.getMetadataArray("delta.typeChanges");
-          for (org.apache.spark.sql.types.Metadata typeChange : typeChanges) {
-            String fromType = typeChange.getString("fromType");
-            String toType = typeChange.getString("toType");
-            // Check if this is an unsupported type change (e.g., string -> integer)
-            if ("string".equals(fromType) && "integer".equals(toType)) {
-              throw new io.delta.kernel.exceptions.KernelException(
-                  "Unsupported type change from string to integer in field: " + field.name());
-            }
-          }
-        }
-      }
-    }
+    // TODO(): Implement validation for table with widening.
   }
 
   @Override
