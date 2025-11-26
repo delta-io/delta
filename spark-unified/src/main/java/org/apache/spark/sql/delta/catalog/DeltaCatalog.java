@@ -65,7 +65,7 @@ import org.apache.spark.sql.connector.catalog.Table;
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
   /**
-   * Loads a catalog-managed Delta table.
+   * Loads a Delta table that is registered in the catalog.
    *
    * <p>Routing logic based on {@link DeltaSQLConfV2#V2_ENABLE_MODE}:
    * <ul>
@@ -73,19 +73,20 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
    * </ul>
    *
-   * @param ident Table identifier
-   * @param catalogTable Catalog table metadata
-   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
+   * @param ident The identifier of the table in the catalog.
+   * @param catalogTable The catalog table metadata containing table properties and location.
+   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
    */
   @Override
-  public Table loadCatalogManagedTable(Identifier ident, CatalogTable catalogTable) {
+  public Table loadCatalogTable(Identifier ident, CatalogTable catalogTable) {
     return loadTableInternal(
         () -> new SparkTable(ident, catalogTable, new HashMap<>()),
-        () -> super.loadCatalogManagedTable(ident, catalogTable));
+        () -> super.loadCatalogTable(ident, catalogTable));
   }
 
   /**
-   * Loads a path-based Delta table.
+   * Loads a Delta table directly from a path.
+   * This is used for path-based table access where the identifier name is the table path.
    *
    * <p>Routing logic based on {@link DeltaSQLConfV2#V2_ENABLE_MODE}:
    * <ul>
@@ -93,15 +94,15 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
    * </ul>
    *
-   * @param ident Table identifier containing table path
-   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
+   * @param ident The identifier whose name contains the path to the Delta table.
+   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
    */
   @Override
-  public Table loadPathBasedDeltaTable(Identifier ident) {
+  public Table loadPathTable(Identifier ident) {
     return loadTableInternal(
         // delta.`/path/to/table`, where ident.name() is `/path/to/table`
         () -> new SparkTable(ident, ident.name()),
-        () -> super.loadPathBasedDeltaTable(ident));
+        () -> super.loadPathTable(ident));
   }
 
   /**

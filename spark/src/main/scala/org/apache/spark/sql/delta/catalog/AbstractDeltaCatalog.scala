@@ -237,14 +237,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     try {
       super.loadTable(ident) match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          loadCatalogManagedTable(ident, v1.catalogTable)
+          loadCatalogTable(ident, v1.catalogTable)
         case o => o
       }
     } catch {
       case e @ (
         _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException) =>
           if (isPathIdentifier(ident)) {
-            loadPathBasedDeltaTable(ident)
+            loadPathTable(ident)
           } else if (isIcebergPathIdentifier(ident)) {
             newIcebergPathTable(ident)
           } else {
@@ -253,7 +253,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
         logWarning(log"Received an access denied error from Glue. Assuming this " +
           log"identifier (${MDC(DeltaLogKeys.TABLE_NAME, ident)}) is path based.", e)
-        loadPathBasedDeltaTable(ident)
+        loadPathTable(ident)
     }
   }
 
@@ -316,7 +316,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   }
 
 
-  protected def loadCatalogManagedTable(ident: Identifier, catalogTable: CatalogTable): Table = {
+  /**
+   * Loads a Delta table that is registered in the catalog.
+   *
+   * @param ident The identifier of the table in the catalog.
+   * @param catalogTable The catalog table metadata containing table properties and location.
+   * @return A DeltaTableV2 instance with catalog metadata attached.
+   */
+  protected def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
     DeltaTableV2(
       spark,
       new Path(catalogTable.location),
@@ -324,7 +331,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       tableIdentifier = Some(ident.toString))
   }
 
-  protected def loadPathBasedDeltaTable(ident: Identifier): Table = {
+  /**
+   * Loads a Delta table directly from a path.
+   * This is used for path-based table access where the identifier name is the table path.
+   *
+   * @param ident The identifier whose name contains the path to the Delta table.
+   * @return A DeltaTableV2 instance loaded from the specified path.
+   */
+  protected def loadPathTable(ident: Identifier): Table = {
     DeltaTableV2(spark, new Path(ident.name()))
   }
 
