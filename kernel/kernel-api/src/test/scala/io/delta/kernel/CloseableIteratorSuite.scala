@@ -226,27 +226,27 @@ class CloseableIteratorSuite extends AnyFunSuite {
     assert(outerClosed === true)
   }
 
-  test("last -- returns empty for empty iterator") {
-    val result = toCloseableIter(Seq[Int]()).last()
+  test("iteratorLast -- returns empty for empty iterator") {
+    val result = Utils.iteratorLast(toCloseableIter(Seq[Int]()))
     assert(!result.isPresent)
   }
 
-  test("last -- returns last element for single element iterator") {
-    val result = toCloseableIter(Seq(42)).last()
+  test("iteratorLast -- returns last element for single element iterator") {
+    val result = Utils.iteratorLast(toCloseableIter(Seq(42)))
     assert(result.isPresent)
     assert(result.get() === 42)
   }
 
-  test("last -- returns last element for multiple element iterator") {
-    val result = toCloseableIter(Seq(1, 2, 3, 4, 5)).last()
+  test("iteratorLast -- returns last element for multiple element iterator") {
+    val result = Utils.iteratorLast(toCloseableIter(Seq(1, 2, 3, 4, 5)))
     assert(result.isPresent)
     assert(result.get() === 5)
   }
 
-  test("last -- properly closes iterator after consumption") {
+  test("iteratorLast -- properly closes iterator after consumption") {
     var closed = false
     val iter = new TrackingCloseableIterator(Seq(1, 2, 3), () => closed = true)
-    val result = iter.last()
+    val result = Utils.iteratorLast(iter)
     assert(result.isPresent)
     assert(result.get() === 3)
     assert(closed === true)
