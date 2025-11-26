@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog;
 
-import io.delta.kernel.spark.table.SparkTable;
+import io.delta.kernel.spark.catalog.SparkTable;
 import org.apache.spark.sql.delta.sources.DeltaSQLConfV2;
 import java.util.HashMap;
 import java.util.function.Supplier;
