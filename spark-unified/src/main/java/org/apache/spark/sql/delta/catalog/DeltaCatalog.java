@@ -65,7 +65,7 @@ import org.apache.spark.sql.connector.catalog.Table;
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
   /**
-   * Loads a Delta table from a catalog.
+   * Loads a Delta table that is registered in the catalog.
    *
    * <p>Routing logic based on {@link DeltaSQLConfV2#V2_ENABLE_MODE}:
    * <ul>
@@ -73,9 +73,9 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
    * </ul>
    *
-   * @param ident Table identifier
-   * @param catalogTable Catalog table metadata
-   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
+   * @param ident The identifier of the table in the catalog.
+   * @param catalogTable The catalog table metadata containing table properties and location.
+   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
    */
   @Override
   public Table loadCatalogTable(Identifier ident, CatalogTable catalogTable) {
@@ -85,7 +85,8 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   }
 
   /**
-   * Loads a path-based Delta table.
+   * Loads a Delta table directly from a path.
+   * This is used for path-based table access where the identifier name is the table path.
    *
    * <p>Routing logic based on {@link DeltaSQLConfV2#V2_ENABLE_MODE}:
    * <ul>
@@ -93,8 +94,8 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
    * </ul>
    *
-   * @param ident Table identifier containing table path
-   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
+   * @param ident The identifier whose name contains the path to the Delta table.
+   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
    */
   @Override
   public Table loadPathTable(Identifier ident) {

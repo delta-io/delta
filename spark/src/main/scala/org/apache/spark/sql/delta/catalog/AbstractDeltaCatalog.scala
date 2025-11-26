@@ -316,6 +316,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   }
 
 
+  /**
+   * Loads a Delta table that is registered in the catalog.
+   *
+   * @param ident The identifier of the table in the catalog.
+   * @param catalogTable The catalog table metadata containing table properties and location.
+   * @return A DeltaTableV2 instance with catalog metadata attached.
+   */
   protected def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
     DeltaTableV2(
       spark,
@@ -324,6 +331,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       tableIdentifier = Some(ident.toString))
   }
 
+  /**
+   * Loads a Delta table directly from a path.
+   * This is used for path-based table access where the identifier name is the table path.
+   *
+   * @param ident The identifier whose name contains the path to the Delta table.
+   * @return A DeltaTableV2 instance loaded from the specified path.
+   */
   protected def loadPathTable(ident: Identifier): Table = {
     DeltaTableV2(spark, new Path(ident.name()))
   }
