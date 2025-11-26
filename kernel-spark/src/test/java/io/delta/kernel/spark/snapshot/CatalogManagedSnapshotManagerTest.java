@@ -69,6 +69,17 @@ class CatalogManagedSnapshotManagerTest {
     }
 
     @Override
+    public java.util.List<io.delta.kernel.internal.files.ParsedLogData> getRatifiedCommits(
+        java.util.Optional<Long> endVersionOpt) {
+      throw new UnsupportedOperationException("noop");
+    }
+
+    @Override
+    public long getLatestRatifiedVersion() {
+      throw new UnsupportedOperationException("noop");
+    }
+
+    @Override
     public void close() {}
   }
 }

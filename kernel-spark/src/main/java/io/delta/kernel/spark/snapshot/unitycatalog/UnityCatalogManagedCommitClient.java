@@ -20,12 +20,23 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.spark.snapshot.ManagedCommitClient;
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.storage.commit.Commit;
+import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
@@ -100,12 +111,52 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
   }
 
   @Override
+  public List<ParsedLogData> getRatifiedCommits(Optional<Long> endVersionOpt) {
+    GetCommitsResponse response = getCommitsFromUC(endVersionOpt);
+    return response.getCommits().stream()
+        .sorted(Comparator.comparingLong(Commit::getVersion))
+        .map(
+            commit ->
+                ParsedCatalogCommitData.forFileStatus(
+                    hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public long getLatestRatifiedVersion() {
+    GetCommitsResponse response = getCommitsFromUC(Optional.empty());
+    long maxRatified = response.getLatestTableVersion();
+    // UC returns -1 when only 0.json exists (CREATE not yet registered with UC)
+    return maxRatified == -1 ? 0 : maxRatified;
+  }
+
+  @Override
   public void close() {
     try {
       ucClient.close();
     } catch (Exception e) {
       // Swallow close errors to avoid disrupting caller cleanup
     }
+  }
+
+  private GetCommitsResponse getCommitsFromUC(Optional<Long> endVersionOpt) {
+    try {
+      return ucClient.getCommits(
+          tableId,
+          new Path(tablePath).toUri(),
+          Optional.empty(), // startVersion
+          endVersionOpt);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    } catch (UCCommitCoordinatorException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  private static io.delta.kernel.utils.FileStatus hadoopFileStatusToKernelFileStatus(
+      org.apache.hadoop.fs.FileStatus hadoopFS) {
+    return io.delta.kernel.utils.FileStatus.of(
+        hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {

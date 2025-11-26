@@ -22,10 +22,14 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 import org.slf4j.Logger;
@@ -77,11 +81,18 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   /**
    * Finds the active commit at a specific timestamp.
    *
-   * <p><strong>Note:</strong> This operation is not yet supported for Unity Catalog managed tables
-   * because it requires filesystem-based commit history which is not accessible for catalog-managed
-   * tables. Unity Catalog coordinates commits differently than traditional Delta tables.
+   * <p>For catalog-managed tables, this method retrieves ratified commits from the catalog and uses
+   * {@link DeltaHistoryManager#getActiveCommitAtTimestamp} to find the commit that was active at
+   * the specified timestamp.
    *
-   * @throws UnsupportedOperationException always - not yet implemented for catalog-managed tables
+   * @param timestampMillis the timestamp in milliseconds since epoch (UTC)
+   * @param canReturnLastCommit if true, returns the last commit if the timestamp is after all
+   *     commits; if false, throws an exception
+   * @param mustBeRecreatable if true, only considers commits that can be fully recreated from
+   *     available log files; if false, considers all commits
+   * @param canReturnEarliestCommit if true, returns the earliest commit if the timestamp is before
+   *     all commits; if false, throws an exception
+   * @return the commit that was active at the specified timestamp
    */
   @Override
   public DeltaHistoryManager.Commit getActiveCommitAtTime(
@@ -89,22 +100,46 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
-    throw new UnsupportedOperationException(
-        "getActiveCommitAtTime not yet implemented for catalog-managed tables. "
-            + "This operation requires filesystem-based commit history which may not be "
-            + "available for catalog-managed tables.");
+    // Load the latest snapshot for timestamp resolution
+    SnapshotImpl latestSnapshot = (SnapshotImpl) loadLatestSnapshot();
+
+    // Get ratified commits from the catalog
+    List<ParsedLogData> logData = commitClient.getRatifiedCommits(Optional.empty());
+
+    // Convert to ParsedCatalogCommitData for DeltaHistoryManager
+    List<ParsedCatalogCommitData> catalogCommits =
+        logData.stream()
+            .filter(data -> data instanceof ParsedCatalogCommitData)
+            .map(data -> (ParsedCatalogCommitData) data)
+            .collect(Collectors.toList());
+
+    return DeltaHistoryManager.getActiveCommitAtTimestamp(
+        kernelEngine,
+        latestSnapshot,
+        latestSnapshot.getLogPath(),
+        timestampMillis,
+        mustBeRecreatable,
+        canReturnLastCommit,
+        canReturnEarliestCommit,
+        catalogCommits);
   }
 
   /**
    * Checks if a specific version exists and is accessible.
    *
-   * <p><strong>Performance Note:</strong> For Unity Catalog managed tables, version checking
-   * requires loading the full snapshot including all file metadata. This is less efficient than
-   * filesystem-based checks which can verify log file existence without reading contents.
+   * <p>For catalog-managed tables, versions are assumed to be contiguous (enforced by the catalog
+   * coordinator). This method performs a lightweight check by verifying the version is within the
+   * valid range [0, latestRatifiedVersion].
    *
-   * <p><strong>TODO (Next PR):</strong> Add lightweight version checking API to
-   * UCCatalogManagedClient to avoid loading full snapshots for existence checks.
+   * <p>This approach is consistent with the existing Spark Delta behavior in {@code
+   * DeltaHistoryManager.checkVersionExists} which also assumes contiguous commits.
    *
+   * @param version the version to check
+   * @param mustBeRecreatable if true, requires that the version can be fully recreated from
+   *     available log files. For catalog-managed tables, all versions are recreatable since the
+   *     catalog maintains the complete commit history.
+   * @param allowOutOfRange if true, allows versions greater than the latest version without
+   *     throwing an exception; if false, throws exception for out-of-range versions
    * @throws VersionNotFoundException if the version is not available
    */
   @Override
@@ -112,15 +147,13 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
       throws VersionNotFoundException {
     checkArgument(version >= 0, "version must be non-negative");
 
-    try {
-      // Attempt to load the snapshot at the specified version
-      // Note: This loads the full snapshot - see performance note above
-      loadSnapshotAt(version);
-    } catch (KernelException e) {
-      // Specific Kernel exceptions indicate version doesn't exist or isn't accessible
-      // Let other exceptions (network failures, auth errors, etc.) propagate to caller
-      long latestVersion = loadLatestSnapshot().getVersion();
-      throw new VersionNotFoundException(version, 0, latestVersion);
+    // For catalog-managed tables, the earliest recreatable version is 0 since the catalog
+    // maintains the complete commit history
+    long earliestVersion = 0;
+    long latestVersion = commitClient.getLatestRatifiedVersion();
+
+    if (version < earliestVersion || ((version > latestVersion) && !allowOutOfRange)) {
+      throw new VersionNotFoundException(version, earliestVersion, latestVersion);
     }
   }
 

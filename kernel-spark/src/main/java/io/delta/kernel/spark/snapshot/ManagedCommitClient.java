@@ -18,6 +18,8 @@ package io.delta.kernel.spark.snapshot;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.files.ParsedLogData;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -40,6 +42,28 @@ public interface ManagedCommitClient extends AutoCloseable {
       Optional<Long> startTimestampOpt,
       Optional<Long> endVersionOpt,
       Optional<Long> endTimestampOpt);
+
+  /**
+   * Gets the ratified commits from the catalog up to the specified version.
+   *
+   * <p>The returned list contains {@link ParsedLogData} representing each ratified commit, sorted
+   * by version in ascending order. These are typically {@code ParsedCatalogCommitData} instances
+   * for catalog-managed tables.
+   *
+   * @param endVersionOpt optional end version (inclusive); if empty, returns commits up to latest
+   * @return list of parsed log data representing ratified commits, sorted by version ascending
+   */
+  List<ParsedLogData> getRatifiedCommits(Optional<Long> endVersionOpt);
+
+  /**
+   * Gets the latest ratified table version from the catalog.
+   *
+   * <p>For catalog-managed tables, this is the highest version that has been ratified by the
+   * catalog coordinator.
+   *
+   * @return the latest version ratified by the catalog, or 0 if only the initial commit exists
+   */
+  long getLatestRatifiedVersion();
 
   @Override
   void close();
