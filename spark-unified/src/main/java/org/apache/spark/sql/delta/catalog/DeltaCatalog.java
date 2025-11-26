@@ -65,7 +65,7 @@ import org.apache.spark.sql.connector.catalog.Table;
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
   /**
-   * Loads a catalog-managed Delta table.
+   * Loads a Delta table from a catalog.
    *
    * <p>Routing logic based on {@link DeltaSQLConfV2#V2_ENABLE_MODE}:
    * <ul>
@@ -78,10 +78,10 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
    */
   @Override
-  public Table loadCatalogManagedTable(Identifier ident, CatalogTable catalogTable) {
+  public Table loadCatalogTable(Identifier ident, CatalogTable catalogTable) {
     return loadTableInternal(
         () -> new SparkTable(ident, catalogTable, new HashMap<>()),
-        () -> super.loadCatalogManagedTable(ident, catalogTable));
+        () -> super.loadCatalogTable(ident, catalogTable));
   }
 
   /**
@@ -97,11 +97,11 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
    */
   @Override
-  public Table loadPathBasedDeltaTable(Identifier ident) {
+  public Table loadPathTable(Identifier ident) {
     return loadTableInternal(
         // delta.`/path/to/table`, where ident.name() is `/path/to/table`
         () -> new SparkTable(ident, ident.name()),
-        () -> super.loadPathBasedDeltaTable(ident));
+        () -> super.loadPathTable(ident));
   }
 
   /**
