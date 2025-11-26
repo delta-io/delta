@@ -237,14 +237,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     try {
       super.loadTable(ident) match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          newDeltaCatalogBasedTable(ident, v1.catalogTable)
+          loadManagedTable(ident, v1.catalogTable)
         case o => o
       }
     } catch {
       case e @ (
         _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException) =>
           if (isPathIdentifier(ident)) {
-            newDeltaPathTable(ident)
+            loadPathBasedDeltaTable(ident)
           } else if (isIcebergPathIdentifier(ident)) {
             newIcebergPathTable(ident)
           } else {
@@ -253,7 +253,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
         logWarning(log"Received an access denied error from Glue. Assuming this " +
           log"identifier (${MDC(DeltaLogKeys.TABLE_NAME, ident)}) is path based.", e)
-        newDeltaPathTable(ident)
+        loadPathBasedDeltaTable(ident)
     }
   }
 
@@ -316,7 +316,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   }
 
 
-  protected def newDeltaCatalogBasedTable(ident: Identifier, catalogTable: CatalogTable): Table = {
+  protected def loadManagedTable(ident: Identifier, catalogTable: CatalogTable): Table = {
     DeltaTableV2(
       spark,
       new Path(catalogTable.location),
@@ -324,7 +324,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       tableIdentifier = Some(ident.toString))
   }
 
-  protected def newDeltaPathTable(ident: Identifier): Table = {
+  protected def loadPathBasedDeltaTable(ident: Identifier): Table = {
     DeltaTableV2(spark, new Path(ident.name()))
   }
 
