@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.table;
+package io.delta.kernel.spark.catalog;
 
 import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
@@ -201,6 +201,24 @@ public class SparkTable implements Table, SupportsRead {
    */
   public Optional<CatalogTable> getCatalogTable() {
     return catalogTable;
+  }
+
+  /**
+   * Returns the filesystem path to the Delta table root.
+   *
+   * @return the table path string
+   */
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  /**
+   * Returns the table options used to configure Hadoop conf, table reads and writes.
+   *
+   * @return an unmodifiable map of options
+   */
+  public Map<String, String> getOptions() {
+    return options;
   }
 
   /**
