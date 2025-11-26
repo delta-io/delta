@@ -1413,6 +1413,8 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
             assert(operationParamsBegin("retentionCheckEnabled") === "false")
             assert(operationMetricsBegin("numFilesToDelete") === filesDeleted.toString)
             assert(operationMetricsBegin("sizeOfDataToDelete") === (filesDeleted * 9).toString)
+            assert(operationParamsBegin("typeOfVacuum") ===
+              (if (isLiteVacuum) "LITE" else "FULL"))
 
             if (retentionHours == 0) {
               assert(

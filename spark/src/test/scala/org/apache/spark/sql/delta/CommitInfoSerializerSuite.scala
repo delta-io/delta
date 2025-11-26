@@ -178,9 +178,10 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
       source = "s3://bucket/path/to/table",
       sourceVersion = 10L)),
     "VacuumStart" -> (() => DeltaOperations.VacuumStart(
-      retentionCheckEnabled = true,
-      specifiedRetentionMillis = Some(604800000L),
-      defaultRetentionMillis = 604800000L)),
+      true,
+      Some(604800000L),
+      604800000L,
+      "FULL")),
     "VacuumEnd" -> (() => DeltaOperations.VacuumEnd("COMPLETED")),
     "Reorg" -> (() => DeltaOperations.Reorg(
       predicate = Seq(EqualTo(Literal("col1"), Literal("value1"))),
