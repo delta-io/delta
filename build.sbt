@@ -168,6 +168,29 @@ def runTaskOnlyOnSparkMaster[T](
   }
 }
 
+/**
+ * Run a task only when Spark short version matches the required version (e.g., "4.0").
+ */
+def runTaskOnlyOnSparkShortVersion[T](
+    task: sbt.TaskKey[T],
+    taskName: String,
+    projectName: String,
+    requiredShortVersion: String,
+    emptyValue: => T): Def.Initialize[Task[T]] = {
+  if (CrossSparkVersions.getSparkVersionSpec().shortVersion == requiredShortVersion) {
+    Def.task(task.value)
+  } else {
+    Def.task {
+      // scalastyle:off println
+      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
+        s"${CrossSparkVersions.getSparkVersion()} (${CrossSparkVersions.getSparkVersionSpec().shortVersion}) " +
+        s"does not match required short version $requiredShortVersion.")
+      // scalastyle:on println
+      emptyValue
+    }
+  }
+}
+
 lazy val connectCommon = (project in file("spark-connect/common"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
@@ -705,6 +728,76 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
+
+val unityCatalogVersion = "0.3.0"
+val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
+
+lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
+  .settings(
+    name := "delta-spark-unitycatalog",
+    commonSettings,
+    scalaStyleSettings,
+    skipReleaseSettings,
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+
+    // This is a test-only module - no production sources
+    Compile / sources := Seq.empty,
+
+    Test / javaOptions ++= Seq("-ea"),
+
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    Test / parallelExecution := false,
+
+    // Only run tests with Spark 4.0 (Unity Catalog 0.3.0 requires Spark 4.0)
+    Test / test := runTaskOnlyOnSparkShortVersion(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-spark-unitycatalog",
+      requiredShortVersion = "4.0",
+      emptyValue = ()).value,
+
+    // Force ALL Jackson dependencies to match Spark's Jackson version
+    // This overrides Jackson from Unity Catalog's transitive dependencies (e.g., Armeria)
+    dependencyOverrides ++= Seq(
+      "com.fasterxml.jackson.core" % "jackson-core" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-annotations" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
+    ),
+
+    libraryDependencies ++= Seq(
+      // Standard test dependencies
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+
+      // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
+      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+      "io.unitycatalog" % "unitycatalog-server" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+
+      // Spark test dependencies
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
+    ),
+
+    Test / testOptions += Tests.Argument("-oDF"),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+  )
+
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -794,7 +887,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     ),
     assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
-      // TODO Upgrade SBT to 1.5 which will do this automatically
       case "module-info.class" => MergeStrategy.discard
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       case x =>
@@ -1515,7 +1607,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
