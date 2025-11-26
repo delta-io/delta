@@ -130,14 +130,14 @@ class UnityCatalogManagedTableBasicSuite(UnityCatalogManagedTableTestBase):
     def test_unset_catalog_owned_feature(self) -> None:
         try:
             spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
-                      f"UNSET TBLPROPERTIES ('delta.feature.catalogOwned-preview')")
+                      f"UNSET TBLPROPERTIES ('delta.feature.catalogManaged')")
         except UnsupportedOperationException as error:
             assert("Altering a table is not supported yet" in str(error))
 
     def test_drop_catalog_owned_property(self) -> None:
         try:
             spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
-                      f"DROP FEATURE 'catalogOwned-preview'")
+                      f"DROP FEATURE 'catalogManaged'")
         except UnsupportedOperationException as error:
             assert("Altering a table is not supported yet" in str(error))
 
@@ -391,7 +391,7 @@ class UnityCatalogManagedTableDDLSuite(UnityCatalogManagedTableTestBase):
             # CLONE fails with an assertion error in UCSingleCatalog
             spark.sql(f"CREATE TABLE {CATALOG_NAME}.{SCHEMA}.created_table" +
                       f" SHALLOW CLONE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
-                      f"TBLPROPERTIES ('delta.feature.catalogOwned-preview' = 'false')")
+                      f"TBLPROPERTIES ('delta.feature.catalogManaged' = 'false')")
         except py4j.protocol.Py4JJavaError as error:
             assert("java.lang.AssertionError: assertion failed" in str(error))
 
