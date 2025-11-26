@@ -60,7 +60,10 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
         .setAppName("UnityCatalog Support Tests")
         .setMaster("local[2]")
         .set("spark.ui.enabled", "false")
-        .set("spark.sql.shuffle.partitions", "5");
+        .set("spark.sql.shuffle.partitions", "5")
+        // Delta Lake required configurations
+        .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog");
 
     // Configure with Unity Catalog
     conf = configureSparkWithUnityCatalog(conf);
