@@ -16,7 +16,10 @@
 
 package org.apache.spark.sql.connector.catalog;
 
-public interface RequiresDataFrameWriterV1SaveAsTableOverwriteWriteOption extends TableProvider {
-  String IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE_OPTION_NAME =
-    "__is_data_frame_writer_v1_save_as_table_overwrite";
+public interface SupportsV1OverwriteWithSaveAsTable extends Table {
+  String OPTION_NAME = "__v1_save_as_table_overwrite";
+
+  default boolean addV1OverwriteWithSaveAsTableOption() {
+    return true;
+  }
 }

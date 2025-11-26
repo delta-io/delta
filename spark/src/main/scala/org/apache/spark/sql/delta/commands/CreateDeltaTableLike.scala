@@ -175,7 +175,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    *
    * In Spark 4.1, DataFrameWriter provides the option
-   * "__is_data_frame_writer_v1_save_as_table_overwrite", because the stack trace does not indicate
+   * "__v1_save_as_table_overwrite", because the stack trace does not indicate
    * the calling API anymore in connect mode - planning and execution has been separated.
    * An older horrible hack depended on the stack trace, where eager execution of the command
    * pointed to the calling API.
