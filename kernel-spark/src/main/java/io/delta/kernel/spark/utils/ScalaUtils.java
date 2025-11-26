@@ -72,15 +72,4 @@ public final class ScalaUtils {
   public static <T> Optional<T> toJavaOptional(Option<T> option) {
     return option.isDefined() ? Optional.of(option.get()) : Optional.empty();
   }
-
-  public static Map<String, String> toJavaMap(
-      scala.collection.immutable.Map<String, String> scalaMap) {
-    if (scalaMap == null) {
-      return null;
-    }
-    if (scalaMap.isEmpty()) {
-      return Collections.emptyMap();
-    }
-    return CollectionConverters.asJava(scalaMap);
-  }
 }
