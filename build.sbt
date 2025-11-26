@@ -52,26 +52,33 @@ val all_scala_versions = Seq(scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala213
 
-// Scala version to use for all projects
-scalaVersion := default_scala_version.value
-
-// crossScalaVersions must be set to Nil on the root project to avoid conflicts
-crossScalaVersions := Nil
-
-val internalModuleNames = settingKey[Set[String]]("Internal module artifact names to exclude from POM")
-
-// Spark version to delta-spark and its dependent modules
-// For more information see CrossSparkVersions.scala
+val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
+val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
+val internalModuleNames = settingKey[Set[String]]("Internal module artifact names to exclude from POM")
+spark / sparkVersion := getSparkVersion()
+sparkV1 / sparkVersion := getSparkVersion()
+sparkV2 / sparkVersion := getSparkVersion()
+connectCommon / sparkVersion := getSparkVersion()
+connectClient / sparkVersion := getSparkVersion()
+connectServer / sparkVersion := getSparkVersion()
+sharing / sparkVersion := getSparkVersion()
+sparkUnityCatalog / sparkVersion := getSparkVersion()
 
 // Dependent library versions
-val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
+val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
+
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
+
+scalaVersion := default_scala_version.value
+
+// crossScalaVersions must be set to Nil on the root project
+crossScalaVersions := Nil
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
@@ -80,6 +87,36 @@ Global / targetJvm := "11"
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
 lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
+/**
+ * Returns the current spark version, which is the same value as `sparkVersion.value`.
+ *
+ * This logic exists in a separate method because some call sites cannot access `sparkVersion.value`
+ * e.g. callers that are not inside tasks or setting macros.
+ */
+def getSparkVersion(): String = {
+  val latestReleasedSparkVersionShort = getMajorMinorPatch(LATEST_RELEASED_SPARK_VERSION) match {
+    case (maj, min, _) => s"$maj.$min"
+  }
+  val allValidSparkVersionInputs = Seq(
+    "master",
+    "latest",
+    SPARK_MASTER_VERSION,
+    LATEST_RELEASED_SPARK_VERSION,
+    latestReleasedSparkVersionShort
+  )
+
+  // e.g. build/sbt -DsparkVersion=master, build/sbt -DsparkVersion=4.0.0-SNAPSHOT
+  val input = sys.props.getOrElse("sparkVersion", LATEST_RELEASED_SPARK_VERSION)
+  input match {
+    case LATEST_RELEASED_SPARK_VERSION | "latest" | `latestReleasedSparkVersionShort` =>
+      LATEST_RELEASED_SPARK_VERSION
+    case SPARK_MASTER_VERSION | "master" =>
+      SPARK_MASTER_VERSION
+    case _ =>
+      throw new IllegalArgumentException(s"Invalid sparkVersion: $input. Must be one of " +
+          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
+  }
+}
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
@@ -149,19 +186,67 @@ def scalafmtCheckSettings(): Seq[Def.Setting[Task[CompileAnalysis]]] = Seq(
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
  *       setting macro.
  */
+def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
+  case LATEST_RELEASED_SPARK_VERSION => Seq(
+    scalaVersion := default_scala_version.value,
+    crossScalaVersions := all_scala_versions,
+    targetJvm := "11",
+    // For adding staged Spark RC versions, e.g.:
+    // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
+    Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
+    Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
+    Antlr4 / antlr4Version := "4.9.3",
+    Test / javaOptions ++= Seq("-Dlog4j.configurationFile=log4j2.properties"),
+
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
+  )
+
+  case SPARK_MASTER_VERSION => Seq(
+    scalaVersion := scala213,
+    crossScalaVersions := Seq(scala213),
+    targetJvm := "17",
+    Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
+    Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
+    Antlr4 / antlr4Version := "4.13.1",
+    Test / javaOptions ++= Seq(
+      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+      "-Dlog4j.configurationFile=log4j2_spark_master.properties"
+    ),
+    // For Delta Connect tests we create a Spark Distribution from the classpath. For this to work
+    // dependencies on other modules need to be exposed as a JAR, and not as a directory of classes.
+    exportJars := true,
+    // Java-/Scala-/Uni-Doc Settings
+    // This isn't working yet against Spark Master.
+    // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
+    //    generating delta-spark unidoc compiles delta-iceberg
+    // 2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
+    //    issue above.
+  )
+}
+
 def runTaskOnlyOnSparkMaster[T](
     task: sbt.TaskKey[T],
     taskName: String,
     projectName: String,
     emptyValue: => T): Def.Initialize[Task[T]] = {
-  if (CrossSparkVersions.getSparkVersionSpec().isMaster) {
+  if (getSparkVersion() == SPARK_MASTER_VERSION) {
     Def.task(task.value)
   } else {
     Def.task {
       // scalastyle:off println
-      val masterVersion = SparkVersionSpec.MASTER.map(_.fullVersion).getOrElse("(no master version configured)")
       println(s"Project $projectName: Skipping `$taskName` as Spark version " +
-        s"${CrossSparkVersions.getSparkVersion()} does not equal $masterVersion.")
+        s"${getSparkVersion()} does not equal $SPARK_MASTER_VERSION.")
       // scalastyle:on println
       emptyValue
     }
@@ -196,7 +281,9 @@ lazy val connectCommon = (project in file("spark-connect/common"))
   .settings(
     name := "delta-connect-common",
     commonSettings,
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    crossSparkSettings(),
+    // iceberg-core 1.8.0 brings jackson 2.18.2 thus force upgrade
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
@@ -237,7 +324,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
     name := "delta-connect-client",
     commonSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -256,6 +342,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
       projectName = "delta-connect-client",
       emptyValue = ()
     ).value,
+    crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -299,15 +386,6 @@ lazy val connectServer = (project in file("spark-connect/server"))
     name := "delta-connect-server",
     commonSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    assembly / assemblyMergeStrategy := {
-      // Discard module-info.class files from Java 9+ modules and multi-release JARs
-      case "module-info.class" => MergeStrategy.discard
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
-    },
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -326,6 +404,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
       projectName = "delta-connect-server",
       emptyValue = ()
     ).value,
+    crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
@@ -383,7 +462,7 @@ lazy val sparkV1 = (project in file("spark"))
     commonSettings,
     scalaStyleSettings,
     skipReleaseSettings, // Internal module - not published to Maven
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    crossSparkSettings(),
 
     // Export as JAR instead of classes directory. This prevents dependent projects
     // (e.g., connectServer) from seeing multiple 'classes' directories with the same
@@ -490,7 +569,6 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     commonSettings,
     javafmtCheckSettings,
     skipReleaseSettings, // Internal module - not published to Maven
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
     Test / javaOptions ++= Seq("-ea"),
@@ -539,11 +617,11 @@ lazy val spark = (project in file("spark-unified"))
     sparkMimaSettings,
     releaseSettings, // Published to Maven as delta-spark.jar
 
-    // Set Test baseDirectory before sparkDependentSettings() so it uses the correct directory
+    // Set Test baseDirectory before crossSparkSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
     // Test sources from spark/ directory (sparkV1's directory)
-    // MUST be set BEFORE sparkDependentSettings() to avoid overwriting version-specific directories
+    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       Seq(
@@ -555,7 +633,7 @@ lazy val spark = (project in file("spark-unified"))
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
     ),
 
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    crossSparkSettings(),
 
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
     mimaCurrentClassfiles := (Compile / packageBin).value,
@@ -667,8 +745,8 @@ lazy val spark = (project in file("spark-unified"))
     TestParallelization.settings,
   )
   .configureUnidoc(
-    generatedJavaDoc = CrossSparkVersions.getSparkVersionSpec().generateDocs,
-    generateScalaDoc = CrossSparkVersions.getSparkVersionSpec().generateDocs,
+    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
     // spark-connect has classes with the same name as spark-core, this causes compilation issues
     // with unidoc since it concatenates the classpaths from all modules
     // ==> thus we exclude such sources
@@ -684,7 +762,6 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -720,22 +797,20 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
-
-val unityCatalogVersion = "0.3.0"
-val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
-
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
-  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
+  .disablePlugins(ScalafmtPlugin)
   .settings(
     name := "delta-spark-unitycatalog",
     commonSettings,
-    scalaStyleSettings,
     skipReleaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
     // This is a test-only module - no production sources
     Compile / sources := Seq.empty,
+
+    // Ensure Java sources are picked up
+    Test / unmanagedSourceDirectories += baseDirectory.value / "src" / "test" / "java",
 
     Test / javaOptions ++= Seq("-ea"),
 
@@ -750,41 +825,36 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       requiredShortVersion = "4.0",
       emptyValue = ()).value,
 
-    // Force ALL Jackson dependencies to match Spark's Jackson version
-    // This overrides Jackson from Unity Catalog's transitive dependencies (e.g., Armeria)
-    dependencyOverrides ++= Seq(
-      "com.fasterxml.jackson.core" % "jackson-core" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-annotations" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.module" %% "jackson-module-scala" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
-    ),
-
     libraryDependencies ++= Seq(
-      // Standard test dependencies
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-
-      // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
-      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
-        ExclusionRule(organization = "com.fasterxml.jackson.core"),
-        ExclusionRule(organization = "com.fasterxml.jackson.module"),
-        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
-        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
-      ),
-      "io.unitycatalog" % "unitycatalog-server" % unityCatalogVersion % "test" excludeAll(
-        ExclusionRule(organization = "com.fasterxml.jackson.core"),
-        ExclusionRule(organization = "com.fasterxml.jackson.module"),
-        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
-        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
-      ),
+      // Unity Catalog dependencies - matching UC's own spark connector config
+      "io.unitycatalog" %% "unitycatalog-spark" % "0.3.0" % "test",
+      "io.unitycatalog" % "unitycatalog-client" % "0.3.0" % "test",
+      
+      // Standard test dependencies (JUnit for Java tests)
+      "junit" % "junit" % "4.13.2" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
 
       // Spark test dependencies
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
     ),
+
+    // Add Unity Catalog server-shaded JAR for tests (with all dependencies shaded)
+    // This JAR is built from local Unity Catalog repository
+    Test / unmanagedJars += {
+      val ucServerShadedJar = file("/Users/tdas/Projects/unitycatalog/server-shaded/target") / 
+        "unitycatalog-server-shaded-assembly-0.3.0-SNAPSHOT.jar"
+      if (!ucServerShadedJar.exists()) {
+        throw new RuntimeException(
+          s"Unity Catalog server-shaded JAR not found at ${ucServerShadedJar}. " +
+          "Please build it first by running: cd /Users/tdas/Projects/unitycatalog && build/sbt serverShaded/assembly"
+        )
+      }
+      ucServerShadedJar
+    },
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
@@ -798,7 +868,7 @@ lazy val sharing = (project in file("sharing"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    crossSparkSettings(),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -878,6 +948,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     ),
     assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
+      // TODO Upgrade SBT to 1.5 which will do this automatically
       case "module-info.class" => MergeStrategy.discard
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       case x =>
@@ -1117,7 +1188,6 @@ lazy val iceberg = (project in file("iceberg"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
@@ -1128,9 +1198,7 @@ lazy val iceberg = (project in file("iceberg"))
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
-    assembly / assemblyJarName := {
-      s"${moduleName.value}_${scalaBinaryVersion.value}-${version.value}.jar"
-    },
+    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyExcludedJars := {
@@ -1744,9 +1812,8 @@ releaseProcess := Seq[ReleaseStep](
   runTest,
   setReleaseVersion,
   commitReleaseVersion,
-  tagRelease
-) ++ CrossSparkVersions.crossSparkReleaseSteps("+publishSigned") ++ Seq[ReleaseStep](
-
+  tagRelease,
+  releaseStepCommandAndRemaining("+publishSigned"),
   // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
   // manually.
   //
