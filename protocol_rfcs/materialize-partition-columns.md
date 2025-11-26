@@ -27,7 +27,7 @@ When this feature is enabled, partition columns are physically written to Parque
 
 When supported:
  - The table respects metadata property `delta.enableMaterializePartitionColumnsFeature` for enablement of this feature. The writer feature `materializePartitionColumns` is auto-enabled when this property is set to `true`.
- - When the writer feature `materializePartitionColumns` is set in the protocol, writers must require that partition column values are materialized into any newly created data file, placed after the data columns in the parquet
+ - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize partition columns into any newly created data file, placing them after the data columns in the parquet
   schema. This mimics the same partition column materialization requirement from [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
 and
 [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full
