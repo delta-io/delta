@@ -55,7 +55,7 @@ class CatalogManagedWithIcebergWriterCompatV1Suite
         .withCommitter(committerUsingPutIfAbsent)
         .withTableProperties(
           Map(
-            "delta.feature.catalogManaged" -> "supported",
+            TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported",
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true").asJava)
         .build(engine)
 

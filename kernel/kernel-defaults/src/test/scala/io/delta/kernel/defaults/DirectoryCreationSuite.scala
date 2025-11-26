@@ -48,7 +48,7 @@ class DirectoryCreationSuite extends AnyFunSuite with WriteUtils with ActionUtil
       TableManager
         .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
         .withTableProperties(Map(
-          "delta.feature.catalogManaged" -> "supported",
+          TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported",
           "delta.checkpointPolicy" -> "v2").asJava)
         .withCommitter(committerUsingPutIfAbsent)
         .build(engine)
@@ -79,7 +79,7 @@ class DirectoryCreationSuite extends AnyFunSuite with WriteUtils with ActionUtil
         .build(engine)
         .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
         .withTablePropertiesAdded(Map(
-          "delta.feature.catalogManaged" -> "supported",
+          TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported",
           "delta.checkpointPolicy" -> "v2").asJava)
         .build(engine)
         .commit(engine, emptyIterable())
