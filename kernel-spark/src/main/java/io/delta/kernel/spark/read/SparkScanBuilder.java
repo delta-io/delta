@@ -39,6 +39,7 @@ public class SparkScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
+  private final io.delta.kernel.Snapshot initialSnapshot;
   private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -70,8 +71,8 @@ public class SparkScanBuilder
       StructType dataSchema,
       StructType partitionSchema,
       CaseInsensitiveStringMap options) {
-    this.kernelScanBuilder =
-        requireNonNull(initialSnapshot, "initialSnapshot is null").getScanBuilder();
+    this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.kernelScanBuilder = this.initialSnapshot.getScanBuilder();
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
@@ -164,6 +165,7 @@ public class SparkScanBuilder
         pushedKernelPredicates,
         dataFilters,
         kernelScanBuilder.build(),
+        initialSnapshot,
         options);
   }
 

@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.spark.read;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.SnapshotImpl;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -30,7 +32,6 @@ import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -53,6 +54,7 @@ public class SparkBatch implements Batch {
   private final long totalBytes;
   private scala.collection.immutable.Map<String, String> scalaOptions;
   private final List<PartitionedFile> partitionedFiles;
+  private final Snapshot initialSnapshot;
 
   public SparkBatch(
       String tablePath,
@@ -64,7 +66,8 @@ public class SparkBatch implements Batch {
       Filter[] dataFilters,
       long totalBytes,
       scala.collection.immutable.Map<String, String> scalaOptions,
-      Configuration hadoopConf) {
+      Configuration hadoopConf,
+      Snapshot initialSnapshot) {
 
     this.tablePath = Objects.requireNonNull(tablePath, "tablePath is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
@@ -82,6 +85,7 @@ public class SparkBatch implements Batch {
     this.totalBytes = totalBytes;
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
+    this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.sqlConf = SQLConf.get();
   }
 
@@ -105,16 +109,24 @@ public class SparkBatch implements Batch {
             new Tuple2<>(
                 FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
                 String.valueOf(enableVectorizedReader)));
+
+    // Use DeltaParquetFileFormatV2 to enable Delta-aware reading (column mapping, DVs, etc.)
+    DeltaParquetFileFormatV2 fileFormat =
+        new DeltaParquetFileFormatV2(
+            ((SnapshotImpl) initialSnapshot).getProtocol(),
+            ((SnapshotImpl) initialSnapshot).getMetadata(),
+            tablePath,
+            true);
+
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
-        new ParquetFileFormat()
-            .buildReaderWithPartitionValues(
-                SparkSession.active(),
-                dataSchema,
-                partitionSchema,
-                readDataSchema,
-                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-                optionsWithBatch,
-                hadoopConf);
+        fileFormat.buildReaderWithPartitionValues(
+            SparkSession.active(),
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
+            optionsWithBatch,
+            hadoopConf);
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
   }
