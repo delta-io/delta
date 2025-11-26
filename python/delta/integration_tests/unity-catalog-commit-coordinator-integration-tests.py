@@ -107,7 +107,57 @@ class UnityCatalogManagedTableTestSuite(unittest.TestCase):
             [(4, ),  (5, )], schema=StructType([StructField("id", IntegerType(), True)]))
         single_col_df.writeTo(table_name).append()
 
+<<<<<<< HEAD
     # DML Operations #
+=======
+
+class UnityCatalogManagedTableBasicSuite(UnityCatalogManagedTableTestBase):
+    """
+    Suite covering basic functionality of catalog owned tables.
+    """
+
+    def test_read_from_managed_table_without_catalog_owned(self) -> None:
+        self.read(MANAGED_NON_CATALOG_OWNED_TABLE_FULL_NAME)
+
+    def test_write_to_managed_catalog_owned_table(self) -> None:
+        self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        assertDataFrameEqual(updated_tbl,
+                             self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
+
+    def test_read_from_managed_catalog_owned_table(self) -> None:
+        self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        assertDataFrameEqual(updated_tbl, self.setup_df)
+
+    # Writing to tables that are not catalog owned is not supported.
+    def test_write_to_managed_table_without_catalog_owned(self) -> None:
+        try:
+            self.append(MANAGED_NON_CATALOG_OWNED_TABLE_FULL_NAME)
+        except py4j.protocol.Py4JJavaError as error:
+            assert("[TASK_WRITE_FAILED] Task failed while writing rows to s3" in str(error))
+
+    def test_unset_catalog_owned_feature(self) -> None:
+        try:
+            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+                      f"UNSET TBLPROPERTIES ('delta.feature.catalogManaged')")
+        except UnsupportedOperationException as error:
+            assert("Altering a table is not supported yet" in str(error))
+
+    def test_drop_catalog_owned_property(self) -> None:
+        try:
+            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+                      f"DROP FEATURE 'catalogManaged'")
+        except UnsupportedOperationException as error:
+            assert("Altering a table is not supported yet" in str(error))
+
+
+class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
+    """
+    Suite covering DMLs (INSERT, MERGE, UPDATE, DELETE) on catalog owned tables.
+    """
+
+>>>>>>> 4ed3bbb85 ([Spark] Renames the catalogOwned-preview table feature to catalogManaged (#5534))
     def test_update(self) -> None:
         spark.sql(f"UPDATE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} SET id=4 WHERE id=1")
         updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
@@ -263,8 +313,19 @@ class UnityCatalogManagedTableTestSuite(unittest.TestCase):
         except py4j.protocol.Py4JJavaError as error:
             assert("[TASK_WRITE_FAILED] Task failed while writing rows to s3" in str(error))
 
+<<<<<<< HEAD
     def test_read_from_managed_table_without_catalog_owned(self) -> None:
         self.read(MANAGED_NON_CATALOG_OWNED_TABLE_FULL_NAME)
+=======
+    def test_clone_into_non_catalog_owned(self) -> None:
+        try:
+            # CLONE fails with an assertion error in UCSingleCatalog
+            spark.sql(f"CREATE TABLE {CATALOG_NAME}.{SCHEMA}.created_table" +
+                      f" SHALLOW CLONE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+                      f"TBLPROPERTIES ('delta.feature.catalogManaged' = 'false')")
+        except py4j.protocol.Py4JJavaError as error:
+            assert("java.lang.AssertionError: assertion failed" in str(error))
+>>>>>>> 4ed3bbb85 ([Spark] Renames the catalogOwned-preview table feature to catalogManaged (#5534))
 
     def test_write_to_managed_catalog_owned_table(self) -> None:
         self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
