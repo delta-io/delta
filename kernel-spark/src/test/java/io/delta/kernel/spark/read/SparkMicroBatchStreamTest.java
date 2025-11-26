@@ -1033,6 +1033,118 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   // ================================================================================================
+  // Tests for availableNow parity between DSv1 and DSv2
+  // ================================================================================================
+
+  @ParameterizedTest
+  @MethodSource("availableNowParameters")
+  public void testAvailableNow(
+      Long startVersion,
+      Long startIndex,
+      ReadLimitConfig limitConfig,
+      String testDescription,
+      @TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_availableNow_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ true);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    String tableId = deltaLog.tableId();
+
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
+    ReadLimit readLimit = limitConfig.toReadLimit();
+
+    // dsv1
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    deltaSource.prepareForTriggerAvailableNow();
+    Offset v1EndOffset = deltaSource.latestOffset(startOffset, readLimit);
+
+    // dsv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    stream.prepareForTriggerAvailableNow();
+    Offset v2EndOffset = stream.latestOffset(startOffset, readLimit);
+
+    compareOffsets(v1EndOffset, v2EndOffset, testDescription);
+  }
+
+  private static Stream<Arguments> availableNowParameters() {
+    long BASE_INDEX = DeltaSourceOffset.BASE_INDEX();
+    long END_INDEX = DeltaSourceOffset.END_INDEX();
+
+    return Stream.of(
+        // No limits
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            "NoLimits1"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            "NoLimits2"),
+        Arguments.of(
+            /* startVersion= */ 4L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.noLimit(),
+            "NoLimits3"),
+
+        // Max files
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(1),
+            "MaxFiles1"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(1000),
+            "MaxFiles2"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(1),
+            "MaxFiles3"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(0),
+            "MaxFiles4"),
+
+        // Max bytes
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1),
+            "MaxBytes1"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1000000), // ensure larger than total file size
+            "MaxBytes2"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1000),
+            "MaxBytes3"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(0),
+            "MaxBytes4"));
+  }
+
+  // ================================================================================================
   // Helper methods
   // ================================================================================================
 
