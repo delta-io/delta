@@ -237,7 +237,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     try {
       super.loadTable(ident) match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          loadManagedTable(ident, v1.catalogTable)
+          loadCatalogManagedTable(ident, v1.catalogTable)
         case o => o
       }
     } catch {
@@ -316,7 +316,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   }
 
 
-  protected def loadManagedTable(ident: Identifier, catalogTable: CatalogTable): Table = {
+  protected def loadCatalogManagedTable(ident: Identifier, catalogTable: CatalogTable): Table = {
     DeltaTableV2(
       spark,
       new Path(catalogTable.location),
