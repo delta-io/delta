@@ -16,12 +16,15 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.spark.catalog.SparkTable
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -50,6 +53,11 @@ class ConvertSparkTableToDeltaTableV2(session: SparkSession) extends Rule[Logica
     }
   }
 
+  /** Converts Java Optional to Scala Option */
+  private def toScalaOption[T](opt: Optional[T]): Option[T] = {
+    if (opt.isPresent) Some(opt.get()) else None
+  }
+
   /**
    * Converts a SparkTable to DeltaTableV2.
    *
@@ -58,7 +66,7 @@ class ConvertSparkTableToDeltaTableV2(session: SparkSession) extends Rule[Logica
    */
   private def convertToDeltaTableV2(sparkTable: SparkTable): DeltaTableV2 = {
     val path = new Path(sparkTable.getTablePath)
-    val catalogTable = sparkTable.getCatalogTable.map(ct => ct).orElse(None)
+    val catalogTable: Option[CatalogTable] = toScalaOption(sparkTable.getCatalogTable)
     val options = sparkTable.getOptions.asScala.toMap
 
     // Create DeltaTableV2 with the same properties as SparkTable
@@ -80,12 +88,18 @@ class ConvertSparkTableToDeltaTableV2(session: SparkSession) extends Rule[Logica
  * This can be used in pattern matching to extract the converted DeltaTableV2.
  */
 object SparkTableToDeltaTableV2 {
+
+  /** Converts Java Optional to Scala Option */
+  private def toScalaOption[T](opt: Optional[T]): Option[T] = {
+    if (opt.isPresent) Some(opt.get()) else None
+  }
+
   def unapply(dsv2: DataSourceV2Relation)(implicit session: SparkSession)
       : Option[(DataSourceV2Relation, DeltaTableV2)] = {
     dsv2.table match {
       case sparkTable: SparkTable =>
         val path = new Path(sparkTable.getTablePath)
-        val catalogTable = sparkTable.getCatalogTable.map(ct => ct).orElse(None)
+        val catalogTable: Option[CatalogTable] = toScalaOption(sparkTable.getCatalogTable)
         val options = sparkTable.getOptions.asScala.toMap
         val tableIdentifier = catalogTable.map(_.identifier.unquotedString)
 
