@@ -67,24 +67,24 @@ class ConvertSparkTableToDeltaTableV2(session: SparkSession) extends Rule[Logica
         dsv2.copy(table = convertToDeltaTableV2(sparkTable))
 
       // Handle AppendData (INSERT INTO)
-      case a: AppendData if hasSparkTable(a.table) =>
+      case a: AppendData if isDeltaKernelTable(a.table) =>
         val (dsv2, sparkTable) = extractSparkTable(a.table)
         a.copy(table = dsv2.copy(table = convertToDeltaTableV2(sparkTable)))
 
       // Handle OverwriteByExpression (INSERT OVERWRITE)
-      case o: OverwriteByExpression if hasSparkTable(o.table) =>
+      case o: OverwriteByExpression if isDeltaKernelTable(o.table) =>
         val (dsv2, sparkTable) = extractSparkTable(o.table)
         o.copy(table = dsv2.copy(table = convertToDeltaTableV2(sparkTable)))
 
       // Handle OverwritePartitionsDynamic (dynamic partition overwrite)
-      case o: OverwritePartitionsDynamic if hasSparkTable(o.table) =>
+      case o: OverwritePartitionsDynamic if isDeltaKernelTable(o.table) =>
         val (dsv2, sparkTable) = extractSparkTable(o.table)
         o.copy(table = dsv2.copy(table = convertToDeltaTableV2(sparkTable)))
     }
   }
 
   /** Checks if the relation contains a SparkTable */
-  private def hasSparkTable(relation: LogicalPlan): Boolean = {
+  private def isDeltaKernelTable(relation: LogicalPlan): Boolean = {
     SparkTableRelation.unapply(relation).isDefined
   }
 
