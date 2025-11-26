@@ -78,10 +78,10 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    * @return Table instance (SparkTable for V2, DeltaTableV2 for V1)
    */
   @Override
-  public Table loadManagedTable(Identifier ident, CatalogTable catalogTable) {
+  public Table loadCatalogManagedTable(Identifier ident, CatalogTable catalogTable) {
     return loadTableInternal(
         () -> new SparkTable(ident, catalogTable, new HashMap<>()),
-        () -> super.loadManagedTable(ident, catalogTable));
+        () -> super.loadCatalogManagedTable(ident, catalogTable));
   }
 
   /**
