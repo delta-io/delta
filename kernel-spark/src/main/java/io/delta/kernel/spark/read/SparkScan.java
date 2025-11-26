@@ -17,6 +17,7 @@ package io.delta.kernel.spark.read;
 
 import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
@@ -55,7 +56,7 @@ import scala.collection.JavaConverters;
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final DeltaSnapshotManager snapshotManager;
-  private final io.delta.kernel.Snapshot initialSnapshot;
+  private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
