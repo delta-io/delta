@@ -17,14 +17,12 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
 import java.io.FileNotFoundException
 import java.net.URI
 import java.sql.Timestamp
 import java.util.Date
 import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
-import scala.math.min
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile, SingleAction}
@@ -44,7 +42,7 @@ import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
+import org.apache.spark.sql.functions.{col, count, lit, startswith, substr, sum}
 import org.apache.spark.sql.types.{BooleanType, LongType, StringType, StructField, StructType}
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock, Utils}
 
@@ -166,6 +164,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
+      val tableId = snapshot.metadata.id
+      val truncatedTableId = tableId.split("-").head
 
       // VACUUM can break clones by removing files that clones still references for managed tables.
       // Eventually the catalog should track this dependency to avoid breaking clones,
@@ -205,7 +205,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         case Some(millis) => clock.getTimeMillis() - millis
         case _ => snapshot.minFileRetentionTimestamp
       }
-      logInfo(log"Starting garbage collection (dryRun = " +
+      logInfo(
+        log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] " +
+        log"Starting garbage collection (dryRun = " +
         log"${MDC(DeltaLogKeys.IS_DRY_RUN, dryRun)}) of untracked " +
         log"files older than ${MDC(DeltaLogKeys.DATE,
           new Date(deleteBeforeTimestamp).toGMTString)} in " +
@@ -356,10 +358,13 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             )
 
             recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-            logInfo(log"Found ${MDC(DeltaLogKeys.NUM_FILES, numFiles.toLong)} files " +
+            logInfo(
+              log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] " +
+              log"Found ${MDC(DeltaLogKeys.NUM_FILES, numFiles.toLong)} files " +
               log"(${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} bytes) and directories in " +
               log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories " +
-              log"that are safe to delete. Vacuum stats: ${MDC(DeltaLogKeys.VACUUM_STATS, stats)}")
+              log"that are safe to delete. Vacuum stats: " +
+              log"${MDC(DeltaLogKeys.VACUUM_STATS, stats)}")
 
             return diffFiles.map(f => urlEncodedStringToPath(f).toString).toDF("path")
           }
@@ -369,7 +374,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             diffFiles,
             sizeOfDataToDelete,
             retentionMillis,
-            snapshotTombstoneRetentionMillis)
+            snapshotTombstoneRetentionMillis,
+            truncatedTableId)
 
           val deleteStartTime = System.currentTimeMillis()
           val filesDeleted = try {
@@ -410,7 +416,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           LastVacuumInfo.persistLastVacuumInfo(
             LastVacuumInfo(latestCommitVersionOutsideOfRetentionWindowOpt), deltaLog)
 
-          logInfo(log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, filesDeleted)} files " +
+          logInfo(
+            log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] " +
+            log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, filesDeleted)} files " +
             log"(${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} bytes) and directories in " +
             log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories. " +
             log"Vacuum stats: ${MDC(DeltaLogKeys.VACUUM_STATS, stats)}")
@@ -539,9 +547,11 @@ trait VacuumCommandImpl extends DeltaCommand {
       diff: Dataset[String],
       sizeOfDataToDelete: Long,
       specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long): Unit = {
+      defaultRetentionMillis: Long,
+      truncatedTableId: String): Unit = {
     val deltaLog = table.deltaLog
     logInfo(
+      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] " +
       log"Deleting untracked files and empty directories in " +
       log"${MDC(DeltaLogKeys.PATH, deltaLog.dataPath)}. The amount " +
       log"of data to be deleted is ${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} (in bytes)"
