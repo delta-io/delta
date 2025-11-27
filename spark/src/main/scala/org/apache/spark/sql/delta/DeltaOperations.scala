@@ -794,12 +794,15 @@ object DeltaOperations {
    * @param retentionCheckEnabled - whether retention check was enabled for this run of vacuum.
    * @param specifiedRetentionMillis - specified retention interval
    * @param defaultRetentionMillis - default retention period for the table
+   * @param opType - the type of vacuum that was run; for example, "FULL" or "LITE"
    */
   case class VacuumStart(
       retentionCheckEnabled: Boolean,
       specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long) extends Operation(VacuumStart.OPERATION_NAME) {
+      defaultRetentionMillis: Long,
+      opType: String) extends Operation(VacuumStart.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
+      "opType" -> opType,
       "retentionCheckEnabled" -> retentionCheckEnabled,
       "defaultRetentionMillis" -> defaultRetentionMillis
     ) ++ specifiedRetentionMillis.map("specifiedRetentionMillis" -> _)
