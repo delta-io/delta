@@ -195,7 +195,7 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     use_spark_master = os.getenv("USE_SPARK_MASTER") or False
     prepare(root_dir, use_spark_master)
-    delta_spark_package = get_local_package("delta-spark", use_spark_master)
+    delta_spark_package = get_local_package("delta-spark_4.1", use_spark_master)
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
@@ -209,6 +209,6 @@ if __name__ == "__main__":
         # packages locally instead of downloading from Maven.
         delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
                                   "org.apache.spark:spark-connect_2.13:4.0.0",
-                                  get_local_package("delta-connect-server", use_spark_master)]
+                                  get_local_package("delta-connect-server_4.1", use_spark_master)]
 
         test(root_dir, path.join("delta", "connect"), delta_connect_packages)

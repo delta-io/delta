@@ -17,9 +17,9 @@
 package io.delta.tables
 
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.text.SimpleDateFormat
-
-import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.{col, lit}
@@ -67,7 +67,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
       // create a uncommitted file.
       val notCommittedFile = "notCommittedFile.json"
       val file = new File(dir, notCommittedFile)
-      FileUtils.write(file, "gibberish")
+      Files.write(file.toPath, "gibberish".getBytes(StandardCharsets.UTF_8))
       // set to ancient time so that the file is eligible to be vacuumed.
       file.setLastModified(0)
       assert(file.exists())

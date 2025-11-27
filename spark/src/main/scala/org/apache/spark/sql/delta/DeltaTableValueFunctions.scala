@@ -189,7 +189,7 @@ case class TableChanges(
 
   /** Converts the table changes plan to a query over a Delta table */
   def toReadQuery: LogicalPlan = child.transformUp {
-    case DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+    case DataSourceV2Relation(d: DeltaTableV2, _, _, _, options, _) =>
       // withOptions empties the catalog table stats
       d.withOptions(options.asScala.toMap).toLogicalRelation
     case r: NamedRelation =>

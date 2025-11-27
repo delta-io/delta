@@ -38,7 +38,7 @@ class HilbertIndexSuite extends SparkFunSuite {
     TestCase(6, 3)
   )
 
-  def gridTest[A](testNamePrefix: String, testTags: Tag*)(params: Seq[A])(
+  override def gridTest[A](testNamePrefix: String, testTags: Tag*)(params: Seq[A])(
     testFun: A => Unit): Unit = {
     for (param <- params) {
       test(testNamePrefix + s" ($param)", testTags: _*)(testFun(param))
