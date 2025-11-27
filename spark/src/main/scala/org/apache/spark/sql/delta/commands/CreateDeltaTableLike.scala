@@ -174,15 +174,15 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    *
-   * In Spark 4.1, DataFrameWriter provides the option
-   * "__is_data_frame_writer_v1_save_as_table_overwrite", because the stack trace does not indicate
-   * the calling API anymore in connect mode - planning and execution has been separated.
+   * In Spark 4.1, DataFrameWriter provides the option "__v1_save_as_table_overwrite", because
+   * the stack trace does not indicate the calling API anymore in connect mode - planning and
+   * execution has been separated.
    * An older horrible hack depended on the stack trace, where eager execution of the command
    * pointed to the calling API.
    */
   protected def isV1WriterSaveAsTableOverwrite: Boolean = {
     val options = new DeltaOptions(table.storage.properties, conf)
-    options.isDataFrameWriterV1SaveAsTableOverwrite ||
+    options.isDataFrameWriterV1SaveAsTableOverwrite // ||
       // Horrible hack for Spark versions before 4.1.
       Thread.currentThread().getStackTrace.exists(_.toString.contains(
         classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
