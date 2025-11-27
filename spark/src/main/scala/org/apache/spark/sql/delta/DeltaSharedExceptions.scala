@@ -88,7 +88,6 @@ class DeltaParseException(
   extends ParseException(
       Option(ParserUtils.command(ctx)),
       ParserUtils.position(ctx.getStart),
-      ParserUtils.position(ctx.getStop),
       errorClass,
       messageParameters
     ) with DeltaThrowable {

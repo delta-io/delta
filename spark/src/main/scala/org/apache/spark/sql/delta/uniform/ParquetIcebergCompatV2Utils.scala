@@ -122,6 +122,7 @@ object ParquetIcebergCompatV2Utils {
     val conf = new org.apache.hadoop.conf.Configuration
     val fs = path.getFileSystem(conf)
     val status = fs.getFileStatus(path)
-    ParquetFooterReader.readFooter(conf, status, ParquetMetadataConverter.NO_FILTER)
+    val inputFile = org.apache.parquet.hadoop.util.HadoopInputFile.fromStatus(status, conf)
+    ParquetFooterReader.readFooter(inputFile, ParquetMetadataConverter.NO_FILTER)
   }
 }

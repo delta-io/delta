@@ -42,6 +42,8 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
+import org.apache.spark.sql.execution.streaming.checkpointing.OffsetSeqLog
+import org.apache.spark.sql.execution.streaming.runtime.StreamingRelation
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock

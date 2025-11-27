@@ -24,7 +24,8 @@ import org.apache.spark.sql.delta.DataFrameUtils
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}
+import org.apache.spark.sql.execution.streaming.IncrementalExecutionShims
+import org.apache.spark.sql.execution.streaming.runtime.{IncrementalExecution, StreamExecution}
 
 object DeltaStreamUtils {
 

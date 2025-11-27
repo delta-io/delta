@@ -39,8 +39,8 @@ import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.execution.streaming.CheckpointFileManager
-import org.apache.spark.sql.execution.streaming.CheckpointFileManager.CancellableFSDataOutputStream
+import org.apache.spark.sql.execution.streaming.checkpointing.CheckpointFileManager
+import org.apache.spark.sql.execution.streaming.checkpointing.CheckpointFileManager.CancellableFSDataOutputStream
 import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
 /**

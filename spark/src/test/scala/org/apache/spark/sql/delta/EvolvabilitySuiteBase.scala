@@ -27,7 +27,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
-import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.execution.streaming.runtime.MemoryStream
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -165,6 +165,7 @@ object EvolvabilitySuiteBase {
       path: String,
       tblProps: Map[DeltaConfig[_], String] = Map.empty): Unit = {
     import org.apache.spark.sql.delta.implicits._
+    implicit val sparkSession: SparkSession = spark
     implicit val s = spark.sqlContext
 
     Seq(1, 2, 3).toDF(spark).write.format("delta").save(path)

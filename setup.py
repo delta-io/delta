@@ -24,8 +24,8 @@ if MAJOR_VERSION < 4:
 else:  # MAJOR_VERSION >= 4
     # Delta 4.0+ contains Delta Connect code and uses Spark 4.0+
     packages_arg = ['delta', 'delta.connect', 'delta.connect.proto', 'delta.exceptions']
-    install_requires_arg = ['pyspark>=4.0.0', 'importlib_metadata>=1.0.0']
-    python_requires_arg = '>=3.9'
+    install_requires_arg = ['pyspark>=4.1.0.dev4', 'importlib_metadata>=1.0.0']
+    python_requires_arg = '>=3.10'
 
 class VerifyVersionCommand(install):
     """Custom command to verify that the git tag matches our version"""

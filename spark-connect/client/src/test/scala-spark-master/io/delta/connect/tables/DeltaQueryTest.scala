@@ -44,7 +44,7 @@ import org.scalatest.Assertions
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.sql.{DataFrame, Dataset, Row}
-import org.apache.spark.sql.catalyst.util.SparkStringUtils.sideBySide
+import org.apache.spark.util.SparkStringUtils.sideBySide
 import org.apache.spark.sql.connect.ConnectConversions._
 import org.apache.spark.sql.connect.SparkSession
 import org.apache.spark.sql.connect.test.SQLHelper
