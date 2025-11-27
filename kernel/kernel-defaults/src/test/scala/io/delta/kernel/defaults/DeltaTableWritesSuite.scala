@@ -1216,6 +1216,94 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  ///////////////////////////////////////////////////////////////////////////
+  // Change Data Feed (CDF) tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  test("create table with CDF enabled - add-only transaction succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with CDF enabled
+      val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+      val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+
+      // Verify transaction properties
+      assert(txn.getSchema(engine) === testSchema)
+      assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
+      assert(txn.getReadTableVersion === -1)
+
+      // Commit with some initial data (add-only operation)
+      val txnState = txn.getTransactionState(engine)
+      val actions = inMemoryIterable(stageData(txnState, Map.empty, dataBatches1))
+      val expectedData = dataBatches1.flatMap(_.toTestRows)
+
+      val txnResult = commitTransaction(txn, engine, actions)
+
+      // Verify commit succeeded
+      assert(txnResult.getVersion === 0)
+      verifyCommitInfo(tablePath = tablePath, version = 0)
+      verifyWrittenContent(tablePath, testSchema, expectedData)
+
+      // Verify CDF is enabled in the snapshot
+      val snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+        .asInstanceOf[SnapshotImpl]
+      assert(TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(snapshot.getMetadata))
+    }
+  }
+
+  test("write to CDF-enabled table - add-only (append) succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with CDF enabled
+      val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+      val createTxn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+      commitTransaction(createTxn, engine, emptyIterable())
+
+      // Append data (add-only operation) - should succeed
+      val table = Table.forPath(engine, tablePath)
+      val appendTxn = table.createTransactionBuilder(engine, testEngineInfo, WRITE).build(engine)
+
+      val txnState = appendTxn.getTransactionState(engine)
+      val actions = inMemoryIterable(stageData(txnState, Map.empty, dataBatches1))
+      val expectedData = dataBatches1.flatMap(_.toTestRows)
+
+      val txnResult = commitTransaction(appendTxn, engine, actions)
+
+      // Verify append succeeded
+      assert(txnResult.getVersion === 1)
+      verifyCommitInfo(tablePath = tablePath, version = 1, partitionCols = null)
+      verifyWrittenContent(tablePath, testSchema, expectedData)
+    }
+  }
+
+  test("write to CDF-enabled table - multiple appends succeed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with CDF enabled and initial data
+      val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+      val createTxn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+      val txnState1 = createTxn.getTransactionState(engine)
+      val actions1 = inMemoryIterable(stageData(txnState1, Map.empty, dataBatches1))
+      commitTransaction(createTxn, engine, actions1)
+
+      // First append - should succeed
+      val table = Table.forPath(engine, tablePath)
+      val appendTxn1 = table.createTransactionBuilder(engine, testEngineInfo, WRITE).build(engine)
+      val txnState2 = appendTxn1.getTransactionState(engine)
+      val actions2 = inMemoryIterable(stageData(txnState2, Map.empty, dataBatches2))
+      val txnResult1 = commitTransaction(appendTxn1, engine, actions2)
+      assert(txnResult1.getVersion === 1)
+
+      // Second append - should succeed
+      val appendTxn2 = table.createTransactionBuilder(engine, testEngineInfo, WRITE).build(engine)
+      val txnState3 = appendTxn2.getTransactionState(engine)
+      val actions3 = inMemoryIterable(stageData(txnState3, Map.empty, dataBatches1))
+      val txnResult2 = commitTransaction(appendTxn2, engine, actions3)
+      assert(txnResult2.getVersion === 2)
+
+      // Verify all data is present
+      val expectedData = (dataBatches1 ++ dataBatches2 ++ dataBatches1).flatMap(_.toTestRows)
+      verifyWrittenContent(tablePath, testSchema, expectedData)
+    }
+  }
+
   def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
     def process(dataType: DataType): Option[DataType] = dataType match {
       case a: ArrayType =>
