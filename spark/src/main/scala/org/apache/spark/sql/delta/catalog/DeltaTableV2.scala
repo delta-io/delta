@@ -41,7 +41,7 @@ import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.connector.catalog.{SupportsV1OverwriteWithSaveAsTable, SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
+import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.V1Table
@@ -70,7 +70,6 @@ class DeltaTableV2 private(
   extends Table
   with SupportsWrite
   with V2TableWithV1Fallback
-  with SupportsV1OverwriteWithSaveAsTable
   with DeltaLogging {
 
   case class PathInfo(
