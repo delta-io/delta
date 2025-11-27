@@ -192,7 +192,7 @@ public class UcCatalogInfo {
     InMemoryUCClient ucClient = new InMemoryUCClient("benchmark-metastore");
     InMemoryUCClient.TableData tableData =
         new InMemoryUCClient.TableData(maxRatifiedVersion, commits);
-    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData);
+    ucClient.insertTableData(ucTableId, tableData);
 
     return ucClient;
   }

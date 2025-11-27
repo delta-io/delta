@@ -265,13 +265,10 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
     assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
   }
 
-  test("loadCommitRange for new table when UC maxRatifiedVersion is -1") {
+  test("loadCommitRange for new table when UC maxRatifiedVersion is 0") {
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucCatalogManagedClient =
-      createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
-    val commitRange = loadCommitRange(
-      ucCatalogManagedClient,
-      tablePath = tablePath)
+    val ucCatalogManagedClient = createUCCatalogManagedClientForTableAfterCreate()
+    val commitRange = loadCommitRange(ucCatalogManagedClient, tablePath = tablePath)
 
     assert(commitRange.getStartVersion == 0)
     assert(commitRange.getEndVersion == 0)

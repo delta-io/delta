@@ -134,10 +134,9 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     (javaLongOpt(0L), emptyLongOpt, "v0 (explicitly by version)"),
     (emptyLongOpt, javaLongOpt(1749830855993L), "v0 (explicitly by timestamp")).foreach {
     case (versionToLoad, timestampToLoad, description) =>
-      test(s"table version 0 is loaded when UC maxRatifiedVersion is -1 -- $description") {
+      test(s"table version 0 is loaded when UC maxRatifiedVersion is 0 -- $description") {
         val tablePath = getTestResourceFilePath("catalog-owned-preview")
-        val ucCatalogManagedClient =
-          createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
+        val ucCatalogManagedClient = createUCCatalogManagedClientForTableAfterCreate()
         val snapshot = loadSnapshot(
           ucCatalogManagedClient,
           tablePath = tablePath,
@@ -263,8 +262,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
   test("creates snapshot with UCCatalogManagedCommitter") {
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucCatalogManagedClient =
-      createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
+    val ucCatalogManagedClient = createUCCatalogManagedClientForTableAfterCreate()
     val snapshot =
       loadSnapshot(ucCatalogManagedClient, tablePath = tablePath, versionToLoad = Optional.of(0L))
     assert(snapshot.getCommitter.isInstanceOf[UCCatalogManagedCommitter])
