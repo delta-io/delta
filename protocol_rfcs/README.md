@@ -25,6 +25,7 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2025-03-18    | [iceberg-writer-compat-v1.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-writer-compat-v1.md)           | https://github.com/delta-io/delta/issues/4284 | IcebergWriterCompatV1                  |
 | 2025-04-07    | [catalog-managed.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/catalog-managed.md)                             | https://github.com/delta-io/delta/issues/4381 | Catalog-Managed Tables                 |
 | 2025-05-06    | [variant-shredding.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md)                         | https://github.com/delta-io/delta/issues/4032 | Variant Shredding                      |
+| 2025-11-20    | [materialize-partition-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/materialize-partition-columns.md)                         | https://github.com/delta-io/delta/issues/5555 | Materialize Partition Columns                      |
 
 ### Accepted RFCs
 
