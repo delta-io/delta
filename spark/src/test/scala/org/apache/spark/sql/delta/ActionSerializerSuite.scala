@@ -39,18 +39,26 @@ import org.apache.spark.util.Utils
 class ActionSerializerSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
 
   roundTripCompare("Add",
-    AddFile("test", Map.empty, 1, 1, dataChange = true))
+    AddFile("test", Map.empty, 1, 1, dataChange = true),
+     // Jackson 2.19+ deserializes null collection values as empty collections.
+    _.asInstanceOf[AddFile].copy(tags = Map.empty))
   roundTripCompare("Add with partitions",
-    AddFile("test", Map("a" -> "1"), 1, 1, dataChange = true))
+    AddFile("test", Map("a" -> "1"), 1, 1, dataChange = true),
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    _.asInstanceOf[AddFile].copy(tags = Map.empty))
   roundTripCompare("Add with stats",
-    AddFile("test", Map.empty, 1, 1, dataChange = true, stats = "stats"))
+    AddFile("test", Map.empty, 1, 1, dataChange = true, stats = "stats"),
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    _.asInstanceOf[AddFile].copy(tags = Map.empty))
   roundTripCompare("Add with tags",
     AddFile("test", Map.empty, 1, 1, dataChange = true, tags = Map("a" -> "1")))
   roundTripCompare("Add with empty tags",
     AddFile("test", Map.empty, 1, 1, dataChange = true, tags = Map.empty))
 
   roundTripCompare("Remove",
-    RemoveFile("test", Some(2)))
+    RemoveFile("test", Some(2)),
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    _.asInstanceOf[RemoveFile].copy(tags = Map.empty, partitionValues = Map.empty))
 
   test("AddFile tags") {
     val action1 =
@@ -114,9 +122,16 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     val json1 = """{"remove":{"path":"a","deletionTimestamp":2,"dataChange":true}}"""
     val json2 = """{"remove":{"path":"a","dataChange":false}}"""
     val json4 = """{"remove":{"path":"a","deletionTimestamp":5}}"""
-    assert(Action.fromJson(json1) === RemoveFile("a", Some(2L), dataChange = true))
-    assert(Action.fromJson(json2) === RemoveFile("a", None, dataChange = false))
-    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = true))
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    val object1 =
+      RemoveFile("a", Some(2L), dataChange = true, tags = Map.empty, partitionValues = Map.empty)
+    val object2 =
+      RemoveFile("a", None, dataChange = false, tags = Map.empty, partitionValues = Map.empty)
+    val object4 =
+      RemoveFile("a", Some(5L), dataChange = true, tags = Map.empty, partitionValues = Map.empty)
+    assert(Action.fromJson(json1) === object1)
+    assert(Action.fromJson(json2) === object2)
+    assert(Action.fromJson(json4) === object4)
   }
 
   roundTripCompare("SetTransaction",
@@ -401,7 +416,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     AddFile("x=2/f1", partitionValues = Map("x" -> "2"),
       size = 10, modificationTime = 1, dataChange = true, stats = "{\"numRecords\": 2}"),
     expectedJson = """{"add":{"path":"x=2/f1","partitionValues":{"x":"2"},"size":10,""" +
-      """"modificationTime":1,"dataChange":true,"stats":"{\"numRecords\": 2}"}}""".stripMargin)
+      """"modificationTime":1,"dataChange":true,"stats":"{\"numRecords\": 2}"}}""".stripMargin,
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    actionTransform = _.asInstanceOf[AddFile].copy(tags = Map.empty))
 
   testActionSerDe(
     "AddFile (with tags) - json serialization/deserialization",
@@ -435,7 +452,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       dataChange = true, stats = "{\"numRecords\": 2}").removeWithTimestamp(timestamp = 11),
     expectedJson = """{"remove":{"path":"part=p1/f1","deletionTimestamp":11,"dataChange":true,""" +
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10,""" +
-      """"stats":"{\"numRecords\": 2}"}}""")
+      """"stats":"{\"numRecords\": 2}"}}""".stripMargin,
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    actionTransform = _.asInstanceOf[RemoveFile].copy(tags = Map.empty))
 
   testActionSerDe(
     "RemoveFile (without tags and stats) - json serialization/deserialization",
@@ -444,7 +463,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       .removeWithTimestamp(timestamp = 11)
       .copy(stats = null),
     expectedJson = """{"remove":{"path":"part=p1/f1","deletionTimestamp":11,"dataChange":true,""" +
-      """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""")
+      """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""".stripMargin,
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    actionTransform = _.asInstanceOf[RemoveFile].copy(tags = Map.empty))
 
   private def deletionVectorWithRelativePath: DeletionVectorDescriptor =
     DeletionVectorDescriptor.onDiskWithRelativePath(
@@ -606,9 +627,11 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       """{"checkpointMetadata":{"version":1,""" +
         """"tags":{"k1":"v1","schema":"{\"type\":\"struct\",\"fields\":[]}"}}}""")
 
-    Seq(m1, m2, m3).foreach { metadata =>
-      assert(metadata === JsonUtils.fromJson[SingleAction](metadata.json).unwrap)
-    }
+    // Starting jackson 2.19, null collection values are deserialized as
+    // empty collections.
+    assert(m2 === JsonUtils.fromJson[SingleAction](m1.json).unwrap)
+    assert(m2 === JsonUtils.fromJson[SingleAction](m2.json).unwrap)
+    assert(m3 === JsonUtils.fromJson[SingleAction](m3.json).unwrap)
   }
 
   test("SidecarFile - serialize/deserialize") {
@@ -628,16 +651,20 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3,""" +
         """"tags":{"k1":"v1","schema":"{\"type\":\"struct\",\"fields\":[]}"}}}""".stripMargin)
 
-    Seq(f1, f2, f3).foreach { file =>
-      assert(file === JsonUtils.fromJson[SingleAction](file.json).unwrap)
-    }
+    // Starting jackson 2.19, null collection values are deserialized as
+    // empty collections.
+    assert(f2 === JsonUtils.fromJson[SingleAction](f1.json).unwrap)
+    assert(f2 === JsonUtils.fromJson[SingleAction](f2.json).unwrap)
+    assert(f3 === JsonUtils.fromJson[SingleAction](f3.json).unwrap)
   }
 
   testActionSerDe(
     "AddCDCFile (without tags) - json serialization/deserialization",
     AddCDCFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10),
     expectedJson = """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":"2"},""" +
-      """"size":10,"dataChange":false}}""".stripMargin)
+      """"size":10,"dataChange":false}}""".stripMargin,
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    actionTransform = _.asInstanceOf[AddCDCFile].copy(tags = Map.empty))
 
   testActionSerDe(
     "AddCDCFile (with tags) - json serialization/deserialization",
@@ -650,7 +677,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     "AddCDCFile (without null value in partitionValues) - json serialization/deserialization",
     AddCDCFile("part=p1/f1", partitionValues = Map("x" -> null), size = 10),
     expectedJson = """{"cdc":{"path":"part=p1/f1","partitionValues":{"x":null},""" +
-      """"size":10,"dataChange":false}}""".stripMargin)
+      """"size":10,"dataChange":false}}""".stripMargin,
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    actionTransform = _.asInstanceOf[AddCDCFile].copy(tags = Map.empty))
 
   {
     val metadata = Metadata(id = "testId", createdTime = Some(2222))
@@ -850,12 +879,18 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(legacyParams != deserialized.operationParameters)
   }
 
-  private def roundTripCompare(name: String, actions: Action*) = {
+  private def roundTripCompare(
+      name: String,
+      action: Action,
+      actionTransform: Action => Action = identity) = {
     test(name) {
-      val asJson = actions.map(_.json)
-      val asObjects = asJson.map(Action.fromJson)
+      val asJson = action.json
+      val asObject = Action.fromJson(asJson)
 
-      assert(actions === asObjects)
+      // Jackson 2.19+ deserializes null collection values as empty collections.
+      // The action transform is used to convert the action to the expected object
+      // after deserialization.
+      assert(actionTransform(action) === asObject)
     }
   }
 
@@ -865,7 +900,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       action: => Action,
       expectedJson: String,
       extraSettings: Seq[(String, String)] = Seq.empty,
-      testTags: Seq[org.scalatest.Tag] = Seq.empty): Unit = {
+      testTags: Seq[org.scalatest.Tag] = Seq.empty,
+      actionTransform: Action => Action = identity): Unit = {
     import org.apache.spark.sql.delta.test.DeltaTestImplicits._
     test(name, testTags: _*) {
       withTempDir { tempDir =>
@@ -895,7 +931,10 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           val serializedJson = committedActions.last
           assert(serializedJson === expectedJson)
           val asObject = Action.fromJson(serializedJson)
-          assert(action === asObject)
+          // Jackson 2.19+ deserializes null collection values as empty collections.
+          // The action transform is used to convert the action to the expected object
+          // after deserialization.
+          assert(actionTransform(action) === asObject)
         }
       }
     }

@@ -22,7 +22,7 @@ lazy val root = (project in file("."))
     name := "benchmarks",
     libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.5.3" % "provided",
     libraryDependencies += "com.github.scopt" %% "scopt" % "4.0.1",
-    libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.13.1",
+    libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.20.1",
 
     assemblyMergeStrategy in assembly := {
       case PathList("META-INF", xs @ _*) => MergeStrategy.discard

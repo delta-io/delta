@@ -756,10 +756,10 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
-      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.20.1",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.20.1",
+      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.20",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.20.1",
 
       // JSR-305 annotations for @Nullable
       "com.google.code.findbugs" % "jsr305" % "3.0.2",
@@ -1326,7 +1326,7 @@ lazy val standalone = (project in file("connectors/standalone"))
       "com.github.mjakubowski84" %% "parquet4s-core" % parquet4sVersion excludeAll (
         ExclusionRule("org.slf4j", "slf4j-api")
         ),
-      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.12.3",
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.20.1",
       "org.json4s" %% "json4s-jackson" % "3.7.0-M11" excludeAll (
         ExclusionRule("com.fasterxml.jackson.core"),
         ExclusionRule("com.fasterxml.jackson.module")
@@ -1394,6 +1394,9 @@ lazy val standalone = (project in file("connectors/standalone"))
       // Discard the jackson service configs that we don't need. These files are not shaded so
       // adding them may conflict with other jackson version used by the user.
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      // Discard 'META-INF/versions' which contains version specific classes for
+      // JDK21 that are not properly shaded and we do not need them.
+      case PathList("META-INF", "versions", xs @ _*) => MergeStrategy.discard
       // This project `.dependsOn` delta-storage, and its classes will be included by default
       // in this assembly jar. Manually discard them since it is already a compile-time dependency.
       case PathList("io", "delta", "storage", xs @ _*) => MergeStrategy.discard
