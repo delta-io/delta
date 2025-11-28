@@ -1420,7 +1420,7 @@ metadata | binary | The binary-encoded Variant metadata, as described in [Varian
 The parquet struct must include the two struct fields `value` and `metadata`.
 Supported writers must write the two binary fields, and supported readers must read the two binary fields.
 
-[Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) will be introduced in a separate `variantShredding` table feature. will be introduced later, as a separate `variantShredding` table feature.
+[Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) will be introduced in a separate `variantShredding` table feature.
 
 ## Writer Requirements for Variant Data Type
 
