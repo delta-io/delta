@@ -96,8 +96,12 @@ class DeltaScanSuite extends FunSuite {
       val filter = new And(metadataConjunct, dataConjunct)
       val scan = log.update().scan(filter)
 
+      // Jackson 2.19+ scala deserialization converts null collection values to empty collections.
       assert(scan.getFiles.asScala.toSeq.map(ConversionUtils.convertAddFileJ) ==
-        filesDataChangeFalse.filter(_.partitionValues("col1").toInt == 0))
+        filesDataChangeFalse
+          .filter(_.partitionValues("col1").toInt == 0)
+          // Jackson 2.19+ scala deserialization converts null collection values to empty collections.
+          .map(_.copy(tags = Map.empty)))
 
       assert(scan.getPushedPredicate.get == metadataConjunct)
       assert(scan.getResidualPredicate.get == dataConjunct)
@@ -110,7 +114,7 @@ class DeltaScanSuite extends FunSuite {
       val scan = log.update().scan(filter)
 
       assert(scan.getFiles.asScala.toSeq.map(ConversionUtils.convertAddFileJ) ==
-        filesDataChangeFalse)
+        filesDataChangeFalse.map(_.copy(tags = Map.empty)))
       assert(!scan.getPushedPredicate.isPresent)
       assert(scan.getResidualPredicate.get == filter)
     }
@@ -185,6 +189,8 @@ class DeltaScanSuite extends FunSuite {
 
       val expectedSet = Set(addA_2, addC_7, addE_13, addF_16_0)
         .map(_.copy(dataChange = false))
+        // Jackson 2.19+ scala deserialization converts null collection values to empty collections.
+        .map(_.copy(tags = Map.empty))
         .map(ConversionUtils.convertAddFile)
 
       val set = new scala.collection.mutable.HashSet[AddFileJ]()

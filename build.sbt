@@ -1410,6 +1410,9 @@ lazy val standalone = (project in file("connectors/standalone"))
       // Discard the jackson service configs that we don't need. These files are not shaded so
       // adding them may conflict with other jackson version used by the user.
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      // Discard 'META-INF/versions' which contains version specific classes for
+      // JDK21 that are not properly shaded and we do not need them.
+      case PathList("META-INF", "versions", xs @ _*) => MergeStrategy.discard
       // This project `.dependsOn` delta-storage, and its classes will be included by default
       // in this assembly jar. Manually discard them since it is already a compile-time dependency.
       case PathList("io", "delta", "storage", xs @ _*) => MergeStrategy.discard
