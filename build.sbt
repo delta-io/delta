@@ -833,10 +833,10 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
-      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.20.1",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.20.1",
+      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.20",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.20.1",
 
       // JSR-305 annotations for @Nullable
       "com.google.code.findbugs" % "jsr305" % "3.0.2",
@@ -944,8 +944,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     libraryDependencies ++= Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.20.1",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.20.1",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
