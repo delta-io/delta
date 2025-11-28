@@ -866,8 +866,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     libraryDependencies ++= Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.20.1",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.20.1",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
