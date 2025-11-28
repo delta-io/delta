@@ -86,8 +86,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |    "partitionValues": {},
         |    "size": 1,
         |    "modificationTime": 2,
-        |    "dataChange": false,
-        |    "tags": {}
+        |    "dataChange": false
         |  }
         |}""".stripMargin
     val action2 =
@@ -544,7 +543,6 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |"modificationTime":1,
         |"dataChange":true,
         |"stats":"{\"numRecords\":3}",
-        |"tags":{},
         |"deletionVector":{
         |"storageType":"p",
         |"pathOrInlineDv":"/test.dv",
@@ -601,14 +599,15 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     )
 
     assert(m1.json === """{"checkpointMetadata":{"version":1}}""")
-    assert(m2.json === """{"checkpointMetadata":{"version":1,"tags":{}}}""")
+    assert(m2.json === """{"checkpointMetadata":{"version":1}}""")
     assert(m3.json ===
       """{"checkpointMetadata":{"version":1,""" +
         """"tags":{"k1":"v1","schema":"{\"type\":\"struct\",\"fields\":[]}"}}}""")
 
-    Seq(m1, m2, m3).foreach { metadata =>
-      assert(metadata === JsonUtils.fromJson[SingleAction](metadata.json).unwrap)
-    }
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    assert(m2 === JsonUtils.fromJson[SingleAction](m1.json).unwrap)
+    assert(m2 === JsonUtils.fromJson[SingleAction](m2.json).unwrap)
+    assert(m3 === JsonUtils.fromJson[SingleAction](m3.json).unwrap)
   }
 
   test("SidecarFile - serialize/deserialize") {
@@ -622,15 +621,15 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(f1.json ===
       """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3}}""")
     assert(f2.json ===
-      """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,""" +
-        """"modificationTime":3,"tags":{}}}""")
+      """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3}}""")
     assert(f3.json ===
       """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3,""" +
         """"tags":{"k1":"v1","schema":"{\"type\":\"struct\",\"fields\":[]}"}}}""".stripMargin)
 
-    Seq(f1, f2, f3).foreach { file =>
-      assert(file === JsonUtils.fromJson[SingleAction](file.json).unwrap)
-    }
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    assert(f2 === JsonUtils.fromJson[SingleAction](f1.json).unwrap)
+    assert(f2 === JsonUtils.fromJson[SingleAction](f2.json).unwrap)
+    assert(f3 === JsonUtils.fromJson[SingleAction](f3.json).unwrap)
   }
 
   testActionSerDe(

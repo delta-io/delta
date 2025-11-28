@@ -20,6 +20,8 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.NumRecordsStats
 import org.apache.spark.sql.util.ScalaExtensions._
+import com.fasterxml.jackson.annotation.JsonInclude
+import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.commons.lang3.StringUtils
 
@@ -85,14 +87,19 @@ case class MergeStats(
 
     // Expressions used in old MERGE stats, now always Null
     updateConditionExpr: String,
+    @JsonInclude(Include.NON_EMPTY)
     updateExprs: Seq[String],
     insertConditionExpr: String,
+    @JsonInclude(Include.NON_EMPTY)
     insertExprs: Seq[String],
     deleteConditionExpr: String,
 
     // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED/NOT MATCHED BY SOURCE
+    @JsonInclude(Include.NON_EMPTY)
     matchedStats: Seq[MergeClauseStats],
+    @JsonInclude(Include.NON_EMPTY)
     notMatchedStats: Seq[MergeClauseStats],
+    @JsonInclude(Include.NON_EMPTY)
     notMatchedBySourceStats: Seq[MergeClauseStats],
 
     // Timings

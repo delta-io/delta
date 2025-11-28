@@ -333,7 +333,7 @@ class DeltaLogSuite extends QueryTest
         createTestAddFile(encodedPath = "bar", modificationTime = System.currentTimeMillis())
       log.startTransaction().commit(otherAdd :: Nil, DeltaOperations.ManualUpdate)
 
-      assert(log.update().allFiles.collect().find(_.path == "foo")
+      assert(log.update().allFiles.collect().find(_.path == "foo").map(_.copy(tags = Map.empty))
         // `dataChange` is set to `false` after replaying logs.
         === Some(add2.copy(
           dataChange = false, baseRowId = Some(1), defaultRowCommitVersion = Some(2))))

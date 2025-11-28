@@ -742,7 +742,8 @@ case class AddFile(
     modificationTime: Long,
     override val dataChange: Boolean,
     override val stats: String = null,
-    override val tags: Map[String, String] = null,
+    @JsonInclude(Include.NON_EMPTY)
+    override val tags: Map[String, String] = Map.empty,
     override val deletionVector: DeletionVectorDescriptor = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
@@ -942,10 +943,11 @@ case class RemoveFile(
     deletionTimestamp: Option[Long],
     override val dataChange: Boolean = true,
     extendedFileMetadata: Option[Boolean] = None,
-    partitionValues: Map[String, String] = null,
+    partitionValues: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
-    override val tags: Map[String, String] = null,
+    @JsonInclude(Include.NON_EMPTY)
+    override val tags: Map[String, String] = Map.empty,
     override val deletionVector: DeletionVectorDescriptor = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
@@ -1002,7 +1004,8 @@ case class AddCDCFile(
     @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
-    override val tags: Map[String, String] = null,
+    @JsonInclude(Include.NON_EMPTY)
+    override val tags: Map[String, String] = Map.empty,
     override val stats: String = null) extends FileAction with HasNumRecords {
   override val dataChange = false
   @JsonIgnore
@@ -1370,15 +1373,15 @@ sealed trait CheckpointOnlyAction extends Action
  * @param path - sidecar path relative to `_delta_log/_sidecar` directory
  * @param sizeInBytes - size in bytes for the sidecar file
  * @param modificationTime - modification time of the sidecar file
- * @param tags - attributes of the sidecar file, defaults to null (which is semantically same as an
- *               empty Map). This is kept null to ensure that the field is not present in the
- *               generated json.
+ * @param tags - attributes of the sidecar file, defaults to an empty map. Both
+ *               null and empty maps are not included in the generated json.
  */
 case class SidecarFile(
     path: String,
     sizeInBytes: Long,
     modificationTime: Long,
-    tags: Map[String, String] = null)
+    @JsonInclude(Include.NON_EMPTY)
+    tags: Map[String, String] = Map.empty)
   extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(sidecar = this)
@@ -1403,13 +1406,13 @@ object SidecarFile {
  * Holds information about the Delta Checkpoint. This action will only be part of checkpoints.
  *
  * @param version version of the checkpoint
- * @param tags    attributes of the checkpoint, defaults to null (which is semantically same as an
- *                empty Map). This is kept null to ensure that the field is not present in the
- *                generated json.
+ * @param tags    attributes of the checkpoint, defaults to empty map. Both null and empty
+ *                maps are not included in the generated json.
  */
 case class CheckpointMetadata(
     version: Long,
-    tags: Map[String, String] = null)
+    @JsonInclude(Include.NON_EMPTY)
+    tags: Map[String, String] = Map.empty)
   extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
