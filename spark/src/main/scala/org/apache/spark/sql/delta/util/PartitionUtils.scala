@@ -119,8 +119,13 @@ object PartitionSpec {
 
 private[delta] object PartitionUtils {
 
-  lazy val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.SSSSSS][.S]"
-  lazy val utcFormatter = TimestampFormatter("yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
+  lazy val timestampPartitionPattern = s"yyyy-MM-dd HH:mm:ss${precisionMatchPatterns(6)}"
+  lazy val utcFormatter = TimestampFormatter(s"yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
+
+  private def precisionMatchPatterns(maxDigits: Int): String =
+    (maxDigits to 1 by -1)
+      .map(n => "[." + ("S" * n) + "]")
+      .mkString
 
   case class PartitionValues(columnNames: Seq[String], literals: Seq[Literal])
   {

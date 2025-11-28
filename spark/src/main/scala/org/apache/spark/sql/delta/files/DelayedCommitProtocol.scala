@@ -33,6 +33,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.delta.files.DeltaFileFormatWriter.PartitionedTaskAttemptContextImpl
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.internal.SQLConf
@@ -142,8 +143,17 @@ class DelayedCommitProtocol(
         .filter(partitionCol => partitionCol._2 == TimestampType)
 
     val dateFormatter = DateFormatter()
-    val timestampFormatter =
-      TimestampFormatter(PartitionUtils.timestampPartitionPattern, java.util.TimeZone.getDefault)
+    // if adjusting to UTC make sure to interpret timezones using Spark
+    // config, otherwise fallback to JVM timezone
+    val timezone = {
+      if (useUtcNormalizedTimestamps) {
+        DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone)
+      } else {
+        java.util.TimeZone.getDefault
+      }
+    }
+
+    val timestampFormatter = TimestampFormatter(PartitionUtils.timestampPartitionPattern, timezone)
 
     /**
      * ToDo: Remove the use of this PartitionUtils API with type inference logic
