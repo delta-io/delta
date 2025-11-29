@@ -20,7 +20,6 @@ import io.delta.kernel.spark.read.SparkReaderFactory;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
@@ -71,18 +70,8 @@ public class PartitionUtils {
   }
 
   /**
-   * Calculate the maximum split bytes for file partitioning using file list. Convenience method
-   * that calculates total bytes from the file list.
-   */
-  public static long calculateMaxSplitBytes(
-      SparkSession sparkSession, List<PartitionedFile> partitionedFiles, SQLConf sqlConf) {
-    long totalBytes = partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
-    return calculateMaxSplitBytes(sparkSession, totalBytes, partitionedFiles.size(), sqlConf);
-  }
-
-  /**
-   * Build the partition InternalRow from kernel partition values by casting them to the desired
-   * Spark types using the session time zone for temporal types.
+   * Build the partition {@link InternalRow} from kernel partition values by casting them to the
+   * desired Spark types using the session time zone for temporal types.
    */
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
@@ -131,11 +120,13 @@ public class PartitionUtils {
       SQLConf sqlConf) {
     boolean enableVectorizedReader =
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
-    scala.collection.immutable.Map<String, String> optionsWithBatch =
+    scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
             new Tuple2<>(
-                FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
+                FileFormat$.MODULE$
+                    .OPTION_RETURNING_BATCH(), // Option name for enabling vectorized reading
                 String.valueOf(enableVectorizedReader)));
+    // TODO(#5318): deletion vector support.
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         new ParquetFileFormat()
             .buildReaderWithPartitionValues(
@@ -144,7 +135,7 @@ public class PartitionUtils {
                 partitionSchema,
                 readDataSchema,
                 JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-                optionsWithBatch,
+                optionsWithVectorizedReading,
                 hadoopConf);
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);

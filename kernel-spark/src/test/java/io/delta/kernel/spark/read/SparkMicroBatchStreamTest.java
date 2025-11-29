@@ -1050,38 +1050,36 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         testTableName,
         /* numVersions= */ 5,
         /* rowsPerVersion= */ 10,
-        /* includeEmptyVersion= */ false);
+        /* includeEmptyVersion= */ true);
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSourceOffset startOffset =
         new DeltaSourceOffset(
-            deltaLog.tableId(), fromVersion, DeltaSourceOffset.BASE_INDEX(), false);
-
+            deltaLog.tableId(),
+            fromVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false);
     DeltaSourceOffset planPartitionsEndOffset =
-        new DeltaSourceOffset(deltaLog.tableId(), toVersion, DeltaSourceOffset.END_INDEX(), false);
+        new DeltaSourceOffset(
+            deltaLog.tableId(),
+            toVersion,
+            DeltaSourceOffset.END_INDEX(),
+            /* isInitialSnapshot= */ false);
 
     // Ground truth: Read directly from Delta table
     List<Row> expectedRows = new ArrayList<>();
-    for (long version = fromVersion; version <= toVersion; version++) {
-      Dataset<Row> versionData =
-          spark.read().format("delta").option("versionAsOf", version).load(testTablePath);
-
-      // For streaming, we only want the NEW rows added in each version
-      // Subtract the previous version's data to get only newly added rows
-      // Note: Only applies when version > 0 (when there's a previous version to subtract)
-      if (version > 0) {
-        Dataset<Row> previousData =
-            spark.read().format("delta").option("versionAsOf", version - 1).load(testTablePath);
-        versionData = versionData.except(previousData);
-      }
-
-      expectedRows.addAll(versionData.collectAsList());
+    Dataset<Row> toVersionData =
+        spark.read().format("delta").option("versionAsOf", toVersion).load(testTablePath);
+    if (fromVersion > 0) {
+      Dataset<Row> beforeFromVersionData =
+          spark.read().format("delta").option("versionAsOf", fromVersion - 1).load(testTablePath);
+      toVersionData = toVersionData.except(beforeFromVersionData);
     }
+    expectedRows.addAll(toVersionData.collectAsList());
 
     // DSv2: planInputPartitions + createReaderFactory
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
-
     org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
     StructType dataSchema = deltaSnapshot.metadata().schema();
     StructType partitionSchema = deltaSnapshot.metadata().partitionSchema();
@@ -1095,14 +1093,14 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             testTablePath,
             dataSchema,
             partitionSchema,
-            dataSchema, // readDataSchema = dataSchema for this test
+            dataSchema,
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty());
 
     InputPartition[] partitions = stream.planInputPartitions(startOffset, planPartitionsEndOffset);
     PartitionReaderFactory readerFactory = stream.createReaderFactory();
 
-    // Read all partitions
+    // Simulates how Spark calls the reader factory and reads the data
     List<Row> dsv2Rows = new ArrayList<>();
     for (InputPartition partition : partitions) {
       if (readerFactory.supportColumnarReads(partition)) {
@@ -1143,18 +1141,58 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     return Stream.of(
         // Basic version range tests
-        Arguments.of(1L, 2L, noMaxFiles, noMaxBytes, "Single version (1 to 2)"),
-        Arguments.of(1L, 3L, noMaxFiles, noMaxBytes, "Multiple versions (1 to 3)"),
-        Arguments.of(0L, 5L, noMaxFiles, noMaxBytes, "From version 0 to 5"),
-        Arguments.of(2L, 4L, noMaxFiles, noMaxBytes, "Mid-range versions (2 to 4)"),
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 2L,
+            noMaxFiles,
+            noMaxBytes,
+            "Single version (1 to 2)"),
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 3L,
+            noMaxFiles,
+            noMaxBytes,
+            "Multiple versions (1 to 3)"),
+        Arguments.of(
+            /* fromVersion= */ 0L,
+            /* toVersion= */ 5L,
+            noMaxFiles,
+            noMaxBytes,
+            "From version 0 to 5"),
+        Arguments.of(
+            /* fromVersion= */ 2L,
+            /* toVersion= */ 4L,
+            noMaxFiles,
+            noMaxBytes,
+            "Mid-range versions (2 to 4)"),
 
         // Rate limiting tests
-        Arguments.of(1L, 5L, Optional.of(5), noMaxFiles, "With maxFiles limit"),
-        Arguments.of(1L, 5L, noMaxFiles, Optional.of(5000L), "With maxBytes limit"),
-        Arguments.of(1L, 5L, Optional.of(10), Optional.of(10000L), "With both limits"),
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 5L,
+            Optional.of(5),
+            noMaxFiles,
+            "With maxFiles limit"),
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 5L,
+            noMaxFiles,
+            Optional.of(5000L),
+            "With maxBytes limit"),
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 5L,
+            Optional.of(10),
+            Optional.of(10000L),
+            "With both limits"),
 
         // Edge cases
-        Arguments.of(3L, 3L, noMaxFiles, noMaxBytes, "Same version (3 to 3)"));
+        Arguments.of(
+            /* fromVersion= */ 3L,
+            /* toVersion= */ 3L,
+            noMaxFiles,
+            noMaxBytes,
+            "Same version (3 to 3)"));
   }
 
   /**
