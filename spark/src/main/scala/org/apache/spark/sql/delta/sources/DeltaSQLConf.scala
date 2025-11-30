@@ -159,6 +159,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(n => n > 0, "Delta snapshot partition number must be positive.")
       .createOptional
 
+  val DELTA_SNAPSHOT_PARTITION_BYTES =
+    buildConf("snapshotPartitionBytes")
+      .internal()
+      .doc("Number of bytes of index files to put in each partition when building a Delta Lake " +
+        "snapshot. This can be used to dynamically set the number of partitions used for a Delta" +
+        "Lake snapshot based on the size of the file indices.")
+      .bytesConf(ByteUnit.BYTE)
+      .checkValue(n => n > 0, "Delta snapshot partition bytes must be positive.")
+      .createOptional
+
   val DELTA_SNAPSHOT_LOADING_MAX_RETRIES =
     buildConf("snapshotLoading.maxRetries")
       .internal()
