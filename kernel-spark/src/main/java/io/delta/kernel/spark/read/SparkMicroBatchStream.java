@@ -58,10 +58,11 @@ public class SparkMicroBatchStream implements MicroBatchStream {
 
   private static final Set<String> ALLOWED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
-          new HashSet<>(Arrays.asList(
-              DeltaOptions.STARTING_VERSION_OPTION().toLowerCase(),
-              DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION().toLowerCase(),
-              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION().toLowerCase())));
+          new HashSet<>(
+              Arrays.asList(
+                  DeltaOptions.STARTING_VERSION_OPTION().toLowerCase(),
+                  DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION().toLowerCase(),
+                  DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION().toLowerCase())));
 
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
@@ -85,7 +86,7 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       DeltaOptions options) {
     // Validate that only allowed streaming options are used
     validateStreamingOptions(options);
-    
+
     this.spark = spark;
     this.snapshotManager = snapshotManager;
     this.engine = DefaultEngine.create(hadoopConf);
@@ -99,6 +100,8 @@ public class SparkMicroBatchStream implements MicroBatchStream {
 
     while (keysIterator.hasNext()) {
       String key = keysIterator.next();
+      // DeltaOptions uses CaseInsensitiveMap which preserves original key casing,
+      // so we need toLowerCase() to match against our allowed options
       if (!ALLOWED_STREAMING_OPTIONS.contains(key.toLowerCase())) {
         unsupportedOptions.add(key);
       }
@@ -106,9 +109,9 @@ public class SparkMicroBatchStream implements MicroBatchStream {
 
     if (!unsupportedOptions.isEmpty()) {
       throw new UnsupportedOperationException(
-              String.format(
-                      "The following streaming options are not supported: %s. ",
-                      String.join(", ", unsupportedOptions)));
+          String.format(
+              "The following streaming options are not supported: %s. ",
+              String.join(", ", unsupportedOptions)));
     }
   }
 

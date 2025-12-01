@@ -15,8 +15,7 @@
  */
 package io.delta.kernel.spark.read;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
@@ -132,7 +131,12 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             .$plus$eq(scala.Tuple2.apply("MAXBYTESPERTRIGGER", "1g"))
             .result();
     DeltaOptions deltaOptions = new DeltaOptions(supportedOptions, spark.sessionState().conf());
-    
+
+    // Verify DeltaOptions can recognize the options (case insensitive)
+    assertEquals(true, deltaOptions.maxFilesPerTrigger().isDefined());
+    assertEquals(100, deltaOptions.maxFilesPerTrigger().get());
+    assertEquals(true, deltaOptions.maxBytesPerTrigger().isDefined());
+
     // Should not throw
     new SparkMicroBatchStream(
         snapshotManager, spark.sessionState().newHadoopConf(), spark, deltaOptions);
@@ -163,10 +167,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     // Verify unsupported options are in the error message
     String message = exception.getMessage();
-    assertEquals(true, message.contains("readChangeFeed"));
-    assertEquals(true, message.contains("ignoreDeletes"));
+    assertTrue(message.contains("readChangeFeed"));
+    assertTrue(message.contains("ignoreDeletes"));
     // Supported option should not be in the error message
-    assertEquals(false, message.contains("startingVersion"));
+    assertFalse(message.contains("startingVersion"));
   }
 
   // ================================================================================================
