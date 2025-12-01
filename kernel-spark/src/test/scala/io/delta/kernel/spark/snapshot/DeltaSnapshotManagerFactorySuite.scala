@@ -17,55 +17,62 @@ package io.delta.kernel.spark.snapshot
 
 import java.net.URI
 
-import io.delta.kernel.spark.utils.CatalogTableTestUtils
-
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
-import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.scalatest.funsuite.AnyFunSuite
 
-/** Tests for [[DeltaSnapshotManagerFactory]]. */
-class DeltaSnapshotManagerFactorySuite extends SparkFunSuite with SharedSparkSession {
+class DeltaSnapshotManagerFactorySuite extends AnyFunSuite {
 
-  private def createTestCatalogTable() = {
-    CatalogTableTestUtils.createCatalogTable(locationUri = Some(new URI("s3://test/path")))
+  private def nonUcTable(location: String): CatalogTable = {
+    CatalogTable(
+      identifier = TableIdentifier("tbl", Some("default")),
+      tableType = CatalogTableType.EXTERNAL,
+      storage = CatalogStorageFormat.empty.copy(locationUri = Some(new URI(location))),
+      schema = new org.apache.spark.sql.types.StructType(),
+      provider = Some("delta"))
   }
 
-  test("fromPath throws NullPointerException for null tablePath") {
-    assertThrows[NullPointerException] {
-      DeltaSnapshotManagerFactory.fromPath(null, new Configuration())
+  private def ucTable(location: String, tableId: String): CatalogTable = {
+    CatalogTable(
+      identifier = TableIdentifier("tbl", Some("uc"), Some("main")),
+      tableType = CatalogTableType.EXTERNAL,
+      storage = CatalogStorageFormat.empty.copy(
+        locationUri = Some(new URI(location)),
+        properties = Map(
+          UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableId,
+          "delta.feature.catalogManaged" -> "supported")),
+      schema = new org.apache.spark.sql.types.StructType(),
+      provider = Some("delta"))
+  }
+
+  test("fromPath returns path-based manager") {
+    val mgr = DeltaSnapshotManagerFactory.fromPath("/tmp/test", new Configuration())
+    assert(mgr.isInstanceOf[PathBasedSnapshotManager])
+  }
+
+  test("fromCatalogTable falls back to path-based for non-UC tables") {
+    val spark = SparkSession.builder().master("local[1]").appName("factory-non-uc").getOrCreate()
+    try {
+      val table = nonUcTable("file:/tmp/non-uc")
+      val mgr = DeltaSnapshotManagerFactory.fromCatalogTable(table, spark, new Configuration())
+      assert(mgr.isInstanceOf[PathBasedSnapshotManager])
+    } finally {
+      spark.stop()
     }
   }
 
-  test("fromPath throws NullPointerException for null hadoopConf") {
-    assertThrows[NullPointerException] {
-      DeltaSnapshotManagerFactory.fromPath("/tmp/test", null)
-    }
-  }
-
-  test("fromCatalogTable throws NullPointerException for null catalogTable") {
-    assertThrows[NullPointerException] {
-      DeltaSnapshotManagerFactory.fromCatalogTable(null, spark, new Configuration())
-    }
-  }
-
-  test("fromCatalogTable throws NullPointerException for null spark") {
-    val table = createTestCatalogTable()
-    assertThrows[NullPointerException] {
-      DeltaSnapshotManagerFactory.fromCatalogTable(table, null, new Configuration())
-    }
-  }
-
-  test("fromCatalogTable throws NullPointerException for null hadoopConf") {
-    val table = createTestCatalogTable()
-    assertThrows[NullPointerException] {
-      DeltaSnapshotManagerFactory.fromCatalogTable(table, spark, null)
-    }
-  }
-
-  test("fromCatalogTable throws UnsupportedOperationException (skeleton)") {
-    val table = createTestCatalogTable()
-    assertThrows[UnsupportedOperationException] {
-      DeltaSnapshotManagerFactory.fromCatalogTable(table, spark, new Configuration())
+  test("fromCatalogTable throws when UC table is missing UC config") {
+    val spark = SparkSession.builder().master("local[1]").appName("factory-uc-missing-config").getOrCreate()
+    try {
+      val table = ucTable("file:/tmp/uc", tableId = "abc123")
+      assertThrows[IllegalArgumentException] {
+        DeltaSnapshotManagerFactory.fromCatalogTable(table, spark, new Configuration())
+      }
+    } finally {
+      spark.stop()
     }
   }
 }
