@@ -43,14 +43,13 @@ NON_SPARK_RELATED_JAR_TEMPLATES = [
     # Scala modules
     "delta-hudi_2.13-{version}.jar",
     "delta-standalone_2.13-{version}.jar",
-    "delta-suite-generator_2.13-{version}.jar",
 
     # Java-only modules (no Scala version)
     "delta-storage-{version}.jar",
     "delta-kernel-api-{version}.jar",
     "delta-kernel-defaults-{version}.jar",
     "delta-storage-s3-dynamodb-{version}.jar",
-    "delta-unity-{version}.jar"
+    "delta-kernel-unitycatalog-{version}.jar"
 ]
 
 

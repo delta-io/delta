@@ -22,7 +22,7 @@ import io.delta.golden.GoldenTableUtils$;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.spark.table.SparkTable;
+import io.delta.kernel.spark.catalog.SparkTable;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;

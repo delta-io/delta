@@ -27,14 +27,24 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 
 /**
- * [[SQLConf]] entries for Delta features.
+ * Utility trait providing common configuration building methods for Delta SQL configs.
+ *
+ * This trait contains only utility methods and constants, no actual config entries.
+ * It is designed to be extended by multiple configuration objects without causing
+ * duplicate config registration.
  */
-trait DeltaSQLConfBase {
+trait DeltaSQLConfUtils {
   val SQL_CONF_PREFIX = "spark.databricks.delta"
 
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"$SQL_CONF_PREFIX.$key")
   def buildStaticConf(key: String): ConfigBuilder =
     SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
+}
+
+/**
+ * [[SQLConf]] entries for Delta features.
+ */
+trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
     buildConf("timeTravel.resolveOnIdentifier.enabled")
@@ -1691,6 +1701,14 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH =
+    buildConf("skipping.enhancedIsNullPushdownExprs.maxDepth")
+      .doc("The maximum number of times a complex expression like Or or And would have an IsNull " +
+        "pushed down in it for data skipping.")
+      .internal()
+      .intConf
+      .createWithDefault(8)
 
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
