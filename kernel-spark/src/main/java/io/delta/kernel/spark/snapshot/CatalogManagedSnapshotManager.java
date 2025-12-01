@@ -25,11 +25,9 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
-import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 import org.slf4j.Logger;
@@ -115,16 +113,9 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     // Load the latest snapshot for timestamp resolution
     SnapshotImpl latestSnapshot = (SnapshotImpl) loadLatestSnapshot();
 
-    // Get ratified commits from the catalog
-    List<ParsedLogData> logData =
-        catalogAdapter.getRatifiedCommits(/* endVersionOpt = */ Optional.empty());
-
-    // Convert to ParsedCatalogCommitData for DeltaHistoryManager
+    // Extract catalog commits from the snapshot's log segment (avoids redundant UC call)
     List<ParsedCatalogCommitData> catalogCommits =
-        logData.stream()
-            .filter(data -> data instanceof ParsedCatalogCommitData)
-            .map(data -> (ParsedCatalogCommitData) data)
-            .collect(Collectors.toList());
+        latestSnapshot.getLogSegment().getAllCatalogCommits();
 
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         kernelEngine,
