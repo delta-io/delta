@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import java.io.Closeable;
  * Provider interface for Unity Catalog access tokens.
  *
  * <p>Implementations of this interface are responsible for providing valid access tokens
- * for authenticating with Unity Catalog services. The interface extends {@link Closeable}
- * to allow implementations to clean up resources such as HTTP clients or cached credentials.
+ * for authenticating with Unity Catalog services. The interface extends {@link Closeable} to allow
+ * implementations to clean up resources such as HTTP clients or cached credentials.
  *
  * <p>Implementations may cache tokens and handle automatic renewal as needed.
  */
