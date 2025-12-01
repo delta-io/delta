@@ -57,9 +57,9 @@ public class SparkMicroBatchStream implements MicroBatchStream {
           new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE)));
 
   /**
-   * Block list of DeltaOptions that are not supported for streaming in Delta Kernel.
-   * Only startingVersion, maxFilesPerTrigger, and maxBytesPerTrigger are supported.
-   * User-defined custom options (not in DeltaOptions) are allowed to pass through.
+   * Block list of DeltaOptions that are not supported for streaming in Delta Kernel. Only
+   * startingVersion, maxFilesPerTrigger, and maxBytesPerTrigger are supported. User-defined custom
+   * options (not in DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
@@ -108,7 +108,6 @@ public class SparkMicroBatchStream implements MicroBatchStream {
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = options;
   }
-
 
   private static void validateStreamingOptions(DeltaOptions deltaOptions) {
     List<String> unsupportedOptions = new ArrayList<>();
