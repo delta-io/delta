@@ -17,8 +17,6 @@ package io.delta.kernel.spark.snapshot;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.spark.snapshot.unitycatalog.UnityCatalogAdapter;
-import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
@@ -80,36 +78,16 @@ public final class DeltaSnapshotManagerFactory {
   /**
    * Creates a snapshot manager from catalog table metadata.
    *
-   * <p>Automatically selects {@link CatalogManagedSnapshotManager} for Unity Catalog managed
-   * tables, or falls back to {@link PathBasedSnapshotManager} for regular tables.
+   * <p>Wire-up is intentionally deferred; this skeleton method currently throws until implemented in
+   * a follow-up PR.
    *
-   * @param catalogTable Spark catalog table metadata
-   * @param spark SparkSession for resolving Unity Catalog configurations
-   * @param hadoopConf Hadoop configuration for the Delta Kernel engine
-   * @return appropriate snapshot manager implementation
-   * @throws NullPointerException if catalogTable, spark, or hadoopConf is null
-   * @throws IllegalArgumentException if catalogTable is UC-managed but configuration is invalid
+   * @throws UnsupportedOperationException always, until UC wiring is added
    */
   public static DeltaSnapshotManager fromCatalogTable(
       CatalogTable catalogTable, SparkSession spark, Configuration hadoopConf) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
     requireNonNull(hadoopConf, "hadoopConf is null");
-
-    Optional<ManagedCatalogAdapter> adapterOpt =
-        UnityCatalogAdapter.fromCatalog(catalogTable, spark);
-
-    if (adapterOpt.isPresent()) {
-      ManagedCatalogAdapter adapter = adapterOpt.get();
-      // Cast to UnityCatalogAdapter to access tableId and tablePath
-      UnityCatalogAdapter ucAdapter = (UnityCatalogAdapter) adapter;
-      String tableId = ucAdapter.getTableId();
-      String tablePath = ucAdapter.getTablePath();
-      return new CatalogManagedSnapshotManager(adapter, tableId, tablePath, hadoopConf);
-    }
-
-    // Fallback to path-based snapshot manager
-    String tablePath = catalogTable.location().toString();
-    return new PathBasedSnapshotManager(tablePath, hadoopConf);
+    throw new UnsupportedOperationException("UC catalog wiring not implemented in skeleton");
   }
 }
