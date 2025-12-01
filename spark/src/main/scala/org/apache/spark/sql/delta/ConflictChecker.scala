@@ -672,7 +672,13 @@ private[delta] class ConflictChecker(
           DeltaConfigs.COLUMN_MAPPING_MODE.key,
           DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
 
-    rowTrackingAllowList ++ columnMappingAllowList
+    // Resolving a deletion vectors enablement conflict with another transaction is equivalent
+    // of the latter transaction choosing not to generate DVs although DVs are enabled. This
+    // is valid behavior.
+    val dvsAllowList =
+        Set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
+
+    rowTrackingAllowList ++ columnMappingAllowList ++ dvsAllowList
   }
 
   /**
@@ -734,6 +740,9 @@ private[delta] class ConflictChecker(
         // Column mapping related configurations.
         case DeltaConfigs.COLUMN_MAPPING_MODE.key =>
           areColumnMappingChangesConflictFree(currentMetadata, winningMetadata)
+        case DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key =>
+          currentTransactionInfo.protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
+            value.toBoolean
         case _ => true
       }
     }

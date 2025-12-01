@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.table;
+package io.delta.kernel.spark.catalog;
 
 import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
@@ -25,6 +25,7 @@ import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.*;
@@ -185,9 +186,12 @@ public class SparkTable implements Table, SupportsRead {
   /**
    * Helper method to decode URI path handling URL-encoded characters correctly. E.g., converts
    * "spark%25dir%25prefix" to "spark%dir%prefix"
+   *
+   * <p>Uses Hadoop's Path class to properly handle all URI schemes (file, s3, abfss, gs, hdfs,
+   * etc.), not just file:// URIs.
    */
   private static String getDecodedPath(java.net.URI location) {
-    return new java.io.File(location).getPath();
+    return new Path(location).toString();
   }
 
   /**
