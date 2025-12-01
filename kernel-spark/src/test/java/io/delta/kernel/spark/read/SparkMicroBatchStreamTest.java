@@ -122,13 +122,14 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
 
-    // Test with all allowed options together (case insensitive)
+    // Test with supported options (case insensitive) and custom user options
     scala.collection.immutable.Map<String, String> supportedOptions =
         scala.collection.immutable.Map$.MODULE$
             .<String, String>newBuilder()
             .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
             .$plus$eq(scala.Tuple2.apply("MaxFilesPerTrigger", "100"))
             .$plus$eq(scala.Tuple2.apply("MAXBYTESPERTRIGGER", "1g"))
+            .$plus$eq(scala.Tuple2.apply("myCustomOption", "value"))
             .result();
     DeltaOptions deltaOptions = new DeltaOptions(supportedOptions, spark.sessionState().conf());
 
@@ -137,7 +138,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     assertEquals(100, deltaOptions.maxFilesPerTrigger().get());
     assertEquals(true, deltaOptions.maxBytesPerTrigger().isDefined());
 
-    // Should not throw
+    // Should not throw - custom options are allowed
     new SparkMicroBatchStream(
         snapshotManager, spark.sessionState().newHadoopConf(), spark, deltaOptions);
   }
@@ -148,13 +149,14 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
 
-    // Test with mix of supported and unsupported options
+    // Test with blocked DeltaOptions and custom user options
     scala.collection.immutable.Map<String, String> mixedOptions =
         scala.collection.immutable.Map$.MODULE$
             .<String, String>newBuilder()
             .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
             .$plus$eq(scala.Tuple2.apply("readChangeFeed", "true"))
             .$plus$eq(scala.Tuple2.apply("ignoreDeletes", "true"))
+            .$plus$eq(scala.Tuple2.apply("myCustomOption", "value")) // Custom option should be OK
             .result();
     DeltaOptions deltaOptions = new DeltaOptions(mixedOptions, spark.sessionState().conf());
 
@@ -165,12 +167,13 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                 new SparkMicroBatchStream(
                     snapshotManager, spark.sessionState().newHadoopConf(), spark, deltaOptions));
 
-    // Verify unsupported options are in the error message
+    // Verify only blocked DeltaOptions are in the error message
     String message = exception.getMessage();
     assertTrue(message.contains("readChangeFeed"));
     assertTrue(message.contains("ignoreDeletes"));
-    // Supported option should not be in the error message
+    // Supported and custom options should not be in the error message
     assertFalse(message.contains("startingVersion"));
+    assertFalse(message.contains("myCustomOption"));
   }
 
   // ================================================================================================
