@@ -84,7 +84,6 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
 
   @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
-    requireNonNull(engine, "engine is null");
     throw new UnsupportedOperationException("getTableChanges not implemented yet");
   }
 
