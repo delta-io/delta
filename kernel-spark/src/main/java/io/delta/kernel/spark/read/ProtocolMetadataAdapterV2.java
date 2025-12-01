@@ -115,7 +115,7 @@ public class ProtocolMetadataAdapterV2 implements ProtocolMetadataAdapter, Seria
 
   @Override
   public void assertTableReadable(SparkSession sparkSession) {
-    // TODO: Add row tracking validation.
+    // TODO: Add type widening validation.
   }
 
   @Override
