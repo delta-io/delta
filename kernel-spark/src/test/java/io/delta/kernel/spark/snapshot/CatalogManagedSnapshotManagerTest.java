@@ -17,6 +17,12 @@ package io.delta.kernel.spark.snapshot;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.files.ParsedLogData;
+import java.util.List;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Test;
 
@@ -51,26 +57,26 @@ class CatalogManagedSnapshotManagerTest {
     }
 
     @Override
-    public io.delta.kernel.Snapshot loadSnapshot(
-        io.delta.kernel.engine.Engine engine,
-        java.util.Optional<Long> versionOpt,
-        java.util.Optional<Long> timestampOpt) {
+    public Snapshot loadSnapshot(
+        Engine engine,
+        Optional<Long> versionOpt,
+        Optional<Long> timestampOpt) {
       throw new UnsupportedOperationException("noop");
     }
 
     @Override
-    public io.delta.kernel.CommitRange loadCommitRange(
-        io.delta.kernel.engine.Engine engine,
-        java.util.Optional<Long> startVersionOpt,
-        java.util.Optional<Long> startTimestampOpt,
-        java.util.Optional<Long> endVersionOpt,
-        java.util.Optional<Long> endTimestampOpt) {
+    public CommitRange loadCommitRange(
+        Engine engine,
+        Optional<Long> startVersionOpt,
+        Optional<Long> startTimestampOpt,
+        Optional<Long> endVersionOpt,
+        Optional<Long> endTimestampOpt) {
       throw new UnsupportedOperationException("noop");
     }
 
     @Override
-    public java.util.List<io.delta.kernel.internal.files.ParsedLogData> getRatifiedCommits(
-        java.util.Optional<Long> endVersionOpt) {
+    public List<ParsedLogData> getRatifiedCommits(
+        Optional<Long> endVersionOpt) {
       throw new UnsupportedOperationException("noop");
     }
 
