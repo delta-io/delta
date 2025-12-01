@@ -22,6 +22,8 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import java.util.Optional;
+
+import io.delta.kernel.internal.DeltaHistoryManager;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 import org.slf4j.Logger;
@@ -68,7 +70,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   }
 
   @Override
-  public io.delta.kernel.internal.DeltaHistoryManager.Commit getActiveCommitAtTime(
+  public DeltaHistoryManager.Commit getActiveCommitAtTime(
       long timestampMillis,
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
