@@ -28,7 +28,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
-import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClientFactory$;
+import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Comparator;
@@ -85,8 +85,7 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
    */
   public static ManagedCatalogAdapter fromConnectionInfo(UnityCatalogConnectionInfo info) {
     requireNonNull(info, "info is null");
-    UCClient client =
-        UCTokenBasedRestClientFactory$.MODULE$.createUCClient(info.getEndpoint(), info.getToken());
+    UCClient client = new UCTokenBasedRestClient(info.getEndpoint(), info.getToken());
     return new UnityCatalogAdapter(info.getTableId(), info.getTablePath(), client);
   }
 
