@@ -28,7 +28,10 @@ import org.apache.spark.sql.functions.input_file_name
  */
 class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanningClient {
 
-  override def planScan(databaseName: String, table: String): ScanPlan = {
+  override def planScan(
+      databaseName: String,
+      table: String,
+      filter: Option[org.apache.spark.sql.sources.Filter] = None): ScanPlan = {
     val fullTableName = s"$databaseName.$table"
 
     // Temporarily disable server-side planning to avoid infinite recursion

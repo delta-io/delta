@@ -46,9 +46,13 @@ trait ServerSidePlanningClient {
    *
    * @param databaseName The database or schema name
    * @param table The table name
+   * @param filter Optional filter expression to push down to server (Spark Filter format)
    * @return ScanPlan containing files to read
    */
-  def planScan(databaseName: String, table: String): ScanPlan
+  def planScan(
+      databaseName: String,
+      table: String,
+      filter: Option[org.apache.spark.sql.sources.Filter] = None): ScanPlan
 }
 
 /**

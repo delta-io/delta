@@ -224,7 +224,8 @@ class ServerSidePlannedScan(
   override def toBatch: Batch = this
 
   // Call the server-side planning API once and store the result
-  private val scanPlan = planningClient.planScan(databaseName, tableName)
+  // Filter parameter will be wired up in a subsequent PR
+  private val scanPlan = planningClient.planScan(databaseName, tableName, None)
 
   override def planInputPartitions(): Array[InputPartition] = {
     // Convert each file to an InputPartition
