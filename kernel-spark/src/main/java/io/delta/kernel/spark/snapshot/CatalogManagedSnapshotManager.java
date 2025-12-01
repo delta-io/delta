@@ -21,9 +21,8 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
-import java.util.Optional;
-
 import io.delta.kernel.internal.DeltaHistoryManager;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 import org.slf4j.Logger;
