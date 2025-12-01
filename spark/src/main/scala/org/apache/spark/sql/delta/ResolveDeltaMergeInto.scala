@@ -374,10 +374,7 @@ object ResolveDeltaMergeInto {
         val sourceExpr = source.resolve(nameParts, conf.resolver).getOrElse {
           // if we use getActions to expand target columns, this will fail on target columns not
           // present in the source
-          throw new DeltaIllegalArgumentException(
-            errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
-            messageParameters = Array(s"${UnresolvedAttribute(nameParts).name}")
-          )
+          throw DeltaErrors.cannotResolveSourceColumnException(nameParts)
         }
         Seq(
           DeltaMergeAction(
