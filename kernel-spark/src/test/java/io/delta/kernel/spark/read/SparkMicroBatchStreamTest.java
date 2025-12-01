@@ -114,6 +114,62 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   // ================================================================================================
+  // Tests for streaming options validation
+  // ================================================================================================
+
+  @Test
+  public void testValidateStreamingOptions_SupportedOptions(@TempDir File tempDir) {
+    String testPath = tempDir.getAbsolutePath();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
+
+    // Test with all allowed options together (case insensitive)
+    scala.collection.immutable.Map<String, String> supportedOptions =
+        scala.collection.immutable.Map$.MODULE$
+            .<String, String>newBuilder()
+            .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
+            .$plus$eq(scala.Tuple2.apply("MaxFilesPerTrigger", "100"))
+            .$plus$eq(scala.Tuple2.apply("MAXBYTESPERTRIGGER", "1g"))
+            .result();
+    DeltaOptions deltaOptions = new DeltaOptions(supportedOptions, spark.sessionState().conf());
+    
+    // Should not throw
+    new SparkMicroBatchStream(
+        snapshotManager, spark.sessionState().newHadoopConf(), spark, deltaOptions);
+  }
+
+  @Test
+  public void testValidateStreamingOptions_UnsupportedOptions(@TempDir File tempDir) {
+    String testPath = tempDir.getAbsolutePath();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
+
+    // Test with mix of supported and unsupported options
+    scala.collection.immutable.Map<String, String> mixedOptions =
+        scala.collection.immutable.Map$.MODULE$
+            .<String, String>newBuilder()
+            .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
+            .$plus$eq(scala.Tuple2.apply("readChangeFeed", "true"))
+            .$plus$eq(scala.Tuple2.apply("ignoreDeletes", "true"))
+            .result();
+    DeltaOptions deltaOptions = new DeltaOptions(mixedOptions, spark.sessionState().conf());
+
+    UnsupportedOperationException exception =
+        assertThrows(
+            UnsupportedOperationException.class,
+            () ->
+                new SparkMicroBatchStream(
+                    snapshotManager, spark.sessionState().newHadoopConf(), spark, deltaOptions));
+
+    // Verify unsupported options are in the error message
+    String message = exception.getMessage();
+    assertEquals(true, message.contains("readChangeFeed"));
+    assertEquals(true, message.contains("ignoreDeletes"));
+    // Supported option should not be in the error message
+    assertEquals(false, message.contains("startingVersion"));
+  }
+
+  // ================================================================================================
   // Tests for getFileChanges parity between DSv1 and DSv2
   // ================================================================================================
 

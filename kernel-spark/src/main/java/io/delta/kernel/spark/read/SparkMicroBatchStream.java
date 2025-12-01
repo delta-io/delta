@@ -56,6 +56,13 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       Collections.unmodifiableSet(
           new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE)));
 
+  private static final Set<String> ALLOWED_STREAMING_OPTIONS =
+      Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList(
+              DeltaOptions.STARTING_VERSION_OPTION().toLowerCase(),
+              DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION().toLowerCase(),
+              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION().toLowerCase())));
+
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
@@ -76,10 +83,33 @@ public class SparkMicroBatchStream implements MicroBatchStream {
       Configuration hadoopConf,
       SparkSession spark,
       DeltaOptions options) {
+    // Validate that only allowed streaming options are used
+    validateStreamingOptions(options);
+    
     this.spark = spark;
     this.snapshotManager = snapshotManager;
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = options;
+  }
+
+
+  private static void validateStreamingOptions(DeltaOptions deltaOptions) {
+    List<String> unsupportedOptions = new ArrayList<>();
+    scala.collection.Iterator<String> keysIterator = deltaOptions.options().keysIterator();
+
+    while (keysIterator.hasNext()) {
+      String key = keysIterator.next();
+      if (!ALLOWED_STREAMING_OPTIONS.contains(key.toLowerCase())) {
+        unsupportedOptions.add(key);
+      }
+    }
+
+    if (!unsupportedOptions.isEmpty()) {
+      throw new UnsupportedOperationException(
+              String.format(
+                      "The following streaming options are not supported: %s. ",
+                      String.join(", ", unsupportedOptions)));
+    }
   }
 
   ////////////
