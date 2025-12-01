@@ -19,12 +19,14 @@ package io.delta.kernel.internal.commitrange;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.TableChangesUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
@@ -96,13 +98,32 @@ public class CommitRangeImpl implements CommitRange {
   @Override
   public CloseableIterator<ColumnarBatch> getActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    validateParameters(engine, startSnapshot, actionSet);
+    // Build on top of getCommitActions() by flattening and adding version/timestamp columns
+    CloseableIterator<CommitActions> commits = getCommitActions(engine, startSnapshot, actionSet);
+
+    return TableChangesUtils.flattenCommitsAndAddMetadata(engine, commits);
+  }
+
+  @Override
+  public CloseableIterator<CommitActions> getCommitActions(
+      Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    validateParameters(engine, startSnapshot, actionSet);
+    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+        engine, dataPath.toString(), getDeltaFiles(), actionSet);
+  }
+
+  //////////////////////
+  // Private helpers //
+  //////////////////////
+
+  private void validateParameters(
+      Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     requireNonNull(engine, "engine cannot be null");
     requireNonNull(startSnapshot, "startSnapshot cannot be null");
     requireNonNull(actionSet, "actionSet cannot be null");
     checkArgument(
         startSnapshot.getVersion() == startVersion,
         "startSnapshot must have version = startVersion");
-    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
-        engine, dataPath.toString(), getDeltaFiles(), actionSet);
   }
 }

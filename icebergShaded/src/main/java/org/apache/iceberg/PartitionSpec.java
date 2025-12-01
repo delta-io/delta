@@ -40,6 +40,7 @@ import org.apache.iceberg.transforms.Transform;
 import org.apache.iceberg.transforms.Transforms;
 import org.apache.iceberg.transforms.UnknownTransform;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.StructType;
 
@@ -49,7 +50,7 @@ import org.apache.iceberg.types.Types.StructType;
  * <p>Partition data is produced by transforming columns in a table. Each column transform is
  * represented by a named {@link PartitionField}.
  *
- * This class is directly copied from iceberg repo; The only change is this sets checkConflicts
+ * This class is directly copied from iceberg repo 1.10.0; The only change is this sets checkConflicts
  * to false by default for partition spec converted from Delta to honor the field id assigned by Delta
  */
 public class PartitionSpec implements Serializable {
@@ -134,6 +135,12 @@ public class PartitionSpec implements Serializable {
           for (PartitionField field : fields) {
             Type sourceType = schema.findType(field.sourceId());
             Type resultType = field.transform().getResultType(sourceType);
+
+            // When the source field has been dropped we cannot determine the type
+            if (sourceType == null) {
+              resultType = Types.UnknownType.get();
+            }
+
             structFields.add(Types.NestedField.optional(field.fieldId(), field.name(), resultType));
           }
 
@@ -373,7 +380,7 @@ public class PartitionSpec implements Serializable {
     private final AtomicInteger lastAssignedFieldId =
         new AtomicInteger(unpartitionedLastAssignedId());
     // check if there are conflicts between partition and schema field name
-    // HACK HACK: disable checkConflicts for partition spec converted from Delta
+    // HACK-HACK: disable checkConflicts for partition spec converted from Delta
     // to honor the field id assigned by Delta
     private boolean checkConflicts = false;
     private boolean caseSensitive = true;
@@ -454,7 +461,7 @@ public class PartitionSpec implements Serializable {
       return sourceColumn;
     }
 
-    Builder identity(String sourceName, String targetName) {
+    public Builder identity(String sourceName, String targetName) {
       return identity(findSourceColumn(sourceName), targetName);
     }
 
@@ -618,8 +625,12 @@ public class PartitionSpec implements Serializable {
     }
 
     public PartitionSpec build() {
+      return build(false);
+    }
+
+    public PartitionSpec build(boolean allowMissingFields) {
       PartitionSpec spec = buildUnchecked();
-      checkCompatibility(spec, schema);
+      checkCompatibility(spec, schema, allowMissingFields);
       return spec;
     }
 
@@ -629,9 +640,18 @@ public class PartitionSpec implements Serializable {
   }
 
   static void checkCompatibility(PartitionSpec spec, Schema schema) {
+    checkCompatibility(spec, schema, false);
+  }
+
+  static void checkCompatibility(PartitionSpec spec, Schema schema, boolean allowMissingFields) {
+    final Map<Integer, Integer> parents = TypeUtil.indexParents(schema.asStruct());
     for (PartitionField field : spec.fields) {
       Type sourceType = schema.findType(field.sourceId());
       Transform<?, ?> transform = field.transform();
+      // In the case the underlying field is dropped, we cannot check if they are compatible
+      if (allowMissingFields && sourceType == null) {
+        continue;
+      }
       // In the case of a Version 1 partition-spec field gets deleted,
       // it is replaced with a void transform, see:
       // https://iceberg.apache.org/spec/#partition-transforms
@@ -649,6 +669,15 @@ public class PartitionSpec implements Serializable {
             "Invalid source type %s for transform: %s",
             sourceType,
             transform);
+        // The only valid parent types for a PartitionField are StructTypes. This must be checked
+        // recursively.
+        Integer parentId = parents.get(field.sourceId());
+        while (parentId != null) {
+          Type parentType = schema.findType(parentId);
+          ValidationException.check(
+              parentType.isStructType(), "Invalid partition field parent: %s", parentType);
+          parentId = parents.get(parentId);
+        }
       }
     }
   }
@@ -662,4 +691,3 @@ public class PartitionSpec implements Serializable {
     return true;
   }
 }
-

@@ -82,11 +82,8 @@ public class TableFeatures {
     }
   }
 
-  // TODO: [delta-io/delta#4763] Support `catalogManaged` when the RFC is formally accepted into the
-  //       protocol.
-
-  public static final TableFeature CATALOG_MANAGED_R_W_FEATURE_PREVIEW =
-      new CatalogManagedFeatureBase("catalogOwned-preview");
+  public static final TableFeature CATALOG_MANAGED_RW_FEATURE =
+      new CatalogManagedFeatureBase("catalogManaged");
 
   private static class CatalogManagedFeatureBase extends TableFeature.ReaderWriterFeature {
     CatalogManagedFeatureBase(String featureName) {
@@ -452,6 +449,19 @@ public class TableFeatures {
     }
   }
 
+  /**
+   * Support reading / metadata writes on tables with the feature. Don't support writing new data
+   * rows with default values. Don't allow updating the types of columns with default values.
+   */
+  public static final TableFeature ALLOW_COLUMN_DEFAULTS_W_FEATURE =
+      new AllowColumnDefaultsTableFeature();
+
+  private static class AllowColumnDefaultsTableFeature extends TableFeature.WriterFeature {
+    AllowColumnDefaultsTableFeature() {
+      super("allowColumnDefaults", /* minWriterVersion = */ 7);
+    }
+  }
+
   public static final TableFeature ICEBERG_WRITER_COMPAT_V1 = new IcebergWriterCompatV1();
 
   private static class IcebergWriterCompatV1 extends TableFeature.WriterFeature
@@ -504,8 +514,9 @@ public class TableFeatures {
   public static final List<TableFeature> TABLE_FEATURES =
       Collections.unmodifiableList(
           Arrays.asList(
+              ALLOW_COLUMN_DEFAULTS_W_FEATURE,
               APPEND_ONLY_W_FEATURE,
-              CATALOG_MANAGED_R_W_FEATURE_PREVIEW,
+              CATALOG_MANAGED_RW_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
               CLUSTERING_W_FEATURE,
@@ -712,7 +723,7 @@ public class TableFeatures {
   /////////////////////////////
 
   public static boolean isCatalogManagedSupported(Protocol protocol) {
-    return protocol.supportsFeature(CATALOG_MANAGED_R_W_FEATURE_PREVIEW);
+    return protocol.supportsFeature(CATALOG_MANAGED_RW_FEATURE);
   }
 
   public static boolean isRowTrackingSupported(Protocol protocol) {

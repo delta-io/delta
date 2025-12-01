@@ -554,7 +554,7 @@ object DropTableFeatureUtils extends DeltaLogging {
 
     def checkpointAndVerify(snapshot: Snapshot): Boolean = {
       try {
-        log.checkpoint(snapshot)
+        table.checkpoint(snapshot)
         log.checkpointExistsAtVersion(snapshot.version)
       } catch {
         case NonFatal(e) =>
@@ -588,7 +588,7 @@ object DropTableFeatureUtils extends DeltaLogging {
     if (retryOnFailure) {
       createCheckpointWithRetries(table, emptyCommitTS)
     } else {
-      log.checkpoint(table.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+      table.checkpoint(table.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
       true
     }
   }

@@ -20,13 +20,13 @@ import java.util
 
 import scala.collection.JavaConverters._
 
-import org.apache.iceberg.MetadataColumns
-import org.apache.iceberg.Schema
-import org.apache.iceberg.relocated.com.google.common.collect.Lists
-import org.apache.iceberg.types.Type
-import org.apache.iceberg.types.Type.TypeID._
-import org.apache.iceberg.types.Types
-import org.apache.iceberg.types.TypeUtil
+import shadedForDelta.org.apache.iceberg.MetadataColumns
+import shadedForDelta.org.apache.iceberg.Schema
+import shadedForDelta.org.apache.iceberg.relocated.com.google.common.collect.Lists
+import shadedForDelta.org.apache.iceberg.types.Type
+import shadedForDelta.org.apache.iceberg.types.Type.TypeID._
+import shadedForDelta.org.apache.iceberg.types.Types
+import shadedForDelta.org.apache.iceberg.types.TypeUtil
 
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.BinaryType

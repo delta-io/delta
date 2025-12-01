@@ -40,43 +40,38 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.18"
-val scala213 = "2.13.13"
-val all_scala_versions = Seq(scala212, scala213)
+val scala213 = "2.13.16"
+val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
-// sbt 'set default_scala_version := 2.13.13' [commands]
+// sbt 'set default_scala_version := 2.13.16' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala212
+Global / default_scala_version := scala213
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
-val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
+// Scala version to use for all projects
+scalaVersion := default_scala_version.value
+
+// crossScalaVersions must be set to Nil on the root project to avoid conflicts
+crossScalaVersions := Nil
+
+val internalModuleNames = settingKey[Set[String]]("Internal module artifact names to exclude from POM")
+
+// Spark version to delta-spark and its dependent modules
+// For more information see CrossSparkVersions.scala
 val sparkVersion = settingKey[String]("Spark version")
-spark / sparkVersion := getSparkVersion()
-kernelSpark / sparkVersion := getSparkVersion()
-connectCommon / sparkVersion := getSparkVersion()
-connectClient / sparkVersion := getSparkVersion()
-connectServer / sparkVersion := getSparkVersion()
-sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
-val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
+val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
-
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-
-scalaVersion := default_scala_version.value
-
-// crossScalaVersions must be set to Nil on the root project
-crossScalaVersions := Nil
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
@@ -85,36 +80,6 @@ Global / targetJvm := "11"
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
 lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
-/**
- * Returns the current spark version, which is the same value as `sparkVersion.value`.
- *
- * This logic exists in a separate method because some call sites cannot access `sparkVersion.value`
- * e.g. callers that are not inside tasks or setting macros.
- */
-def getSparkVersion(): String = {
-  val latestReleasedSparkVersionShort = getMajorMinorPatch(LATEST_RELEASED_SPARK_VERSION) match {
-    case (maj, min, _) => s"$maj.$min"
-  }
-  val allValidSparkVersionInputs = Seq(
-    "master",
-    "latest",
-    SPARK_MASTER_VERSION,
-    LATEST_RELEASED_SPARK_VERSION,
-    latestReleasedSparkVersionShort
-  )
-
-  // e.g. build/sbt -DsparkVersion=master, build/sbt -DsparkVersion=4.0.0-SNAPSHOT
-  val input = sys.props.getOrElse("sparkVersion", LATEST_RELEASED_SPARK_VERSION)
-  input match {
-    case LATEST_RELEASED_SPARK_VERSION | "latest" | `latestReleasedSparkVersionShort` =>
-      LATEST_RELEASED_SPARK_VERSION
-    case SPARK_MASTER_VERSION | "master" =>
-      SPARK_MASTER_VERSION
-    case _ =>
-      throw new IllegalArgumentException(s"Invalid sparkVersion: $input. Must be one of " +
-          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
-  }
-}
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
@@ -184,67 +149,19 @@ def scalafmtCheckSettings(): Seq[Def.Setting[Task[CompileAnalysis]]] = Seq(
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
  *       setting macro.
  */
-def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
-  case LATEST_RELEASED_SPARK_VERSION => Seq(
-    scalaVersion := default_scala_version.value,
-    crossScalaVersions := all_scala_versions,
-    targetJvm := "11",
-    // For adding staged Spark RC versions, e.g.:
-    // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
-    Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
-    Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
-    Antlr4 / antlr4Version := "4.9.3",
-    Test / javaOptions ++= Seq("-Dlog4j.configurationFile=log4j2.properties"),
-
-    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
-  )
-
-  case SPARK_MASTER_VERSION => Seq(
-    scalaVersion := scala213,
-    crossScalaVersions := Seq(scala213),
-    targetJvm := "17",
-    Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
-    Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
-    Antlr4 / antlr4Version := "4.13.1",
-    Test / javaOptions ++= Seq(
-      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
-      "--add-opens=java.base/java.lang=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens=java.base/java.io=ALL-UNNAMED",
-      "--add-opens=java.base/java.net=ALL-UNNAMED",
-      "--add-opens=java.base/java.nio=ALL-UNNAMED",
-      "--add-opens=java.base/java.util=ALL-UNNAMED",
-      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
-      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
-      "-Dlog4j.configurationFile=log4j2_spark_master.properties"
-    ),
-    // For Delta Connect tests we create a Spark Distribution from the classpath. For this to work
-    // dependencies on other modules need to be exposed as a JAR, and not as a directory of classes.
-    exportJars := true,
-    // Java-/Scala-/Uni-Doc Settings
-    // This isn't working yet against Spark Master.
-    // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
-    //    generating delta-spark unidoc compiles delta-iceberg
-    // 2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
-    //    issue above.
-  )
-}
-
 def runTaskOnlyOnSparkMaster[T](
     task: sbt.TaskKey[T],
     taskName: String,
     projectName: String,
     emptyValue: => T): Def.Initialize[Task[T]] = {
-  if (getSparkVersion() == SPARK_MASTER_VERSION) {
+  if (CrossSparkVersions.getSparkVersionSpec().isMaster) {
     Def.task(task.value)
   } else {
     Def.task {
       // scalastyle:off println
+      val masterVersion = SparkVersionSpec.MASTER.map(_.fullVersion).getOrElse("(no master version configured)")
       println(s"Project $projectName: Skipping `$taskName` as Spark version " +
-        s"${getSparkVersion()} does not equal $SPARK_MASTER_VERSION.")
+        s"${CrossSparkVersions.getSparkVersion()} does not equal $masterVersion.")
       // scalastyle:on println
       emptyValue
     }
@@ -256,9 +173,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
   .settings(
     name := "delta-connect-common",
     commonSettings,
-    crossSparkSettings(),
-    // iceberg-core 1.8.0 brings jackson 2.18.2 thus force upgrade
-    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
@@ -299,6 +214,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
     name := "delta-connect-client",
     commonSettings,
     releaseSettings,
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -317,7 +233,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
       projectName = "delta-connect-client",
       emptyValue = ()
     ).value,
-    crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -333,7 +248,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
       if (!distributionDir.exists()) {
         val jarsDir = distributionDir / "jars"
         IO.createDirectory(jarsDir)
-        // Create symlinks for all dependencies.
+        // Create symlinks for all dependencies
         serverClassPath.distinct.foreach { entry =>
           val jarFile = entry.data.toPath
           val linkedJarFile = jarsDir / entry.data.getName
@@ -361,6 +276,15 @@ lazy val connectServer = (project in file("spark-connect/server"))
     name := "delta-connect-server",
     commonSettings,
     releaseSettings,
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -379,7 +303,6 @@ lazy val connectServer = (project in file("spark-connect/server"))
       projectName = "delta-connect-server",
       emptyValue = ()
     ).value,
-    crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
@@ -413,6 +336,7 @@ lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
     name := "delta-suite-generator",
     commonSettings,
     scalaStyleSettings,
+    skipReleaseSettings, // Internal module - not published to Maven
     libraryDependencies ++= Seq(
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.11.0",
       "org.scalameta" %% "scalameta" % "4.13.5",
@@ -425,17 +349,29 @@ lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
     Test / baseDirectory := (ThisBuild / baseDirectory).value,
   )
 
-lazy val spark = (project in file("spark"))
+// ============================================================
+// Spark Module 1: sparkV1 (prod code only, no tests)
+// ============================================================
+lazy val sparkV1 = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
-    name := "delta-spark",
+    name := "delta-spark-v1",
     commonSettings,
     scalaStyleSettings,
-    sparkMimaSettings,
-    releaseSettings,
-    crossSparkSettings(),
+    skipReleaseSettings, // Internal module - not published to Maven
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+
+    // Export as JAR instead of classes directory. This prevents dependent projects
+    // (e.g., connectServer) from seeing multiple 'classes' directories with the same
+    // name in their classpath, which would cause FileAlreadyExistsException.
+    exportJars := true,
+
+    // Tests are compiled in the final 'spark' module to avoid circular dependencies
+    Test / sources := Seq.empty,
+    Test / resources := Seq.empty,
+
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -462,6 +398,234 @@ lazy val spark = (project in file("spark"))
     Antlr4 / antlr4GenListener := true,
     Antlr4 / antlr4GenVisitor := true,
 
+    // Introduced in https://github.com/delta-io/delta/commit/d2990624d34b6b86fa5cf230e00a89b095fde254
+    //
+    // Hack to avoid errors related to missing repo-root/target/scala-2.13/classes/
+    // In multi-module sbt projects, some dependencies may attempt to locate this directory
+    // at the repository root, causing build failures if it doesn't exist.
+    createTargetClassesDir := {
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.13" / "classes"
+      Files.createDirectories(dir.toPath)
+    },
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
+    // Generate the package object to provide the version information in runtime.
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "package.scala"
+      IO.write(file,
+        s"""package io
+           |
+           |package object delta {
+           |  val VERSION = "${version.value}"
+           |}
+           |""".stripMargin)
+      Seq(file)
+    },
+  )
+
+// ============================================================
+// Spark Module 2: sparkV1Filtered (v1 without DeltaLog for v2 dependency)
+// This filtered version of sparkV1 is needed because sparkV2 (kernel-spark) depends on some
+// V1 classes for utilities and common functionality, but must NOT have access to DeltaLog,
+// Snapshot, OptimisticTransaction, or actions that belongs to core V1 delta libraries.
+// We should use Kernel as the Delta implementation.
+// ============================================================
+lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
+  .dependsOn(sparkV1)
+  .dependsOn(storage)
+  .settings(
+    name := "delta-spark-v1-filtered",
+    commonSettings,
+    skipReleaseSettings, // Internal module - not published to Maven
+    exportJars := true,  // Export as JAR to avoid classpath conflicts
+
+    // No source code - just repackage sparkV1 without DeltaLog classes
+    Compile / sources := Seq.empty,
+    Test / sources := Seq.empty,
+
+    // Repackage sparkV1 jar but exclude DeltaLog and related classes
+    Compile / packageBin / mappings := {
+      val v1Mappings = (sparkV1 / Compile / packageBin / mappings).value
+
+      // Filter out DeltaLog, Snapshot, OptimisticTransaction, and actions.scala classes
+      v1Mappings.filterNot { case (file, path) =>
+        path.contains("org/apache/spark/sql/delta/DeltaLog") ||
+        path.contains("org/apache/spark/sql/delta/Snapshot") ||
+        path.contains("org/apache/spark/sql/delta/OptimisticTransaction") ||
+        path.contains("org/apache/spark/sql/delta/actions/actions")
+      }
+    },
+  )
+
+// ============================================================
+// Spark Module 3: sparkV2 (kernel-spark based, depends on v1-filtered)
+// ============================================================
+lazy val sparkV2 = (project in file("kernel-spark"))
+  .dependsOn(sparkV1Filtered)
+  .dependsOn(kernelDefaults)
+  .dependsOn(goldenTables % "test")
+  .settings(
+    name := "delta-spark-v2",
+    commonSettings,
+    javafmtCheckSettings,
+    skipReleaseSettings, // Internal module - not published to Maven
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    exportJars := true,  // Export as JAR to avoid classpath conflicts
+
+    Test / javaOptions ++= Seq("-ea"),
+    // make sure shaded kernel-api jar exists before compiling/testing
+    Compile / compile := (Compile / compile)
+      .dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test := (Test / test)
+      .dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+    Compile / unmanagedJars ++= Seq(
+      (kernelApi / Compile / packageBin).value
+    ),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+
+      // Test dependencies
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+      // Spark test classes for Scala/Java test utilities
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      // ScalaTest for test utilities (needed by Spark test classes)
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
+    ),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+  )
+
+
+// ============================================================
+// Spark Module 4: delta-spark (final published module - unified v1+v2)
+// ============================================================
+lazy val spark = (project in file("spark-unified"))
+  .dependsOn(sparkV1)
+  .dependsOn(sparkV2)
+  .dependsOn(storage)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
+  .settings (
+    name := "delta-spark",
+    commonSettings,
+    scalaStyleSettings,
+    sparkMimaSettings,
+    releaseSettings, // Published to Maven as delta-spark.jar
+
+    // Set Test baseDirectory before sparkDependentSettings() so it uses the correct directory
+    Test / baseDirectory := (sparkV1 / baseDirectory).value,
+
+    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory
+    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
+    Test / unmanagedSourceDirectories := {
+      val sparkDir = (sparkV1 / baseDirectory).value
+      val unifiedDir = baseDirectory.value
+      Seq(
+        sparkDir / "src" / "test" / "scala",
+        sparkDir / "src" / "test" / "java",
+        unifiedDir / "src" / "test" / "scala",
+        unifiedDir / "src" / "test" / "java"
+      )
+    },
+    Test / unmanagedResourceDirectories := Seq(
+      (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
+      baseDirectory.value / "src" / "test" / "resources"
+    ),
+
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+
+    // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
+    mimaCurrentClassfiles := (Compile / packageBin).value,
+
+    // Export as JAR to dependent projects (e.g., connectServer, connectClient).
+    // This prevents classpath conflicts from internal module 'classes' directories.
+    exportJars := true,
+
+    // Internal module artifact names to exclude from published POM
+    internalModuleNames := Set("delta-spark-v1", "delta-spark-v1-shaded", "delta-spark-v2"),
+
+    // Merge classes from internal modules (v1, v2) into final JAR
+    // kernel modules are kept as separate JARs and listed as dependencies in POM
+    Compile / packageBin / mappings ++= {
+      val log = streams.value.log
+
+      // Collect mappings from internal modules
+      val v1Mappings = (sparkV1 / Compile / packageBin / mappings).value
+      val v2Mappings = (sparkV2 / Compile / packageBin / mappings).value
+
+      // Include Python files (from spark/ directory)
+      val pythonMappings = listPythonFiles(baseDirectory.value.getParentFile / "python")
+
+      // Combine all mappings
+      val allMappings = v1Mappings ++ v2Mappings ++ pythonMappings
+
+      // Detect duplicate class files
+      val classFiles = allMappings.filter(_._2.endsWith(".class"))
+      val duplicates = classFiles.groupBy(_._2).filter(_._2.size > 1)
+
+      if (duplicates.nonEmpty) {
+        log.error(s"Found ${duplicates.size} duplicate class(es) in packageBin mappings:")
+        duplicates.foreach { case (className, entries) =>
+          log.error(s"  - $className:")
+          entries.foreach { case (file, path) => log.error(s"      from: $file") }
+        }
+        sys.error("Duplicate classes found. This indicates overlapping code between sparkV1, sparkV2, and storage modules.")
+      }
+
+      allMappings.distinct
+    },
+
+    // Exclude internal modules from published POM
+    pomPostProcess := { node =>
+      val internalModules = internalModuleNames.value
+      import scala.xml._
+      import scala.xml.transform._
+      new RuleTransformer(new RewriteRule {
+        override def transform(n: Node): Seq[Node] = n match {
+          case e: Elem if e.label == "dependency" =>
+            val artifactId = (e \ "artifactId").text
+            // Check if artifactId starts with any internal module name
+            // (e.g., "delta-spark-v1_4.1_2.13" starts with "delta-spark-v1")
+            val isInternal = internalModules.exists(module => artifactId.startsWith(module))
+            if (isInternal) Seq.empty else Seq(n)
+          case _ => Seq(n)
+        }
+      }).transform(node).head
+    },
+
+    pomIncludeRepository := { _ => false },
+
+    // Filter internal modules from project dependencies
+    // This works together with pomPostProcess to ensure internal modules
+    // (sparkV1, sparkV2, sparkV1Filtered) are not listed as dependencies in POM
+    projectDependencies := {
+      val internalModules = internalModuleNames.value
+      projectDependencies.value.filterNot(dep => internalModules.contains(dep.name))
+    },
+
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.mockito" % "mockito-inline" % "4.11.0" % "test",
+    ),
+
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
 
@@ -485,29 +649,11 @@ lazy val spark = (project in file("spark"))
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
 
-    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
-    createTargetClassesDir := {
-      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
-      Files.createDirectories(dir.toPath)
-    },
-    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
-    // Generate the package object to provide the version information in runtime.
-    Compile / sourceGenerators += Def.task {
-      val file = (Compile / sourceManaged).value / "io" / "delta" / "package.scala"
-      IO.write(file,
-        s"""package io
-           |
-           |package object delta {
-           |  val VERSION = "${version.value}"
-           |}
-           |""".stripMargin)
-      Seq(file)
-    },
     TestParallelization.settings,
   )
   .configureUnidoc(
-    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
-    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    generatedJavaDoc = CrossSparkVersions.getSparkVersionSpec().generateDocs,
+    generateScalaDoc = CrossSparkVersions.getSparkVersionSpec().generateDocs,
     // spark-connect has classes with the same name as spark-core, this causes compilation issues
     // with unidoc since it concatenates the classpaths from all modules
     // ==> thus we exclude such sources
@@ -523,6 +669,7 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -546,9 +693,13 @@ lazy val contribs = (project in file("contribs"))
       "-Xmx1024m"
     ),
 
-    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
+    // Introduced in https://github.com/delta-io/delta/commit/d2990624d34b6b86fa5cf230e00a89b095fde254
+    //
+    // Hack to avoid errors related to missing repo-root/target/scala-2.13/classes/
+    // In multi-module sbt projects, some dependencies may attempt to locate this directory
+    // at the repository root, causing build failures if it doesn't exist.
     createTargetClassesDir := {
-      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.13" / "classes"
       Files.createDirectories(dir.toPath)
     },
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
@@ -562,7 +713,7 @@ lazy val sharing = (project in file("sharing"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    crossSparkSettings(),
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -590,7 +741,17 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
+
+    // Use unique classDirectory name to avoid conflicts in connectClient test setup
+    // This allows connectClient to create symlinks without FileAlreadyExistsException
+    Compile / classDirectory := target.value / "scala-2.13" / "kernel-api-classes",
+
     Test / javaOptions ++= Seq("-ea"),
+
+    // Also publish a test-jar (classifier = "tests") so consumers (e.g. kernelDefault)
+    // can depend on test utilities via a published artifact instead of depending on raw class directories.
+    Test / publishArtifact := true,
+    Test / packageBin / artifactClassifier := Some("tests"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
@@ -600,10 +761,14 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
 
+      // JSR-305 annotations for @Nullable
+      "com.google.code.findbugs" % "jsr305" % "3.0.2",
+
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
@@ -671,8 +836,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelApi)
-  .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
   .dependsOn(goldenTables % "test")
@@ -683,10 +846,26 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
+
+    // Use unique classDirectory name to avoid conflicts in connectClient test setup
+    // This allows connectClient to create symlinks without FileAlreadyExistsException
+    Compile / classDirectory := target.value / "scala-2.13" / "kernel-defaults-classes",
+
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
+
+    // Put the shaded kernel-api JAR on the classpath (compile & test)
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
     libraryDependencies ++= Seq(
+      "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
@@ -696,7 +875,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.13.2" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
@@ -715,58 +895,53 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
-
-lazy val kernelSpark = (project in file("kernel-spark"))
-  .dependsOn(kernelApi)
-  .dependsOn(kernelDefaults)
-  .dependsOn(spark % "compile->compile")
-  .dependsOn(goldenTables % "test")
-  .settings(
-    name := "kernel-spark",
-    commonSettings,
-    javafmtCheckSettings,
-    skipReleaseSettings,
-    Test / javaOptions ++= Seq("-ea"),
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-
-      // Using released delta-spark JAR instead of module dependency to break circular dependency
-      "io.delta" %% "delta-spark" % "3.3.2" % "test",
-
-      // Spark test dependencies for QueryTest and other test utilities
-      // Spark version(3.5.6) matches delta-spark's version 3.3.2
-      "org.apache.spark" %% "spark-sql" % "3.5.6" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % "3.5.6" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % "3.5.6" % "test" classifier "tests",
-
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
-    ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
-  )
-  // TODO to enable unit doc for kernelSpark.
-
-lazy val unity = (project in file("unity"))
+lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
   .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelApi % "compile->compile;test->test")
+  .dependsOn(kernelDefaults % "test->test")
+  .dependsOn(kernelApi % "test->test")
+  .dependsOn(storage % "test->test")
+  .dependsOn(kernelUnityCatalog % "test->test")
+  .settings(
+    name := "delta-kernel-benchmarks",
+    commonSettings,
+    skipReleaseSettings,
+    exportJars := false,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
+    
+    libraryDependencies ++= Seq(
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
+    ),
+  )
+
+lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
+  .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(storage)
   .settings (
-    name := "delta-unity",
+    name := "delta-kernel-unitycatalog",
     commonSettings,
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     scalaStyleSettings,
     scalafmtCheckSettings,
+
+    // Put the shaded kernel-api JAR on the classpath (compile & test)
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
     ),
     unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
   ).configureUnidoc()
@@ -863,6 +1038,7 @@ lazy val iceberg = (project in file("iceberg"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
@@ -873,14 +1049,15 @@ lazy val iceberg = (project in file("iceberg"))
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
-    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / assemblyJarName := {
+      s"${moduleName.value}_${scalaBinaryVersion.value}-${version.value}.jar"
+    },
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyExcludedJars := {
       // Note: the input here is only `libraryDependencies` jars, not `.dependsOn(_)` jars.
       val allowedJars = Seq(
         s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
-        s"scala-library-${scala212}.jar",
         s"scala-library-${scala213}.jar",
         s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
         "caffeine-2.9.3.jar",
@@ -923,7 +1100,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-val icebergShadedVersion = "1.9.0"
+val icebergShadedVersion = "1.10.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -960,7 +1137,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll
     ),
     assembly / assemblyExcludedJars := {
-      val cp = (fullClasspath in assembly).value
+      val cp = (assembly / fullClasspath).value
       cp.filter { jar =>
         val doExclude = jar.data.getName.contains("jackson-annotations") ||
           jar.data.getName.contains("RoaringBitmap")
@@ -1338,7 +1515,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, kernelSpark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1356,7 +1533,7 @@ lazy val icebergGroup = project
   )
 
 lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefaults)
+  .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1488,8 +1665,9 @@ releaseProcess := Seq[ReleaseStep](
   runTest,
   setReleaseVersion,
   commitReleaseVersion,
-  tagRelease,
-  releaseStepCommandAndRemaining("+publishSigned"),
+  tagRelease
+) ++ CrossSparkVersions.crossSparkReleaseSteps("+publishSigned") ++ Seq[ReleaseStep](
+
   // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
   // manually.
   //

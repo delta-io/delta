@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults
 import scala.collection.immutable.Seq
-import scala.jdk.CollectionConverters.seqAsJavaListConverter
+import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row

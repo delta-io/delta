@@ -76,7 +76,7 @@ private[delta] case class IndexedFile(
     add: AddFile,
     remove: RemoveFile = null,
     cdc: AddCDCFile = null,
-    shouldSkip: Boolean = false) {
+    shouldSkip: Boolean = false) extends AdmittableFile {
 
   require(Option(add).size + Option(remove).size + Option(cdc).size <= 1,
     "IndexedFile must have at most one of add, remove, or cdc")
@@ -91,11 +91,11 @@ private[delta] case class IndexedFile(
     }
   }
 
-  def hasFileAction: Boolean = {
+  override def hasFileAction(): Boolean = {
     getFileAction != null
   }
 
-  def getFileSize: Long = {
+  override def getFileSize(): Long = {
     if (add != null) {
       add.size
     } else if (remove != null) {
@@ -690,14 +690,11 @@ trait DeltaSourceBase extends Source
       // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
       // will cause the stream to fail with a retryable exception, and the stream will restart using
       // the new schema.
-      val typeWideningMode =
-        if (typeWideningEnabled && !enableSchemaTrackingForTypeWidening) {
-          TypeWideningMode.AllTypeWidening
-        } else {
-         TypeWideningMode.NoTypeWidening
-        }
+      val allowWideningTypeChanges = typeWideningEnabled && !enableSchemaTrackingForTypeWidening
+
       if (!SchemaUtils.isReadCompatible(
-          schemaChange, schema,
+          existingSchema = schemaChange,
+          readSchema = schema,
           forbidTightenNullability = shouldForbidTightenNullability,
           // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
           // column mapping schema changes, we can allow the standard check to allow missing columns
@@ -710,7 +707,13 @@ trait DeltaSourceBase extends Source
             isStreamingFromColumnMappingTable &&
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
               backfilling,
-          typeWideningMode = typeWideningMode,
+          // When backfilling after a type change, allow processing the data using the new, wider
+          // type.
+          typeWideningMode = if (allowWideningTypeChanges && backfilling) {
+              TypeWideningMode.AllTypeWidening
+            } else {
+              TypeWideningMode.NoTypeWidening
+            },
           // Partition column change will be ignored if user enable the unsafe flag
           newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
             else newMetadata.partitionColumns,
@@ -726,10 +729,15 @@ trait DeltaSourceBase extends Source
         // and if it works (including that `schemaChange` should not tighten the nullability
         // constraint from `schema`), it is a retryable exception.
         val retryable = !backfilling && SchemaUtils.isReadCompatible(
-          schema,
-          schemaChange,
+          existingSchema = schema,
+          readSchema = schemaChange,
           forbidTightenNullability = shouldForbidTightenNullability,
-          typeWideningMode = typeWideningMode
+          // Check for widening type changes that would succeed on retry when we backfill batches.
+          typeWideningMode = if (allowWideningTypeChanges) {
+              TypeWideningMode.AllTypeWidening
+            } else {
+              TypeWideningMode.NoTypeWidening
+            }
         )
         throw DeltaErrors.schemaChangedException(
           schema,
@@ -1292,21 +1300,21 @@ case class DeltaSource(
      * This overloaded method checks if all the FileActions for a commit can be accommodated by
      * the rate limit.
      */
-    def admit(indexedFiles: Seq[IndexedFile]): Boolean = {
-      def getSize(actions: Seq[IndexedFile]): Long = {
-        actions.filter(_.hasFileAction).foldLeft(0L) { (l, r) => l + r.getFileAction.getFileSize }
+    def admit(admittableFiles: Seq[AdmittableFile]): Boolean = {
+      def getSize(actions: Seq[AdmittableFile]): Long = {
+        actions.filter(_.hasFileAction).foldLeft(0L) { (l, r) => l + r.getFileSize }
       }
-      if (indexedFiles.isEmpty) {
+      if (admittableFiles.isEmpty) {
         true
       } else {
         // if no files have been admitted, then admit all to avoid deadlock
         // else check if all of the files together satisfy the limit, only then admit
-        val bytesInFiles = getSize(indexedFiles)
+        val bytesInFiles = getSize(admittableFiles)
         val shouldAdmit = !commitProcessedInBatch ||
-          (filesToTake - indexedFiles.size >= 0 && bytesToTake - bytesInFiles >= 0)
+          (filesToTake - admittableFiles.size >= 0 && bytesToTake - bytesInFiles >= 0)
 
         commitProcessedInBatch = true
-        take(files = indexedFiles.size, bytes = bytesInFiles)
+        take(files = admittableFiles.size, bytes = bytesInFiles)
         shouldAdmit
       }
     }
@@ -1315,10 +1323,10 @@ case class DeltaSource(
      * Whether to admit the next file. Dummy IndexedFile entries with no attached file action are
      * always admitted.
      */
-    def admit(indexedFile: IndexedFile): Boolean = {
+    def admit(admittableFile: AdmittableFile): Boolean = {
       commitProcessedInBatch = true
 
-      if (!indexedFile.hasFileAction) {
+      if (!admittableFile.hasFileAction) {
         // Don't count placeholders. They are not files. If we have empty commits, then we should
         // not count the placeholders as files, or else we'll end up with under-filled batches.
         return true
@@ -1328,7 +1336,7 @@ case class DeltaSource(
       // will even admit a file when it is larger than the remaining capacity, and that we will
       // admit at least one file.
       val shouldAdmit = hasCapacity
-      take(files = 1, bytes = indexedFile.getFileAction.getFileSize)
+      take(files = 1, bytes = admittableFile.getFileSize)
       shouldAdmit
     }
 

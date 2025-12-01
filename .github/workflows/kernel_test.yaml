@@ -20,7 +20,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     env:
-      SCALA_VERSION: 2.12.18
+      SCALA_VERSION: 2.13.16
       NUM_SHARDS: 4
       DISABLE_UNIDOC: true # Another unidoc workflow will test unidoc.
       TEST_PARALLELISM_COUNT: 4

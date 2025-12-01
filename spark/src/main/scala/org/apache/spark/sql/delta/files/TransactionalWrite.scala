@@ -427,6 +427,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val constraints =
       Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
+    Constraints.validateCheckConstraints(spark, constraints, deltaLog, metadata.schema)
 
     val identityTrackerOpt = IdentityColumn.createIdentityColumnStatsTracker(
       spark,

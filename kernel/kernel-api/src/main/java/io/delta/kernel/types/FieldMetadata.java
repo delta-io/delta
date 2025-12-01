@@ -119,12 +119,17 @@ public final class FieldMetadata {
   public String toString() {
     return metadata.entrySet().stream()
         .map(
-            entry ->
-                entry.getKey()
-                    + "="
-                    + (entry.getValue().getClass().isArray()
-                        ? Arrays.toString((Object[]) entry.getValue())
-                        : entry.getValue().toString()))
+            entry -> {
+              String key = entry.getKey();
+              Object value = entry.getValue();
+              if (value == null) {
+                return key + "=null";
+              }
+              String valueStr =
+                  value.getClass().isArray() ? Arrays.toString((Object[]) value) : value.toString();
+
+              return key + "=" + valueStr;
+            })
         .collect(Collectors.joining(", ", "{", "}"));
   }
 

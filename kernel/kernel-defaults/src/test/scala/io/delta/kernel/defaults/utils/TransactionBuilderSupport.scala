@@ -303,7 +303,7 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       } else {
         Map()
       }
-      origTblProps ++ dmTblProps
+      (origTblProps ++ dmTblProps).toMap
     }
   }
 }

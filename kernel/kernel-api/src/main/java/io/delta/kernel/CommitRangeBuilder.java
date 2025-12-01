@@ -117,13 +117,11 @@ public interface CommitRangeBuilder {
      * <p>The timestamp represents a point in time, and the boundary will resolve to the appropriate
      * commit version.
      *
-     * @param timestamp the timestamp in milliseconds since epoch, must be non-negative
+     * @param timestamp the timestamp in milliseconds since epoch
      * @param latestSnapshot the latest snapshot of the table, used for timestamp resolution
      * @return a new {@code CommitBoundary} representing the specified timestamp
-     * @throws IllegalArgumentException if {@code timestamp} is negative
      */
     public static CommitBoundary atTimestamp(long timestamp, Snapshot latestSnapshot) {
-      checkArgument(timestamp >= 0, "Timestamp must be >= 0, but got: %d", timestamp);
       checkArgument(
           latestSnapshot instanceof SnapshotImpl,
           "latestSnapshot must be instance of SnapshotImpl");

@@ -48,7 +48,7 @@ class DirectoryCreationSuite extends AnyFunSuite with WriteUtils with ActionUtil
       TableManager
         .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
         .withTableProperties(Map(
-          "delta.feature.catalogOwned-preview" -> "supported",
+          "delta.feature.catalogManaged" -> "supported",
           "delta.checkpointPolicy" -> "v2").asJava)
         .withCommitter(committerUsingPutIfAbsent)
         .build(engine)
@@ -79,7 +79,7 @@ class DirectoryCreationSuite extends AnyFunSuite with WriteUtils with ActionUtil
         .build(engine)
         .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
         .withTablePropertiesAdded(Map(
-          "delta.feature.catalogOwned-preview" -> "supported",
+          "delta.feature.catalogManaged" -> "supported",
           "delta.checkpointPolicy" -> "v2").asJava)
         .build(engine)
         .commit(engine, emptyIterable())
@@ -100,10 +100,10 @@ class DirectoryCreationSuite extends AnyFunSuite with WriteUtils with ActionUtil
       TableFeatures.TABLE_FEATURES_MIN_READER_VERSION,
       TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION,
       Set(
-        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName(),
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName(),
         TableFeatures.CHECKPOINT_V2_RW_FEATURE.featureName()).asJava,
       Set(
-        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName(),
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName(),
         TableFeatures.CHECKPOINT_V2_RW_FEATURE.featureName(),
         TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()).asJava)
 

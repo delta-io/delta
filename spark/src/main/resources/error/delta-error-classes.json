@@ -53,6 +53,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_AGGREGATE_IN_CHECK_CONSTRAINT" : {
+    "message" : [
+      "Found <sqlExpr> in a CHECK constraint. Aggregate expressions are not allowed in CHECK constraints."
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_AGGREGATE_IN_GENERATED_COLUMN" : {
     "message" : [
       "Found <sqlExpr>. A generated column cannot use an aggregate expression"
@@ -1469,6 +1475,12 @@
     ],
     "sqlState" : "42K05"
   },
+  "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES" : {
+    "message" : [
+      "Found <colName> in CHECK constraint. A check constraint cannot use a non-existent column."
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_INVALID_CLONE_PATH" : {
     "message" : [
       "The target location for CLONE needs to be an absolute path or table name. Use an",
@@ -1894,6 +1906,12 @@
     ],
     "sqlState" : "42621"
   },
+  "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_CHECK_CONSTRAINT" : {
+    "message" : [
+      "Found <expr> in a CHECK constraint. A CHECK constraint cannot use a nondeterministic expression."
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN" : {
     "message" : [
       "Found <expr>. A generated column cannot use a non deterministic expression."
@@ -2186,6 +2204,12 @@
       "Unable to upgrade only the reader protocol version to use table features. Writer protocol version must be at least <writerVersion> to proceed. Refer to <docLink> for more information on table protocol versions."
     ],
     "sqlState" : "KD004"
+  },
+  "DELTA_READ_SOURCE_SCHEMA_CONFLICT" : {
+    "message" : [
+      "The schema provided for the source read doesn't match the schema of the Delta table"
+    ],
+    "sqlState" : "42K07"
   },
   "DELTA_READ_TABLE_WITHOUT_COLUMNS" : {
     "message" : [
@@ -2599,6 +2623,13 @@
     ],
     "sqlState" : "428GU"
   },
+  "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION" : {
+    "message" : [
+      "The provided timestamp (<userTimestamp>) is before the earliest version available to",
+      "this table (<commitTs>). Please use a timestamp after <timestampString>."
+    ],
+    "sqlState" : "42816"
+  },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [
       "The provided timestamp (<providedTimestamp>) is after the latest version available to this",
@@ -2636,6 +2667,12 @@
       "<mismatchStringOpt>"
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_UDF_IN_CHECK_CONSTRAINT" : {
+    "message" : [
+      "Found <expr> in a CHECK constraint. A CHECK constraint cannot use a user-defined function."
+    ],
+    "sqlState" : "42621"
   },
   "DELTA_UDF_IN_GENERATED_COLUMN" : {
     "message" : [
@@ -2897,6 +2934,12 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT" : {
+    "message" : [
+      "Found <expression> in a CHECK constraint. <expression> cannot be used in a CHECK constraint."
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
     "message" : [
       "<expression> cannot be used in a generated column"
@@ -3110,6 +3153,12 @@
       "The provided version (<version>) is not a valid version."
     ],
     "sqlState" : "42815"
+  },
+  "DELTA_VERSION_NOT_FOUND" : {
+    "message" : [
+      "Cannot time travel Delta table to version <userVersion>. Available versions: [<earliest>, <latest>]."
+    ],
+    "sqlState" : "22003"
   },
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
     "message" : [
