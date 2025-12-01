@@ -47,17 +47,25 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   private static final Logger logger = LoggerFactory.getLogger(CatalogManagedSnapshotManager.class);
 
   private final ManagedCatalogAdapter catalogAdapter;
+  private final String tableId;
+  private final String tablePath;
   private final Engine kernelEngine;
 
-  public CatalogManagedSnapshotManager(ManagedCatalogAdapter catalogAdapter, Configuration hadoopConf) {
+  public CatalogManagedSnapshotManager(
+      ManagedCatalogAdapter catalogAdapter,
+      String tableId,
+      String tablePath,
+      Configuration hadoopConf) {
     this.catalogAdapter = requireNonNull(catalogAdapter, "catalogAdapter is null");
+    this.tableId = requireNonNull(tableId, "tableId is null");
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
     requireNonNull(hadoopConf, "hadoopConf is null");
 
     this.kernelEngine = DefaultEngine.create(hadoopConf);
     logger.info(
         "Created CatalogManagedSnapshotManager for table {} at path {}",
-        catalogAdapter.getTableId(),
-        catalogAdapter.getTablePath());
+        tableId,
+        tablePath);
   }
 
   /** Loads the latest snapshot of the catalog-managed Delta table. */
@@ -193,10 +201,9 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   public void close() {
     try {
       catalogAdapter.close();
-      logger.info("Closed CatalogManagedSnapshotManager for table {}", catalogAdapter.getTableId());
+      logger.info("Closed CatalogManagedSnapshotManager for table {}", tableId);
     } catch (Exception e) {
-      logger.warn(
-          "Error closing catalog-managed client for table {}", catalogAdapter.getTableId(), e);
+      logger.warn("Error closing catalog-managed client for table {}", tableId, e);
     }
   }
 }

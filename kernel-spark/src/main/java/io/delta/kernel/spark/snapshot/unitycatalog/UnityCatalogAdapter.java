@@ -23,24 +23,21 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.spark.snapshot.ManagedCatalogAdapter;
-import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClientFactory$;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
-import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
 
 /** UC-backed implementation of {@link ManagedCatalogAdapter}. */
 public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
@@ -58,31 +55,45 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
   }
 
   /**
-   * Builds a UC-backed {@link ManagedCatalogAdapter} for a UC-managed table.
+   * Creates adapter from Spark catalog table (convenience method).
    *
-   * @throws IllegalArgumentException if the table lacks UC identifiers or catalog config is missing
+   * <p>Extracts UC connection info from Spark metadata and delegates to {@link
+   * #fromConnectionInfo}.
+   *
+   * @param catalogTable Spark catalog table metadata
+   * @param spark SparkSession for resolving Unity Catalog configurations
+   * @return adapter if table is UC-managed, empty otherwise
+   * @throws IllegalArgumentException if table is UC-managed but configuration is invalid
    */
   public static Optional<ManagedCatalogAdapter> fromCatalog(
       CatalogTable catalogTable, SparkSession spark) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
 
-    if (!CatalogTableUtils.isUnityCatalogManagedTable(catalogTable)) {
-      return Optional.empty();
-    }
-
-    String tableId = extractUCTableId(catalogTable);
-    String tablePath = extractTablePath(catalogTable);
-    UCClient client = createUCClient(catalogTable, spark);
-    return Optional.of(new UnityCatalogAdapter(tableId, tablePath, client));
+    return SparkUnityCatalogUtils.extractConnectionInfo(catalogTable, spark)
+        .map(UnityCatalogAdapter::fromConnectionInfo);
   }
 
-  @Override
+  /**
+   * Creates adapter from connection info (no Spark dependency).
+   *
+   * <p>This method allows creating a UC adapter without Spark dependencies if you have connection
+   * information directly.
+   *
+   * @param info Unity Catalog connection information
+   * @return adapter instance
+   */
+  public static ManagedCatalogAdapter fromConnectionInfo(UnityCatalogConnectionInfo info) {
+    requireNonNull(info, "info is null");
+    UCClient client =
+        UCTokenBasedRestClientFactory$.MODULE$.createUCClient(info.getEndpoint(), info.getToken());
+    return new UnityCatalogAdapter(info.getTableId(), info.getTablePath(), client);
+  }
+
   public String getTableId() {
     return tableId;
   }
 
-  @Override
   public String getTablePath() {
     return tablePath;
   }
@@ -157,56 +168,5 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
       org.apache.hadoop.fs.FileStatus hadoopFS) {
     return io.delta.kernel.utils.FileStatus.of(
         hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
-  }
-
-  private static String extractUCTableId(CatalogTable catalogTable) {
-    Map<String, String> storageProperties =
-        scala.collection.JavaConverters.mapAsJavaMap(catalogTable.storage().properties());
-
-    String ucTableId =
-        storageProperties.get(
-            io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
-    if (ucTableId == null || ucTableId.isEmpty()) {
-      throw new IllegalArgumentException(
-          "Cannot extract ucTableId from table " + catalogTable.identifier());
-    }
-    return ucTableId;
-  }
-
-  private static String extractTablePath(CatalogTable catalogTable) {
-    if (catalogTable.location() == null) {
-      throw new IllegalArgumentException(
-          "Cannot extract table path: location is null for table " + catalogTable.identifier());
-    }
-    return catalogTable.location().toString();
-  }
-
-  private static UCClient createUCClient(CatalogTable catalogTable, SparkSession spark) {
-    scala.Option<String> catalogOption = catalogTable.identifier().catalog();
-    String catalogName =
-        catalogOption.isDefined()
-            ? catalogOption.get()
-            : spark.sessionState().catalogManager().currentCatalog().name();
-
-    scala.collection.immutable.List<scala.Tuple3<String, String, String>> scalaConfigs =
-        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigs(spark);
-
-    Optional<scala.Tuple3<String, String, String>> configTuple =
-        scala.jdk.javaapi.CollectionConverters.asJava(scalaConfigs).stream()
-            .filter(tuple -> tuple._1().equals(catalogName))
-            .findFirst();
-
-    if (!configTuple.isPresent()) {
-      throw new IllegalArgumentException(
-          "Cannot create UC client: Unity Catalog configuration not found for catalog '"
-              + catalogName
-              + "'.");
-    }
-
-    scala.Tuple3<String, String, String> config = configTuple.get();
-    String uri = config._2();
-    String token = config._3();
-
-    return UCTokenBasedRestClientFactory$.MODULE$.createUCClient(uri, token);
   }
 }

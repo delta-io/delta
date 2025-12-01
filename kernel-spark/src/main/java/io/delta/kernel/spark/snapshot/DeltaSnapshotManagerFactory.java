@@ -27,27 +27,31 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 /**
  * Factory for creating {@link DeltaSnapshotManager} instances.
  *
- * <p>This factory determines the appropriate snapshot manager implementation based on table
- * characteristics and automatically handles the selection between:
+ * <p>This factory provides two creation methods:
  *
  * <ul>
- *   <li>{@link CatalogManagedSnapshotManager} - for Unity Catalog managed tables (CCv2)
- *   <li>{@link PathBasedSnapshotManager} - for regular filesystem-based Delta tables
+ *   <li>{@link #fromPath} - Creates a {@link PathBasedSnapshotManager} for filesystem-based Delta
+ *       tables
+ *   <li>{@link #fromCatalogTable} - Creates snapshot manager from catalog metadata, automatically
+ *       selecting {@link CatalogManagedSnapshotManager} for UC tables or falling back to {@link
+ *       PathBasedSnapshotManager}
  * </ul>
- *
- * <p>The factory encapsulates the decision logic so that callers (e.g., {@code SparkTable}) don't
- * need to know about specific manager implementations.
  *
  * <p><strong>Example usage:</strong>
  *
  * <pre>{@code
- * DeltaSnapshotManager manager = DeltaSnapshotManagerFactory.create(
+ * // For path-based tables
+ * DeltaSnapshotManager manager = DeltaSnapshotManagerFactory.fromPath(
  *     tablePath,
- *     Optional.of(catalogTable),
+ *     hadoopConf
+ * );
+ *
+ * // For catalog tables
+ * DeltaSnapshotManager manager = DeltaSnapshotManagerFactory.fromCatalogTable(
+ *     catalogTable,
  *     spark,
  *     hadoopConf
  * );
- * Snapshot snapshot = manager.loadLatestSnapshot();
  * }</pre>
  */
 @Experimental
@@ -57,43 +61,55 @@ public final class DeltaSnapshotManagerFactory {
   private DeltaSnapshotManagerFactory() {}
 
   /**
-   * Creates the appropriate snapshot manager for a Delta table.
+   * Creates a path-based snapshot manager for filesystem Delta tables.
    *
-   * <p><strong>Selection logic:</strong>
-   *
-   * <ul>
-   *   <li>If {@code catalogTable} is present and UC-managed → {@link CatalogManagedSnapshotManager}
-   *   <li>Otherwise → {@link PathBasedSnapshotManager}
-   * </ul>
+   * <p>Use this when no catalog metadata is available or when you want to work directly with a
+   * filesystem path.
    *
    * @param tablePath filesystem path to the Delta table root
-   * @param catalogTable optional Spark catalog table metadata
+   * @param hadoopConf Hadoop configuration for the Delta Kernel engine
+   * @return PathBasedSnapshotManager instance
+   * @throws NullPointerException if tablePath or hadoopConf is null
+   */
+  public static DeltaSnapshotManager fromPath(String tablePath, Configuration hadoopConf) {
+    requireNonNull(tablePath, "tablePath is null");
+    requireNonNull(hadoopConf, "hadoopConf is null");
+    return new PathBasedSnapshotManager(tablePath, hadoopConf);
+  }
+
+  /**
+   * Creates a snapshot manager from catalog table metadata.
+   *
+   * <p>Automatically selects {@link CatalogManagedSnapshotManager} for Unity Catalog managed
+   * tables, or falls back to {@link PathBasedSnapshotManager} for regular tables.
+   *
+   * @param catalogTable Spark catalog table metadata
    * @param spark SparkSession for resolving Unity Catalog configurations
    * @param hadoopConf Hadoop configuration for the Delta Kernel engine
    * @return appropriate snapshot manager implementation
-   * @throws NullPointerException if tablePath, spark, or hadoopConf is null
+   * @throws NullPointerException if catalogTable, spark, or hadoopConf is null
    * @throws IllegalArgumentException if catalogTable is UC-managed but configuration is invalid
    */
-  public static DeltaSnapshotManager create(
-      String tablePath,
-      Optional<CatalogTable> catalogTable,
-      SparkSession spark,
-      Configuration hadoopConf) {
-
-    requireNonNull(tablePath, "tablePath is null");
+  public static DeltaSnapshotManager fromCatalogTable(
+      CatalogTable catalogTable, SparkSession spark, Configuration hadoopConf) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
     requireNonNull(hadoopConf, "hadoopConf is null");
 
-    if (catalogTable.isPresent()) {
-      Optional<ManagedCatalogAdapter> adapterOpt =
-          UnityCatalogAdapter.fromCatalog(catalogTable.get(), spark);
-      if (adapterOpt.isPresent()) {
-        return new CatalogManagedSnapshotManager(adapterOpt.get(), hadoopConf);
-      }
+    Optional<ManagedCatalogAdapter> adapterOpt =
+        UnityCatalogAdapter.fromCatalog(catalogTable, spark);
+
+    if (adapterOpt.isPresent()) {
+      ManagedCatalogAdapter adapter = adapterOpt.get();
+      // Cast to UnityCatalogAdapter to access tableId and tablePath
+      UnityCatalogAdapter ucAdapter = (UnityCatalogAdapter) adapter;
+      String tableId = ucAdapter.getTableId();
+      String tablePath = ucAdapter.getTablePath();
+      return new CatalogManagedSnapshotManager(adapter, tableId, tablePath, hadoopConf);
     }
 
-    // Default to path-based snapshot manager
+    // Fallback to path-based snapshot manager
+    String tablePath = catalogTable.location().toString();
     return new PathBasedSnapshotManager(tablePath, hadoopConf);
   }
 }

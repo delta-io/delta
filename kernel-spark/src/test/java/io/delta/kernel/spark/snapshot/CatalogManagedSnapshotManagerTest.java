@@ -33,7 +33,7 @@ class CatalogManagedSnapshotManagerTest {
   void testConstructor_NullHadoopConf_ThrowsException() {
     assertThrows(
         NullPointerException.class,
-        () -> new CatalogManagedSnapshotManager(new NoOpClient(), null),
+        () -> new CatalogManagedSnapshotManager(new NoOpClient(), "table-id", "/tmp/path", null),
         "Null hadoopConf should throw NullPointerException");
   }
 
@@ -41,21 +41,11 @@ class CatalogManagedSnapshotManagerTest {
   void testConstructor_NullClient_ThrowsException() {
     assertThrows(
         NullPointerException.class,
-        () -> new CatalogManagedSnapshotManager(null, new Configuration()),
+        () -> new CatalogManagedSnapshotManager(null, "table-id", "/tmp/path", new Configuration()),
         "Null commitClient should throw NullPointerException");
   }
 
   private static final class NoOpClient implements ManagedCatalogAdapter {
-    @Override
-    public String getTableId() {
-      return "dummy";
-    }
-
-    @Override
-    public String getTablePath() {
-      return "/tmp/dummy";
-    }
-
     @Override
     public Snapshot loadSnapshot(
         Engine engine,

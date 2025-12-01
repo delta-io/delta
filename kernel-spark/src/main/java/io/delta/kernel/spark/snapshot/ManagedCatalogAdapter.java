@@ -28,12 +28,6 @@ import java.util.Optional;
  */
 public interface ManagedCatalogAdapter extends AutoCloseable {
 
-  /** @return catalog-managed table identifier (for logging/telemetry). */
-  String getTableId();
-
-  /** @return physical table path used by Delta Kernel. */
-  String getTablePath();
-
   Snapshot loadSnapshot(Engine engine, Optional<Long> versionOpt, Optional<Long> timestampOpt);
 
   CommitRange loadCommitRange(
