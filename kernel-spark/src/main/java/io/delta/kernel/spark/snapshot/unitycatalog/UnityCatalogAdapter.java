@@ -46,15 +46,14 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
   /**
    * Creates adapter from Spark catalog table (convenience method).
    *
-   * <p>Extracts UC connection info from Spark metadata and delegates to {@link #fromConnectionInfo}.
+   * <p>Extracts UC connection info from Spark metadata and delegates to {@link
+   * #fromConnectionInfo}.
    */
   public static Optional<ManagedCatalogAdapter> fromCatalog(
       CatalogTable catalogTable, SparkSession spark) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
-
-    return SparkUnityCatalogUtils.extractConnectionInfo(catalogTable, spark)
-        .map(UnityCatalogAdapter::fromConnectionInfo);
+    throw new UnsupportedOperationException("UC wiring deferred to implementation PR");
   }
 
   /** Creates adapter from connection info (no Spark dependency). */
