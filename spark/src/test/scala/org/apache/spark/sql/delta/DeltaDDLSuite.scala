@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -130,6 +132,66 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
         }
         intercept[UnsupportedFileSystemException](createTableWithOptions(false))
         createTableWithOptions(true)
+      }
+    }
+  }
+
+  test("CREATE TABLE should translate old CatalogOwned property key to new one in UC") {
+    for (withBothNewAndOldProperty <- Seq(false, true)) {
+      withTempDir { dir =>
+        withTable("t") {
+          val path = dir.getCanonicalPath
+          val oldPropertyKey = CatalogOwnedTableFeature.oldPropertyKey
+          val newPropertyKey = CatalogOwnedTableFeature.propertyKey
+
+          if (withBothNewAndOldProperty) {
+            // Create table with old and new property key using test.simulateUC to simulate Unity
+            // Catalog
+            sql(s"""
+               |CREATE TABLE t (id INT) USING delta LOCATION '$path'
+               |TBLPROPERTIES (
+               |  test.simulateUC=true,
+               |  '$oldPropertyKey' = 'something-else',
+               |  '$newPropertyKey' = 'supported',
+               |  '$UC_TABLE_ID_KEY_OLD' = 'some-other-id',
+               |  '$UC_TABLE_ID_KEY' = 'correct-table-id'
+               |)
+               |""".stripMargin)
+          } else {
+            // Create table with old property key using test.simulateUC to simulate Unity Catalog
+            sql(s"""
+               |CREATE TABLE t (id INT) USING delta LOCATION '$path'
+               |TBLPROPERTIES (
+               |  test.simulateUC=true,
+               |  '$oldPropertyKey' = 'supported',
+               |  '$UC_TABLE_ID_KEY_OLD' = 'correct-table-id'
+               |)
+               |""".stripMargin)
+          }
+
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+          val properties = deltaLog.snapshot.getProperties
+
+          // Verify the old property key is not present
+          assert(!properties.contains(oldPropertyKey),
+            s"Old property key '$oldPropertyKey' should not be present in table properties")
+
+          // Verify the new property key is present with the value from the old key
+          assert(properties.contains(newPropertyKey),
+            s"New property key '$newPropertyKey' should be present in table properties")
+          assert(properties(newPropertyKey) == "supported",
+            s"New property key '$newPropertyKey' should have value 'supported'")
+
+          // Verify the new table id is present with the value from the old key
+          assert(properties.contains(UC_TABLE_ID_KEY),
+            s"New table id key '$UC_TABLE_ID_KEY' should be present in table properties")
+          assert(properties(UC_TABLE_ID_KEY) == "correct-table-id",
+            s"New table id key '$UC_TABLE_ID_KEY' should have value 'correct-table-id'")
+
+          // Verify the feature is actually enabled
+          assert(deltaLog.snapshot.protocol.writerFeatureNames.contains("catalogManaged"),
+            "CatalogManaged feature should be enabled in protocol")
+        }
       }
     }
   }
