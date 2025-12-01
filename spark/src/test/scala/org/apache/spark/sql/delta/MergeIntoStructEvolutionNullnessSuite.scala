@@ -150,6 +150,14 @@ trait MergeIntoStructEvolutionNullnessTestUtils extends MergeHelpers {
     )
   }
 
+  /**
+   * Checks if null source struct preservation is enabled for UPDATE SET * operations.
+   * @return true if both preserveNullSourceStructs and preserveNullSourceStructsUpdateStar are true
+   */
+  protected def shouldPreserveNullSourceStructsForUpdateStar: Boolean = {
+    preserveNullSourceStructs && preserveNullSourceStructsUpdateStar
+  }
+
   /** Represents a struct evolution nullness test case. */
   protected case class StructEvolutionNullnessTestCase(
     testName: String,
@@ -356,7 +364,7 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
     sourceSchema = topLevelStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y":null,"z":null,"x":null}}"""
@@ -468,7 +476,7 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
     sourceSchema = topLevelStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y":null,"z":null,"w":null,"x":null}}"""
@@ -604,7 +612,7 @@ trait MergeIntoNestedStructEvolutionNullnessTests
     val resultXOpt: Option[Any] = actionType match {
       case ActionType.UpdateStar =>
         if (sourceX == null) {
-          if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+          if (shouldPreserveNullSourceStructsForUpdateStar) {
             Some(null)
           } else {
             Some(Map("a" -> null, "b" -> null))
@@ -737,7 +745,7 @@ trait MergeIntoNestedStructEvolutionNullnessTests
     sourceSchema = nestedStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y":{"d":null,"e":null,"c":null},"z":null,"x":{"a":null,"b":null}}}"""
@@ -756,7 +764,7 @@ trait MergeIntoNestedStructEvolutionNullnessTests
     sourceSchema = nestedStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":{"y":{"d":null,"e":2,"c":null},"z":{"f":2,"g":2},"x":null}}"""
       } else {
         """{"key":1,"col":{"y":{"d":null,"e":2,"c":null},"z":{"f":2,"g":2},"x":{"a":null,"b":null}}}"""
@@ -1240,7 +1248,7 @@ trait MergeIntoNestedArrayStructEvolutionNullnessTests
     sourceSchema = nestedArrayStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y":null,"z":null,"x":null}}"""
@@ -1737,7 +1745,7 @@ trait MergeIntoNestedMapStructEvolutionNullnessTests
     sourceSchema = nestedMapStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y": null,"z": null, "x": null}}"""
