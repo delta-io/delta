@@ -78,8 +78,8 @@ public final class DeltaSnapshotManagerFactory {
   /**
    * Creates a snapshot manager from catalog table metadata.
    *
-   * <p>Wire-up is intentionally deferred; this skeleton method currently throws until implemented in
-   * a follow-up PR.
+   * <p>Wire-up is intentionally deferred; this skeleton method currently throws until implemented
+   * in a follow-up PR.
    *
    * @throws UnsupportedOperationException always, until UC wiring is added
    */
