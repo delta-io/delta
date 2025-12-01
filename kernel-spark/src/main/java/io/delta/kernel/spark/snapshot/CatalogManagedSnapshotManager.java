@@ -61,18 +61,14 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
 
     this.kernelEngine = DefaultEngine.create(hadoopConf);
     logger.info(
-        "Created CatalogManagedSnapshotManager for table {} at path {}",
-        tableId,
-        tablePath);
+        "Created CatalogManagedSnapshotManager for table {} at path {}", tableId, tablePath);
   }
 
   /** Loads the latest snapshot of the catalog-managed Delta table. */
   @Override
   public Snapshot loadLatestSnapshot() {
     return catalogAdapter.loadSnapshot(
-        kernelEngine,
-        /* versionOpt = */ Optional.empty(),
-        /* timestampOpt = */ Optional.empty());
+        kernelEngine, /* versionOpt = */ Optional.empty(), /* timestampOpt = */ Optional.empty());
   }
 
   /**

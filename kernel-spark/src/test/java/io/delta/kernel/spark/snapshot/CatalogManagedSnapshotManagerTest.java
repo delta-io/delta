@@ -48,9 +48,7 @@ class CatalogManagedSnapshotManagerTest {
   private static final class NoOpClient implements ManagedCatalogAdapter {
     @Override
     public Snapshot loadSnapshot(
-        Engine engine,
-        Optional<Long> versionOpt,
-        Optional<Long> timestampOpt) {
+        Engine engine, Optional<Long> versionOpt, Optional<Long> timestampOpt) {
       throw new UnsupportedOperationException("noop");
     }
 
@@ -65,8 +63,7 @@ class CatalogManagedSnapshotManagerTest {
     }
 
     @Override
-    public List<ParsedLogData> getRatifiedCommits(
-        Optional<Long> endVersionOpt) {
+    public List<ParsedLogData> getRatifiedCommits(Optional<Long> endVersionOpt) {
       throw new UnsupportedOperationException("noop");
     }
 
