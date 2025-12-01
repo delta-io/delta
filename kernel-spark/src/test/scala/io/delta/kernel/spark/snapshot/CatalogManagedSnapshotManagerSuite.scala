@@ -17,100 +17,229 @@ package io.delta.kernel.spark.snapshot
 
 import java.util.Optional
 
-import io.delta.kernel.CommitRange
-import io.delta.kernel.Snapshot
-import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.files.ParsedLogData
+import io.delta.kernel.spark.exception.VersionNotFoundException
+import io.delta.kernel.spark.snapshot.unitycatalog.UnityCatalogAdapter
+import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedTestUtils}
 
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-/** Tests for [[CatalogManagedSnapshotManager]] wireframe. */
-class CatalogManagedSnapshotManagerSuite extends AnyFunSuite {
+/** Tests for [[CatalogManagedSnapshotManager]]. */
+class CatalogManagedSnapshotManagerSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
-  private val tableId = "testTable"
-  private val tablePath = "/tmp/path"
+  private val testUcTableId = "testUcTableId"
 
-  private def stubAdapter: ManagedCatalogAdapter = new ManagedCatalogAdapter {
-    override def loadSnapshot(
-        engine: Engine,
-        versionOpt: Optional[java.lang.Long],
-        timestampOpt: Optional[java.lang.Long]): Snapshot =
-      throw new UnsupportedOperationException("stub")
+  test("constructor throws on null hadoopConf") {
+    val adapter = new UnityCatalogAdapter(
+      testUcTableId,
+      "/tmp/path",
+      new InMemoryUCClient("ucMetastoreId"))
 
-    override def loadCommitRange(
-        engine: Engine,
-        startVersionOpt: Optional[java.lang.Long],
-        startTimestampOpt: Optional[java.lang.Long],
-        endVersionOpt: Optional[java.lang.Long],
-        endTimestampOpt: Optional[java.lang.Long]): CommitRange =
-      throw new UnsupportedOperationException("stub")
-
-    override def getRatifiedCommits(endVersionOpt: Optional[java.lang.Long])
-        : java.util.List[ParsedLogData] =
-      throw new UnsupportedOperationException("stub")
-
-    override def getLatestRatifiedVersion: Long =
-      throw new UnsupportedOperationException("stub")
-
-    override def close(): Unit = {}
-  }
-
-  test("constructor throws on nulls") {
     assertThrows[NullPointerException] {
-      new CatalogManagedSnapshotManager(null, tableId, tablePath, new Configuration())
+      new CatalogManagedSnapshotManager(adapter, testUcTableId, "/tmp/path", null)
     }
+  }
+
+  test("constructor throws on null catalogAdapter") {
     assertThrows[NullPointerException] {
-      new CatalogManagedSnapshotManager(stubAdapter, null, tablePath, new Configuration())
+      new CatalogManagedSnapshotManager(null, testUcTableId, "/tmp/path", new Configuration())
     }
+  }
+
+  test("constructor throws on null tableId") {
+    val adapter = new UnityCatalogAdapter(
+      testUcTableId,
+      "/tmp/path",
+      new InMemoryUCClient("ucMetastoreId"))
+
     assertThrows[NullPointerException] {
-      new CatalogManagedSnapshotManager(stubAdapter, tableId, null, new Configuration())
+      new CatalogManagedSnapshotManager(adapter, null, "/tmp/path", new Configuration())
     }
+  }
+
+  test("constructor throws on null tablePath") {
+    val adapter = new UnityCatalogAdapter(
+      testUcTableId,
+      "/tmp/path",
+      new InMemoryUCClient("ucMetastoreId"))
+
     assertThrows[NullPointerException] {
-      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, null)
+      new CatalogManagedSnapshotManager(adapter, testUcTableId, null, new Configuration())
     }
   }
 
-  test("operations are unsupported in wireframe") {
-    val manager =
-      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
+  test("loadLatestSnapshot returns snapshot at max ratified version") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
 
-    assertThrows[UnsupportedOperationException] {
-      manager.loadLatestSnapshot()
-    }
-    assertThrows[UnsupportedOperationException] {
-      manager.loadSnapshotAt(0L)
-    }
-    assertThrows[UnsupportedOperationException] {
-      manager.getTableChanges(null, 0L, Optional.empty())
-    }
-    assertThrows[UnsupportedOperationException] {
-      manager.checkVersionExists(0L, true, false)
-    }
-    assertThrows[UnsupportedOperationException] {
-      manager.getActiveCommitAtTime(0L, true, true, true)
+      try {
+        val snapshot = manager.loadLatestSnapshot()
+
+        assert(snapshot != null, "Snapshot should not be null")
+        assert(snapshot.getVersion == maxRatifiedVersion, "Should load max ratified version")
+      } finally {
+        manager.close()
+      }
     }
   }
 
-  test("loadSnapshotAt validates version") {
-    val manager =
-      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
-    assertThrows[IllegalArgumentException] {
-      manager.loadSnapshotAt(-1L)
+  test("loadSnapshotAt loads specified version") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        val snapshot = manager.loadSnapshotAt(1L)
+
+        assert(snapshot != null, "Snapshot should not be null")
+        assert(snapshot.getVersion == 1L, "Should load version 1")
+      } finally {
+        manager.close()
+      }
     }
   }
 
-  test("checkVersionExists validates version") {
-    val manager =
-      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
-    assertThrows[IllegalArgumentException] {
-      manager.checkVersionExists(-1L, true, false)
+  test("loadSnapshotAt throws on negative version") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        assertThrows[IllegalArgumentException] {
+          manager.loadSnapshotAt(-1L)
+        }
+      } finally {
+        manager.close()
+      }
     }
   }
 
-  test("close is tolerant") {
-    val manager =
-      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
-    manager.close() // should not throw
+  test("checkVersionExists validates version range") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        // Versions 0, 1, 2 should exist
+        manager.checkVersionExists(
+          0L,
+          /* mustBeRecreatable = */ true,
+          /* allowOutOfRange = */ false)
+        manager.checkVersionExists(
+          1L,
+          /* mustBeRecreatable = */ true,
+          /* allowOutOfRange = */ false)
+        manager.checkVersionExists(
+          maxRatifiedVersion,
+          /* mustBeRecreatable = */ true,
+          /* allowOutOfRange = */ false)
+
+        // Version beyond latest should throw
+        assertThrows[VersionNotFoundException] {
+          manager.checkVersionExists(
+            maxRatifiedVersion + 1,
+            /* mustBeRecreatable = */ true,
+            /* allowOutOfRange = */ false)
+        }
+      } finally {
+        manager.close()
+      }
+    }
+  }
+
+  test("checkVersionExists allows out of range when specified") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        // Should not throw when allowOutOfRange = true
+        manager.checkVersionExists(
+          maxRatifiedVersion + 10,
+          /* mustBeRecreatable = */ true,
+          /* allowOutOfRange = */ true)
+      } finally {
+        manager.close()
+      }
+    }
+  }
+
+  test("checkVersionExists throws on negative version") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        assertThrows[IllegalArgumentException] {
+          manager.checkVersionExists(
+            -1L,
+            /* mustBeRecreatable = */ true,
+            /* allowOutOfRange = */ false)
+        }
+      } finally {
+        manager.close()
+      }
+    }
+  }
+
+  test("getTableChanges returns commit range") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        val commitRange = manager.getTableChanges(
+          defaultEngine,
+          /* startVersion = */ 1L,
+          Optional.of(2L) /* endVersion */ )
+
+        assert(commitRange != null, "CommitRange should not be null")
+      } finally {
+        manager.close()
+      }
+    }
+  }
+
+  test("close releases resources") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      // Should not throw
+      manager.close()
+    }
   }
 }
