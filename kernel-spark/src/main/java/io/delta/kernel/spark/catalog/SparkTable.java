@@ -22,6 +22,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.spark.utils.Lazy;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -53,12 +54,7 @@ public class SparkTable implements Table, SupportsRead {
 
   private final Configuration hadoopConf;
 
-  private final StructType schema;
-  private final List<String> partColNames;
-  private final StructType dataSchema;
-  private final StructType partitionSchema;
-  private final Column[] columns;
-  private final Transform[] partitionTransforms;
+  private final Lazy<SchemaProvider> schemaProvider;
   private final Optional<CatalogTable> catalogTable;
 
   /**
@@ -144,43 +140,11 @@ public class SparkTable implements Table, SupportsRead {
     this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
-    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
-    this.partColNames =
-        Collections.unmodifiableList(new ArrayList<>(initialSnapshot.getPartitionColumnNames()));
 
-    final List<StructField> dataFields = new ArrayList<>();
-    final List<StructField> partitionFields = new ArrayList<>();
-
-    // Build a map for O(1) field lookups to improve performance
-    Map<String, StructField> fieldMap = new HashMap<>();
-    for (StructField field : schema.fields()) {
-      fieldMap.put(field.name(), field);
-    }
-
-    // IMPORTANT: Add partition fields in the exact order specified by partColNames
-    // This is crucial because the order in partColNames may differ from the order
-    // in snapshotSchema, and we need to preserve the partColNames order for
-    // proper partitioning behavior
-    for (String partColName : partColNames) {
-      StructField field = fieldMap.get(partColName);
-      if (field != null) {
-        partitionFields.add(field);
-      }
-    }
-
-    // Add remaining fields as data fields (non-partition columns)
-    // These are fields that exist in the schema but are not partition columns
-    for (StructField field : schema.fields()) {
-      if (!partColNames.contains(field.name())) {
-        dataFields.add(field);
-      }
-    }
-    this.dataSchema = new StructType(dataFields.toArray(new StructField[0]));
-    this.partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
-
-    this.columns = CatalogV2Util.structTypeToV2Columns(schema);
-    this.partitionTransforms =
-        partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
+    // Lazily compute schema-related metadata only when needed
+    // SparkSession.active() is deferred to when the schema is first accessed
+    this.schemaProvider =
+        new Lazy<>(() -> new SchemaProvider(SparkSession.active(), initialSnapshot));
   }
 
   /**
@@ -221,17 +185,17 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public StructType schema() {
-    return schema;
+    return schemaProvider.get().getPublicSchema();
   }
 
   @Override
   public Column[] columns() {
-    return columns;
+    return schemaProvider.get().getColumns();
   }
 
   @Override
   public Transform[] partitioning() {
-    return partitionTransforms;
+    return schemaProvider.get().getPartitionTransforms();
   }
 
   @Override
@@ -250,12 +214,115 @@ public class SparkTable implements Table, SupportsRead {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
+    SchemaProvider provider = schemaProvider.get();
     return new SparkScanBuilder(
-        name(), initialSnapshot, snapshotManager, dataSchema, partitionSchema, merged);
+        name(),
+        initialSnapshot,
+        snapshotManager,
+        provider.getDataSchema(),
+        provider.getPartitionSchema(),
+        merged);
   }
 
   @Override
   public String toString() {
     return "SparkTable{identifier=" + identifier + '}';
+  }
+
+  /**
+   * Private helper class that lazily computes and caches schema-related metadata.
+   *
+   * <p>This class encapsulates all schema computation logic including:
+   *
+   * <ul>
+   *   <li>Raw schema conversion from Kernel to Spark
+   *   <li>Public schema with internal metadata removed
+   *   <li>Data and partition schema derivation
+   *   <li>Column and partition transform creation
+   * </ul>
+   */
+  private static class SchemaProvider {
+    // Raw schema with all metadata intact - used internally for data reading
+    private final StructType rawSchema;
+    // Public schema with internal metadata removed - returned by schema()
+    private final StructType publicSchema;
+    private final List<String> partColNames;
+    private final StructType dataSchema;
+    private final StructType partitionSchema;
+    private final Column[] columns;
+    private final Transform[] partitionTransforms;
+
+    SchemaProvider(SparkSession sparkSession, Snapshot snapshot) {
+      // Convert Kernel schema to Spark schema - keep all metadata for internal use
+      this.rawSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+
+      // Create public schema by removing internal metadata (for schema() method)
+      this.publicSchema =
+          DeltaTableUtils.removeInternalDeltaMetadata(
+              sparkSession, DeltaTableUtils.removeInternalWriterMetadata(sparkSession, rawSchema));
+
+      this.partColNames =
+          Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
+
+      final List<StructField> dataFields = new ArrayList<>();
+      final List<StructField> partitionFields = new ArrayList<>();
+
+      // Build a map for O(1) field lookups to improve performance
+      // Use rawSchema (with metadata) for deriving data and partition schemas
+      Map<String, StructField> fieldMap = new HashMap<>();
+      for (StructField field : rawSchema.fields()) {
+        fieldMap.put(field.name(), field);
+      }
+
+      // IMPORTANT: Add partition fields in the exact order specified by partColNames
+      // This is crucial because the order in partColNames may differ from the order
+      // in snapshotSchema, and we need to preserve the partColNames order for
+      // proper partitioning behavior
+      for (String partColName : partColNames) {
+        StructField field = fieldMap.get(partColName);
+        if (field != null) {
+          partitionFields.add(field);
+        }
+      }
+
+      // Add remaining fields as data fields (non-partition columns)
+      // These are fields that exist in the schema but are not partition columns
+      for (StructField field : rawSchema.fields()) {
+        if (!partColNames.contains(field.name())) {
+          dataFields.add(field);
+        }
+      }
+      this.dataSchema = new StructType(dataFields.toArray(new StructField[0]));
+      this.partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
+
+      // Use publicSchema (cleaned) for external API
+      this.columns = CatalogV2Util.structTypeToV2Columns(publicSchema);
+      this.partitionTransforms =
+          partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
+    }
+
+    StructType getRawSchema() {
+      return rawSchema;
+    }
+
+    StructType getPublicSchema() {
+      return publicSchema;
+    }
+
+    StructType getDataSchema() {
+      return dataSchema;
+    }
+
+    StructType getPartitionSchema() {
+      return partitionSchema;
+    }
+
+    Column[] getColumns() {
+      return columns;
+    }
+
+    Transform[] getPartitionTransforms() {
+      return partitionTransforms;
+    }
   }
 }
