@@ -33,11 +33,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
@@ -45,6 +47,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import scala.Option;
 
 public class SparkTableTest extends SparkDsv2TestBase {
 
@@ -107,6 +110,41 @@ public class SparkTableTest extends SparkDsv2TestBase {
       // Check column object from table.columns()
       assertEquals(expectedCol, actualColumns[i], "Column mismatch at position " + i);
     }
+
+    // ===== Verify schema consistency with DeltaTableV2 =====
+    // This ensures SparkTable (Kernel-based) returns the same schema as DeltaTableV2 (V1-based)
+    // Both should properly remove internal Delta metadata (e.g., column mapping physical names)
+    DeltaTableV2 deltaTableV2;
+    switch (method) {
+      case FROM_PATH:
+        deltaTableV2 =
+            DeltaTableV2.apply(
+                spark,
+                new Path(path),
+                Option.empty(),
+                Option.empty(),
+                scala.collection.immutable.Map$.MODULE$.empty(),
+                Option.empty());
+        break;
+      case FROM_CATALOG_TABLE:
+        deltaTableV2 =
+            DeltaTableV2.apply(
+                spark,
+                new Path(path),
+                Option.apply(catalogTable),
+                Option.apply(tableName),
+                scala.collection.immutable.Map$.MODULE$.empty(),
+                Option.empty());
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown method: " + method);
+    }
+
+    // Verify schemas are equal (including field names, types, and metadata)
+    assertEquals(
+        deltaTableV2.schema(),
+        sparkSchema,
+        "SparkTable schema should match DeltaTableV2 schema for test case: " + testCase.name);
 
     // ===== Test partitioning =====
     Transform[] partitioning = kernelTable.partitioning();
@@ -221,6 +259,15 @@ public class SparkTableTest extends SparkDsv2TestBase {
     List<Column> singleColumn = new ArrayList<>();
     singleColumn.add(Column.create("id", DataTypes.IntegerType));
 
+    // ===== Name Mapping Table =====
+    List<Column> nameMappingTableColumns = new ArrayList<>();
+    nameMappingTableColumns.add(Column.create("id", DataTypes.IntegerType));
+    nameMappingTableColumns.add(Column.create("name", DataTypes.StringType));
+    nameMappingTableColumns.add(Column.create("value", DataTypes.DoubleType));
+
+    Map<String, String> nameMappingProps = new HashMap<>();
+    nameMappingProps.put("delta.columnMapping.mode", "name");
+
     List<TableTestCase> testCases =
         Arrays.asList(
             new TableTestCase(
@@ -261,7 +308,22 @@ public class SparkTableTest extends SparkDsv2TestBase {
                 },
                 singleColumn,
                 new String[] {},
-                multiProps));
+                multiProps),
+            new TableTestCase(
+                "Name Mapping Table",
+                (tableName, path) -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta "
+                              + "TBLPROPERTIES ('delta.columnMapping.mode'='name') "
+                              + "LOCATION '%s'",
+                          tableName, path));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'test', 100.0)", tableName));
+                  return null;
+                },
+                nameMappingTableColumns,
+                new String[] {},
+                nameMappingProps));
 
     // Create cartesian product of test cases and construction methods
     return testCases.stream()

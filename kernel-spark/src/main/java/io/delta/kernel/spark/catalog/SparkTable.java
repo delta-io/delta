@@ -22,9 +22,9 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
-import io.delta.kernel.spark.utils.Lazy;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
+import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
@@ -54,7 +54,7 @@ public class SparkTable implements Table, SupportsRead {
 
   private final Configuration hadoopConf;
 
-  private final Lazy<SchemaProvider> schemaProvider;
+  private final SchemaProvider schemaProvider;
   private final Optional<CatalogTable> catalogTable;
 
   /**
@@ -141,10 +141,8 @@ public class SparkTable implements Table, SupportsRead {
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 
-    // Lazily compute schema-related metadata only when needed
-    // SparkSession.active() is deferred to when the schema is first accessed
-    this.schemaProvider =
-        new Lazy<>(() -> new SchemaProvider(SparkSession.active(), initialSnapshot));
+    // Schema-related metadata is lazily computed on first access within SchemaProvider
+    this.schemaProvider = new SchemaProvider(SparkSession.active(), initialSnapshot);
   }
 
   /**
@@ -185,17 +183,17 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public StructType schema() {
-    return schemaProvider.get().getPublicSchema();
+    return schemaProvider.getPublicSchema();
   }
 
   @Override
   public Column[] columns() {
-    return schemaProvider.get().getColumns();
+    return schemaProvider.getColumns();
   }
 
   @Override
   public Transform[] partitioning() {
-    return schemaProvider.get().getPartitionTransforms();
+    return schemaProvider.getPartitionTransforms();
   }
 
   @Override
@@ -214,13 +212,12 @@ public class SparkTable implements Table, SupportsRead {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
-    SchemaProvider provider = schemaProvider.get();
     return new SparkScanBuilder(
         name(),
         initialSnapshot,
         snapshotManager,
-        provider.getDataSchema(),
-        provider.getPartitionSchema(),
+        schemaProvider.getDataSchema(),
+        schemaProvider.getPartitionSchema(),
         merged);
   }
 
@@ -240,19 +237,33 @@ public class SparkTable implements Table, SupportsRead {
    *   <li>Data and partition schema derivation
    *   <li>Column and partition transform creation
    * </ul>
+   *
+   * <p>All schema computations are deferred until first access.
    */
   private static class SchemaProvider {
-    // Raw schema with all metadata intact - used internally for data reading
-    private final StructType rawSchema;
-    // Public schema with internal metadata removed - returned by schema()
-    private final StructType publicSchema;
-    private final List<String> partColNames;
-    private final StructType dataSchema;
-    private final StructType partitionSchema;
-    private final Column[] columns;
-    private final Transform[] partitionTransforms;
+    private final SparkSession sparkSession;
+    private final Snapshot snapshot;
+
+    // Lazily computed fields
+    private boolean initialized = false;
+    private StructType rawSchema;
+    private StructType publicSchema;
+    private List<String> partColNames;
+    private StructType dataSchema;
+    private StructType partitionSchema;
+    private Column[] columns;
+    private Transform[] partitionTransforms;
 
     SchemaProvider(SparkSession sparkSession, Snapshot snapshot) {
+      this.sparkSession = sparkSession;
+      this.snapshot = snapshot;
+    }
+
+    private synchronized void ensureInitialized() {
+      if (initialized) {
+        return;
+      }
+
       // Convert Kernel schema to Spark schema - keep all metadata for internal use
       this.rawSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
 
@@ -299,30 +310,33 @@ public class SparkTable implements Table, SupportsRead {
       this.columns = CatalogV2Util.structTypeToV2Columns(publicSchema);
       this.partitionTransforms =
           partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
+
+      this.initialized = true;
     }
 
-    StructType getRawSchema() {
-      return rawSchema;
+    private <T> T withInit(Supplier<T> supplier) {
+      ensureInitialized();
+      return supplier.get();
     }
 
     StructType getPublicSchema() {
-      return publicSchema;
+      return withInit(() -> publicSchema);
     }
 
     StructType getDataSchema() {
-      return dataSchema;
+      return withInit(() -> dataSchema);
     }
 
     StructType getPartitionSchema() {
-      return partitionSchema;
+      return withInit(() -> partitionSchema);
     }
 
     Column[] getColumns() {
-      return columns;
+      return withInit(() -> columns);
     }
 
     Transform[] getPartitionTransforms() {
-      return partitionTransforms;
+      return withInit(() -> partitionTransforms);
     }
   }
 }
