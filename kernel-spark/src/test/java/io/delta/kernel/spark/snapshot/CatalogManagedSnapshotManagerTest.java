@@ -45,7 +45,7 @@ class CatalogManagedSnapshotManagerTest {
         "Null commitClient should throw NullPointerException");
   }
 
-  private static final class NoOpClient implements ManagedCommitClient {
+  private static final class NoOpClient implements ManagedCatalogAdapter {
     @Override
     public String getTableId() {
       return "dummy";

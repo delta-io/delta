@@ -23,10 +23,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Catalog-managed commit client that knows how to load snapshots and commit ranges for a specific
- * table.
+ * Adapter for catalog-managed tables that knows how to load snapshots and commit ranges for a
+ * specific table.
  */
-public interface ManagedCommitClient extends AutoCloseable {
+public interface ManagedCatalogAdapter extends AutoCloseable {
 
   /** @return catalog-managed table identifier (for logging/telemetry). */
   String getTableId();

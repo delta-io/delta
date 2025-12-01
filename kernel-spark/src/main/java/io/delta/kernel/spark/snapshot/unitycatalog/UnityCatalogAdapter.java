@@ -22,7 +22,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
-import io.delta.kernel.spark.snapshot.ManagedCommitClient;
+import io.delta.kernel.spark.snapshot.ManagedCatalogAdapter;
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.storage.commit.Commit;
@@ -42,15 +42,15 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
 
-/** UC-backed implementation of {@link ManagedCommitClient}. */
-public final class UnityCatalogManagedCommitClient implements ManagedCommitClient {
+/** UC-backed implementation of {@link ManagedCatalogAdapter}. */
+public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
 
   private final String tableId;
   private final String tablePath;
   private final UCClient ucClient;
   private final UCCatalogManagedClient ucManagedClient;
 
-  public UnityCatalogManagedCommitClient(String tableId, String tablePath, UCClient ucClient) {
+  public UnityCatalogAdapter(String tableId, String tablePath, UCClient ucClient) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.ucClient = requireNonNull(ucClient, "ucClient is null");
@@ -58,11 +58,11 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
   }
 
   /**
-   * Builds a UC-backed {@link ManagedCommitClient} for a UC-managed table.
+   * Builds a UC-backed {@link ManagedCatalogAdapter} for a UC-managed table.
    *
    * @throws IllegalArgumentException if the table lacks UC identifiers or catalog config is missing
    */
-  public static Optional<ManagedCommitClient> fromCatalog(
+  public static Optional<ManagedCatalogAdapter> fromCatalog(
       CatalogTable catalogTable, SparkSession spark) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
@@ -74,7 +74,7 @@ public final class UnityCatalogManagedCommitClient implements ManagedCommitClien
     String tableId = extractUCTableId(catalogTable);
     String tablePath = extractTablePath(catalogTable);
     UCClient client = createUCClient(catalogTable, spark);
-    return Optional.of(new UnityCatalogManagedCommitClient(tableId, tablePath, client));
+    return Optional.of(new UnityCatalogAdapter(tableId, tablePath, client));
   }
 
   @Override

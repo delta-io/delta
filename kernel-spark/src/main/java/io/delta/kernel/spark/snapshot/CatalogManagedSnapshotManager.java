@@ -39,31 +39,31 @@ import org.slf4j.LoggerFactory;
  * Implementation of DeltaSnapshotManager for catalog-managed tables (e.g., UC).
  *
  * <p>This snapshot manager is agnostic to the underlying catalog implementation. It delegates to a
- * {@link ManagedCommitClient}, keeping catalog-specific wiring out of the manager itself.
+ * {@link ManagedCatalogAdapter}, keeping catalog-specific wiring out of the manager itself.
  */
 @Experimental
 public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, AutoCloseable {
 
   private static final Logger logger = LoggerFactory.getLogger(CatalogManagedSnapshotManager.class);
 
-  private final ManagedCommitClient commitClient;
+  private final ManagedCatalogAdapter catalogAdapter;
   private final Engine kernelEngine;
 
-  public CatalogManagedSnapshotManager(ManagedCommitClient commitClient, Configuration hadoopConf) {
-    this.commitClient = requireNonNull(commitClient, "commitClient is null");
+  public CatalogManagedSnapshotManager(ManagedCatalogAdapter catalogAdapter, Configuration hadoopConf) {
+    this.catalogAdapter = requireNonNull(catalogAdapter, "catalogAdapter is null");
     requireNonNull(hadoopConf, "hadoopConf is null");
 
     this.kernelEngine = DefaultEngine.create(hadoopConf);
     logger.info(
         "Created CatalogManagedSnapshotManager for table {} at path {}",
-        commitClient.getTableId(),
-        commitClient.getTablePath());
+        catalogAdapter.getTableId(),
+        catalogAdapter.getTablePath());
   }
 
   /** Loads the latest snapshot of the catalog-managed Delta table. */
   @Override
   public Snapshot loadLatestSnapshot() {
-    return commitClient.loadSnapshot(
+    return catalogAdapter.loadSnapshot(
         kernelEngine,
         /* versionOpt = */ Optional.empty(),
         /* timestampOpt = */ Optional.empty());
@@ -78,7 +78,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   @Override
   public Snapshot loadSnapshotAt(long version) {
     checkArgument(version >= 0, "version must be non-negative");
-    return commitClient.loadSnapshot(
+    return catalogAdapter.loadSnapshot(
         kernelEngine, Optional.of(version), /* timestampOpt = */ Optional.empty());
   }
 
@@ -109,7 +109,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
 
     // Get ratified commits from the catalog
     List<ParsedLogData> logData =
-        commitClient.getRatifiedCommits(/* endVersionOpt = */ Optional.empty());
+        catalogAdapter.getRatifiedCommits(/* endVersionOpt = */ Optional.empty());
 
     // Convert to ParsedCatalogCommitData for DeltaHistoryManager
     List<ParsedCatalogCommitData> catalogCommits =
@@ -155,7 +155,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     // For catalog-managed tables, the earliest recreatable version is 0 since the catalog
     // maintains the complete commit history
     long earliestVersion = 0;
-    long latestVersion = commitClient.getLatestRatifiedVersion();
+    long latestVersion = catalogAdapter.getLatestRatifiedVersion();
 
     if (version < earliestVersion || ((version > latestVersion) && !allowOutOfRange)) {
       throw new VersionNotFoundException(version, earliestVersion, latestVersion);
@@ -175,7 +175,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     checkArgument(startVersion >= 0, "startVersion must be non-negative");
     endVersion.ifPresent(v -> checkArgument(v >= 0, "endVersion must be non-negative"));
 
-    return commitClient.loadCommitRange(
+    return catalogAdapter.loadCommitRange(
         engine,
         Optional.of(startVersion),
         /* startTimestampOpt = */ Optional.empty(),
@@ -192,11 +192,11 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   @Override
   public void close() {
     try {
-      commitClient.close();
-      logger.info("Closed CatalogManagedSnapshotManager for table {}", commitClient.getTableId());
+      catalogAdapter.close();
+      logger.info("Closed CatalogManagedSnapshotManager for table {}", catalogAdapter.getTableId());
     } catch (Exception e) {
       logger.warn(
-          "Error closing catalog-managed client for table {}", commitClient.getTableId(), e);
+          "Error closing catalog-managed client for table {}", catalogAdapter.getTableId(), e);
     }
   }
 }
