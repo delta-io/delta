@@ -19,7 +19,13 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.spark.snapshot.ManagedCatalogAdapter;
 import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Optional;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 
@@ -28,33 +34,31 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  *
  * <p>This adapter is responsible only for fetching commit metadata from Unity Catalog's commit
  * coordinator API. It does not contain any Delta/Kernel snapshot building logic - that
- * responsibility belongs to the snapshot manager layer.
- *
- * <p>Methods are stubbed in this wireframe PR and will be implemented in a follow-up once UC
- * operations are enabled.
+ * responsibility belongs to the {@link io.delta.kernel.spark.snapshot.CatalogManagedSnapshotManager}
+ * layer.
  */
 public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
 
   private final String tableId;
   private final String tablePath;
-  private final String endpoint;
-  private final String token;
+  private final UCClient ucClient;
 
-  public UnityCatalogAdapter(String tableId, String tablePath, String endpoint, String token) {
+  public UnityCatalogAdapter(String tableId, String tablePath, UCClient ucClient) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
-    this.endpoint = requireNonNull(endpoint, "endpoint is null");
-    this.token = requireNonNull(token, "token is null");
+    this.ucClient = requireNonNull(ucClient, "ucClient is null");
   }
 
   /**
    * Creates adapter from Spark catalog table.
    *
-   * <p>Extracts UC connection info from Spark metadata and creates the adapter.
+   * <p>Extracts UC connection info from Spark metadata and delegates to {@link
+   * #fromConnectionInfo}.
    *
-   * @param catalogTable the catalog table metadata
-   * @param spark the active SparkSession
-   * @return Optional containing the adapter if this is a UC-managed table, empty otherwise
+   * @param catalogTable Spark catalog table metadata
+   * @param spark SparkSession for resolving Unity Catalog configurations
+   * @return adapter if table is UC-managed, empty otherwise
+   * @throws IllegalArgumentException if table is UC-managed but configuration is invalid
    */
   public static Optional<ManagedCatalogAdapter> fromCatalog(
       CatalogTable catalogTable, SparkSession spark) {
@@ -65,11 +69,19 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
         .map(UnityCatalogAdapter::fromConnectionInfo);
   }
 
-  /** Creates adapter from connection info (no Spark dependency). */
+  /**
+   * Creates adapter from connection info (no Spark dependency).
+   *
+   * <p>This method allows creating a UC adapter without Spark dependencies if you have connection
+   * information directly.
+   *
+   * @param info Unity Catalog connection information
+   * @return adapter instance
+   */
   public static ManagedCatalogAdapter fromConnectionInfo(UnityCatalogConnectionInfo info) {
     requireNonNull(info, "info is null");
-    return new UnityCatalogAdapter(
-        info.getTableId(), info.getTablePath(), info.getEndpoint(), info.getToken());
+    UCClient client = new UCTokenBasedRestClient(info.getEndpoint(), info.getToken());
+    return new UnityCatalogAdapter(info.getTableId(), info.getTablePath(), client);
   }
 
   @Override
@@ -82,29 +94,36 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
     return tablePath;
   }
 
-  /** Returns the UC endpoint URL. */
-  public String getEndpoint() {
-    return endpoint;
-  }
-
-  /** Returns the UC authentication token. */
-  public String getToken() {
-    return token;
-  }
-
   @Override
   public GetCommitsResponse getCommits(long startVersion, Optional<Long> endVersion) {
     requireNonNull(endVersion, "endVersion is null");
-    throw new UnsupportedOperationException("UC getCommits not implemented yet");
+    try {
+      return ucClient.getCommits(
+          tableId,
+          new Path(tablePath).toUri(),
+          startVersion == 0 ? Optional.empty() : Optional.of(startVersion),
+          endVersion);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    } catch (UCCommitCoordinatorException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Override
   public long getLatestRatifiedVersion() {
-    throw new UnsupportedOperationException("UC getLatestRatifiedVersion not implemented yet");
+    GetCommitsResponse response = getCommits(0, Optional.empty());
+    long maxRatified = response.getLatestTableVersion();
+    // UC returns -1 when only 0.json exists (CREATE not yet registered with UC)
+    return maxRatified == -1 ? 0 : maxRatified;
   }
 
   @Override
   public void close() {
-    // no-op in wireframe; will close UCClient in implementation
+    try {
+      ucClient.close();
+    } catch (Exception e) {
+      // Swallow close errors to avoid disrupting caller cleanup
+    }
   }
 }
