@@ -63,7 +63,10 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   /** Loads the latest snapshot of the catalog-managed Delta table. */
   @Override
   public Snapshot loadLatestSnapshot() {
-    return commitClient.loadSnapshot(kernelEngine, Optional.empty(), Optional.empty());
+    return commitClient.loadSnapshot(
+        kernelEngine,
+        /* versionOpt = */ Optional.empty(),
+        /* timestampOpt = */ Optional.empty());
   }
 
   /**
@@ -75,7 +78,8 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   @Override
   public Snapshot loadSnapshotAt(long version) {
     checkArgument(version >= 0, "version must be non-negative");
-    return commitClient.loadSnapshot(kernelEngine, Optional.of(version), Optional.empty());
+    return commitClient.loadSnapshot(
+        kernelEngine, Optional.of(version), /* timestampOpt = */ Optional.empty());
   }
 
   /**
@@ -104,7 +108,8 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     SnapshotImpl latestSnapshot = (SnapshotImpl) loadLatestSnapshot();
 
     // Get ratified commits from the catalog
-    List<ParsedLogData> logData = commitClient.getRatifiedCommits(Optional.empty());
+    List<ParsedLogData> logData =
+        commitClient.getRatifiedCommits(/* endVersionOpt = */ Optional.empty());
 
     // Convert to ParsedCatalogCommitData for DeltaHistoryManager
     List<ParsedCatalogCommitData> catalogCommits =
@@ -171,7 +176,11 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     endVersion.ifPresent(v -> checkArgument(v >= 0, "endVersion must be non-negative"));
 
     return commitClient.loadCommitRange(
-        engine, Optional.of(startVersion), Optional.empty(), endVersion, Optional.empty());
+        engine,
+        Optional.of(startVersion),
+        /* startTimestampOpt = */ Optional.empty(),
+        endVersion,
+        /* endTimestampOpt = */ Optional.empty());
   }
 
   /**
