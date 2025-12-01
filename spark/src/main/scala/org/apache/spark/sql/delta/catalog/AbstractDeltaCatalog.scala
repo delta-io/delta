@@ -25,11 +25,12 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, IdentityColumn}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaOptions, DeltaTableUtils, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
@@ -42,7 +43,6 @@ import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
-import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -378,11 +378,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         // TODO: we should extract write options from table properties for all the cases. We
         //       can remove the UC check when we have confidence.
-        val respectOptions = isUnityCatalog || properties.containsKey("test.simulateUC")
-        val (props, writeOptions) = if (respectOptions) {
+        val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
+        val (props, writeOptions) = if (isUC) {
           val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
           expandTableProps(props, writeOptions, spark.sessionState.conf)
           props.remove("test.simulateUC")
+          translateCatalogOwnedFeature(props)
           (props, writeOptions)
         } else {
           (properties, Map.empty[String, String])
@@ -600,6 +601,18 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         }
       }
     }
+  }
+
+  /**
+   * The table feature CatalogOwnedTableFeature was once renamed from an old name. In a transition
+   * period we need to translate the old table feature property name set by caller to new one.
+   * TODO: clean up once callers are migrated.
+   */
+  private def translateCatalogOwnedFeature(props: util.Map[String, String]): Unit = {
+    val removedValue = Option(props.remove(CatalogOwnedTableFeature.oldPropertyKey))
+    removedValue.foreach(props.putIfAbsent(CatalogOwnedTableFeature.propertyKey, _))
+    val oldTableIdProperty = Option(props.remove(UC_TABLE_ID_KEY_OLD))
+    oldTableIdProperty.foreach(props.putIfAbsent(UC_TABLE_ID_KEY, _))
   }
 
   /**
