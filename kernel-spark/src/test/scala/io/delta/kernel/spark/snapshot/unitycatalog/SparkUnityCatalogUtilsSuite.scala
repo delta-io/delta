@@ -15,25 +15,45 @@
  */
 package io.delta.kernel.spark.snapshot.unitycatalog
 
-import scala.collection.JavaConverters._
+import java.net.URI
+import java.util.{HashMap => JHashMap}
 
 import io.delta.kernel.spark.utils.CatalogTableTestUtils
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTableType}
-import org.apache.spark.sql.types.StructType
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
+/**
+ * Unit tests for [[SparkUnityCatalogUtils]].
+ *
+ * Tests use distinctive, high-entropy values that would fail if the implementation
+ * had hardcoded defaults instead of actually extracting values from the inputs.
+ */
 class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
 
   private var spark: SparkSession = _
 
+  // String values matching the implementation's constants (package-private access)
+  private val FEATURE_CATALOG_MANAGED = "delta.feature.catalogManaged"
+  private val FEATURE_SUPPORTED = "supported"
+  private val UC_TABLE_ID_KEY = UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+  private val UC_CATALOG_CONNECTOR = "io.unitycatalog.spark.UCSingleCatalog"
+
+  // Distinctive values that would fail if hardcoded
+  private val TABLE_ID_ALPHA = "uc_8f2b3c9a-d1e7-4a6f-b8c2"
+  private val TABLE_PATH_ALPHA = "abfss://delta-store@prod.dfs.core.windows.net/warehouse/tbl_v3"
+  private val ENDPOINT_ALPHA = "https://westus2-prod.azuredatabricks.net/api/2.1/unity-catalog"
+  private val TOKEN_ALPHA = "dapi_Xk7mP$9qRs#2vWz_prod"
+  private val CATALOG_ALPHA = "uc_catalog_westus2_prod"
+
   override protected def beforeAll(): Unit = {
     super.beforeAll()
-    spark = SparkSession.builder().master("local[1]").appName("uc-utils-suite").getOrCreate()
+    spark = SparkSession.builder()
+      .master("local[1]")
+      .appName("SparkUnityCatalogUtilsSuite")
+      .getOrCreate()
   }
 
   override protected def afterAll(): Unit = {
@@ -43,25 +63,199 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
     super.afterAll()
   }
 
-  private def makeTable(storageProps: java.util.Map[String, String]): CatalogTable = {
-    val base =
-      CatalogTableTestUtils.catalogTableWithProperties(new java.util.HashMap[String, String](), storageProps)
-    base.copy(storage = base.storage.copy(locationUri = Some(new java.net.URI("file:/tmp/uc-tbl"))))
+  // ==================== Helper Methods ====================
+
+  private def makeNonUCTable(): CatalogTable = {
+    CatalogTableTestUtils.catalogTableWithLocation(
+      new JHashMap[String, String](),
+      new JHashMap[String, String](),
+      new URI(TABLE_PATH_ALPHA)
+    )
   }
+
+  private def makeUCTable(
+      tableId: String = TABLE_ID_ALPHA,
+      tablePath: String = TABLE_PATH_ALPHA,
+      catalogName: Option[String] = None): CatalogTable = {
+    val storageProps = new JHashMap[String, String]()
+    storageProps.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
+    storageProps.put(UC_TABLE_ID_KEY, tableId)
+
+    catalogName match {
+      case Some(catalog) =>
+        CatalogTableTestUtils.catalogTableWithCatalogName(
+          catalog, "tbl", new JHashMap[String, String](), storageProps, new URI(tablePath)
+        )
+      case None =>
+        CatalogTableTestUtils.catalogTableWithLocation(
+          new JHashMap[String, String](), storageProps, new URI(tablePath)
+        )
+    }
+  }
+
+  private def withUCCatalogConfig(catalogName: String, uri: String, token: String)
+                                 (testCode: => Unit): Unit = {
+    val configs = Seq(
+      s"spark.sql.catalog.$catalogName" -> UC_CATALOG_CONNECTOR,
+      s"spark.sql.catalog.$catalogName.uri" -> uri,
+      s"spark.sql.catalog.$catalogName.token" -> token
+    )
+    val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
+
+    try {
+      configs.foreach { case (key, value) => spark.conf.set(key, value) }
+      testCode
+    } finally {
+      configs.foreach { case (key, _) =>
+        originalValues.get(key).flatten match {
+          case Some(v) => spark.conf.set(key, v)
+          case None => spark.conf.unset(key)
+        }
+      }
+    }
+  }
+
+  // ==================== Tests ====================
 
   test("returns empty for non-UC table") {
-    val table = makeTable(new java.util.HashMap[String, String]())
-    val info = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
-    assert(info.isEmpty)
+    val table = makeNonUCTable()
+    val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+    assert(result.isEmpty, "Non-UC table should return empty Optional")
   }
 
-  test("throws when UC table has no catalog config") {
-    // Cannot validate missing UC config in this harness; skip
-    cancel("Skipping: UC catalog configs not available in unit test harness")
+  test("returns empty when UC table ID present but feature flag missing") {
+    val storageProps = new JHashMap[String, String]()
+    storageProps.put(UC_TABLE_ID_KEY, "orphan_id_9x7y5z")
+    // No FEATURE_CATALOG_MANAGED - simulates corrupted/partial metadata
+
+    val table = CatalogTableTestUtils.catalogTableWithLocation(
+      new JHashMap[String, String](), storageProps, new URI("gs://other-bucket/path")
+    )
+    val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+    assert(result.isEmpty, "Missing feature flag should return empty")
   }
 
-  test("extracts connection info when UC config present") {
-    // UC catalog configs are not wired in this test harness; skip
-    cancel("Skipping: UC catalog configs not available in unit test harness")
+  test("throws NullPointerException for null inputs") {
+    val table = makeNonUCTable()
+
+    intercept[NullPointerException] {
+      SparkUnityCatalogUtils.extractConnectionInfo(null, spark)
+    }
+    intercept[NullPointerException] {
+      SparkUnityCatalogUtils.extractConnectionInfo(table, null)
+    }
+  }
+
+  test("throws IllegalArgumentException for UC table with empty table ID") {
+    val storageProps = new JHashMap[String, String]()
+    storageProps.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
+    storageProps.put(UC_TABLE_ID_KEY, "")
+
+    val table = CatalogTableTestUtils.catalogTableWithLocation(
+      new JHashMap[String, String](), storageProps, new URI("s3://empty-id-bucket/path")
+    )
+    val exception = intercept[IllegalArgumentException] {
+      SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+    }
+    assert(exception.getMessage.contains("Cannot extract ucTableId"))
+  }
+
+  test("throws exception for UC table without location") {
+    val storageProps = new JHashMap[String, String]()
+    storageProps.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
+    storageProps.put(UC_TABLE_ID_KEY, "no_location_tbl_id_3k9m")
+
+    val table = CatalogTableTestUtils.catalogTableWithProperties(
+      new JHashMap[String, String](), storageProps
+    )
+    // Spark throws AnalysisException when location is missing
+    val exception = intercept[Exception] {
+      SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+    }
+    assert(exception.getMessage.contains("locationUri") ||
+      exception.getMessage.contains("location"))
+  }
+
+  test("throws IllegalArgumentException when no matching catalog configuration") {
+    val table = makeUCTable(catalogName = Some("nonexistent_catalog_xyz"))
+
+    val exception = intercept[IllegalArgumentException] {
+      SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+    }
+    assert(exception.getMessage.contains("Unity Catalog configuration not found") ||
+      exception.getMessage.contains("Cannot create UC client"))
+  }
+
+  test("extracts connection info when UC catalog is properly configured") {
+    val table = makeUCTable(catalogName = Some(CATALOG_ALPHA))
+
+    withUCCatalogConfig(CATALOG_ALPHA, ENDPOINT_ALPHA, TOKEN_ALPHA) {
+      val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+
+      assert(result.isPresent, "Should return connection info")
+      val info = result.get()
+      // Each assertion uses the specific expected value - would fail if hardcoded
+      assert(info.getTableId == TABLE_ID_ALPHA, s"Table ID mismatch: got ${info.getTableId}")
+      assert(info.getTablePath == TABLE_PATH_ALPHA, s"Table path mismatch: got ${info.getTablePath}")
+      assert(info.getEndpoint == ENDPOINT_ALPHA, s"Endpoint mismatch: got ${info.getEndpoint}")
+      assert(info.getToken == TOKEN_ALPHA, s"Token mismatch: got ${info.getToken}")
+    }
+  }
+
+  test("selects correct catalog when multiple catalogs configured") {
+    // Use completely different values for each catalog to prove selection works
+    val catalogBeta = "uc_catalog_eastus_staging"
+    val endpointBeta = "https://eastus-staging.databricks.net/api/2.1/uc"
+    val tokenBeta = "dapi_Yz3nQ$8wRt#1vXa_staging"
+    val tableIdBeta = "uc_tbl_staging_4d7e2f1a"
+    val tablePathBeta = "s3://staging-bucket-us-east/delta/tables/v2"
+
+    val catalogGamma = "uc_catalog_euwest_dev"
+    val endpointGamma = "https://euwest-dev.databricks.net/api/2.1/uc"
+    val tokenGamma = "dapi_Jk5pL$3mNq#9vBc_dev"
+
+    // Table is in catalogBeta
+    val table = makeUCTable(
+      tableId = tableIdBeta,
+      tablePath = tablePathBeta,
+      catalogName = Some(catalogBeta)
+    )
+
+    val configs = Seq(
+      // catalogGamma config (should NOT be used)
+      s"spark.sql.catalog.$catalogGamma" -> UC_CATALOG_CONNECTOR,
+      s"spark.sql.catalog.$catalogGamma.uri" -> endpointGamma,
+      s"spark.sql.catalog.$catalogGamma.token" -> tokenGamma,
+      // catalogBeta config (should be used)
+      s"spark.sql.catalog.$catalogBeta" -> UC_CATALOG_CONNECTOR,
+      s"spark.sql.catalog.$catalogBeta.uri" -> endpointBeta,
+      s"spark.sql.catalog.$catalogBeta.token" -> tokenBeta
+    )
+    val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
+
+    try {
+      configs.foreach { case (key, value) => spark.conf.set(key, value) }
+
+      val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+      assert(result.isPresent, "Should return connection info")
+
+      val info = result.get()
+      // Verify it selected catalogBeta's config, not catalogGamma's
+      assert(info.getEndpoint == endpointBeta,
+        s"Should use catalogBeta's endpoint, got: ${info.getEndpoint}")
+      assert(info.getToken == tokenBeta,
+        s"Should use catalogBeta's token, got: ${info.getToken}")
+      assert(info.getTableId == tableIdBeta,
+        s"Should extract tableIdBeta, got: ${info.getTableId}")
+      assert(info.getTablePath == tablePathBeta,
+        s"Should extract tablePathBeta, got: ${info.getTablePath}")
+    } finally {
+      configs.foreach { case (key, _) =>
+        originalValues.get(key).flatten match {
+          case Some(v) => spark.conf.set(key, v)
+          case None => spark.conf.unset(key)
+        }
+      }
+    }
   }
 }
