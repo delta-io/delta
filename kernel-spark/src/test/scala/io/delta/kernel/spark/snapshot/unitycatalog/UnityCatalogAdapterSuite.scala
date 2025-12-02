@@ -78,7 +78,7 @@ class UnityCatalogAdapterSuite extends AnyFunSuite {
     val adapter = new UnityCatalogAdapter(tableId, tablePath, new StubUCClient(
       new GetCommitsResponse(commits.asJava, /* latest */ 2L)))
 
-    val parsed = adapter.getRatifiedCommits(Optional.empty()).asScala.map(_.getVersion)
+    val parsed = adapter.getRatifiedCommits(/* endVersionOpt = */ Optional.empty()).asScala.map(_.getVersion)
     assert(parsed == Seq(0L, 1L, 2L))
     assert(adapter.getLatestRatifiedVersion() == 2L)
   }
@@ -96,7 +96,7 @@ class UnityCatalogAdapterSuite extends AnyFunSuite {
       throwOnGet = Some(new IOException("boom"))))
 
     assertThrows[java.io.UncheckedIOException] {
-      adapter.getRatifiedCommits(Optional.empty())
+      adapter.getRatifiedCommits(/* endVersionOpt = */ Optional.empty())
     }
   }
 
@@ -106,7 +106,7 @@ class UnityCatalogAdapterSuite extends AnyFunSuite {
       throwOnGet = Some(new CommitLimitReachedException("boom"))))
 
     assertThrows[RuntimeException] {
-      adapter.getRatifiedCommits(Optional.empty())
+      adapter.getRatifiedCommits(/* endVersionOpt = */ Optional.empty())
     }
   }
 }

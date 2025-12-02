@@ -220,7 +220,7 @@ class CatalogManagedSnapshotManagerSuite extends AnyFunSuite with UCCatalogManag
         val commitRange = manager.getTableChanges(
           defaultEngine,
           /* startVersion = */ 1L,
-          Optional.of(2L) /* endVersion */ )
+          /* endVersion = */ Optional.of(2L))
 
         assert(commitRange != null, "CommitRange should not be null")
       } finally {
