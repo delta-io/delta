@@ -240,7 +240,7 @@ object SparkVersionSpec {
   )
 
   private val spark41Snapshot = SparkVersionSpec(
-    fullVersion = "4.1.0-SNAPSHOT",
+    fullVersion = "4.1.0",
     targetJvm = "17",
     additionalSourceDir = Some("scala-spark-master"),
     antlr4Version = "4.13.1",
