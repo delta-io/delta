@@ -373,7 +373,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       targetType: StructType,
       targetNamedStructExpr: Expression,
       originalTargetExprOpt: Option[Expression]): Expression = {
-    if (conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)) {
+    if (UpdateExpressionsSupport.isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf)) {
       val sourceNullCondition = IsNull(sourceExpr)
       val fullNullCondition = originalTargetExprOpt match {
         case Some(originalTargetExpr) =>
@@ -792,13 +792,24 @@ case class CheckOverflowInTableWrite(child: Expression, columnName: String)
 }
 
 object UpdateExpressionsSupport {
+
+  /**
+   * Returns true if preserving null source structs for whole-struct assignments is enabled.
+   * This fix addresses the issue where a null source struct is incorrectly expanded into
+   * a non-null struct with all fields set to null in whole-struct assignments, e.g.
+   * UPDATE SET col = s.col.
+   */
+  def isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf: SQLConf): Boolean = {
+    conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)
+  }
+
   /**
    * Returns true if preserving null source structs for UPDATE * is enabled.
    * This fix addresses the issue where a null source struct is incorrectly expanded into
    * a non-null struct with all fields set to null in UPDATE * operations.
    */
   def isUpdateStarPreserveNullSourceStructsEnabled(conf: SQLConf): Boolean = {
-    conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS) &&
+    isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf) &&
       conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS_UPDATE_STAR)
   }
 }

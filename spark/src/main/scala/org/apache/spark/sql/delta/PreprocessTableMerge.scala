@@ -306,9 +306,20 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         targetOnlyStructFieldBehavior = a.targetOnlyStructFieldBehavior)
     }
 
-    // And construct operations for columns that the insert/update clauses will add.
     val newUpdateOps =
-      generateUpdateOpsForNewTargetFields(target, postEvolutionTargetSchema, resolvedActions)
+      if (UpdateExpressionsSupport.isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf)) {
+        // We don't want to call `generateUpdateOpsForNewTargetFields` here because:
+        // 1. `generateUpdateExpressions` (below) already handles any fields in the evolved schema
+        // that don't have corresponding actions by assigning them default expressions (NULL for
+        // new fields or the existing target value for existing target fields).
+        // 2. `generateUpdateOpsForNewTargetFields` generates leaf-level operations for new target
+        // fields. If these fields are null structs in the source, they will be expanded to
+        // non-null structs with null fields in the target.
+        Seq.empty
+      } else {
+        // And construct operations for columns that the insert/update clauses will add.
+        generateUpdateOpsForNewTargetFields(target, postEvolutionTargetSchema, resolvedActions)
+      }
 
     // Use the helper methods in UpdateExpressionsSupport to generate expressions such that nested
     // fields can be updated (only for existing columns).
