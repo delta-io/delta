@@ -68,6 +68,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -546,9 +547,9 @@ public class TransactionImpl implements Transaction {
 
       // Track CDF validation state: whether we've seen adds and removes
       // with enableChangeDataFeed=true
-      // This is wrapped in an array to allow modification from within the lambda
-      final boolean[] hasAddWithDataChange = {false};
-      final boolean[] hasRemoveWithDataChange = {false};
+      // This is wrapped in an AtomicBoolean to allow modification from within the lambda
+      final AtomicBoolean hasAddWithDataChange = new AtomicBoolean(false);
+      final AtomicBoolean hasRemoveWithDataChange = new AtomicBoolean(false);
 
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
@@ -563,22 +564,22 @@ public class TransactionImpl implements Transaction {
                       if (isAppendOnlyTable && removeFile.getDataChange()) {
                         throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
                       }
-                      // Track removes with enableChangeDataFeed=true for table creation validation
+                      // Track removes with dataChange=true for table creation validation
                       if (isCdfEnabled && removeFile.getDataChange()) {
-                        hasRemoveWithDataChange[0] = true;
-                        // Check if we've already seen adds with enableChangeDataFeed=true
-                        if (hasAddWithDataChange[0]) {
+                        hasRemoveWithDataChange.set(true);
+                        // Check if we've already seen adds with dataChange=true
+                        if (hasAddWithDataChange.get()) {
                           throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
                         }
                       }
                     }
                     if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                       AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
-                      // Track adds with enableChangeDataFeed=true for table creation validation
+                      // Track adds with dataChange=true for table creation validation
                       if (isCdfEnabled && addFile.getDataChange()) {
-                        hasAddWithDataChange[0] = true;
-                        // Check if we've already seen removes with enableChangeDataFeed=true
-                        if (hasRemoveWithDataChange[0]) {
+                        hasAddWithDataChange.set(true);
+                        // Check if we've already seen removes with dataChange=true
+                        if (hasRemoveWithDataChange.get()) {
                           throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
                         }
                       }
