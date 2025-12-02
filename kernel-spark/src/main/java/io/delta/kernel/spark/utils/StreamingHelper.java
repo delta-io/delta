@@ -101,12 +101,10 @@ public class StreamingHelper {
    * Gets actions from a commit range without requiring a snapshot at the exact start version.
    *
    * <p>This method is "unsafe" because it bypasses the standard {@code CommitRange.getActions()}
-   * API which requires a snapshot at the exact start version for protocol validation. Instead, it
-   * directly reads commit files and validates protocol per-commit, allowing a newer snapshot to be
-   * used for reading historical commits.
+   * API which requires a snapshot at the exact start version for protocol validation.
    *
    * <p>This is necessary for streaming scenarios where the start version might not have a
-   * recreatable snapshot (e.g., after log cleanup) or where {@code startingVersion="latest"} is
+   * recreatable snapshot (e.g., after log cleanup) or where {@code startingVersion} is
    * used.
    *
    * @param engine the Delta engine
