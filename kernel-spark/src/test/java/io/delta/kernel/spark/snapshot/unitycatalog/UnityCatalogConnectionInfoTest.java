@@ -28,7 +28,7 @@ class UnityCatalogConnectionInfoTest {
     // Use distinctive values that would fail if implementation had hardcoded defaults
     String tableId = "uc_tbl_7f3a9b2c-e8d1-4f6a";
     String tablePath = "abfss://container@acct.dfs.core.windows.net/delta/v2";
-    String endpoint = "https://westus2.azuredatabricks.net/api/2.1/uc";
+    String endpoint = "https://uc-server.example.net/api/2.1/uc";
     String token = "dapi_Kx9mN$2pQr#7vWz";
 
     UnityCatalogConnectionInfo info =

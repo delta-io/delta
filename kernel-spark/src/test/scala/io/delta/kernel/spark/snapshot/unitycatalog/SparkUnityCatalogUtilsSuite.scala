@@ -44,7 +44,7 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
   // Distinctive values that would fail if hardcoded
   private val TABLE_ID_ALPHA = "uc_8f2b3c9a-d1e7-4a6f-b8c2"
   private val TABLE_PATH_ALPHA = "abfss://delta-store@prod.dfs.core.windows.net/warehouse/tbl_v3"
-  private val ENDPOINT_ALPHA = "https://westus2-prod.azuredatabricks.net/api/2.1/unity-catalog"
+  private val ENDPOINT_ALPHA = "https://uc-server-westus2.example.net/api/2.1/unity-catalog"
   private val TOKEN_ALPHA = "dapi_Xk7mP$9qRs#2vWz_prod"
   private val CATALOG_ALPHA = "uc_catalog_westus2_prod"
 
@@ -205,13 +205,13 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
   test("selects correct catalog when multiple catalogs configured") {
     // Use completely different values for each catalog to prove selection works
     val catalogBeta = "uc_catalog_eastus_staging"
-    val endpointBeta = "https://eastus-staging.databricks.net/api/2.1/uc"
+    val endpointBeta = "https://uc-server-eastus.example.net/api/2.1/uc"
     val tokenBeta = "dapi_Yz3nQ$8wRt#1vXa_staging"
     val tableIdBeta = "uc_tbl_staging_4d7e2f1a"
     val tablePathBeta = "s3://staging-bucket-us-east/delta/tables/v2"
 
     val catalogGamma = "uc_catalog_euwest_dev"
-    val endpointGamma = "https://euwest-dev.databricks.net/api/2.1/uc"
+    val endpointGamma = "https://uc-server-euwest.example.net/api/2.1/uc"
     val tokenGamma = "dapi_Jk5pL$3mNq#9vBc_dev"
 
     // Table is in catalogBeta
