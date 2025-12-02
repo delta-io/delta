@@ -20,8 +20,10 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.lang.Lazy
 import io.delta.kernel.internal.metrics.SnapshotQueryContext
 import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.FileNames
@@ -29,7 +31,9 @@ import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringM
 import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
 
-object MockSnapshotUtils {
+object MockSnapshotUtils extends MockSnapshotUtils
+
+trait MockSnapshotUtils {
 
   /**
    * Creates a mock snapshot with valid metadata at the given version.
@@ -38,7 +42,9 @@ object MockSnapshotUtils {
   def getMockSnapshot(
       dataPath: Path,
       latestVersion: Long,
-      ictEnablementInfoOpt: Option[(Long, Long)] = None): SnapshotImpl = {
+      ictEnablementInfoOpt: Option[(Long, Long)] = None,
+      timestamp: Long = 0L,
+      deltaFileAtEndVersion: Option[FileStatus] = None): SnapshotImpl = {
     val configuration = ictEnablementInfoOpt match {
       case Some((version, _)) if version == 0L =>
         Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
@@ -62,27 +68,31 @@ object MockSnapshotUtils {
       stringStringMapValue(configuration.asJava));
     val logPath = new Path(dataPath, "_delta_log")
 
-    val fs = FileStatus.of(
+    val fs = deltaFileAtEndVersion.getOrElse(FileStatus.of(
       FileNames.deltaFile(logPath, latestVersion),
       1, /* size */
-      1 /* modificationTime */ )
+      1 /* modificationTime */ ))
     val logSegment = new LogSegment(
       logPath, /* logPath */
       latestVersion,
       Seq(fs).asJava, /* deltas */
       Seq.empty.asJava, /* compactions */
       Seq.empty.asJava, /* checkpoints */
+      fs, /* deltaAtEndVersion */
       Optional.empty(), /* lastSeenChecksum */
-      0L /* lastCommitTimestamp */
+      Optional.empty() /* maxPublishedDeltaVersion */
     )
     val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(dataPath.toString)
     new SnapshotImpl(
       dataPath, /* dataPath */
-      logSegment, /* logSegment */
+      logSegment.getVersion, /* version */
+      new Lazy(() => logSegment), /* logSegment */
       null, /* logReplay */
-      null, /* protocol */
+      new Protocol(1, 2), /* protocol */
       metadata,
-      snapshotQueryContext /* snapshotContext */
+      DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
+      snapshotQueryContext, /* snapshotContext */
+      Optional.empty() /* inCommitTimestampOpt */
     )
   }
 }

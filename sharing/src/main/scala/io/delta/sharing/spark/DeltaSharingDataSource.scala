@@ -139,10 +139,12 @@ private[sharing] class DeltaSharingDataSource
         // streaming dataframe. We only need to merge consecutive schema changes here because the
         // process would create a new entry in the schema log such that when the schema log is
         // looked up again in the execution phase, we would use the correct schema.
+        // Delta sharing delta log doesn't have a catalog table, so we pass None here.
         DeltaDataSource
           .getMetadataTrackingLogForDeltaSource(
             sqlContext.sparkSession,
             snapshotDescriptor,
+            catalogTableOpt = None,
             parameters,
             mergeConsecutiveSchemaChanges = shouldMergeConsecutiveSchemas
           )

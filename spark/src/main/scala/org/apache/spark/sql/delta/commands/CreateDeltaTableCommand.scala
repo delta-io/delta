@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -131,7 +132,8 @@ case class CreateDeltaTableCommand(
     val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
       DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
     }
-    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation, fileSystemOptions)
+    val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
+      sparkSession, existingTableOpt, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
@@ -329,6 +331,7 @@ case class CreateDeltaTableCommand(
     }
     val updatedConfiguration = UniversalFormat.enforceDependenciesInConfiguration(
       sparkSession,
+      tableWithLocation,
       deltaWriter.configuration,
       txn.snapshot
     )
@@ -396,6 +399,7 @@ case class CreateDeltaTableCommand(
         newMetadata = newMetadata.copy(configuration =
           UniversalFormat.enforceDependenciesInConfiguration(
             sparkSession,
+            tableWithLocation,
             newMetadata.configuration,
             txn.snapshot
           ))
@@ -725,6 +729,7 @@ case class CreateDeltaTableCommand(
       var newMetadata = getProvidedMetadata(table, schema.json)
       val updatedConfig = UniversalFormat.enforceDependenciesInConfiguration(
         sparkSession,
+        tableDesc,
         newMetadata.configuration,
         txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)

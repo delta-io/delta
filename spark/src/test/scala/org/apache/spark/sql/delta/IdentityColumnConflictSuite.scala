@@ -83,6 +83,7 @@ trait IdentityColumnConflictSuiteBase
     with PhaseLockingTestMixin {
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
+    .set(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key, "true")
 
   val colName = "id"
 
@@ -108,7 +109,7 @@ trait IdentityColumnConflictSuiteBase
    * Returns the expected exception class for the test case.
    * Returns None if no exception is expected.
    */
-  private def expectedExceptionClass(
+  protected def expectedExceptionClass(
       currentTxn: TransactionConflictTestCase,
       winningTxn: TransactionConflictTestCase): Option[Class[_ <: RuntimeException]] = {
     val currentTxnShouldAbortDueToMetadataUpdate = winningTxn match {
@@ -127,7 +128,7 @@ trait IdentityColumnConflictSuiteBase
       currentTxn.isInstanceOf[IdentityOnlyMetadataUpdateTestCase] && !currentTxn.isAppend
 
     if (currentTxnShouldAbortDueToConcurrentAppend) {
-        return Some(classOf[io.delta.exceptions.ConcurrentAppendException])
+      return Some(classOf[io.delta.exceptions.ConcurrentAppendException])
     }
 
     None
@@ -137,7 +138,7 @@ trait IdentityColumnConflictSuiteBase
    * Helper function to test two concurrently running commands. Winning transaction commits before
    * current transaction commits.
    */
-  private def transactionIdentityConflictHelper(
+  protected def transactionIdentityConflictHelper(
       currentTxn: TransactionConflictTestCase,
       winningTxn: TransactionConflictTestCase,
       tblIsoLevel: Option[IsolationLevel]): Unit = {
@@ -150,21 +151,8 @@ trait IdentityColumnConflictSuiteBase
 
       val threadPool =
         ThreadUtils.newDaemonSingleThreadExecutor(threadName = "identity-column-thread-pool")
-      var (txnObserver, future) = runQueryWithObserver(
+      val (txnObserver, future) = runQueryWithObserver(
         name = "current", threadPool, currentTxn.sqlCommand.replace("{tblName}", tblName))
-
-      // If the current txn is enabling row tracking on an existing table, the first txn is
-      // a NOOP since there are no files in the table initially. No commit will be made.
-      // Let's "skip" this txn obj. Replace the observer after the first commit.
-      // We want to observe the metadata update in this test, which happens after backfill.
-      val metadataUpdateObserver = new PhaseLockingTransactionExecutionObserver(
-        OptimisticTransactionPhases.forName("late-txn"))
-      if (currentTxn.isInstanceOf[RowTrackingEnablementOnlyTestCase]) {
-        txnObserver.setNextObserver(metadataUpdateObserver, autoAdvance = true)
-        unblockAllPhases(txnObserver)
-        txnObserver.phases.postCommitPhase.exitBarrier.unblock()
-        txnObserver = metadataUpdateObserver
-      }
 
       unblockUntilPreCommit(txnObserver)
       busyWaitFor(txnObserver.phases.preparePhase.hasEntered, timeout)
@@ -178,9 +166,13 @@ trait IdentityColumnConflictSuiteBase
           ThreadUtils.awaitResult(future, Duration.Inf)
           assert(expectedException.isEmpty, "Expected txn to fail, but no exception was thrown")
         } catch {
-          case NonFatal(e) =>
-            assert(expectedException.isDefined, "Unexpected failure")
-            assert(e.getCause.getClass === expectedException.get)
+          case NonFatal(e) => expectedException match {
+            case None => fail("Expecting no exception, but an exception was thrown", e)
+            case Some(expected) if (e.getCause == null) || e.getCause.getClass != expected =>
+              fail(s"Expected exception of type ${expected.getName}, " +
+                "but got a different exception", e)
+            case Some(_) => // Expected exception was thrown, test passes.
+          }
         }
       }
 
@@ -223,30 +215,29 @@ trait IdentityColumnConflictSuiteBase
   )
 
   // Explicitly provided IDENTITY value will not generate a metadata update.
-  private val noMetadataUpdateTestCase =
-    NoMetadataUpdateTestCase(
-      name = "noMetadataUpdate",
-      sqlCommand = s"INSERT INTO {tblName} VALUES (1, 1)",
-      isAppend = true
-    )
+  private val noMetadataUpdateTestCase = NoMetadataUpdateTestCase(
+    name = "noMetadataUpdate",
+    sqlCommand = s"INSERT INTO {tblName} VALUES (1, 1)",
+    isAppend = true
+  )
 
   private val rowTrackingEnablementTestCase = RowTrackingEnablementOnlyTestCase(
-      name = "rowTrackingEnablement",
-      sqlCommand =
-        s"""ALTER TABLE {tblName}
-           |SET TBLPROPERTIES(
-           |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true'
-           |)""".stripMargin,
-      isAppend = false
-    )
+    name = "rowTrackingEnablement",
+    sqlCommand =
+      s"""ALTER TABLE {tblName}
+         |SET TBLPROPERTIES(
+         |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true'
+         |)""".stripMargin,
+    isAppend = false
+  )
 
   private val otherMetadataUpdateTestCase = GenericMetadataUpdateTestCase(
-      name = "otherMetadataUpdate",
-      sqlCommand = s"ALTER TABLE {tblName} ADD COLUMN value2 STRING",
-      isAppend = false
-    )
+    name = "otherMetadataUpdate",
+    sqlCommand = s"ALTER TABLE {tblName} ADD COLUMN value2 STRING",
+    isAppend = false
+  )
 
-  private val conflictTestCases: Seq[TransactionConflictTestCase] = Seq(
+  protected val conflictTestCases: Seq[TransactionConflictTestCase] = Seq(
     generatedIdTestCase,
     syncIdentityTestCase,
     noMetadataUpdateTestCase,

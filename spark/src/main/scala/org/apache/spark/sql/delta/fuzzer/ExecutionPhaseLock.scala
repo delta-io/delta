@@ -66,6 +66,11 @@ case class ExecutionPhaseLock(
     leave()
   }
 
+  def hasReached: Boolean = {
+    val current = entryBarrier.load()
+    current == AtomicBarrier.State.Requested || current == AtomicBarrier.State.Passed
+  }
+
   /** Blocks at this point until the phase has been left. */
   def waitToLeave(): Unit = exitBarrier.waitToPass()
 }

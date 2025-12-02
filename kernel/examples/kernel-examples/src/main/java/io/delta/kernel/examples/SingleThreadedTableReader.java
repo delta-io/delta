@@ -103,7 +103,7 @@ public class SingleThreadedTableReader
         int readRecordCount = 0;
         try {
             StructType physicalReadSchema =
-                ScanStateRow.getPhysicalDataReadSchema(engine, scanState);
+                ScanStateRow.getPhysicalDataReadSchema(scanState);
             while (scanFileIter.hasNext()) {
                 FilteredColumnarBatch scanFilesBatch = scanFileIter.next();
                 try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
@@ -115,7 +115,7 @@ public class SingleThreadedTableReader
                             engine.getParquetHandler().readParquetFiles(
                                 singletonCloseableIterator(fileStatus),
                                 physicalReadSchema,
-                                Optional.empty());
+                                Optional.empty()).map(res -> res.getData());
                         try (
                             CloseableIterator<FilteredColumnarBatch> transformedData =
                                 Scan.transformPhysicalData(

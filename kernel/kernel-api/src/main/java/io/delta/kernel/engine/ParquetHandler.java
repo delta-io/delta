@@ -20,6 +20,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -41,9 +42,9 @@ public interface ParquetHandler {
    * Read the Parquet format files at the given locations and return the data as a {@link
    * ColumnarBatch} with the columns requested by {@code physicalSchema}.
    *
-   * <p>If {@code physicalSchema} has a {@link StructField} with column name {@link
-   * StructField#METADATA_ROW_INDEX_COLUMN_NAME} and the field is a metadata column {@link
-   * StructField#isMetadataColumn()} the column must be populated with the file row index.
+   * <p>If {@code physicalSchema} has a {@link StructField} that is a metadata column {@link
+   * StructField#isMetadataColumn()} of type {@link MetadataColumnSpec#ROW_INDEX}, the column must
+   * be populated with the file row index.
    *
    * <p>How does a column in {@code physicalSchema} match to the column in the Parquet file? If the
    * {@link StructField} has a field id in the {@code metadata} with key `parquet.field.id` the
@@ -56,12 +57,12 @@ public interface ParquetHandler {
    * @param predicate Optional predicate which the Parquet reader can optionally use to prune rows
    *     that don't satisfy the predicate. Because pruning is optional and may be incomplete, caller
    *     is still responsible apply the predicate on the data returned by this method.
-   * @return an iterator of {@link ColumnarBatch}s containing the data in columnar format. It is the
-   *     responsibility of the caller to close the iterator. The data returned is in the same as the
-   *     order of files given in {@code scanFileIter}.
+   * @return an iterator of {@link FileReadResult}s containing the data in columnar format along
+   *     with metadata. It is the responsibility of the caller to close the iterator. The data
+   *     returned is in the same as the order of files given in {@code scanFileIter}.
    * @throws IOException if an I/O error occurs during the read.
    */
-  CloseableIterator<ColumnarBatch> readParquetFiles(
+  CloseableIterator<FileReadResult> readParquetFiles(
       CloseableIterator<FileStatus> fileIter,
       StructType physicalSchema,
       Optional<Predicate> predicate)

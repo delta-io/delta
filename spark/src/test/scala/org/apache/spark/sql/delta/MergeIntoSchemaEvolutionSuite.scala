@@ -29,21 +29,50 @@ import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, LongType, M
 import org.apache.spark.util.Utils
 
 /**
- * Trait collecting all other schema evolution test traits for convenience.
- */
-trait MergeIntoSchemaEvolutionAllTests extends MergeIntoSchemaEvolutionCoreTests
-  with MergeIntoSchemaEvolutionBaseTests
-  with MergeIntoSchemaEvolutionNotMatchedBySourceTests
-  with MergeIntoNestedStructEvolutionTests {
-    self: QueryTest with MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils
-      with SharedSparkSession =>
-  }
-
-/**
  * Trait collecting schema evolution test runner methods and other helpers.
  */
-trait MergeIntoSchemaEvolutionMixin {
-  self: QueryTest with SharedSparkSession with MergeIntoTestUtils =>
+trait MergeIntoSchemaEvolutionMixin extends QueryTest {
+  self: SharedSparkSession with MergeIntoTestUtils =>
+
+  protected implicit def strToJsonSeq(str: String): Seq[String] = {
+    str.split("\n").filter(_.trim.length > 0)
+  }
+
+  /**
+   * Helper method similar to [[testEvolution()]] but without aliasing the target and source tables
+   * as 't' and 's'. Used to check that attribute resolution works correctly with schema evolution
+   * when using column name qualified with the actual table name: `table_name.column`.
+   */
+  def testEvolutionWithoutTableAliases(name: String)(
+      targetData: => DataFrame,
+      sourceData: => DataFrame,
+      clauses: MergeClause*)(
+      expected: => Seq[Row] = Seq.empty,
+      expectErrorContains: String = null,
+      expectErrorWithoutEvolutionContains: String = null): Unit =
+    for (schemaEvolutionEnabled <- BOOLEAN_DOMAIN)
+    test(s"schema evolution - $name - schemaEvolutionEnabled= $schemaEvolutionEnabled") {
+      withTable("target", "source") {
+        targetData.write.format("delta").saveAsTable("target")
+        sourceData.write.format("delta").saveAsTable("source")
+        withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolutionEnabled.toString) {
+          if (!schemaEvolutionEnabled && expectErrorWithoutEvolutionContains != null) {
+            val ex = intercept[AnalysisException] {
+              executeMerge(tgt = "target", src = "source", cond = "1 = 1", clauses: _*)
+            }
+            errorContains(ex.getMessage, expectErrorWithoutEvolutionContains)
+          } else if (schemaEvolutionEnabled && expectErrorContains != null) {
+            val ex = intercept[AnalysisException] {
+              executeMerge(tgt = "target", src = "source", cond = "1 = 1", clauses: _*)
+            }
+            errorContains(ex.getMessage, expectErrorContains)
+          } else {
+            executeMerge(tgt = "target", src = "source", cond = "1 = 1", clauses: _*)
+            checkAnswer(spark.read.table("target"), expected)
+          }
+        }
+      }
+    }
 
   /**
    * Test runner used by most non-nested schema evolution tests. Runs the MERGE operation once with
@@ -72,19 +101,19 @@ trait MergeIntoSchemaEvolutionMixin {
 
         if (error != null) {
           val ex = intercept[AnalysisException] {
-            executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
+            executeMerge(s"$tableSQLIdentifier t", "source s", cond, clauses: _*)
           }
           errorContains(Utils.exceptionString(ex), error)
         } else {
-          executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
-          checkAnswer(spark.read.format("delta").load(tempPath), df.collect())
+          executeMerge(s"$tableSQLIdentifier t", "source s", cond, clauses: _*)
+          checkAnswer(readDeltaTableByIdentifier(), df.collect())
           if (schema != null) {
-            assert(spark.read.format("delta").load(tempPath).schema === schema)
+            assert(readDeltaTableByIdentifier().schema === schema)
           } else {
             // Check against the schema of the expected result df if no explicit schema was
             // provided. Nullability of fields will vary depending on the actual data in the df so
             // we ignore it.
-            assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
+            assert(readDeltaTableByIdentifier().schema.asNullable ===
               df.schema.asNullable)
           }
         }
@@ -157,9 +186,8 @@ trait MergeIntoSchemaEvolutionMixin {
  * in other suites to get basic test coverage for schema evolution in combination with other
  * features, e.g. CDF, DVs.
  */
-trait MergeIntoSchemaEvolutionCoreTests {
-  self: QueryTest with MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils
-    with SharedSparkSession =>
+trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
 
   import testImplicits._
 
@@ -224,50 +252,13 @@ trait MergeIntoSchemaEvolutionCoreTests {
 }
 
 /**
- * Trait collecting all base and misc tests for schema evolution.
+ * Trait collecting all base and new column tests for schema evolution.
  */
-trait MergeIntoSchemaEvolutionBaseTests {
-  self: QueryTest with MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils
+trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils
     with SharedSparkSession =>
 
   import testImplicits._
-
-  /**
-   * Helper method similar to [[testEvolution()]] but without aliasing the target and source tables
-   * as 't' and 's'. Used to check that attribute resolution works correctly with schema evolution
-   * when using column name qualified with the actual table name: `table_name.column`.
-   */
-  def testEvolutionWithoutTableAliases(name: String)(
-      targetData: => DataFrame,
-      sourceData: => DataFrame,
-      clauses: MergeClause*)(
-      expected: => Seq[Row] = Seq.empty,
-      expectErrorContains: String = null,
-      expectErrorWithoutEvolutionContains: String = null): Unit =
-    for (schemaEvolutionEnabled <- BOOLEAN_DOMAIN)
-    test(s"schema evolution - $name - schemaEvolutionEnabled= $schemaEvolutionEnabled") {
-      withTable("target", "source") {
-        targetData.write.format("delta").saveAsTable("target")
-        sourceData.write.format("delta").saveAsTable("source")
-        withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolutionEnabled.toString) {
-          if (!schemaEvolutionEnabled && expectErrorWithoutEvolutionContains != null) {
-            val ex = intercept[AnalysisException] {
-              executeMerge(tgt = "target", src = "source", cond = "1 = 1", clauses: _*)
-            }
-            errorContains(ex.getMessage, expectErrorWithoutEvolutionContains)
-          } else if (schemaEvolutionEnabled && expectErrorContains != null) {
-            val ex = intercept[AnalysisException] {
-              executeMerge(tgt = "target", src = "source", cond = "1 = 1", clauses: _*)
-            }
-            errorContains(ex.getMessage, expectErrorContains)
-          } else {
-            executeMerge(tgt = "target", src = "source", cond = "1 = 1", clauses: _*)
-            checkAnswer(spark.read.table("target"), expected)
-          }
-        }
-      }
-    }
-
 
   // Schema evolution with UPDATE SET alone
   testEvolution("new column with update set")(
@@ -365,27 +356,6 @@ trait MergeIntoSchemaEvolutionBaseTests {
       .toDF("key", "value", "extra", "other"),
     expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause")
 
-  // No schema evolution
-  testEvolution("old column updated from new column")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1, -1), (2, 2, -2))
-      .toDF("key", "value", "extra"),
-    clauses = update(set = "value = s.extra") :: Nil,
-    expected = ((0, 0) +: (1, -1) +: (3, 30) +: Nil).toDF("key", "value"),
-    expectedWithoutEvolution = ((0, 0) +: (1, -1) +: (3, 30) +: Nil).toDF("key", "value"))
-
-  testEvolution("old column inserted from new column")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1, -1), (2, 2, -2))
-      .toDF("key", "value", "extra"),
-    clauses = insert(values = "(key) VALUES (s.extra)") :: Nil,
-    expected = ((0, 0) +: (1, 10) +: (3, 30) +: (-2, null) +: Nil)
-      .asInstanceOf[List[(Integer, Integer)]]
-      .toDF("key", "value"),
-    expectedWithoutEvolution = ((0, 0) +: (1, 10) +: (3, 30) +: (-2, null) +: Nil)
-      .asInstanceOf[List[(Integer, Integer)]]
-      .toDF("key", "value"))
-
   testEvolution("new column with insert existing column")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
@@ -396,21 +366,6 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expectedWithoutEvolution = ((0, 0) +: (1, 10) +: (2, null) +: (3, 30) +: Nil)
       .asInstanceOf[List[(Integer, Integer)]]
       .toDF("key", "value"))
-
-  // Column doesn't exist with UPDATE/INSERT alone.
-  testEvolution("update set nonexistent column")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
-    clauses = update(set = "nonexistent = s.extra") :: Nil,
-    expectErrorContains = "cannot resolve nonexistent in UPDATE clause",
-    expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in UPDATE clause")
-
-  testEvolution("insert values nonexistent column")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
-    clauses = insert(values = "(nonexistent) VALUES (s.extra)") :: Nil,
-    expectErrorContains = "cannot resolve nonexistent in INSERT clause",
-    expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in INSERT clause")
 
   testEvolution("new column with update set and update *")(
     targetData = Seq((0, 0), (1, 10), (2, 20)).toDF("key", "value"),
@@ -423,49 +378,6 @@ trait MergeIntoSchemaEvolutionBaseTests {
         Nil
       ).toDF("key", "value", "extra"),
     expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (2, 2) +: Nil).toDF("key", "value")
-  )
-
-  testEvolution("update * with column not in source")(
-    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
-    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = update("*") :: Nil,
-    // update went through even though `extra` wasn't there
-    expected = ((0, 0, 0) +: (1, 1, 10) +: (3, 30, 30) +: Nil).toDF("key", "value", "extra"),
-    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause"
-  )
-
-  testEvolution("insert * with column not in source")(
-    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
-    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = insert("*") :: Nil,
-    // insert went through even though `extra` wasn't there
-    expected = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
-      .asInstanceOf[List[(Integer, Integer, Integer)]]
-      .toDF("key", "value", "extra"),
-    expectErrorWithoutEvolutionContains = "cannot resolve extra in INSERT clause"
-  )
-
-  testEvolution("explicitly insert subset of columns")(
-    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
-    sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
-    clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
-    // 2 should have extra = null, since extra wasn't in the insert spec.
-    expected = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
-      .asInstanceOf[List[(Integer, Integer, Integer)]]
-      .toDF("key", "value", "extra"),
-    expectedWithoutEvolution = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
-      .asInstanceOf[List[(Integer, Integer, Integer)]]
-      .toDF("key", "value", "extra")
-  )
-
-  testEvolution("explicitly update one column")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
-    clauses = update("value = s.value") :: Nil,
-    // Both results should be the same - we're checking that no evolution logic triggers
-    // even though there's an extra source column.
-    expected = ((0, 0) +: (1, 1) +: (3, 30) +: Nil).toDF("key", "value"),
-    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (3, 30) +: Nil).toDF("key", "value")
   )
 
   testEvolution("new column with update non-* and insert *")(
@@ -490,26 +402,6 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expectedWithoutEvolution = ((0, 0) +: (2, 2) +: (3, 30) +: (1, 1) +: Nil).toDF("key", "value")
   )
 
-  testEvolution(s"case-insensitive insert")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
-    clauses = insert("(key, value, VALUE) VALUES (s.key, s.value, s.VALUE)") :: Nil,
-    expected = ((0, 0) +: (1, 10) +: (3, 30) +: (2, 2) +: Nil).toDF("key", "value"),
-    expectedWithoutEvolution = ((0, 0) +: (1, 10) +: (3, 30) +: (2, 2) +: Nil).toDF("key", "value"),
-    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
-  )
-
-  // TODO: Add a test for case-sensitive insert and column not in target
-
-  testEvolution("case-sensitive insert, column not in source")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
-    clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
-    expectErrorContains = "Cannot resolve s.value in INSERT clause",
-    expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT clause",
-    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
-  )
-
   testEvolution("evolve partitioned table")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
@@ -530,231 +422,12 @@ trait MergeIntoSchemaEvolutionBaseTests {
       .toDF("key", "value.with.dotted.name")
   )
 
-  // Note that incompatible types are those where a cast to the target type can't resolve - any
-  // valid cast will be permitted.
-  testEvolution("incompatible types in update *")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
-    clauses = update("*") :: Nil,
-    expectErrorContains =
-      "Failed to merge incompatible data types IntegerType and BinaryType",
-    expectErrorWithoutEvolutionContains = "cannot cast"
-  )
-
-  testEvolution("incompatible types in insert *")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
-    clauses = insert("*") :: Nil,
-    expectErrorContains = "Failed to merge incompatible data types IntegerType and BinaryType",
-    expectErrorWithoutEvolutionContains = "cannot cast"
-  )
-
-  // All integral types other than long can be upcasted to integer.
-  testEvolution("upcast numeric source types into integer target")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1.toByte, 1.toShort), (2.toByte, 2.toShort)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expected = Seq((0, 0), (1, 1), (2, 2), (3, 30)).toDF("key", "value"),
-    expectedWithoutEvolution = Seq((0, 0), (1, 1), (2, 2), (3, 30)).toDF("key", "value")
-  )
-
-  // Delta's automatic schema evolution allows converting table columns with a numeric type narrower
-  // than integer to integer, because in the underlying Parquet they're all stored as ints.
-  testEvolution("upcast numeric target types from integer source")(
-    targetData = Seq((0.toByte, 0.toShort), (1.toByte, 10.toShort)).toDF("key", "value"),
-    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expected =
-      ((0.toByte, 0.toShort) +:
-        (1.toByte, 1.toShort) +:
-        (2.toByte, 2.toShort) +: Nil
-        ).toDF("key", "value"),
-    expectedWithoutEvolution =
-      ((0.toByte, 0.toShort) +:
-        (1.toByte, 1.toShort) +:
-        (2.toByte, 2.toShort) +: Nil
-        ).toDF("key", "value")
-  )
-
-  testEvolution("upcast int source type into long target")(
-    targetData = Seq((0, 0L), (1, 10L), (3, 30L)).toDF("key", "value"),
-    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expected = ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 30L) +: Nil).toDF("key", "value"),
-    expectedWithoutEvolution =
-      ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 30L) +: Nil).toDF("key", "value")
-  )
-
-  testEvolution("write string into int column")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, "1"), (2, "2"), (5, "notANumber")).toDF("key", "value"),
-    clauses = insert("*") :: Nil,
-    expected = ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil)
-      .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
-    expectedWithoutEvolution =
-      ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil)
-        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
-    // Disable ANSI as this test needs to cast string "notANumber" to int
-    confs = Seq(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "LEGACY")
-  )
-
-  // Upcasting is always allowed.
-  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
-  testEvolution("upcast int source type into long target, storeAssignmentPolicy = " +
-    s"$storeAssignmentPolicy")(
-    targetData = Seq((0, 0L), (1, 1L), (3, 3L)).toDF("key", "value"),
-    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expected =
-      ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 3L) +: Nil).toDF("key", "value"),
-    expectedWithoutEvolution =
-      ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 3L) +: Nil).toDF("key", "value"),
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
-  )
-
-  // Casts that are not valid implicit casts (e.g. string -> boolean) are never allowed with
-  // schema evolution enabled and allowed only when storeAssignmentPolicy is LEGACY or ANSI when
-  // schema evolution is disabled.
-  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
-  testEvolution("invalid implicit cast string source type into boolean target, " +
-    s"storeAssignmentPolicy = $storeAssignmentPolicy")(
-    targetData = Seq((0, true), (1, false), (3, true)).toDF("key", "value"),
-    sourceData = Seq((1, "true"), (2, "false")).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expectErrorContains = "Failed to merge incompatible data types BooleanType and StringType",
-    expectedWithoutEvolution = ((0, true) +: (1, true) +: (2, false) +: (3, true) +: Nil)
-      .toDF("key", "value"),
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
-  )
-
-  // Casts that are not valid implicit casts (e.g. string -> boolean) are not allowed with
-  // storeAssignmentPolicy = STRICT.
-  testEvolution("invalid implicit cast string source type into boolean target, " +
-   s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}")(
-    targetData = Seq((0, true), (1, false), (3, true)).toDF("key", "value"),
-    sourceData = Seq((1, "true"), (2, "false")).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expectErrorContains = "Failed to merge incompatible data types BooleanType and StringType",
-    expectErrorWithoutEvolutionContains = "cannot up cast s.value from \"string\" to \"boolean\"",
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
-  )
-
-  // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed with
-  // storeAssignmentPolicy = LEGACY or ANSI.
-  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
-  testEvolution("valid implicit cast string source type into int target, " +
-   s"storeAssignmentPolicy = ${storeAssignmentPolicy}")(
-    targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),
-    sourceData = Seq((1, "1"), (2, "2")).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expected = ((0, 0)+: (1, 1) +: (2, 2) +: (3, 3)  +: Nil).toDF("key", "value"),
-    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (2, 2) +: (3, 3) +: Nil).toDF("key", "value"),
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
-  )
-
-  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
-  testEvolution("valid implicit cast long source type into int target, " +
-   s"storeAssignmentPolicy = $storeAssignmentPolicy")(
-    targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),
-    sourceData = Seq((1, 1L), (2, 2L)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expected = ((0, 0)+: (1, 1) +: (2, 2) +: (3, 3)  +: Nil).toDF("key", "value"),
-    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (2, 2) +: (3, 3) +: Nil).toDF("key", "value"),
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
-  )
-
-  // Valid implicit casts that are not upcasts (e.g. string -> int) are rejected with
-  // storeAssignmentPolicy = STRICT.
-  testEvolution("valid implicit cast string source type into int target, " +
-   s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}")(
-    targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),
-    sourceData = Seq((1, "1"), (2, "2")).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expectErrorContains = "cannot up cast s.value from \"string\" to \"int\"",
-    expectErrorWithoutEvolutionContains = "cannot up cast s.value from \"string\" to \"int\"",
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
-  )
-
-  // This is kinda bug-for-bug compatibility. It doesn't really make sense that infinity is casted
-  // to int as Int.MaxValue, but that's the behavior.
-  testEvolution("write double into int column")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1.1), (2, 2.2), (5, Double.PositiveInfinity)).toDF("key", "value"),
-    clauses = insert("*") :: Nil,
-    expected =
-      ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil)
-        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
-    expectedWithoutEvolution =
-      ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil)
-        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
-    // Disable ANSI as this test needs to cast Double.PositiveInfinity to int
-    confs = Seq(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "LEGACY")
-  )
-
-  testEvolution("multiple casts with storeAssignmentPolicy = STRICT")(
-    targetData = Seq((0L, "0"), (1L, "10"), (3L, "30")).toDF("key", "value"),
-    sourceData = Seq((1, 1L), (2, 2L)).toDF("key", "value"),
-    clauses = update("*") :: insert("*") :: Nil,
-    expected =
-      ((0L, "0") +: (1L, "1") +: (2L, "2") +: (3L, "30") +: Nil).toDF("key", "value"),
-    expectedWithoutEvolution =
-      ((0L, "0") +: (1L, "1") +: (2L, "2") +: (3L, "30") +: Nil).toDF("key", "value"),
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
-
-  testEvolution("new column with storeAssignmentPolicy = STRICT")(
-    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
-    sourceData = Seq((1, 1, "one"), (2, 2, "two")).toDF("key", "value", "extra"),
-    clauses = update("value = CAST(s.value AS short)") :: insert("*") :: Nil,
-    expected =
-      ((0, 0, null) +: (1, 1, null) +: (2, 2, "two") +: (3, 30, null) +: Nil)
-        .toDF("key", "value", "extra"),
-    expectedWithoutEvolution =
-      ((0, 0) +: (1, 1) +: (2, 2) +: (3, 30) +: Nil).toDF("key", "value"),
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
-
   testEvolution("extra nested column in source - insert")(
     targetData = Seq((1, (1, 10))).toDF("key", "x"),
     sourceData = Seq((2, (2, 20, 30))).toDF("key", "x"),
     clauses = insert("*") :: Nil,
     expected = ((1, (1, 10, null)) +: (2, (2, 20, 30)) +: Nil)
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast"
-  )
-
-  testEvolution("missing nested column in source - insert")(
-    targetData = Seq((1, (1, 2, 3))).toDF("key", "x"),
-    sourceData = Seq((2, (2, 3))).toDF("key", "x"),
-    clauses = insert("*") :: Nil,
-    expected = ((1, (1, 2, 3)) +: (2, (2, 3, null)) +: Nil)
-      .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast"
-  )
-
-  testEvolution("missing nested column resolved by name - insert")(
-    targetData = Seq((1, 1, 2, 3)).toDF("key", "a", "b", "c")
-      .selectExpr("key", "named_struct('a', a, 'b', b, 'c', c) as x"),
-    sourceData = Seq((2, 2, 4)).toDF("key", "a", "c")
-      .selectExpr("key", "named_struct('a', a, 'c', c) as x"),
-    clauses = insert("*") :: Nil,
-    expected = ((1, (1, 2, 3)) +: (2, (2, null, 4)) +: Nil)
-      .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
-      .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
     expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
@@ -1066,135 +739,6 @@ trait MergeIntoSchemaEvolutionBaseTests {
     }
   }
 
-  testNestedStructsEvolution("nested field assignment qualified with source alias")(
-    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
-    source = Seq("""{ "a": 3, "t": { "a": 5 } }"""),
-    targetSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    cond = "1 = 1",
-    clauses = update("s.t.a = s.t.a") :: Nil,
-    // Assigning to the source is just wrong and should fail.
-    result = Seq("""{ "a": 1, "t": { "a": 5 } }"""),
-    resultSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    expectErrorWithoutEvolutionContains = "cannot resolve s.t.a in UPDATE")
-
-  testNestedStructsEvolution("existing top-level column assignment qualified with target alias")(
-    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
-    source = Seq("""{ "a": 3, "t": { "a": 5 } }"""),
-    targetSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    cond = "1 = 1",
-    // This succeeds and updates 'a': the fully qualified column name 't.a' gets precedence over
-    // the unqualified struct field name '(t.)t.a' to resolve the ambiguity.
-    clauses = update("t.a = s.a") :: Nil,
-    result = Seq("""{ "a": 3, "t": { "a": 2 } }"""),
-    resultSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    resultWithoutEvolution = Seq("""{ "a": 3, "t": { "a": 2 } }"""))
-
-  testNestedStructsEvolution("existing nested field assignment qualified with target alias")(
-    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
-    source = Seq("""{ "a": 3, "t": { "a": 5 } }"""),
-    targetSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    cond = "1 = 1",
-    // This is unambiguous: and resolves to the struct field 't.t.a' during resolution
-    clauses = update("t.t.a = s.t.a") :: Nil,
-    result = Seq("""{ "a": 1, "t": { "a": 5 } }"""),
-    resultSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    resultWithoutEvolution = Seq("""{ "a": 1, "t": { "a": 5 } }"""))
-
-  testNestedStructsEvolution("new top-level column assignment qualified with target alias")(
-    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
-    source = Seq("""{ "a": 3, "b": 4, "t": { "a": 5, "b": 6 } }"""),
-    targetSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("a", IntegerType)
-      .add("b", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)),
-    cond = "1 = 1",
-    clauses = update("t.b = s.b") :: Nil,
-    result = Seq("""{ "a": 1, "t": { "a": 2, "b": 4 } }"""),
-    resultSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)),
-    expectErrorWithoutEvolutionContains = "No such struct field `b` in `a`")
-
-  testNestedStructsEvolution("new nested field assignment qualified with target alias")(
-    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
-    source = Seq("""{ "a": 3, "b": 4, "t": { "a": 5, "b": 6 } }"""),
-    targetSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("a", IntegerType)
-      .add("b", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)),
-    cond = "1 = 1",
-    clauses = update("t.t.b = s.t.b") :: Nil,
-    // t.t.b gets resolved to source struct t, accessing nested field t.t.b which doesn't exist.
-    expectErrorContains = "No such struct field `t` in `a`, `b`",
-    resultSchema = new StructType()
-      .add("a", IntegerType)
-      .add("t", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)),
-    // t.t.b: t.t gets resolved to target t with nested field b which doesn't exist in fields (a)
-    expectErrorWithoutEvolutionContains = "No such struct field `b` in `a`")
-
-  testEvolutionWithoutTableAliases(
-    "existing top-level column assignment qualified with target name")(
-    targetData = Seq((0, 1)).toDF("a", "nested_a")
-        .selectExpr("a", "named_struct('a', nested_a) as target"),
-    sourceData = Seq((2, 3)).toDF("a", "nested_a")
-        .selectExpr("a", "named_struct('a', nested_a) as target"),
-    clauses = update("target.a = source.a"))(
-    expected = Seq(Row(2, Row(1))))
-
-  testEvolutionWithoutTableAliases("existing nested field assignment qualified with target name")(
-    targetData = Seq((0, 1)).toDF("a", "nested_a")
-        .selectExpr("a", "named_struct('a', nested_a) as target"),
-    sourceData = Seq((2, 3)).toDF("a", "nested_a")
-        .selectExpr("a", "named_struct('a', nested_a) as target"),
-    clauses = update("target.target.a = source.target.a"))(
-    expected = Seq(Row(0, Row(3))))
-
   testEvolutionWithoutTableAliases("new top-level column assignment qualified with target name")(
     targetData = Seq((0, 1)).toDF("a", "nested_a")
         .selectExpr("a", "named_struct('a', nested_a) as target"),
@@ -1219,10 +763,361 @@ trait MergeIntoSchemaEvolutionBaseTests {
 }
 
 /**
+ * Trait collecting all base and existing column tests for schema evolution.
+ */
+trait MergeIntoSchemaEvolutionBaseExistingColumnTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils
+    with SharedSparkSession =>
+
+  import testImplicits._
+
+  // No schema evolution
+  testEvolution("old column updated from new column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, -1), (2, 2, -2))
+      .toDF("key", "value", "extra"),
+    clauses = update(set = "value = s.extra") :: Nil,
+    expected = ((0, 0) +: (1, -1) +: (3, 30) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, -1) +: (3, 30) +: Nil).toDF("key", "value"))
+
+  testEvolution("old column inserted from new column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, -1), (2, 2, -2))
+      .toDF("key", "value", "extra"),
+    clauses = insert(values = "(key) VALUES (s.extra)") :: Nil,
+    expected = ((0, 0) +: (1, 10) +: (3, 30) +: (-2, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer)]]
+      .toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 10) +: (3, 30) +: (-2, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer)]]
+      .toDF("key", "value"))
+
+  // Column doesn't exist with UPDATE/INSERT alone.
+  testEvolution("update set nonexistent column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = update(set = "nonexistent = s.extra") :: Nil,
+    expectErrorContains = "cannot resolve nonexistent in UPDATE clause",
+    expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in UPDATE clause")
+
+  testEvolution("insert values nonexistent column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
+    clauses = insert(values = "(nonexistent) VALUES (s.extra)") :: Nil,
+    expectErrorContains = "cannot resolve nonexistent in INSERT clause",
+    expectErrorWithoutEvolutionContains = "cannot resolve nonexistent in INSERT clause")
+
+  testEvolution("update * with column not in source")(
+    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    clauses = update("*") :: Nil,
+    // update went through even though `extra` wasn't there
+    expected = ((0, 0, 0) +: (1, 1, 10) +: (3, 30, 30) +: Nil).toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in UPDATE clause"
+  )
+
+  testEvolution("insert * with column not in source")(
+    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    clauses = insert("*") :: Nil,
+    // insert went through even though `extra` wasn't there
+    expected = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, Integer)]]
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "cannot resolve extra in INSERT clause"
+  )
+
+  testEvolution("explicitly insert subset of columns")(
+    targetData = Seq((0, 0, 0), (1, 10, 10), (3, 30, 30)).toDF("key", "value", "extra"),
+    sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
+    clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
+    // 2 should have extra = null, since extra wasn't in the insert spec.
+    expected = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, Integer)]]
+      .toDF("key", "value", "extra"),
+    expectedWithoutEvolution = ((0, 0, 0) +: (1, 10, 10) +: (2, 2, null) +: (3, 30, 30) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, Integer)]]
+      .toDF("key", "value", "extra")
+  )
+
+  testEvolution("explicitly update one column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra"),
+    clauses = update("value = s.value") :: Nil,
+    // Both results should be the same - we're checking that no evolution logic triggers
+    // even though there's an extra source column.
+    expected = ((0, 0) +: (1, 1) +: (3, 30) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (3, 30) +: Nil).toDF("key", "value")
+  )
+
+  testEvolution(s"case-insensitive insert")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
+    clauses = insert("(key, value, VALUE) VALUES (s.key, s.value, s.VALUE)") :: Nil,
+    expected = ((0, 0) +: (1, 10) +: (3, 30) +: (2, 2) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 10) +: (3, 30) +: (2, 2) +: Nil).toDF("key", "value"),
+    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
+  )
+
+  // TODO: Add a test for case-sensitive insert and column not in target
+
+  testEvolution("case-sensitive insert, column not in source")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
+    clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
+    expectErrorContains = "Cannot resolve s.value in INSERT clause",
+    expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT clause",
+    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
+  )
+
+  // Note that incompatible types are those where a cast to the target type can't resolve - any
+  // valid cast will be permitted.
+  testEvolution("incompatible types in update *")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
+    clauses = update("*") :: Nil,
+    expectErrorContains =
+      "Failed to merge incompatible data types IntegerType and BinaryType",
+    expectErrorWithoutEvolutionContains = "cannot cast"
+  )
+
+  testEvolution("incompatible types in insert *")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, Array[Byte](1)), (2, Array[Byte](2))).toDF("key", "value"),
+    clauses = insert("*") :: Nil,
+    expectErrorContains = "Failed to merge incompatible data types IntegerType and BinaryType",
+    expectErrorWithoutEvolutionContains = "cannot cast"
+  )
+
+  // All integral types other than long can be upcasted to integer.
+  testEvolution("upcast numeric source types into integer target")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1.toByte, 1.toShort), (2.toByte, 2.toShort)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = Seq((0, 0), (1, 1), (2, 2), (3, 30)).toDF("key", "value"),
+    expectedWithoutEvolution = Seq((0, 0), (1, 1), (2, 2), (3, 30)).toDF("key", "value")
+  )
+
+  // Delta's automatic schema evolution allows converting table columns with a numeric type narrower
+  // than integer to integer, because in the underlying Parquet they're all stored as ints.
+  testEvolution("upcast numeric target types from integer source")(
+    targetData = Seq((0.toByte, 0.toShort), (1.toByte, 10.toShort)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected =
+      ((0.toByte, 0.toShort) +:
+        (1.toByte, 1.toShort) +:
+        (2.toByte, 2.toShort) +: Nil
+        ).toDF("key", "value"),
+    expectedWithoutEvolution =
+      ((0.toByte, 0.toShort) +:
+        (1.toByte, 1.toShort) +:
+        (2.toByte, 2.toShort) +: Nil
+        ).toDF("key", "value")
+  )
+
+  testEvolution("upcast int source type into long target")(
+    targetData = Seq((0, 0L), (1, 10L), (3, 30L)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 30L) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution =
+      ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 30L) +: Nil).toDF("key", "value")
+  )
+
+  testEvolution("write string into int column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, "1"), (2, "2"), (5, "notANumber")).toDF("key", "value"),
+    clauses = insert("*") :: Nil,
+    expected = ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    expectedWithoutEvolution =
+      ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, null) +: Nil)
+        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    // Disable ANSI as this test needs to cast string "notANumber" to int
+    confs = Seq(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "LEGACY")
+  )
+
+  // This is kinda bug-for-bug compatibility. It doesn't really make sense that infinity is casted
+  // to int as Int.MaxValue, but that's the behavior.
+  testEvolution("write double into int column")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1.1), (2, 2.2), (5, Double.PositiveInfinity)).toDF("key", "value"),
+    clauses = insert("*") :: Nil,
+    expected =
+      ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil)
+        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    expectedWithoutEvolution =
+      ((0, 0) +: (1, 10) +: (2, 2) +: (3, 30) +: (5, Int.MaxValue) +: Nil)
+        .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    // Disable ANSI as this test needs to cast Double.PositiveInfinity to int
+    confs = Seq(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "LEGACY")
+  )
+
+  testEvolution("missing nested column in source - insert")(
+    targetData = Seq((1, (1, 2, 3))).toDF("key", "x"),
+    sourceData = Seq((2, (2, 3))).toDF("key", "x"),
+    clauses = insert("*") :: Nil,
+    expected = ((1, (1, 2, 3)) +: (2, (2, 3, null)) +: Nil)
+      .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x"),
+    expectErrorWithoutEvolutionContains = "Cannot cast"
+  )
+
+  testEvolution("missing nested column resolved by name - insert")(
+    targetData = Seq((1, 1, 2, 3)).toDF("key", "a", "b", "c")
+      .selectExpr("key", "named_struct('a', a, 'b', b, 'c', c) as x"),
+    sourceData = Seq((2, 2, 4)).toDF("key", "a", "c")
+      .selectExpr("key", "named_struct('a', a, 'c', c) as x"),
+    clauses = insert("*") :: Nil,
+    expected = ((1, (1, 2, 3)) +: (2, (2, null, 4)) +: Nil)
+      .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
+      .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
+    expectErrorWithoutEvolutionContains = "Cannot cast"
+  )
+
+  testEvolutionWithoutTableAliases(
+    "existing top-level column assignment qualified with target name")(
+    targetData = Seq((0, 1)).toDF("a", "nested_a")
+        .selectExpr("a", "named_struct('a', nested_a) as target"),
+    sourceData = Seq((2, 3)).toDF("a", "nested_a")
+        .selectExpr("a", "named_struct('a', nested_a) as target"),
+    clauses = update("target.a = source.a"))(
+    expected = Seq(Row(2, Row(1))))
+
+  testEvolutionWithoutTableAliases("existing nested field assignment qualified with target name")(
+    targetData = Seq((0, 1)).toDF("a", "nested_a")
+        .selectExpr("a", "named_struct('a', nested_a) as target"),
+    sourceData = Seq((2, 3)).toDF("a", "nested_a")
+        .selectExpr("a", "named_struct('a', nested_a) as target"),
+    clauses = update("target.target.a = source.target.a"))(
+    expected = Seq(Row(0, Row(3))))
+}
+
+trait MergeIntoSchemaEvoStoreAssignmentPolicyTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
+  import testImplicits._
+
+  // Upcasting is always allowed.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
+  testEvolution("upcast int source type into long target, storeAssignmentPolicy = " +
+    s"$storeAssignmentPolicy")(
+    targetData = Seq((0, 0L), (1, 1L), (3, 3L)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected =
+      ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 3L) +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution =
+      ((0, 0L) +: (1, 1L) +: (2, 2L) +: (3, 3L) +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  // Casts that are not valid implicit casts (e.g. string -> boolean) are never allowed with
+  // schema evolution enabled and allowed only when storeAssignmentPolicy is LEGACY or ANSI when
+  // schema evolution is disabled.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  testEvolution("invalid implicit cast string source type into boolean target, " +
+    s"storeAssignmentPolicy = $storeAssignmentPolicy")(
+    targetData = Seq((0, true), (1, false), (3, true)).toDF("key", "value"),
+    sourceData = Seq((1, "true"), (2, "false")).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expectErrorContains = "Failed to merge incompatible data types BooleanType and StringType",
+    expectedWithoutEvolution = ((0, true) +: (1, true) +: (2, false) +: (3, true) +: Nil)
+      .toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  // Casts that are not valid implicit casts (e.g. string -> boolean) are not allowed with
+  // storeAssignmentPolicy = STRICT.
+  testEvolution("invalid implicit cast string source type into boolean target, " +
+   s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}")(
+    targetData = Seq((0, true), (1, false), (3, true)).toDF("key", "value"),
+    sourceData = Seq((1, "true"), (2, "false")).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expectErrorContains = "Failed to merge incompatible data types BooleanType and StringType",
+    expectErrorWithoutEvolutionContains = "cannot up cast s.value from \"string\" to \"boolean\"",
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed with
+  // storeAssignmentPolicy = LEGACY or ANSI.
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  testEvolution("valid implicit cast string source type into int target, " +
+   s"storeAssignmentPolicy = ${storeAssignmentPolicy}")(
+    targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),
+    sourceData = Seq((1, "1"), (2, "2")).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = ((0, 0)+: (1, 1) +: (2, 2) +: (3, 3)  +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (2, 2) +: (3, 3) +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
+  testEvolution("valid implicit cast long source type into int target, " +
+   s"storeAssignmentPolicy = $storeAssignmentPolicy")(
+    targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),
+    sourceData = Seq((1, 1L), (2, 2L)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = ((0, 0)+: (1, 1) +: (2, 2) +: (3, 3)  +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution = ((0, 0) +: (1, 1) +: (2, 2) +: (3, 3) +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  // Valid implicit casts that are not upcasts (e.g. string -> int) are rejected with
+  // storeAssignmentPolicy = STRICT.
+  testEvolution("valid implicit cast string source type into int target, " +
+   s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}")(
+    targetData = Seq((0, 0), (1, 1), (3, 3)).toDF("key", "value"),
+    sourceData = Seq((1, "1"), (2, "2")).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expectErrorContains = "cannot up cast s.value from \"string\" to \"int\"",
+    expectErrorWithoutEvolutionContains = "cannot up cast s.value from \"string\" to \"int\"",
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false")
+  )
+
+  testEvolution("multiple casts with storeAssignmentPolicy = STRICT")(
+    targetData = Seq((0L, "0"), (1L, "10"), (3L, "30")).toDF("key", "value"),
+    sourceData = Seq((1, 1L), (2, 2L)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected =
+      ((0L, "0") +: (1L, "1") +: (2L, "2") +: (3L, "30") +: Nil).toDF("key", "value"),
+    expectedWithoutEvolution =
+      ((0L, "0") +: (1L, "1") +: (2L, "2") +: (3L, "30") +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
+
+  testEvolution("new column with storeAssignmentPolicy = STRICT")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "one"), (2, 2, "two")).toDF("key", "value", "extra"),
+    clauses = update("value = CAST(s.value AS short)") :: insert("*") :: Nil,
+    expected =
+      ((0, 0, null) +: (1, 1, null) +: (2, 2, "two") +: (3, 30, null) +: Nil)
+        .toDF("key", "value", "extra"),
+    expectedWithoutEvolution =
+      ((0, 0) +: (1, 1) +: (2, 2) +: (3, 30) +: Nil).toDF("key", "value"),
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
+
+}
+
+/**
  * Trait collecting tests for schema evolution with a NOT MATCHED BY SOURCE clause.
  */
-trait MergeIntoSchemaEvolutionNotMatchedBySourceTests {
-  self: MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils with SharedSparkSession =>
+trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
 
   import testImplicits._
 
@@ -1287,377 +1182,12 @@ trait MergeIntoSchemaEvolutionNotMatchedBySourceTests {
 /**
  * Trait collecting all tests for nested struct evolution.
  */
-trait MergeIntoNestedStructEvolutionTests {
-  self: MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils with SharedSparkSession =>
+trait MergeIntoNestedStructInMapEvolutionTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
 
   import testImplicits._
 
-  private implicit def strToJsonSeq(str: String): Seq[String] = {
-    str.split("\n").filter(_.trim.length > 0)
-  }
-
-  // Nested Schema evolution with UPDATE alone
-  testNestedStructsEvolution("new nested source field not in update is ignored")(
-    target = """{ "key": "A", "value": { "a": 1 } }""",
-    source = """{ "key": "A", "value": { "a": 2, "b": 3 } }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)),
-    clauses = update("value.a = s.value.a") :: Nil,
-    result = """{ "key": "A", "value": { "a": 2 } }""",
-    resultWithoutEvolution = """{ "key": "A", "value": { "a": 2 } }""")
-
-  testNestedStructsEvolution("two new nested source fields with update: one added, one ignored")(
-    target = """{ "key": "A", "value": { "a": 1 } }""",
-    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 } }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)
-        .add("c", IntegerType)),
-    clauses = update("value.b = s.value.b") :: Nil,
-    result = """{ "key": "A", "value": { "a": 1, "b": 3 } }""",
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)),
-    expectErrorWithoutEvolutionContains = "No such struct field")
-
-  // Nested Schema evolution with INSERT alone
-  testNestedStructsEvolution("new nested source field added when inserting top-level column")(
-    target = """{ "key": "A", "value": { "a": 1 } }""",
-    source = """{ "key": "B", "value": { "a": 2, "b": 3 } }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)),
-    clauses = insert("(value) VALUES (s.value)") :: Nil,
-    result =
-      """{ "key": "A", "value": { "a": 1, "b": null } }
-       { "key": null, "value": { "a": 2, "b": 3 } }""".stripMargin,
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)),
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("insert new nested source field not supported")(
-    target = """{ "key": "A", "value": { "a": 1 } }""",
-    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 } }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", new StructType()
-        .add("a", IntegerType)
-        .add("b", IntegerType)
-        .add("c", IntegerType)),
-    clauses = insert("(value.b) VALUES (s.value.b)") :: Nil,
-    expectErrorContains = "Nested field is not supported in the INSERT clause of MERGE operation",
-    expectErrorWithoutEvolutionContains = "No such struct field")
-
   // scalastyle:off line.size.limit
-  testNestedStructsEvolution("new nested column with update non-* and insert * - array of struct - longer source")(
-    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1, "c": 2 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "b": "2", "a": { "y": 20, "x": 10 } }, { "b": "3", "a": { "y": 30, "x": 20 } }, { "b": "4", "a": { "y": 30, "x": 20 } } ] }
-           { "key": "B", "value": [ { "b": "3", "a": { "y": 30, "x": 40 } }, { "b": "4", "a": { "y": 30, "x": 40 } } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType))
-          .add("b", IntegerType)
-          .add("c", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("b", StringType)
-          .add("a", new StructType().add("y", IntegerType).add("x", IntegerType)))),
-    clauses = update("value = s.value") :: insert("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20 }, "b": 2, "c": null}, { "a": { "x": 20, "y": 30}, "b": 3, "c": null }, { "a": { "x": 20, "y": 30}, "b": 4, "c": null } ] }
-           { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3, "c": null }, { "a": { "x": 40, "y": 30}, "b": 4, "c": null } ] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("new nested column with update non-* and insert * - array of struct - longer target")(
-    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1, "c": 2 }, { "a": { "x": 3, "y": 2 }, "b": 2, "c": 2 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "b": "2", "a": { "y": 20, "x": 10 } } ] }
-           { "key": "B", "value": [ { "b": "3", "a": { "y": 30, "x": 40 } } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType))
-          .add("b", IntegerType)
-          .add("c", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("b", StringType)
-          .add("a", new StructType().add("y", IntegerType).add("x", IntegerType)))),
-    clauses = update("value = s.value") :: insert("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20}, "b": 2, "c": null } ] }
-           { "key": "B", "value": [ { "a": { "x": 40, "y": 30}, "b": 3, "c": null } ] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("new nested column with update non-* and insert * - nested array of struct - longer source")(
-    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 } ] }, "b": 1, "c": 4 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "b": "2", "a": {"x": [ { "d": "30", "c": 10 }, { "d": "20", "c": 10 }, { "d": "20", "c": 10 } ], "y": 20 } } ] }
-          { "key": "B", "value": [ { "b": "3", "a": {"x": [ { "d": "50", "c": 20 }, { "d": "20", "c": 10 } ], "y": 60 } } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-            )))
-          .add("b", IntegerType)
-          .add("c", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("b", StringType)
-          .add("a", new StructType()
-            .add("x", ArrayType(
-              new StructType()
-                .add("d", StringType)
-                .add("c", IntegerType)
-            ))
-            .add("y", IntegerType)))),
-    clauses = update("value = s.value") :: insert("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30 }, { "c": 10, "d": 20 }, { "c": 10, "d": 20 } ] }, "b": 2, "c": null}] }
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 }, { "c": 10, "d": 20 } ] }, "b": 3, "c": null } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("new nested column with update non-* and insert * - nested array of struct - longer target")(
-    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3}, { "c": 2, "d": 3 } ] }, "b": 1, "c": 4 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "b": "2", "a": {"x": [ { "d": "30", "c": 10 } ], "y": 20 } } ] }
-          { "key": "B", "value": [ { "b": "3", "a": {"x": [ { "d": "50", "c": 20 } ], "y": 60 } } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-            )))
-          .add("b", IntegerType)
-          .add("c", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("b", StringType)
-          .add("a", new StructType()
-            .add("x", ArrayType(
-              new StructType()
-                .add("d", StringType)
-                .add("c", IntegerType)
-            ))
-            .add("y", IntegerType)))),
-    clauses = update("value = s.value") :: insert("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30} ] }, "b": 2, "c": null}] }
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 } ] }, "b": 3, "c": null } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-  // scalastyle:on line.size.limit
-
-  testEvolution("new nested-nested column with update non-* and insert *")(
-    targetData = Seq((1, 1, 2, 3)).toDF("key", "a", "b", "c")
-      .selectExpr("key", "named_struct('y', named_struct('a', a, 'b', b, 'c', c)) as x"),
-    sourceData = Seq((1, 10, 30), (2, 20, 40)).toDF("key", "a", "c")
-      .selectExpr("key", "named_struct('y', named_struct('a', a, 'c', c)) as x"),
-    clauses = update("x.y.a = s.x.y.a") :: insert("*") :: Nil,
-    expected = Seq((1, 10, 2, 3), (2, 20, null, 40))
-      .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
-      .toDF("key", "a", "b", "c")
-      .selectExpr("key", "named_struct('y', named_struct('a', a, 'b', b, 'c', c)) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast"
-  )
-
-  testNestedStructsEvolution("nested void columns are not allowed")(
-    target = """{ "key": "A", "value": { "a": { "x": 1 }, "b": 1 } }""",
-    source = """{ "key": "A", "value": { "a": { "x": 2, "z": null } }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value",
-        new StructType()
-          .add("a", new StructType().add("x", IntegerType))
-          .add("b", IntegerType)),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value",
-        new StructType()
-          .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
-    clauses = update("*") :: Nil,
-    expectErrorContains = "Cannot add column `value`.`a`.`z` with type VOID",
-    expectErrorWithoutEvolutionContains = "All nested columns must match")
-
-  // scalastyle:off line.size.limit
-  testNestedStructsEvolution("new nested-nested column with update non-* and insert * - array of struct - longer source")(
-    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "b": "2", "a": { "y": 20, "x": 10 } }, { "b": "3", "a": { "y": 20, "x": 30 } }, { "b": "4", "a": { "y": 20, "x": 30 } } ] }
-           { "key": "B", "value": [ { "b": "3", "a": { "y": 30, "x": 40 } }, { "b": "4", "a": { "y": 30, "x": 40 } } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-            .add("z", IntegerType))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("b", StringType)
-          .add("a", new StructType().add("y", IntegerType).add("x", IntegerType)))),
-    clauses = update("value = s.value") :: insert("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": null }, "b": 2 }, { "a": { "x": 30, "y": 20, "z": null }, "b": 3}, { "a": { "x": 30, "y": 20, "z": null }, "b": 4 } ] }
-           { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 4 } ] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("new nested-nested column with update non-* and insert * - array of struct - longer target")(
-    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 }, { "a": { "x": 2, "y": 3, "z": 4 }, "b": 1 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "b": "2", "a": { "y": 20, "x": 10 } } ] }
-           { "key": "B", "value": [ { "b": "3", "a": { "y": 30, "x": 40 } } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-            .add("z", IntegerType))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("b", StringType)
-          .add("a", new StructType().add("y", IntegerType).add("x", IntegerType)))),
-    clauses = update("value = s.value") :: insert("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [{ "a": { "x": 10, "y": 20, "z": null }, "b": 2 }] }
-           { "key": "B", "value": [{ "a": { "x": 40, "y": 30, "z": null }, "b": 3 }] }""".stripMargin,
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("new nested-nested column with update non-* and insert * - nested array of struct - longer source")(
-    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 1 } ] }, "b": 1 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "b": "2", "a": {"x": [ { "d": "30", "c": 10 }, { "d": "30", "c": 40 }, { "d": "30", "c": 50 } ], "y": 20 } } ] }
-          { "key": "B", "value": [ { "b": "3", "a": {"x": [ { "d": "50", "c": 20 }, { "d": "50", "c": 30 } ], "y": 60 } } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("b", StringType)
-          .add("a", new StructType()
-            .add("x", ArrayType(
-              new StructType()
-                .add("d", StringType)
-                .add("c", IntegerType)
-            ))
-            .add("y", IntegerType)))),
-    clauses = update("value = s.value") :: insert("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": null }, { "c": 40, "d": 30, "e": null }, { "c": 50, "d": 30, "e": null } ] }, "b": 2 } ] }
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null }, { "c": 30, "d": 50, "e": null } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("new nested-nested column with update non-* and insert * - nested array of struct - longer target")(
-    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 1 }, { "c": 2, "d": 3, "e": 4 } ] }, "b": 1 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "b": "2", "a": { "x": [ { "d": "30", "c": 10 } ], "y": 20 } } ] }
-          { "key": "B", "value": [ { "b": "3", "a": { "x": [ { "d": "50", "c": 20 } ], "y": 60 } } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("b", StringType)
-          .add("a", new StructType()
-            .add("x", ArrayType(
-              new StructType()
-                .add("d", StringType)
-                .add("c", IntegerType)
-            ))
-            .add("y", IntegerType)))),
-    clauses = update("value = s.value") :: insert("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": null } ] }, "b": 2 } ] }
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
   // Struct evolution inside of map values.
   testNestedStructsEvolution("new source column in map struct value")(
     target =
@@ -2002,6 +1532,319 @@ trait MergeIntoNestedStructEvolutionTests {
     expectErrorWithoutEvolutionContains = "cannot cast"
   )
   // scalastyle:on line.size.limit
+}
+
+trait MergeIntoNestedStructEvolutionInsertTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
+
+  import testImplicits._
+
+  // Nested Schema evolution with INSERT alone
+  testNestedStructsEvolution("new nested source field added when inserting top-level column")(
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "B", "value": { "a": 2, "b": 3 } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    clauses = insert("(value) VALUES (s.value)") :: Nil,
+    result =
+      """{ "key": "A", "value": { "a": 1, "b": null } }
+       { "key": null, "value": { "a": 2, "b": 3 } }""".stripMargin,
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("insert new nested source field not supported")(
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)
+        .add("c", IntegerType)),
+    clauses = insert("(value.b) VALUES (s.value.b)") :: Nil,
+    expectErrorContains = "Nested field is not supported in the INSERT clause of MERGE operation",
+    expectErrorWithoutEvolutionContains = "No such struct field")
+
+  // scalastyle:off line.size.limit
+  testNestedStructsEvolution("new nested column with update non-* and insert * - array of struct - longer source")(
+    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1, "c": 2 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "b": "2", "a": { "y": 20, "x": 10 } }, { "b": "3", "a": { "y": 30, "x": 20 } }, { "b": "4", "a": { "y": 30, "x": 20 } } ] }
+           { "key": "B", "value": [ { "b": "3", "a": { "y": 30, "x": 40 } }, { "b": "4", "a": { "y": 30, "x": 40 } } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType))
+          .add("b", IntegerType)
+          .add("c", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("b", StringType)
+          .add("a", new StructType().add("y", IntegerType).add("x", IntegerType)))),
+    clauses = update("value = s.value") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20 }, "b": 2, "c": null}, { "a": { "x": 20, "y": 30}, "b": 3, "c": null }, { "a": { "x": 20, "y": 30}, "b": 4, "c": null } ] }
+           { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3, "c": null }, { "a": { "x": 40, "y": 30}, "b": 4, "c": null } ] }""".stripMargin,
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("new nested column with update non-* and insert * - array of struct - longer target")(
+    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1, "c": 2 }, { "a": { "x": 3, "y": 2 }, "b": 2, "c": 2 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "b": "2", "a": { "y": 20, "x": 10 } } ] }
+           { "key": "B", "value": [ { "b": "3", "a": { "y": 30, "x": 40 } } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType))
+          .add("b", IntegerType)
+          .add("c", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("b", StringType)
+          .add("a", new StructType().add("y", IntegerType).add("x", IntegerType)))),
+    clauses = update("value = s.value") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20}, "b": 2, "c": null } ] }
+           { "key": "B", "value": [ { "a": { "x": 40, "y": 30}, "b": 3, "c": null } ] }""".stripMargin,
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("new nested column with update non-* and insert * - nested array of struct - longer source")(
+    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 } ] }, "b": 1, "c": 4 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "b": "2", "a": {"x": [ { "d": "30", "c": 10 }, { "d": "20", "c": 10 }, { "d": "20", "c": 10 } ], "y": 20 } } ] }
+          { "key": "B", "value": [ { "b": "3", "a": {"x": [ { "d": "50", "c": 20 }, { "d": "20", "c": 10 } ], "y": 60 } } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+            )))
+          .add("b", IntegerType)
+          .add("c", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("b", StringType)
+          .add("a", new StructType()
+            .add("x", ArrayType(
+              new StructType()
+                .add("d", StringType)
+                .add("c", IntegerType)
+            ))
+            .add("y", IntegerType)))),
+    clauses = update("value = s.value") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30 }, { "c": 10, "d": 20 }, { "c": 10, "d": 20 } ] }, "b": 2, "c": null}] }
+          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 }, { "c": 10, "d": 20 } ] }, "b": 3, "c": null } ] }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("new nested column with update non-* and insert * - nested array of struct - longer target")(
+    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3}, { "c": 2, "d": 3 } ] }, "b": 1, "c": 4 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "b": "2", "a": {"x": [ { "d": "30", "c": 10 } ], "y": 20 } } ] }
+          { "key": "B", "value": [ { "b": "3", "a": {"x": [ { "d": "50", "c": 20 } ], "y": 60 } } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+            )))
+          .add("b", IntegerType)
+          .add("c", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("b", StringType)
+          .add("a", new StructType()
+            .add("x", ArrayType(
+              new StructType()
+                .add("d", StringType)
+                .add("c", IntegerType)
+            ))
+            .add("y", IntegerType)))),
+    clauses = update("value = s.value") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30} ] }, "b": 2, "c": null}] }
+          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 } ] }, "b": 3, "c": null } ] }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+  // scalastyle:on line.size.limit
+
+  testEvolution("new nested-nested column with update non-* and insert *")(
+    targetData = Seq((1, 1, 2, 3)).toDF("key", "a", "b", "c")
+      .selectExpr("key", "named_struct('y', named_struct('a', a, 'b', b, 'c', c)) as x"),
+    sourceData = Seq((1, 10, 30), (2, 20, 40)).toDF("key", "a", "c")
+      .selectExpr("key", "named_struct('y', named_struct('a', a, 'c', c)) as x"),
+    clauses = update("x.y.a = s.x.y.a") :: insert("*") :: Nil,
+    expected = Seq((1, 10, 2, 3), (2, 20, null, 40))
+      .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
+      .toDF("key", "a", "b", "c")
+      .selectExpr("key", "named_struct('y', named_struct('a', a, 'b', b, 'c', c)) as x"),
+    expectErrorWithoutEvolutionContains = "Cannot cast"
+  )
+
+  // scalastyle:off line.size.limit
+  testNestedStructsEvolution("new nested-nested column with update non-* and insert * - array of struct - longer source")(
+    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "b": "2", "a": { "y": 20, "x": 10 } }, { "b": "3", "a": { "y": 20, "x": 30 } }, { "b": "4", "a": { "y": 20, "x": 30 } } ] }
+           { "key": "B", "value": [ { "b": "3", "a": { "y": 30, "x": 40 } }, { "b": "4", "a": { "y": 30, "x": 40 } } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+            .add("z", IntegerType))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("b", StringType)
+          .add("a", new StructType().add("y", IntegerType).add("x", IntegerType)))),
+    clauses = update("value = s.value") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": null }, "b": 2 }, { "a": { "x": 30, "y": 20, "z": null }, "b": 3}, { "a": { "x": 30, "y": 20, "z": null }, "b": 4 } ] }
+           { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 4 } ] }""".stripMargin,
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("new nested-nested column with update non-* and insert * - array of struct - longer target")(
+    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 }, { "a": { "x": 2, "y": 3, "z": 4 }, "b": 1 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "b": "2", "a": { "y": 20, "x": 10 } } ] }
+           { "key": "B", "value": [ { "b": "3", "a": { "y": 30, "x": 40 } } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+            .add("z", IntegerType))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("b", StringType)
+          .add("a", new StructType().add("y", IntegerType).add("x", IntegerType)))),
+    clauses = update("value = s.value") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [{ "a": { "x": 10, "y": 20, "z": null }, "b": 2 }] }
+           { "key": "B", "value": [{ "a": { "x": 40, "y": 30, "z": null }, "b": 3 }] }""".stripMargin,
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("new nested-nested column with update non-* and insert * - nested array of struct - longer source")(
+    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 1 } ] }, "b": 1 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "b": "2", "a": {"x": [ { "d": "30", "c": 10 }, { "d": "30", "c": 40 }, { "d": "30", "c": 50 } ], "y": 20 } } ] }
+          { "key": "B", "value": [ { "b": "3", "a": {"x": [ { "d": "50", "c": 20 }, { "d": "50", "c": 30 } ], "y": 60 } } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("b", StringType)
+          .add("a", new StructType()
+            .add("x", ArrayType(
+              new StructType()
+                .add("d", StringType)
+                .add("c", IntegerType)
+            ))
+            .add("y", IntegerType)))),
+    clauses = update("value = s.value") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": null }, { "c": 40, "d": 30, "e": null }, { "c": 50, "d": 30, "e": null } ] }, "b": 2 } ] }
+          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null }, { "c": 30, "d": 50, "e": null } ] }, "b": 3 } ] }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("new nested-nested column with update non-* and insert * - nested array of struct - longer target")(
+    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 1 }, { "c": 2, "d": 3, "e": 4 } ] }, "b": 1 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "b": "2", "a": { "x": [ { "d": "30", "c": 10 } ], "y": 20 } } ] }
+          { "key": "B", "value": [ { "b": "3", "a": { "x": [ { "d": "50", "c": 20 } ], "y": 60 } } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("b", StringType)
+          .add("a", new StructType()
+            .add("x", ArrayType(
+              new StructType()
+                .add("d", StringType)
+                .add("c", IntegerType)
+            ))
+            .add("y", IntegerType)))),
+    clauses = update("value = s.value") :: insert("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": null } ] }, "b": 2 } ] }
+          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": 3 } ] }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  // scalastyle:on line.size.limit
 
   // Note that the obvious dual of this test, "update * and insert non-*", doesn't exist
   // because nested columns can't be explicitly INSERTed to.
@@ -2179,387 +2022,6 @@ trait MergeIntoNestedStructEvolutionTests {
     result =
       """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "e": 3, "d": null } ] }, "b": 1 } ] }
           { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "e": 2, "d": "50" }, { "c": 20, "e": 3, "d": "50" } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-  // scalastyle:on line.size.limit
-
-  for (isPartitioned <- BOOLEAN_DOMAIN)
-  testEvolution(s"extra nested column in source - update, isPartitioned=$isPartitioned")(
-    targetData = Seq((1, (1, 10)), (2, (2, 2000))).toDF("key", "x")
-      .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x"),
-    sourceData = Seq((1, (10, 100, 1000))).toDF("key", "x")
-      .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    clauses = update("*") :: Nil,
-    expected = ((1, (10, 100, 1000)) +: (2, (2, null, 2000)) +: Nil)
-      .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
-      .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast",
-    partitionCols = if (isPartitioned) Seq("key") else Seq.empty
-  )
-
-  testEvolution("extra nested column in source - update, partition on unused column")(
-    targetData = Seq((1, 2, (1, 10)), (2, 2, (2, 2000))).toDF("key", "part", "x")
-      .selectExpr("part", "key", "named_struct('a', x._1, 'c', x._2) as x"),
-    sourceData = Seq((1, 2, (10, 100, 1000))).toDF("key", "part", "x")
-      .selectExpr("key", "part", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    clauses = update("*") :: Nil,
-    expected = ((1, 2, (10, 100, 1000)) +: (2, 2, (2, null, 2000)) +: Nil)
-      .asInstanceOf[List[(Integer, Integer, (Integer, Integer, Integer))]].toDF("key", "part", "x")
-      .selectExpr("part", "key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast",
-    partitionCols = Seq("part")
-  )
-
-  // scalastyle:off line.size.limit
-  testNestedStructsEvolution("extra nested column in source - update - array of struct - longer source")(
-    target =
-      """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1 } ] }
-         { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": "2" }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": "3" }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": "4" } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType).add("y", IntegerType).add("z", IntegerType))
-          .add("b", StringType))),
-    clauses = update("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": 2 }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": 3 }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": 4 } ] }
-         { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 } ] }""",
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-            .add("z", IntegerType))
-          .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("extra nested column in source - update - array of struct - longer target")(
-    target =
-      """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1 }, { "a": { "x": 1, "y": 2 }, "b": 2 } ] }
-         { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3 }, { "a": { "x": 40, "y": 30 }, "b": 4 }, { "a": { "x": 40, "y": 30 }, "b": 5 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": "2" } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType).add("y", IntegerType).add("z", IntegerType))
-          .add("b", StringType))),
-    clauses = update("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": 2 } ] }
-         { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 4 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 5 } ] }""".stripMargin,
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-            .add("z", IntegerType))
-          .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("extra nested column in source - update - nested array of struct - longer source")(
-    target =
-      """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 } ] }, "b": 1 } ] }
-         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 } ] }, "b": 3 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": "30", "e": 1 }, { "c": 10, "d": "30", "e": 2 }, { "c": 10, "d": "30", "e": 3 } ] }, "b": 2 } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", StringType)
-                .add("e", IntegerType)
-            )))
-          .add("b", StringType))),
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    clauses = update("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 }, { "c": 10, "d": 30, "e": 2 }, { "c": 10, "d": 30, "e": 3 } ] }, "b": 2 } ] }
-         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("extra nested column in source - update - nested array of struct - longer target")(
-    target =
-      """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 }, { "c": 1, "d": 2 } ] }, "b": 1 } ] }
-         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 }, { "c": 20, "d": 40 }, { "c": 20, "d": 60 } ] }, "b": 3 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": "30", "e": 1 } ] }, "b": "2" } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", StringType)
-                .add("e", IntegerType)
-            )))
-          .add("b", StringType))),
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    clauses = update("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 } ] }, "b": 2 } ] }
-         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null }, { "c": 20, "d": 40, "e": null }, { "c": 20, "d": 60, "e": null } ] }, "b": 3 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-  // scalastyle:on line.size.limit
-
-  testEvolution("missing nested column in source - update")(
-    targetData = Seq((1, (1, 10, 100)), (2, (2, 20, 200))).toDF("key", "x")
-      .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    sourceData = Seq((1, (0, 0))).toDF("key", "x")
-      .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x"),
-    clauses = update("*") :: Nil,
-    expected = ((1, (0, 10, 0)) +: (2, (2, 20, 200)) +: Nil).toDF("key", "x")
-      .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    expectErrorWithoutEvolutionContains = "Cannot cast"
-  )
-
-  // scalastyle:off line.size.limit
-  testNestedStructsEvolution("missing nested column in source - update - array of struct - longer source")(
-    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "z": 2 }, "b": "2" }, { "a": { "x": 10, "z": 2 }, "b": "3" }, { "a": { "x": 10, "z": 2 }, "b": "4" } ] }
-           { "key": "B", "value": [ { "a": { "x": 40, "z": 3 }, "b": "3" } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-            .add("z", IntegerType))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType).add("z", IntegerType))
-          .add("b", StringType))),
-    clauses = update("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": null, "z": 2 }, "b": 2 }, { "a": { "x": 10, "y": null, "z": 2 }, "b": 3 }, { "a": { "x": 10, "y": null, "z": 2 }, "b": 4 } ] }""",
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-            .add("z", IntegerType))
-          .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  // scalastyle:off line.size.limit
-  testNestedStructsEvolution("missing nested column in source - update - array of struct - longer target")(
-    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 }, { "a": { "x": 1, "y": 2, "z": 3 }, "b": 2 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "z": 2 }, "b": "2" } ] }
-           { "key": "B", "value": [ { "a": { "x": 40, "z": 3 }, "b": "3" } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-            .add("z", IntegerType))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType).add("z", IntegerType))
-          .add("b", StringType))),
-    clauses = update("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "x": 10, "y": null, "z": 2 }, "b": 2 } ] }""",
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("x", IntegerType)
-            .add("y", IntegerType)
-            .add("z", IntegerType))
-          .add("b", IntegerType))),
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("missing nested column in source - update - nested array of struct - longer source")(
-    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 4 } ] }, "b": 1 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "a": {"y": 20, "x": [ { "c": 10, "e": 1 }, { "c": 10, "e": 2 }, { "c": 10, "e": 3 } ] }, "b": "2" } ] }
-          { "key": "B", "value": [ { "a": {"y": 60, "x":  [{ "c": 20, "e": 2 } ] }, "b": "3" } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", StringType))),
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    clauses = update("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": null, "e": 1 }, { "c": 10, "d": null, "e": 2 }, { "c": 10, "d": null, "e": 3} ] }, "b": 2 } ] }""",
-    expectErrorWithoutEvolutionContains = "Cannot cast")
-
-  testNestedStructsEvolution("missing nested column in source - update - nested array of struct - longer target")(
-    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 4 }, { "c": 1, "d": 3, "e": 5 } ] }, "b": 1 } ] }""",
-    source =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "e": 1 } ] }, "b": "2" } ] }
-          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "e": 2 } ] }, "b": "3" } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", StringType))),
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", ArrayType(
-        new StructType()
-          .add("a", new StructType()
-            .add("y", IntegerType)
-            .add("x", ArrayType(
-              new StructType()
-                .add("c", IntegerType)
-                .add("d", IntegerType)
-                .add("e", IntegerType)
-            )))
-          .add("b", IntegerType))),
-    clauses = update("*") :: Nil,
-    result =
-      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": null, "e": 1 } ] }, "b": 2 } ] }""",
     expectErrorWithoutEvolutionContains = "Cannot cast")
   // scalastyle:on line.size.limit
 
@@ -3157,43 +2619,6 @@ trait MergeIntoNestedStructEvolutionTests {
     expectErrorWithoutEvolutionContains = "cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
-  testNestedStructsEvolution("add non-nullable struct field to target schema")(
-    target = """{ "key": "A" }""",
-    source = """{ "key": "B", "value": 4}""",
-    targetSchema = new StructType()
-      .add("key", StringType),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value", IntegerType, nullable = false),
-    clauses = update("*") :: Nil,
-    result = """{ "key": "A", "value": null }""".stripMargin,
-    // Even though `value` is non-nullable in the source, it must be nullable in the target as
-    // existing rows will contain null values.
-    resultSchema = new StructType()
-      .add("key", StringType)
-      .add("value", IntegerType, nullable = true),
-    resultWithoutEvolution = """{ "key": "A" }""")
-
-  testNestedStructsEvolution("struct in array with storeAssignmentPolicy = STRICT")(
-    target = """{ "key": "A", "value": [ { "a": 1 } ] }""",
-    source = """{ "key": "A", "value": [ { "a": 2 } ] }""",
-    targetSchema = new StructType()
-      .add("key", StringType)
-      .add("value",
-        ArrayType(new StructType()
-          .add("a", LongType))),
-    sourceSchema = new StructType()
-      .add("key", StringType)
-      .add("value",
-        ArrayType(new StructType()
-          .add("a", IntegerType))),
-    clauses = update("*") :: Nil,
-    result = """{ "key": "A", "value": [ { "a": 2 } ] }""",
-    resultWithoutEvolution = """{ "key": "A", "value": [ { "a": 2 } ] }""",
-    confs = Seq(
-      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
-      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
-
   testNestedStructsEvolution("struct with extra source column not used in update, without fix")(
     target = """{ "key": 1, "value": { "a": 10 } }""",
     source =
@@ -3310,4 +2735,596 @@ trait MergeIntoNestedStructEvolutionTests {
     confs = Seq(
       DeltaSQLConf.DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT.key -> "true")
   )
+}
+
+trait MergeIntoNestedStructEvolutionUpdateOnlyTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
+
+  import testImplicits._
+
+  // Nested Schema evolution with UPDATE alone
+  testNestedStructsEvolution("new nested source field not in update is ignored")(
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3 } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    clauses = update("value.a = s.value.a") :: Nil,
+    result = """{ "key": "A", "value": { "a": 2 } }""",
+    resultWithoutEvolution = """{ "key": "A", "value": { "a": 2 } }""")
+
+  testNestedStructsEvolution("two new nested source fields with update: one added, one ignored")(
+    target = """{ "key": "A", "value": { "a": 1 } }""",
+    source = """{ "key": "A", "value": { "a": 2, "b": 3, "c": 4 } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)
+        .add("c", IntegerType)),
+    clauses = update("value.b = s.value.b") :: Nil,
+    result = """{ "key": "A", "value": { "a": 1, "b": 3 } }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "No such struct field")
+
+  testNestedStructsEvolution("nested void columns are not allowed")(
+    target = """{ "key": "A", "value": { "a": { "x": 1 }, "b": 1 } }""",
+    source = """{ "key": "A", "value": { "a": { "x": 2, "z": null } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType))
+          .add("b", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
+    clauses = update("*") :: Nil,
+    expectErrorContains = "Cannot add column `value`.`a`.`z` with type VOID",
+    expectErrorWithoutEvolutionContains = "All nested columns must match")
+  for (isPartitioned <- BOOLEAN_DOMAIN)
+    testEvolution(s"extra nested column in source - update, isPartitioned=$isPartitioned")(
+      targetData = Seq((1, (1, 10)), (2, (2, 2000))).toDF("key", "x")
+        .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x"),
+      sourceData = Seq((1, (10, 100, 1000))).toDF("key", "x")
+        .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
+      clauses = update("*") :: Nil,
+      expected = ((1, (10, 100, 1000)) +: (2, (2, null, 2000)) +: Nil)
+        .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
+        .selectExpr("key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
+      expectErrorWithoutEvolutionContains = "Cannot cast",
+      partitionCols = if (isPartitioned) Seq("key") else Seq.empty
+    )
+
+  testEvolution("extra nested column in source - update, partition on unused column")(
+    targetData = Seq((1, 2, (1, 10)), (2, 2, (2, 2000))).toDF("key", "part", "x")
+      .selectExpr("part", "key", "named_struct('a', x._1, 'c', x._2) as x"),
+    sourceData = Seq((1, 2, (10, 100, 1000))).toDF("key", "part", "x")
+      .selectExpr("key", "part", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
+    clauses = update("*") :: Nil,
+    expected = ((1, 2, (10, 100, 1000)) +: (2, 2, (2, null, 2000)) +: Nil)
+      .asInstanceOf[List[(Integer, Integer, (Integer, Integer, Integer))]].toDF("key", "part", "x")
+      .selectExpr("part", "key", "named_struct('a', x._1, 'c', x._3, 'b', x._2) as x"),
+    expectErrorWithoutEvolutionContains = "Cannot cast",
+    partitionCols = Seq("part")
+  )
+
+  // scalastyle:off line.size.limit
+  testNestedStructsEvolution("extra nested column in source - update - array of struct - longer source")(
+    target =
+      """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1 } ] }
+         { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": "2" }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": "3" }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": "4" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType).add("y", IntegerType).add("z", IntegerType))
+          .add("b", StringType))),
+    clauses = update("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": 2 }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": 3 }, { "a": { "x": 10, "y": 20, "z": 2 }, "b": 4 } ] }
+         { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 } ] }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+            .add("z", IntegerType))
+          .add("b", IntegerType))),
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("extra nested column in source - update - array of struct - longer target")(
+    target =
+      """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2 }, "b": 1 }, { "a": { "x": 1, "y": 2 }, "b": 2 } ] }
+         { "key": "B", "value": [ { "a": { "x": 40, "y": 30 }, "b": 3 }, { "a": { "x": 40, "y": 30 }, "b": 4 }, { "a": { "x": 40, "y": 30 }, "b": 5 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": "2" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType).add("y", IntegerType).add("z", IntegerType))
+          .add("b", StringType))),
+    clauses = update("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": 20, "z": 2 }, "b": 2 } ] }
+         { "key": "B", "value": [ { "a": { "x": 40, "y": 30, "z": null }, "b": 3 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 4 }, { "a": { "x": 40, "y": 30, "z": null }, "b": 5 } ] }""".stripMargin,
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+            .add("z", IntegerType))
+          .add("b", IntegerType))),
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("extra nested column in source - update - nested array of struct - longer source")(
+    target =
+      """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 } ] }, "b": 1 } ] }
+         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 } ] }, "b": 3 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": "30", "e": 1 }, { "c": 10, "d": "30", "e": 2 }, { "c": 10, "d": "30", "e": 3 } ] }, "b": 2 } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", StringType)
+                .add("e", IntegerType)
+            )))
+          .add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    clauses = update("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 }, { "c": 10, "d": 30, "e": 2 }, { "c": 10, "d": 30, "e": 3 } ] }, "b": 2 } ] }
+         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null } ] }, "b": 3 } ] }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("extra nested column in source - update - nested array of struct - longer target")(
+    target =
+      """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3 }, { "c": 1, "d": 2 } ] }, "b": 1 } ] }
+         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50 }, { "c": 20, "d": 40 }, { "c": 20, "d": 60 } ] }, "b": 3 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": "30", "e": 1 } ] }, "b": "2" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", StringType)
+                .add("e", IntegerType)
+            )))
+          .add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    clauses = update("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": 30, "e": 1 } ] }, "b": 2 } ] }
+         { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "d": 50, "e": null }, { "c": 20, "d": 40, "e": null }, { "c": 20, "d": 60, "e": null } ] }, "b": 3 } ] }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+  // scalastyle:on line.size.limit
+
+  testEvolution("missing nested column in source - update")(
+    targetData = Seq((1, (1, 10, 100)), (2, (2, 20, 200))).toDF("key", "x")
+      .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
+    sourceData = Seq((1, (0, 0))).toDF("key", "x")
+      .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x"),
+    clauses = update("*") :: Nil,
+    expected = ((1, (0, 10, 0)) +: (2, (2, 20, 200)) +: Nil).toDF("key", "x")
+      .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
+    expectErrorWithoutEvolutionContains = "Cannot cast"
+  )
+
+  // scalastyle:off line.size.limit
+  testNestedStructsEvolution("missing nested column in source - update - array of struct - longer source")(
+    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "z": 2 }, "b": "2" }, { "a": { "x": 10, "z": 2 }, "b": "3" }, { "a": { "x": 10, "z": 2 }, "b": "4" } ] }
+           { "key": "B", "value": [ { "a": { "x": 40, "z": 3 }, "b": "3" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+            .add("z", IntegerType))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType).add("z", IntegerType))
+          .add("b", StringType))),
+    clauses = update("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": null, "z": 2 }, "b": 2 }, { "a": { "x": 10, "y": null, "z": 2 }, "b": 3 }, { "a": { "x": 10, "y": null, "z": 2 }, "b": 4 } ] }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+            .add("z", IntegerType))
+          .add("b", IntegerType))),
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  // scalastyle:off line.size.limit
+  testNestedStructsEvolution("missing nested column in source - update - array of struct - longer target")(
+    target = """{ "key": "A", "value": [ { "a": { "x": 1, "y": 2, "z": 3 }, "b": 1 }, { "a": { "x": 1, "y": 2, "z": 3 }, "b": 2 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "z": 2 }, "b": "2" } ] }
+           { "key": "B", "value": [ { "a": { "x": 40, "z": 3 }, "b": "3" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+            .add("z", IntegerType))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType).add("z", IntegerType))
+          .add("b", StringType))),
+    clauses = update("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "x": 10, "y": null, "z": 2 }, "b": 2 } ] }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+            .add("z", IntegerType))
+          .add("b", IntegerType))),
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("missing nested column in source - update - nested array of struct - longer source")(
+    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 4 } ] }, "b": 1 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "a": {"y": 20, "x": [ { "c": 10, "e": 1 }, { "c": 10, "e": 2 }, { "c": 10, "e": 3 } ] }, "b": "2" } ] }
+          { "key": "B", "value": [ { "a": {"y": 60, "x":  [{ "c": 20, "e": 2 } ] }, "b": "3" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    clauses = update("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": null, "e": 1 }, { "c": 10, "d": null, "e": 2 }, { "c": 10, "d": null, "e": 3} ] }, "b": 2 } ] }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+
+  testNestedStructsEvolution("missing nested column in source - update - nested array of struct - longer target")(
+    target = """{ "key": "A", "value": [ { "a": { "y": 2, "x": [ { "c": 1, "d": 3, "e": 4 }, { "c": 1, "d": 3, "e": 5 } ] }, "b": 1 } ] }""",
+    source =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "e": 1 } ] }, "b": "2" } ] }
+          { "key": "B", "value": [ { "a": { "y": 60, "x": [ { "c": 20, "e": 2 } ] }, "b": "3" } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", StringType))),
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", new StructType()
+            .add("y", IntegerType)
+            .add("x", ArrayType(
+              new StructType()
+                .add("c", IntegerType)
+                .add("d", IntegerType)
+                .add("e", IntegerType)
+            )))
+          .add("b", IntegerType))),
+    clauses = update("*") :: Nil,
+    result =
+      """{ "key": "A", "value": [ { "a": { "y": 20, "x": [ { "c": 10, "d": null, "e": 1 } ] }, "b": 2 } ] }""",
+    expectErrorWithoutEvolutionContains = "Cannot cast")
+  // scalastyle:on line.size.limit
+
+  testNestedStructsEvolution("add non-nullable struct field to target schema")(
+    target = """{ "key": "A" }""",
+    source = """{ "key": "B", "value": 4}""",
+    targetSchema = new StructType()
+      .add("key", StringType),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value", IntegerType, nullable = false),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": null }""".stripMargin,
+    // Even though `value` is non-nullable in the source, it must be nullable in the target as
+    // existing rows will contain null values.
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value", IntegerType, nullable = true),
+    resultWithoutEvolution = """{ "key": "A" }""")
+
+  testNestedStructsEvolution("struct in array with storeAssignmentPolicy = STRICT")(
+    target = """{ "key": "A", "value": [ { "a": 1 } ] }""",
+    source = """{ "key": "A", "value": [ { "a": 2 } ] }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        ArrayType(new StructType()
+          .add("a", LongType))),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        ArrayType(new StructType()
+          .add("a", IntegerType))),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": [ { "a": 2 } ] }""",
+    resultWithoutEvolution = """{ "key": "A", "value": [ { "a": 2 } ] }""",
+    confs = Seq(
+      SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
+      DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
+
+  testNestedStructsEvolution("nested field assignment qualified with source alias")(
+    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
+    source = Seq("""{ "a": 3, "t": { "a": 5 } }"""),
+    targetSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    cond = "1 = 1",
+    clauses = update("s.t.a = s.t.a") :: Nil,
+    // Assigning to the source is just wrong and should fail.
+    result = Seq("""{ "a": 1, "t": { "a": 5 } }"""),
+    resultSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    expectErrorWithoutEvolutionContains = "cannot resolve s.t.a in UPDATE")
+
+  testNestedStructsEvolution("existing top-level column assignment qualified with target alias")(
+    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
+    source = Seq("""{ "a": 3, "t": { "a": 5 } }"""),
+    targetSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    cond = "1 = 1",
+    // This succeeds and updates 'a': the fully qualified column name 't.a' gets precedence over
+    // the unqualified struct field name '(t.)t.a' to resolve the ambiguity.
+    clauses = update("t.a = s.a") :: Nil,
+    result = Seq("""{ "a": 3, "t": { "a": 2 } }"""),
+    resultSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    resultWithoutEvolution = Seq("""{ "a": 3, "t": { "a": 2 } }"""))
+
+  testNestedStructsEvolution("existing nested field assignment qualified with target alias")(
+    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
+    source = Seq("""{ "a": 3, "t": { "a": 5 } }"""),
+    targetSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    cond = "1 = 1",
+    // This is unambiguous: and resolves to the struct field 't.t.a' during resolution
+    clauses = update("t.t.a = s.t.a") :: Nil,
+    result = Seq("""{ "a": 1, "t": { "a": 5 } }"""),
+    resultSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    resultWithoutEvolution = Seq("""{ "a": 1, "t": { "a": 5 } }"""))
+
+  testNestedStructsEvolution("new top-level column assignment qualified with target alias")(
+    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
+    source = Seq("""{ "a": 3, "b": 4, "t": { "a": 5, "b": 6 } }"""),
+    targetSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("a", IntegerType)
+      .add("b", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    cond = "1 = 1",
+    clauses = update("t.b = s.b") :: Nil,
+    result = Seq("""{ "a": 1, "t": { "a": 2, "b": 4 } }"""),
+    resultSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "No such struct field `b` in `a`")
+
+  testNestedStructsEvolution("new nested field assignment qualified with target alias")(
+    target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
+    source = Seq("""{ "a": 3, "b": 4, "t": { "a": 5, "b": 6 } }"""),
+    targetSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("a", IntegerType)
+      .add("b", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    cond = "1 = 1",
+    clauses = update("t.t.b = s.t.b") :: Nil,
+    // t.t.b gets resolved to source struct t, accessing nested field t.t.b which doesn't exist.
+    expectErrorContains = "No such struct field `t` in `a`, `b`",
+    resultSchema = new StructType()
+      .add("a", IntegerType)
+      .add("t", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    // t.t.b: t.t gets resolved to target t with nested field b which doesn't exist in fields (a)
+    expectErrorWithoutEvolutionContains = "No such struct field `b` in `a`")
 }

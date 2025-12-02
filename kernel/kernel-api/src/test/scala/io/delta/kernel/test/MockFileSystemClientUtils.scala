@@ -27,6 +27,8 @@ import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
+object MockFileSystemClientUtils extends MockFileSystemClientUtils
+
 /**
  * This is an extension to [[BaseMockFileSystemClient]] containing specific mock implementations
  * [[FileSystemClient]] which are shared across multiple test suite.
@@ -148,7 +150,12 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
    * file statuses.
    */
   def listFromProvider(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
-    files.filter(_.getPath.compareTo(filePath) >= 0).sortBy(_.getPath)
+    val parentPath = new Path(filePath).getParent
+    files
+      // This currently excludes listing nested directories, we can fix this if needed
+      .filter(fs => new Path(fs.getPath).getParent == parentPath)
+      .filter(_.getPath.compareTo(filePath) >= 0)
+      .sortBy(_.getPath)
   }
 
   /**

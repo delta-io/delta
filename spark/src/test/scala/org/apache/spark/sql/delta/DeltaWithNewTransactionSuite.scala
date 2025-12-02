@@ -16,8 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -29,7 +30,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest
-  with CoordinatedCommitsBaseSuite {
+  with CatalogOwnedTestBaseSuite {
 
   /**
    * Test whether `withNewTransaction` captures all delta read made within it and correctly
@@ -314,7 +315,10 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
       // Any concurrent change (even if its seemingly non-conflicting) should fail the filter as
       // the whole table will be scanned by the filter when data skipping is disabled.
       // Note: Adding a file to avoid snapshot isolation level for the commit.
-      txn.commit(Seq(AddFile("a", Map(key -> "2"), 1, 1, true)), DeltaOperations.ManualUpdate)
+      txn.commit(
+        Seq(createTestAddFile(encodedPath = "a", partitionValues = Map(key -> "2"))),
+        DeltaOperations.ManualUpdate
+      )
     },
     shouldFail = true)
 
@@ -372,7 +376,17 @@ class DeltaWithNewTransactionIdColumnMappingSuite extends DeltaWithNewTransactio
 class DeltaWithNewTransactionNameColumnMappingSuite extends DeltaWithNewTransactionSuite
   with DeltaColumnMappingEnableNameMode
 
-class DeltaWithNewTransactionWithCoordinatedCommitsBatch100Suite
+class DeltaWithNewTransactionWithCatalogOwnedBatch1Suite
+    extends DeltaWithNewTransactionSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaWithNewTransactionWithCatalogOwnedBatch2Suite
+    extends DeltaWithNewTransactionSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaWithNewTransactionWithCatalogOwnedBatch100Suite
    extends DeltaWithNewTransactionSuite {
-  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

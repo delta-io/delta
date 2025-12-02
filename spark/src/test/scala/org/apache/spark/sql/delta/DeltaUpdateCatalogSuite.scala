@@ -24,6 +24,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaHiveTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import com.fasterxml.jackson.core.JsonParseException
 
 import org.apache.spark.{SparkConf, SparkContext}

@@ -36,6 +36,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
 
+import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier

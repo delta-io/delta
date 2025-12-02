@@ -24,8 +24,8 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeat
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.stats.{DataSkippingReaderConf, StatisticsCollection}
+import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -43,19 +43,32 @@ case class DeltaConfig[T](
     alternateKeys: Seq[String] = Seq.empty) {
   /**
    * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
-   * alternate keys, returning defaultValue if none match.
+   * alternate keys, returning defaultValue if none matches.
    */
   def fromMetaData(metadata: Metadata): T = {
     fromMap(metadata.configuration)
   }
 
+  /**
+   * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
+   * alternate keys, returning `None` if none matches.
+   */
+  protected[delta] def fromMetaDataOption(metadata: Metadata): Option[T] = {
+    fromMapOption(metadata.configuration)
+  }
+
   def fromMap(configs: Map[String, String]): T = {
-    for (usedKey <- key +: alternateKeys) {
-      configs.get(usedKey).map { value =>
-        return fromString(value)
+    fromMapOption(configs).getOrElse(fromString(defaultValue))
+  }
+
+  protected[delta] def fromMapOption(configs: Map[String, String]): Option[T] = {
+    for (k <- key +: alternateKeys) {
+      configs.get(k) match {
+        case Some(value) => return Some(fromString(value))
+        case None => // keep looking
       }
     }
-    fromString(defaultValue)
+    None
   }
 
   /** Validate the setting for this configuration */
@@ -183,7 +196,14 @@ trait DeltaConfigsBase extends DeltaLogging {
           lKey -> value
         case lKey if lKey.startsWith("delta.") =>
           Option(entries.get(lKey.stripPrefix("delta."))) match {
-            case Some(deltaConfig) => deltaConfig(value) // validate the value
+            case Some(deltaConfig) if (
+              lKey == DeltaConfigs.TOMBSTONE_RETENTION.key.toLowerCase(Locale.ROOT) ||
+              lKey == DeltaConfigs.LOG_RETENTION.key.toLowerCase(Locale.ROOT)) =>
+              val ret = deltaConfig(value) // validate the value
+              validateTombstoneAndLogRetentionDurationCompatibility(configurations)
+              ret
+            case Some(deltaConfig) =>
+              deltaConfig(value) // validate the value
             case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
               // always allow any delta universal format config with key converted to lower case
               lKey -> value
@@ -309,6 +329,41 @@ trait DeltaConfigsBase extends DeltaLogging {
   private def getMicroSeconds(i: CalendarInterval): Long = {
     assert(i.months == 0)
     i.days * DateTimeConstants.MICROS_PER_DAY + i.microseconds
+  }
+
+  private def validateTombstoneAndLogRetentionDurationCompatibility(
+    configs: Map[String, String]): Unit = {
+    if (!SparkSession.active.sessionState.conf
+      .getConf(DeltaSQLConf.ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY)) {
+      return
+    }
+    val lowerCaseConfigs = configs.iterator.map {
+      case (k, v) => k.toLowerCase(Locale.ROOT) -> v
+    }.toMap
+    val logRetention = DeltaConfigs.LOG_RETENTION
+    val tombstoneRetention = DeltaConfigs.TOMBSTONE_RETENTION
+    val logRetentionDuration: CalendarInterval = logRetention.fromString(
+      lowerCaseConfigs.get(logRetention.key.toLowerCase(Locale.ROOT))
+        .getOrElse(logRetention.defaultValue))
+    val tombstoneRetentionDuration: CalendarInterval = tombstoneRetention.fromString(
+      lowerCaseConfigs.get(tombstoneRetention.key.toLowerCase(Locale.ROOT))
+        .getOrElse(tombstoneRetention.defaultValue))
+
+    val logRetentionFound = lowerCaseConfigs.get(
+      logRetention.key.toLowerCase(Locale.ROOT)).isDefined
+
+    val errorMessage = if (logRetentionFound) {
+      s"The table property ${DeltaConfigs.LOG_RETENTION.key}(${logRetentionDuration.toString}) " +
+        s"needs to be greater than or equal to ${DeltaConfigs.TOMBSTONE_RETENTION.key}" +
+        s"(${tombstoneRetentionDuration.toString})."
+    } else {
+      s"The table property ${DeltaConfigs.TOMBSTONE_RETENTION.key}" +
+        s"(${tombstoneRetentionDuration.toString}) needs to be less than or equal to " +
+        s"${DeltaConfigs.LOG_RETENTION.key}(${logRetentionDuration.toString})."
+    }
+
+    require(getMilliSeconds(logRetentionDuration) >= getMilliSeconds(tombstoneRetentionDuration),
+      errorMessage)
   }
 
   /**
@@ -581,7 +636,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val DATA_SKIPPING_NUM_INDEXED_COLS = buildConfig[Int](
     "dataSkippingNumIndexedCols",
-    DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
+    DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
     _.toInt,
     a => a >= -1,
     "needs to be larger than or equal to -1.")
@@ -600,7 +655,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     "dataSkippingStatsColumns",
     null,
     v => Option(v),
-    vOpt => vOpt.forall(v => StatisticsCollection.parseDeltaStatsColumnNames(v).isDefined),
+    vOpt => vOpt.forall(v => DeltaSqlParserUtils.parseMultipartColumnList(v).isDefined),
     """
       |The dataSkippingStatsColumns parameter is a comma-separated list of case-insensitive column
       |identifiers. Each column identifier can consist of letters, digits, and underscores.
@@ -730,6 +785,22 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val ROW_TRACKING_ENABLED = buildConfig[Boolean](
     key = "enableRowTracking",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
+  /**
+   * Controls whether row tracking operations should be suspended. It blocks the assignment of new
+   * baseRowIds as well as copying existing baseRowIds. It is intended to be used when dropping
+   * row tracking. It can be enabled after setting `delta.enableRowTracking` to false.
+   *
+   * WARNING 1: Should never be enabled when `delta.enableRowTracking` is set to true.
+   * WARNING 2: It should never be manually set. It is only safe to be used in the context of
+   *            DROP FEATURE.
+   */
+  val ROW_TRACKING_SUSPENDED = buildConfig[Boolean](
+    key = "rowTrackingSuspended",
     defaultValue = false.toString,
     fromString = _.toBoolean,
     validationFunction = _ => true,

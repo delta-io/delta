@@ -222,16 +222,18 @@ abstract class TahoeFileIndexWithSnapshotDescriptor(
  *
  * @param snapshot the [[Snapshot]] this pointer points to
  */
-class ShallowSnapshotDescriptor(snapshot: Snapshot) extends SnapshotDescriptor {
+class ShallowSnapshotDescriptor(
+    snapshot: Snapshot,
+    catalogTableOpt: Option[CatalogTable]) extends SnapshotDescriptor {
   override val deltaLog: DeltaLog = snapshot.deltaLog
   override val version: Long = snapshot.version
   override val metadata: Metadata = snapshot.metadata
   override val protocol: Protocol = snapshot.protocol
   // Avoid eager state reconstruction
   override protected[delta] def numOfFilesIfKnown: Option[Long] =
-    deltaLog.getSnapshotAt(version).numOfFilesIfKnown
+    deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTableOpt).numOfFilesIfKnown
   override protected[delta] def sizeInBytesIfKnown: Option[Long] =
-    deltaLog.getSnapshotAt(version).sizeInBytesIfKnown
+    deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTableOpt).sizeInBytesIfKnown
 }
 
 /**
@@ -263,7 +265,7 @@ case class TahoeLogFileIndex(
     deltaLog,
     path,
     if (isTimeTravelQuery) snapshotAtAnalysis
-    else new ShallowSnapshotDescriptor(snapshotAtAnalysis),
+    else new ShallowSnapshotDescriptor(snapshotAtAnalysis, catalogTableOpt),
     catalogTableOpt,
     partitionFilters,
     isTimeTravelQuery)

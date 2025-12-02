@@ -24,18 +24,13 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
 
-class DeleteCDCSuite extends DeleteSQLSuite {
-  import testImplicits._
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
-
-  protected def testCDCDelete(name: String)(
+trait DeleteCDCMixin extends DeleteSQLMixin with CDCEnabled {
+  protected def testCDCDelete(
+      name: String)(
       initialData: => Dataset[_],
       partitionColumns: Seq[String] = Seq.empty,
       deleteCondition: String,
@@ -45,26 +40,26 @@ class DeleteCDCSuite extends DeleteSQLSuite {
     test(s"CDC - $name") {
       withSQLConf(
           (DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
-        withTempDir { dir =>
-          val path = dir.getAbsolutePath
-          initialData.write.format("delta").partitionBy(partitionColumns: _*)
-            .save(path)
+        append(initialData.toDF(), partitionColumns)
 
-          executeDelete(s"delta.`$path`", deleteCondition)
+        executeDelete(tableSQLIdentifier, deleteCondition)
 
-          checkAnswer(
-            spark.read.format("delta").load(path),
-            expectedData.toDF())
+        checkAnswer(
+          readDeltaTableByIdentifier(),
+          expectedData.toDF())
 
-          checkAnswer(
-            getCDCForLatestOperation(
-              deltaLog = DeltaLog.forTable(spark, dir),
-              operation = "DELETE"),
-            expectedChangeDataWithoutVersion.toDF())
-        }
+        checkAnswer(
+          getCDCForLatestOperation(deltaLog, operation = "DELETE"),
+          expectedChangeDataWithoutVersion.toDF())
       }
     }
   }
+
+}
+
+trait DeleteCDCTests extends DeleteCDCMixin
+  with CDCTestMixin {
+  import testImplicits._
 
   testCDCDelete("unconditional")(
     initialData = spark.range(0, 10, step = 1, numPartitions = 3),
@@ -125,4 +120,3 @@ class DeleteCDCSuite extends DeleteSQLSuite {
         .selectExpr("3 as part", "id", "'delete' as _change_type"))
 
 }
-

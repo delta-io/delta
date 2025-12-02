@@ -19,8 +19,11 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.DeltaCommitTag.PreservedRowTrackingTag
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructField
 
 /**
@@ -49,6 +52,19 @@ object RowTracking {
     isEnabled
   }
 
+  def isSuspended(spark: SparkSession, metadata: Metadata): Boolean = {
+    val ignoreIsSuspended = spark.conf.get(DeltaSQLConf.DELTA_ROW_TRACKING_IGNORE_SUSPENSION)
+    if (DeltaUtils.isTesting && ignoreIsSuspended) return false
+
+    val isEnabled = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
+    val isSuspended = DeltaConfigs.ROW_TRACKING_SUSPENDED.fromMetaData(metadata)
+    // Make sure a third party client did not miss ROW_TRACKING_SUSPENDED table property.
+    if (isEnabled && isSuspended) {
+      throw DeltaErrors.rowTrackingIllegalPropertyCombination()
+    }
+    isSuspended
+  }
+
   /**
    * Checks whether CONVERT TO DELTA collects statistics if row tracking is supported. If it does
    * not collect statistics, we cannot assign fresh row IDs, hence we throw an error to either rerun
@@ -74,11 +90,14 @@ object RowTracking {
       metadata: Metadata,
       nullableConstantFields: Boolean,
       nullableGeneratedFields: Boolean): Iterable[StructField] = {
-    RowId.createRowIdField(protocol, metadata, nullableGeneratedFields) ++
+    val shouldSetIcebergReservedFieldId = false
+    RowId.createRowIdField(
+      protocol, metadata, nullableGeneratedFields, shouldSetIcebergReservedFieldId) ++
       RowId.createBaseRowIdField(protocol, metadata, nullableConstantFields) ++
       DefaultRowCommitVersion.createDefaultRowCommitVersionField(
         protocol, metadata, nullableConstantFields) ++
-      RowCommitVersion.createMetadataStructField(protocol, metadata, nullableGeneratedFields)
+      RowCommitVersion.createMetadataStructField(
+        protocol, metadata, nullableGeneratedFields, shouldSetIcebergReservedFieldId)
   }
 
   /**
@@ -111,7 +130,7 @@ object RowTracking {
   /**
    * Returns a copy of the CommitInfo passed in with the PreservedRowTrackingTag tag set to false.
    */
-  private def addRowTrackingNotPreservedTag(commitInfo: CommitInfo): CommitInfo = {
+  private[delta] def addRowTrackingNotPreservedTag(commitInfo: CommitInfo): CommitInfo = {
     val tagsMap = commitInfo.tags.getOrElse(Map.empty[String, String])
     val newCommitInfoTags = addPreservedRowTrackingTag(tagsMap, preserved = false)
     commitInfo.copy(tags = Some(newCommitInfoTags))
@@ -173,5 +192,18 @@ object RowTracking {
       snapshot: SnapshotDescriptor): DataFrame = {
     val dfWithRowIds = RowId.preserveRowIds(dfWithoutRowTrackingColumns, snapshot)
     RowCommitVersion.preserveRowCommitVersions(dfWithRowIds, snapshot)
+  }
+  /**
+   * Verifies that the [[RowTrackingFeature]] is enabled and all files have base row IDs in the
+   * given snapshot. These invariants need to hold to enable the RowTracking table property.
+   */
+  def verifyInvariantsForTablePropertyEnablement(snapshot: Snapshot): Unit = {
+    if (!snapshot.protocol.isFeatureSupported(RowTrackingFeature)) {
+      throw new ProtocolChangedException(None)
+    }
+    val filesRequiringBackfill = snapshot.allFiles.where(col("baseRowId").isNull)
+    if (!filesRequiringBackfill.isEmpty) {
+      throw new ProtocolChangedException(None)
+    }
   }
 }

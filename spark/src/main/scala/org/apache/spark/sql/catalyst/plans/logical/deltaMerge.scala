@@ -47,18 +47,59 @@ trait DeltaUnevaluable extends Expression {
 }
 
 /**
+ * Determines the nullness of target-only struct fields when generating target struct expressions
+ * to align with the evolved target schema during MERGE operations with schema evolution enabled.
+ *
+ * Target-only struct fields are nested fields that exist in the target table's struct column
+ * but not in the corresponding source struct column. For example, if the target has
+ * `struct(a, b, c)` and the source has `struct(a, b)`, then field `c` is target-only.
+ *
+ * This behavior only applies when schema evolution is enabled, as target-only fields are not
+ * allowed when schema evolution is disabled.
+ */
+object TargetOnlyStructFieldBehavior extends Enumeration {
+  type TargetOnlyStructFieldBehavior = Value
+
+  /**
+   * Preserve target-only struct fields with their original values from the target table.
+   * Used for: `UPDATE * [EXCEPT]` clauses with schema evolution enabled.
+   * Example: Target row has `struct(a=1, b=2, c=3)`, source has `struct(a=10, b=20)`.
+   *          Result: `struct(a=10, b=20, c=3)` - field `c` is preserved.
+   */
+  val PRESERVE = Value
+
+  /**
+   * Overwrite target-only struct fields with null.
+   * Used for: Explicit column assignments (e.g., `UPDATE SET col = expr`),
+   *           `INSERT` clauses (no existing row to preserve values from)
+   * Example: Target row has `struct(a=1, b=2, c=3)`, source has `struct(a=10, b=20)`.
+   *          Result: `struct(a=10, b=20, c=null)` - field `c` is set to null.
+   */
+  val NULLIFY = Value
+
+  /**
+   * The expression has been fully resolved and aligned to the evolved target schema.
+   */
+  val TARGET_ALIGNED = Value
+}
+
+/**
  * Represents an action in MERGE's UPDATE or INSERT clause where a target columns is assigned the
  * value of an expression
  *
  * @param targetColNameParts The name parts of the target column. This is a sequence to support
  *                           nested fields as targets.
  * @param expr Expression to generate the value of the target column.
+ * @param targetOnlyStructFieldBehavior Determines the nullness of target-only struct fields.
+ *                                      Note: This parameter only takes effect when schema evolution
+ *                                      is enabled; otherwise it is ignored.
  * @param targetColNameResolved Whether the targetColNameParts have undergone resolution and checks
  *                              for validity.
  */
 case class DeltaMergeAction(
     targetColNameParts: Seq[String],
     expr: Expression,
+    targetOnlyStructFieldBehavior: TargetOnlyStructFieldBehavior.Value,
     targetColNameResolved: Boolean = false)
   extends UnaryExpression with DeltaUnevaluable {
   override def child: Expression = expr
@@ -144,7 +185,13 @@ object DeltaMergeIntoClause {
     if (colNames.isEmpty && isEmptySeqEqualToStar) {
       Seq(UnresolvedStar(None))
     } else {
-      (colNames, exprs).zipped.map { (col, expr) => DeltaMergeAction(col.nameParts, expr) }
+      (colNames, exprs).zipped.map { (col, expr) =>
+        DeltaMergeAction(
+          targetColNameParts = col.nameParts,
+          expr = expr,
+          // Explicit column assignments overwrite target-only struct fields with null.
+          targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.NULLIFY)
+      }
     }
   }
 
@@ -153,8 +200,18 @@ object DeltaMergeIntoClause {
       Seq[Expression](UnresolvedStar(None))
     } else {
       assignments.map {
-        case Assignment(key: UnresolvedAttribute, expr) => DeltaMergeAction(key.nameParts, expr)
-        case Assignment(key: Attribute, expr) => DeltaMergeAction(Seq(key.name), expr)
+        case Assignment(key: UnresolvedAttribute, expr) =>
+          DeltaMergeAction(
+            targetColNameParts = key.nameParts,
+            expr = expr,
+            // Explicit column assignments overwrite target-only struct fields with null.
+            targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.NULLIFY)
+        case Assignment(key: Attribute, expr) =>
+          DeltaMergeAction(
+            targetColNameParts = Seq(key.name),
+            expr = expr,
+            // Explicit column assignments overwrite target-only struct fields with null.
+            targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.NULLIFY)
         case other =>
           throw new DeltaAnalysisException(
             errorClass = "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY",

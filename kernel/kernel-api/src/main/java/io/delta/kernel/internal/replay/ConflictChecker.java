@@ -64,7 +64,7 @@ public class ConflictChecker {
 
   // Snapshot of the table read by the transaction that encountered the conflict
   // (a.k.a the losing transaction)
-  private final SnapshotImpl snapshot;
+  private final Optional<SnapshotImpl> snapshotOpt;
 
   // Losing transaction
   private final TransactionImpl transaction;
@@ -76,12 +76,12 @@ public class ConflictChecker {
   private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
 
   private ConflictChecker(
-      SnapshotImpl snapshot,
+      Optional<SnapshotImpl> snapshotOpt,
       TransactionImpl transaction,
       long attemptVersion,
       List<DomainMetadata> domainMetadatas,
       CloseableIterable<Row> dataActions) {
-    this.snapshot = snapshot;
+    this.snapshotOpt = snapshotOpt;
     this.transaction = transaction;
     this.attemptVersion = attemptVersion;
     this.attemptDomainMetadatas = domainMetadatas;
@@ -106,7 +106,7 @@ public class ConflictChecker {
    */
   public static TransactionRebaseState resolveConflicts(
       Engine engine,
-      SnapshotImpl snapshot,
+      Optional<SnapshotImpl> snapshot,
       long attemptVersion,
       TransactionImpl transaction,
       List<DomainMetadata> domainMetadatas,
@@ -159,14 +159,15 @@ public class ConflictChecker {
     if (TableFeatures.isRowTrackingSupported(transaction.getProtocol())) {
       updatedDomainMetadatas =
           RowTracking.updateRowIdHighWatermarkIfNeeded(
-              snapshot,
+              snapshotOpt,
               transaction.getProtocol(),
               lastWinningRowIdHighWatermark,
               attemptDataActions,
-              attemptDomainMetadatas);
+              attemptDomainMetadatas,
+              Optional.empty() /* providedRowIdHighWatermark */);
       updatedDataActions =
           RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
-              snapshot,
+              snapshotOpt,
               transaction.getProtocol(),
               lastWinningRowIdHighWatermark,
               Optional.of(attemptVersion),
@@ -175,9 +176,9 @@ public class ConflictChecker {
     }
 
     Optional<CRCInfo> updatedCrcInfo =
-        ChecksumReader.getCRCInfo(
+        ChecksumReader.tryReadChecksumFile(
             engine,
-            FileStatus.of(checksumFile(snapshot.getLogPath(), lastWinningVersion).toString()));
+            FileStatus.of(checksumFile(transaction.getLogPath(), lastWinningVersion).toString()));
 
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions
@@ -367,7 +368,9 @@ public class ConflictChecker {
   }
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {
-    String firstWinningCommitFile = deltaFile(snapshot.getLogPath(), snapshot.getVersion() + 1);
+    // TODO delta-io/delta#5018 this should be based on attemptVersion not readSnapshot version
+    String firstWinningCommitFile =
+        deltaFile(transaction.getLogPath(), transaction.getReadTableVersion() + 1);
 
     try (CloseableIterator<FileStatus> files =
         wrapEngineExceptionThrowsIO(
@@ -406,12 +409,12 @@ public class ConflictChecker {
       long lastWinningVersion,
       FileStatus lastWinningTxn,
       Optional<CommitInfo> winningCommitInfoOpt) {
-    if (snapshot.getVersion() == -1
-        || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
+    if (!snapshotOpt.isPresent()
+        || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshotOpt.get().getMetadata())) {
       return lastWinningTxn.getModificationTime();
     } else {
-      return CommitInfo.getRequiredInCommitTimestamp(
-          winningCommitInfoOpt, String.valueOf(lastWinningVersion), snapshot.getDataPath());
+      return CommitInfo.extractRequiredIctFromCommitInfoOpt(
+          winningCommitInfoOpt, lastWinningVersion, transaction.getDataPath());
     }
   }
 

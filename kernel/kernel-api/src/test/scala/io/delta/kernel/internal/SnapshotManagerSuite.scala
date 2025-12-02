@@ -15,12 +15,14 @@
  */
 package io.delta.kernel.internal
 
+import java.lang.{Long => JLong}
 import java.util.{Arrays, Collections, Optional}
 
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, CheckpointMetaData, SidecarFile}
@@ -95,7 +97,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           logSegment.getCheckpointVersionOpt.get == v)
       case None => assert(!logSegment.getCheckpointVersionOpt.isPresent())
     }
-    assert(expectedLastCommitTimestamp == logSegment.getLastCommitTimestamp)
+    assert(expectedLastCommitTimestamp == logSegment.getDeltaFileAtEndVersion.getModificationTime)
   }
 
   /**
@@ -135,6 +137,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     topLevelFileTypes.foreach { topLevelFileType =>
       val v2Checkpoints =
         v2CheckpointFileStatuses(v2CheckpointSpec, topLevelFileType)
+
       val checkpointFiles = v2Checkpoints.flatMap {
         case (topLevelCheckpointFile, sidecars) =>
           Seq(topLevelCheckpointFile) ++ sidecars
@@ -160,11 +163,15 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       }.getOrElse((Seq.empty, Seq.empty))
 
       val compactions = compactedFileStatuses(compactionVersions)
-
+      val mockSidecarParquetHandler = if (expectedSidecars.nonEmpty) {
+        new MockSidecarParquetHandler(expectedSidecars, expectedV2Checkpoint.head.getPath)
+      } else {
+        new BaseMockParquetHandler {}
+      }
       val logSegment = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(
-          listFromProvider(deltas ++ compactions ++ checkpointFiles)("/"),
-          new MockSidecarParquetHandler(expectedSidecars),
+          deltas ++ compactions ++ checkpointFiles,
+          mockSidecarParquetHandler,
           new MockSidecarJsonHandler(expectedSidecars)),
         versionToLoad)
 
@@ -644,7 +651,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .take(4)
     val deltas = deltaFileStatuses(10L to 13L)
     testExpectedError[InvalidTableException](
-      corruptedCheckpointStatuses ++ deltas,
+      corruptedCheckpointStatuses.toSeq ++ deltas,
       expectedErrorMessageContains = "Cannot compute snapshot. Missing delta file version 0.")
   }
 
@@ -684,7 +691,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .map(p => FileStatus.of(p.toString, 10, 10))
       .take(4)
     testExpectedError[RuntimeException](
-      files = corruptedCheckpointStatuses ++ deltaFileStatuses(10L to 20L) ++
+      files = corruptedCheckpointStatuses.toSeq ++ deltaFileStatuses(10L to 20L) ++
         singularCheckpointFileStatuses(Seq(10L)),
       lastCheckpointVersion = Optional.of(20),
       expectedErrorMessageContains = "Missing checkpoint at version 20")
@@ -731,6 +738,168 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(exMsg.contains("Missing checkpoint at version 1"))
   }
 
+  /* ------------------- CATALOG MANAGED TABLE TESTS ------------------ */
+
+  test("catalog managed: latest query, we load the maxCatalogVersion even if other deltas exist") {
+    val deltas = deltaFileStatuses(0L to 20)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10))
+
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSListFromEngine(deltas ++ checkpoints),
+      Optional.empty(), // timeTravelVersionOpt
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(15L) // maxCatalogVersionOpt
+    )
+
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 15,
+      expectedDeltas = deltaFileStatuses(11L to 15),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 150L)
+  }
+
+  test("catalog managed: latest query, _last_checkpoint does not exist") {
+    val deltas = deltaFileStatuses(0L to 20)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10))
+
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSListFromEngine(deltas ++ checkpoints),
+      Optional.empty(), // timeTravelVersionOpt
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(20L) // maxCatalogVersionOpt
+    )
+
+    // Should find checkpoint at version 10 by searching backwards from version 20
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 20,
+      expectedDeltas = deltaFileStatuses(11L to 20),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 200L)
+  }
+
+  test("catalog managed: latest query, when _last_checkpoint exists and " +
+    "is <= maxCatalogVersion we use it") {
+    val deltas = deltaFileStatuses(0L to 30)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20, 25))
+    val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)
+    val files = deltas ++ checkpoints ++ Seq(lastCheckpointFileStatus)
+
+    // Create mocked engine that fails if we try to list before the version stored in
+    // _last_checkpoint
+    def listFrom(filePath: String): Seq[FileStatus] = {
+      if (filePath < FileNames.listingPrefix(logPath, 25)) {
+        throw new RuntimeException(
+          s"Listing from before the checkpoint version referenced by _last_checkpoint.")
+      }
+      listFromProvider(files)(filePath)
+    }
+    val mockedEngine = mockEngine(
+      jsonHandler = new MockReadLastCheckpointFileJsonHandler(
+        lastCheckpointFileStatus.getPath,
+        25
+      ), // _last_checkpoint points to version 25
+      fileSystemClient = new MockListFromFileSystemClient(listFrom))
+
+    // Latest query with catalog managed table (maxCatalogVersion = 30)
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      mockedEngine,
+      Optional.empty(), // timeTravelVersionOpt
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(30L) // maxCatalogVersionOpt
+    )
+
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 30,
+      expectedDeltas = deltaFileStatuses(26L to 30),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(25)),
+      expectedCheckpointVersion = Some(25),
+      expectedLastCommitTimestamp = 300L)
+  }
+
+  test("catalog managed:" +
+    "latest query, ignore _last_checkpoint if it's newer than maxCatalogVersion") {
+    val deltas = deltaFileStatuses(0L to 26)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20, 25))
+    val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)
+    val files = deltas ++ checkpoints ++ Seq(lastCheckpointFileStatus)
+
+    // Latest query with catalog managed table where maxCatalogVersion < _last_checkpoint version
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      mockEngine(
+        jsonHandler = new MockReadLastCheckpointFileJsonHandler(
+          lastCheckpointFileStatus.getPath,
+          25
+        ), // _last_checkpoint points to version 25
+        fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))),
+      Optional.empty(), // timeTravelVersionOpt
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(24L) // maxCatalogVersionOpt is 24, which is < 25
+    )
+
+    // Should use checkpoint at version 20 not 25, and should load maxCatalogVersion
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 24,
+      expectedDeltas = deltaFileStatuses(21L to 24),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(20)),
+      expectedCheckpointVersion = Some(20),
+      expectedLastCommitTimestamp = 240L)
+  }
+
+  test("catalog managed: time travel query ignores _last_checkpoint") {
+    val deltas = deltaFileStatuses(0L to 30)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20, 25))
+    val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)
+    val files = deltas ++ checkpoints ++ Seq(lastCheckpointFileStatus)
+
+    val jsonHandler = new BaseMockJsonHandler {
+      override def readJsonFiles(
+          fileIter: CloseableIterator[FileStatus],
+          physicalSchema: StructType,
+          predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+        assert(fileIter.hasNext)
+        if (fileIter.next.getPath == lastCheckpointFileStatus.getPath) {
+          throw new RuntimeException(
+            "We should not be reading the _last_checkpoint file for time-travel queries")
+        } else {
+          throw new RuntimeException("We should not be reading JSON files besides " +
+            "_last_checkpoint during log segment construction")
+        }
+      }
+    }
+
+    // Time travel query with catalog managed table
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      mockEngine(
+        jsonHandler = jsonHandler,
+        fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))),
+      Optional.of(15L), // timeTravelVersionOpt = 15
+      Collections.emptyList(), // parsedLogDatas
+      Optional.of(30L) // maxCatalogVersionOpt
+    )
+
+    // Should use checkpoint at version 10 for time travel to version 15
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 15,
+      expectedDeltas = deltaFileStatuses(11L to 15),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 150L)
+  }
+
+  /* ------------------- Compaction tests ------------------ */
+
   test("One compaction") {
     testWithCompactionsNoCheckpoint(
       deltaVersions = 0L until 5L,
@@ -775,31 +944,40 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 }
 
 trait SidecarIteratorProvider extends VectorTestUtils {
-  def singletonSidecarIterator(sidecars: Seq[FileStatus])
-      : CloseableIterator[ColumnarBatch] = Utils.singletonCloseableIterator(
-    new ColumnarBatch {
-      override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
-      override def getColumnVector(ordinal: Int): ColumnVector = {
-        ordinal match {
-          case 0 => stringVector(sidecars.map(_.getPath)) // path
-          case 1 => longVector(sidecars.map(_.getSize): _*) // size
-          case 2 =>
-            longVector(sidecars.map(_.getModificationTime): _*); // modification time
-        }
-      }
+  private def buildSidecarBatch(sidecars: Seq[FileStatus]): ColumnarBatch = new ColumnarBatch {
+    override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
-      override def getSize: Int = sidecars.length
-    })
+    override def getColumnVector(ordinal: Int): ColumnVector = ordinal match {
+      case 0 => stringVector(sidecars.map(_.getPath)) // path
+      case 1 => longVector(sidecars.map(_.getSize).map(JLong.valueOf)) // size
+      case 2 =>
+        longVector(sidecars.map(_.getModificationTime).map(JLong.valueOf)) // modification time
+    }
+
+    override def getSize: Int = sidecars.length
+  }
+
+  def singletonSidecarParquetIterator(sidecars: Seq[FileStatus], v2CheckpointFileName: String)
+      : CloseableIterator[FileReadResult] = {
+    val batch = buildSidecarBatch(sidecars)
+    Utils.singletonCloseableIterator(new FileReadResult(batch, v2CheckpointFileName))
+  }
+
+  // TODO: [delta-io/delta#4849] extend FileReadResult for JSON read result
+  def singletonSidecarJsonIterator(sidecars: Seq[FileStatus]): CloseableIterator[ColumnarBatch] = {
+    val batch = buildSidecarBatch(sidecars)
+    Utils.singletonCloseableIterator(batch)
+  }
 }
 
-class MockSidecarParquetHandler(sidecars: Seq[FileStatus])
+class MockSidecarParquetHandler(sidecars: Seq[FileStatus], v2CheckpointFileName: String)
     extends BaseMockParquetHandler with SidecarIteratorProvider {
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
-    singletonSidecarIterator(sidecars)
+      predicate: Optional[Predicate]): CloseableIterator[FileReadResult] =
+    singletonSidecarParquetIterator(sidecars, v2CheckpointFileName)
 }
 
 class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
@@ -809,7 +987,7 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
-    singletonSidecarIterator(sidecars)
+    singletonSidecarJsonIterator(sidecars)
 }
 
 class MockReadLastCheckpointFileJsonHandler(
@@ -829,9 +1007,9 @@ class MockReadLastCheckpointFileJsonHandler(
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
           ordinal match {
-            case 0 => longVector(lastCheckpointVersion) /* version */
-            case 1 => longVector(100) /* size */
-            case 2 => longVector(1) /* parts */
+            case 0 => longVector(Seq(lastCheckpointVersion)) /* version */
+            case 1 => longVector(Seq(100)) /* size */
+            case 2 => longVector(Seq(1)) /* parts */
           }
         }
 

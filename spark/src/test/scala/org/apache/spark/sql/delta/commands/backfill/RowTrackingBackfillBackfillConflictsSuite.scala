@@ -84,28 +84,4 @@ class RowTrackingBackfillBackfillConflictsSuite extends RowTrackingBackfillConfl
       }
     }
   }
-
-  test("Concurrent commits from one backfill command") {
-    val maxNumThreads = BackfillExecutor.getOrCreateThreadPool().getMaximumPoolSize
-    require(maxNumThreads >= numFiles,
-      s"Max thread pool size $maxNumThreads smaller than number of files $numFiles.")
-
-    withTestTable {
-      withTrackedBackfillCommits {
-        withSQLConf(
-          DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL.key ->
-            maxNumThreads.toString,
-          DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT.key -> "1"
-        ) {
-          val backfillFuture = launchBackFillAndBlockAfterFeatureIsCommitted()
-
-          commitBatchesSimultaneously(numFiles)
-
-          backfillFuture.get()
-        }
-
-        validateResult(() => tableCreationDF)
-      }
-    }
-  }
 }

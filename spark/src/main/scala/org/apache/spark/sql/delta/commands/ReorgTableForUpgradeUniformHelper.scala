@@ -186,7 +186,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
     } else {
       (None, false)
     }
-    val updatedSnapshot = target.deltaLog.update()
+    val updatedSnapshot = target.update()
     val (numOfAddFiles, numOfAddFilesWithIcebergCompatTag) = getNumOfAddFiles(
       targetIcebergCompatVersion, target, updatedSnapshot)
     if (mayNeedRewrite && numOfAddFilesWithIcebergCompatTag != numOfAddFiles) {
@@ -219,7 +219,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       "numOfAddFilesWithIcebergCompatTagBefore" -> numOfAddFilesWithTagBefore.toString,
       "numOfAddFilesAfter" -> numOfAddFiles.toString,
       "numOfAddFilesWithIcebergCompatTagAfter" -> numOfAddFilesWithIcebergCompatTag.toString,
-      "universalFormatIcebergEnabled" -> icebergEnabled(target.deltaLog.update().metadata).toString
+      "universalFormatIcebergEnabled" -> icebergEnabled(target.update().metadata).toString
     ))
     metricsOpt.getOrElse(Seq.empty[Row])
   }

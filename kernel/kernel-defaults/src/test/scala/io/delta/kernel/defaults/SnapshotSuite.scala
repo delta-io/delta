@@ -19,13 +19,18 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.{Operation, Table}
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.types.{IntegerType, StructField, StructType}
 import io.delta.kernel.utils.CloseableIterable
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class SnapshotSuite extends AnyFunSuite with TestUtils {
+class SnapshotSuite extends AbstractSnapshotSuite with TestUtilsWithTableManagerAPIs
+
+class LegacySnapshotSuite extends AbstractSnapshotSuite with TestUtilsWithLegacyKernelAPIs
+
+trait AbstractSnapshotSuite extends AnyFunSuite {
+  self: AbstractTestUtils =>
 
   Seq(
     Seq("part1"), // simple case
@@ -56,7 +61,8 @@ class SnapshotSuite extends AnyFunSuite with TestUtils {
 
         // Step 2: Check the partition columns
         val tablePartCols =
-          table.getLatestSnapshot(defaultEngine).getPartitionColumnNames()
+          getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, dir.getCanonicalPath)
+            .getPartitionColumnNames()
 
         assert(partCols.asJava === tablePartCols)
       }

@@ -871,7 +871,8 @@ class DeltaConnectPlannerSuite
       spark.sql(
         s"""ALTER TABLE $tableName
            |SET TBLPROPERTIES (
-           |  '${DeltaConfigs.TOMBSTONE_RETENTION.key}' = '$retentionInterval'
+           |  '${DeltaConfigs.TOMBSTONE_RETENTION.key}' = '$retentionInterval',
+           |  '${DeltaConfigs.LOG_RETENTION.key}' = '$retentionInterval'
            |)""".stripMargin
       )
     }

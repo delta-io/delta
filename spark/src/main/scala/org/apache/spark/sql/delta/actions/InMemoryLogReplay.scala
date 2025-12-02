@@ -24,7 +24,8 @@ import java.net.URI
  * of the table. The protocol for resolution is as follows:
  *  - The most recent [[AddFile]] and accompanying metadata for any `(path, dv id)` tuple wins.
  *  - [[RemoveFile]] deletes a corresponding [[AddFile]] and is retained as a
- *    tombstone until `minFileRetentionTimestamp` has passed.
+ *    tombstone until `minFileRetentionTimestamp` has passed. If `minFileRetentionTimestamp` is
+ *    None, all [[RemoveFile]] actions are retained.
  *    A [[RemoveFile]] "corresponds" to the [[AddFile]] that matches both the parquet file URI
  *    *and* the deletion vector's URI (if any).
  *  - The most recent version for any `appId` in a [[SetTransaction]] wins.
@@ -36,7 +37,7 @@ import java.net.URI
  * This class is not thread safe.
  */
 class InMemoryLogReplay(
-    minFileRetentionTimestamp: Long,
+    minFileRetentionTimestamp: Option[Long],
     minSetTransactionRetentionTimestamp: Option[Long]) extends LogReplay {
 
   import InMemoryLogReplay._
@@ -90,18 +91,19 @@ class InMemoryLogReplay(
   }
 
   private def getTombstones: Iterable[FileAction] = {
-    (cancelledRemoveFiles.values ++ activeRemoveFiles.values)
-      .filter(_.delTimestamp > minFileRetentionTimestamp)
-      .map(_.copy(dataChange = false))
+    val allRemovedFiles = cancelledRemoveFiles.values ++ activeRemoveFiles.values
+    val filteredRemovedFiles = minFileRetentionTimestamp match {
+      case None => allRemovedFiles
+      case Some(timestamp) => allRemovedFiles.filter(_.delTimestamp > timestamp)
+    }
+    filteredRemovedFiles.map(_.copy(dataChange = false))
   }
 
   private[delta] def getTransactions: Iterable[SetTransaction] = {
-    if (minSetTransactionRetentionTimestamp.isEmpty) {
-      transactions.values
-    } else {
-      transactions.values.filter { txn =>
-        txn.lastUpdated.exists(_ > minSetTransactionRetentionTimestamp.get)
-      }
+    minSetTransactionRetentionTimestamp match {
+      case None => transactions.values
+      case Some(timestamp) =>
+        transactions.values.filter { txn => txn.lastUpdated.exists(_ > timestamp) }
     }
   }
 

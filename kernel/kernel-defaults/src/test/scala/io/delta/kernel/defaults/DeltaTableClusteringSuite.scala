@@ -21,6 +21,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.{Column, Literal}
@@ -39,8 +40,34 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkClusteringMetadataDomain}
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
+class DeltaTableClusteringTransactionBuilderV1Suite extends DeltaTableClusteringSuiteBase
+    with WriteUtils {
+
+  // It is not possible on an API level to set both clustering and partition columns in V2 builders
+  test("build table txn: " +
+    "clustering column and partition column cannot be set at same time") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val ex = intercept[IllegalArgumentException] {
+        getCreateTxn(
+          engine,
+          tablePath,
+          testPartitionSchema,
+          partCols = Seq("part1"),
+          clusteringColsOpt = Some(List(new Column("PART1"), new Column("part2"))))
+      }
+      assert(
+        ex.getMessage
+          .contains("Partition Columns and Clustering Columns cannot be set at the same time"))
+    }
+  }
+}
+
+class DeltaTableClusteringTransactionBuilderV2Suite extends DeltaTableClusteringSuiteBase
+    with WriteUtilsWithV2Builders {}
+
+trait DeltaTableClusteringSuiteBase extends AnyFunSuite with AbstractWriteUtils {
 
   private val testingDomainMetadata = new DomainMetadata(
     "delta.clustering",
@@ -65,32 +92,13 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
   test("build table txn: clustering column should be part of the schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[KernelException] {
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath,
-          isNewTable = true,
           testPartitionSchema,
           clusteringColsOpt = Some(List(new Column("PART1"), new Column("part3"))))
       }
       assert(ex.getMessage.contains("Column 'column(`part3`)' was not found in the table schema"))
-    }
-  }
-
-  test("build table txn: " +
-    "clustering column and partition column cannot be set at same time") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val ex = intercept[IllegalArgumentException] {
-        createTxn(
-          engine,
-          tablePath,
-          isNewTable = true,
-          testPartitionSchema,
-          partCols = Seq("part1"),
-          clusteringColsOpt = Some(List(new Column("PART1"), new Column("part2"))))
-      }
-      assert(
-        ex.getMessage
-          .contains("Partition Columns and Clustering Columns cannot be set at the same time"))
     }
   }
 
@@ -101,10 +109,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         .add("part1", INTEGER) // partition column
         .add("mapType", new MapType(INTEGER, INTEGER, false));
       val ex = intercept[KernelException] {
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath,
-          isNewTable = true,
           testPartitionSchema,
           clusteringColsOpt = Some(List(new Column("mapType"))))
       }
@@ -344,7 +351,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         data = testData)
 
       verifyCommitResult(commitResult, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+      verifyCommitInfo(tablePath, version = 0)
       verifyWrittenContent(
         tablePath,
         testPartitionSchema,
@@ -376,7 +383,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -395,7 +402,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           dataClusteringBatches2.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 1, partitionCols = null)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -429,7 +436,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -462,11 +469,43 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           dataClusteringBatches2.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult2, expVersion = 2, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 2, partitionCols = null, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 2, partitionCols = null)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
           expectedDomainMetadataAfterUpdate)
+      }
+    }
+  }
+
+  test("can convert physical clustering columns to logical on column-mapping-enabled table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+      val clusteringColumns = List(new Column("part1"), new Column("part2"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        tableProperties = tableProperties,
+        clusteringColsOpt = Some(clusteringColumns))
+
+      // ===== WHEN =====
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val physicalClusteringColumns = snapshot.getPhysicalClusteringColumns.get().asScala
+
+      // ===== THEN =====
+      assert(physicalClusteringColumns.size == 2)
+      physicalClusteringColumns.foreach { c => assert(c.getNames()(0).startsWith("col-")) }
+
+      val schema = snapshot.getSchema
+      physicalClusteringColumns.zipWithIndex.foreach { case (physicalColumn, idx) =>
+        val logicalColumn = ColumnMapping.getLogicalColumnNameAndDataType(schema, physicalColumn)._1
+        val expectedLogicalName = if (idx == 0) "part1" else "part2"
+
+        assert(logicalColumn.getNames.length == 1)
+        assert(logicalColumn.getNames()(0) == expectedLogicalName)
       }
     }
   }

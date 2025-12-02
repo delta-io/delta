@@ -32,7 +32,7 @@ import org.apache.spark.unsafe.Platform
 /**
  * This object contains helper functionality related to [[DeletedRecordCountsHistogram]].
  */
-private[delta] object DeletedRecordCountsHistogramUtils {
+object DeletedRecordCountsHistogramUtils {
   val BUCKET_BOUNDARIES = IndexedSeq(
     0L, 1L, 10L, 100L, 1000L, 10000L, 100000L, 1000000L, 10000000L, Int.MaxValue, Long.MaxValue)
   val NUMBER_OF_BINS = BUCKET_BOUNDARIES.length - 1

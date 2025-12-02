@@ -17,8 +17,10 @@
 package io.delta.tables
 
 import java.io.File
+import java.sql.Timestamp
 import java.util.Locale
 
+import scala.concurrent.duration._
 import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -489,14 +491,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
           //
           // set the time to first file with a early time and verify the delta table can be
           // restored to it.
-          val desiredTime = "1983-01-01"
-          val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
-          val time = format.parse(desiredTime).getTime
+          val desiredTime = new Timestamp(System.currentTimeMillis() - 5.days.toMillis)
 
           val logPath = new Path(srcDir, "_delta_log")
           val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
-          assert(file.setLastModified(time))
-          srcTable.cloneAtTimestamp(desiredTime, dstDir, isShallow = true)
+          assert(file.setLastModified(desiredTime.getTime))
+          srcTable.cloneAtTimestamp(desiredTime.toString, dstDir, isShallow = true)
         }
 
         val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
@@ -596,16 +596,14 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
         // set the time to first file with a early time and verify the delta table can be restored
         // to it.
-        val desiredTime = "1996-01-12"
-        val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
-        val time = format.parse(desiredTime).getTime
+        val desiredTime = new Timestamp(System.currentTimeMillis() - 5.days.toMillis)
 
         val logPath = new Path(dir.getCanonicalPath, "_delta_log")
         val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
-        assert(file.setLastModified(time))
+        assert(file.setLastModified(desiredTime.getTime))
 
         val deltaTable2 = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
-        deltaTable2.restoreToTimestamp(desiredTime)
+        deltaTable2.restoreToTimestamp(desiredTime.toString)
 
         checkAnswer(
           spark.read.format("delta").options(fsOptions).load(path),

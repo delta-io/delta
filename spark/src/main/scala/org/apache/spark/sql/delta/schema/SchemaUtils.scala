@@ -42,7 +42,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Exp
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumnsUtils}
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
-import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -140,19 +140,22 @@ object SchemaUtils extends DeltaLogging {
             Some(generateSelectExpr(f, nameStack :+ sf.name))
           }
         }
-        struct(nested: _*).alias(sf.name)
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
+        when(col(colName).isNull, null)
+          .otherwise(struct(nested: _*))
+          .alias(sf.name)
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "NullType"))
       case _ =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         col(colName).alias(sf.name)
     }
 
@@ -1652,6 +1655,47 @@ def normalizeColumnNamesInDataType(
         StructType(newFields)
       case (_, other, _) => other
     }
+  }
+
+  /**
+   * Renames a column in the metadata, given the old column path, new column path, and an optional
+   * list of column names. If the column names are provided, they will be updated to reflect the
+   * new path.
+   *
+   * @param oldColumnPath The original physical name path of the column to be renamed.
+   * @param newColumnPath The new physical name path for the column.
+   * @param columnNameOpt An optional sequence of unresolved attributes representing the column
+   *                      logical name.
+   * @param deltaConfig   The configuration key for columns that need to be renamed from metadata.
+   * @return              A map containing the updated Delta configuration with new column paths.
+   */
+  def renameColumnForConfig(
+      oldColumnPath: Seq[String],
+      newColumnPath: Seq[String],
+      columnNameOpt: Option[Seq[UnresolvedAttribute]],
+      deltaConfig: String): Map[String, String] = {
+    columnNameOpt.map { deltaColumnsNames =>
+      val deltaColumnsPath = deltaColumnsNames
+        .map(_.nameParts)
+        .map { attributeNameParts =>
+          val commonPrefix = oldColumnPath.zip(attributeNameParts)
+            .takeWhile { case (left, right) => left == right }
+            .size
+          if (commonPrefix == oldColumnPath.size) {
+            newColumnPath ++ attributeNameParts.takeRight(attributeNameParts.size - commonPrefix)
+          } else {
+            attributeNameParts
+          }
+        }
+        .map(columnParts =>
+          if (SparkSession.active.conf.get(DeltaSQLConf.DELTA_RENAME_COLUMN_ESCAPE_NAME)) {
+            UnresolvedAttribute(columnParts).sql
+          } else {
+            UnresolvedAttribute(columnParts).name
+          }
+        )
+      Map(deltaConfig -> deltaColumnsPath.mkString(","))
+    }.getOrElse(Map.empty[String, String])
   }
 }
 

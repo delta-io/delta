@@ -30,4 +30,20 @@ object GoldenTableUtils {
   def goldenTableFile(name: String): File = {
     new File(classLoader.getResource(s"golden/$name").getFile)
   }
+
+  def allTableNames(): Seq[String] = {
+    val root = new File(goldenResourceURL.getFile)
+
+    def loop(dir: File): Seq[File] = {
+      val children = Option(dir.listFiles()).getOrElse(Array.empty[File])
+      val subdirs = children.filter(_.isDirectory)
+      val here = if (new File(dir, "_delta_log").isDirectory) Seq(dir) else Seq.empty[File]
+      here ++ subdirs.flatMap(loop)
+    }
+
+    val rootPath = root.toPath
+    // Find all directories containing `_delta_log` under the `golden` resource and return their
+    // relative paths (to the golden root), sorted.
+    loop(root).map(f => rootPath.relativize(f.toPath).toString).sorted
+  }
 }

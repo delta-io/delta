@@ -18,19 +18,16 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.CommitActions;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
-import io.delta.kernel.expressions.ExpressionEvaluator;
-import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
-import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
@@ -90,7 +87,7 @@ public class DeltaLogActionUtils {
    *
    * @param tablePath path for the given table
    * @param startVersion start version of the range (inclusive)
-   * @param endVersion end version of the range (inclusive)
+   * @param endVersionOpt end version of the range (inclusive)
    * @return the list of commit files in increasing order between startVersion and endVersion
    * @throws TableNotFoundException if the table does not exist or if it is not a delta table
    * @throws KernelException if a commit file does not exist for any of the versions in the provided
@@ -98,11 +95,20 @@ public class DeltaLogActionUtils {
    * @throws KernelException if provided an invalid version range
    */
   public static List<FileStatus> getCommitFilesForVersionRange(
-      Engine engine, Path tablePath, long startVersion, long endVersion) {
+      Engine engine, Path tablePath, long startVersion, Optional<Long> endVersionOpt) {
+    logger.info(
+        "{}: Getting the commit files for versions [{}, {}]",
+        tablePath,
+        startVersion,
+        endVersionOpt);
+
     // Validate arguments
-    if (startVersion < 0 || endVersion < startVersion) {
-      throw invalidVersionRange(startVersion, endVersion);
-    }
+    endVersionOpt.ifPresent(
+        endVersion -> {
+          if (startVersion < 0 || endVersion < startVersion) {
+            throw invalidVersionRange(startVersion, endVersion);
+          }
+        });
 
     // Get any available commit files within the version range
     final List<FileStatus> commitFiles =
@@ -111,7 +117,7 @@ public class DeltaLogActionUtils {
                 Collections.singleton(DeltaLogFileType.COMMIT),
                 tablePath,
                 startVersion,
-                Optional.of(endVersion),
+                endVersionOpt,
                 false /* mustBeRecreatable */)
             .toInMemoryList();
 
@@ -119,69 +125,14 @@ public class DeltaLogActionUtils {
     // This can be due to (1) an empty directory, (2) no valid delta files in the directory,
     // (3) only delta files less than startVersion prefix (4) only delta files after endVersion
     if (commitFiles.isEmpty()) {
-      throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersion);
+      throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersionOpt);
     }
 
     // Verify commit files found
     // (check that they are continuous and start with startVersion and end with endVersion)
-    verifyDeltaVersions(commitFiles, startVersion, endVersion, tablePath);
+    verifyDeltaVersions(commitFiles, startVersion, endVersionOpt, tablePath);
 
     return commitFiles;
-  }
-
-  /**
-   * Read the given commitFiles and return the contents as an iterator of batches. Also adds two
-   * columns "version" and "timestamp" that store the commit version and timestamp for the commit
-   * file that the batch was read from. The "version" and "timestamp" columns are the first and
-   * second columns in the returned schema respectively and both of {@link LongType}
-   *
-   * @param commitFiles list of delta commit files to read
-   * @param readSchema JSON schema to read
-   * @return an iterator over the contents of the files in the same order as the provided files
-   */
-  public static CloseableIterator<ColumnarBatch> readCommitFiles(
-      Engine engine, List<FileStatus> commitFiles, StructType readSchema) {
-
-    return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty())
-        .map(
-            actionWrapper -> {
-              long timestamp =
-                  actionWrapper
-                      .getTimestamp()
-                      .orElseThrow(
-                          () ->
-                              new RuntimeException("Commit files should always have a timestamp"));
-              ExpressionEvaluator commitVersionGenerator =
-                  wrapEngineException(
-                      () ->
-                          engine
-                              .getExpressionHandler()
-                              .getEvaluator(
-                                  readSchema,
-                                  Literal.ofLong(actionWrapper.getVersion()),
-                                  LongType.LONG),
-                      "Get the expression evaluator for the commit version");
-              ExpressionEvaluator commitTimestampGenerator =
-                  wrapEngineException(
-                      () ->
-                          engine
-                              .getExpressionHandler()
-                              .getEvaluator(readSchema, Literal.ofLong(timestamp), LongType.LONG),
-                      "Get the expression evaluator for the commit timestamp");
-              ColumnVector commitVersionVector =
-                  wrapEngineException(
-                      () -> commitVersionGenerator.eval(actionWrapper.getColumnarBatch()),
-                      "Evaluating the commit version expression");
-              ColumnVector commitTimestampVector =
-                  wrapEngineException(
-                      () -> commitTimestampGenerator.eval(actionWrapper.getColumnarBatch()),
-                      "Evaluating the commit timestamp expression");
-
-              return actionWrapper
-                  .getColumnarBatch()
-                  .withNewColumn(0, COMMIT_VERSION_STRUCT_FIELD, commitVersionVector)
-                  .withNewColumn(1, COMMIT_TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
-            });
   }
 
   /**
@@ -284,7 +235,8 @@ public class DeltaLogActionUtils {
                 if (fileVersion > endVersion) {
                   if (mustBeRecreatable && !hasReturnedCommitOrCheckpoint.get()) {
                     final long earliestVersion =
-                        DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
+                        DeltaHistoryManager.getEarliestRecreatableCommit(
+                            engine, logPath, Optional.empty());
                     throw DeltaErrors.versionBeforeFirstAvailableCommit(
                         tablePath.toString(), endVersion, earliestVersion);
                   } else {
@@ -305,6 +257,29 @@ public class DeltaLogActionUtils {
 
               return BreakableFilterResult.INCLUDE;
             });
+  }
+
+  /**
+   * Returns CommitActions for each commit file. CommitActions are ordered by increasing version.
+   *
+   * <p>This function automatically:
+   *
+   * <ul>
+   *   <li>Performs protocol validation by reading and validating the protocol action
+   *   <li>Extracts commit timestamp using inCommitTimestamp if available, otherwise file
+   *       modification time
+   *   <li>Filters out protocol and commitInfo actions if not requested in actionSet
+   * </ul>
+   */
+  public static CloseableIterator<CommitActions> getActionsFromCommitFilesWithProtocolValidation(
+      Engine engine,
+      String tablePath,
+      List<FileStatus> commitFiles,
+      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+
+    // For each commit file, create a CommitActions
+    return toCloseableIterator(commitFiles.iterator())
+        .map(commitFile -> new CommitActionsImpl(engine, commitFile, tablePath, actionSet));
   }
 
   //////////////////////
@@ -337,7 +312,7 @@ public class DeltaLogActionUtils {
   static void verifyDeltaVersions(
       List<FileStatus> commitFiles,
       long expectedStartVersion,
-      long expectedEndVersion,
+      Optional<Long> expectedEndVersionOpt,
       Path tablePath) {
 
     List<Long> commitVersions =
@@ -361,10 +336,13 @@ public class DeltaLogActionUtils {
           commitVersions.isEmpty() ? Optional.empty() : Optional.of(commitVersions.get(0)));
     }
 
-    if (!Objects.equals(ListUtils.getLast(commitVersions), expectedEndVersion)) {
-      throw endVersionNotFound(
-          tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
-    }
+    expectedEndVersionOpt.ifPresent(
+        expectedEndVersion -> {
+          if (!Objects.equals(ListUtils.getLast(commitVersions), expectedEndVersion)) {
+            throw endVersionNotFound(
+                tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
+          }
+        });
   }
 
   /**

@@ -18,8 +18,7 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala212 = "2.12.18"
-val scala213 = "2.13.13"
+val scala213 = "2.13.16"
 val icebergVersion = "1.4.1"
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
@@ -79,13 +78,11 @@ val getIcebergSparkRuntimeArtifactName = settingKey[String](
 )
 getScalaVersion := {
   sys.env.get("SCALA_VERSION") match {
-    case Some("2.12") | Some(`scala212`) =>
-      scala212
     case Some("2.13") | Some(`scala213`) =>
       scala213
     case Some(v) =>
       println(
-        s"[warn] Invalid  SCALA_VERSION. Expected one of {2.12, $scala212, 2.13, $scala213} but " +
+        s"[warn] Invalid  SCALA_VERSION. Expected one of {2.13, $scala213} but " +
         s"got $v. Fallback to $scala213."
       )
       scala213
@@ -159,7 +156,7 @@ lazy val root = (project in file("."))
   .settings(
     run / fork := true,
     name := "hello-world",
-    crossScalaVersions := Seq(scala212, scala213),
+    crossScalaVersions := Seq(scala213),
     libraryDependencies ++= getLibraryDependencies(
       getDeltaVersion.value,
       getDeltaArtifactName.value,

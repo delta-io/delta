@@ -17,19 +17,61 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
-import io.delta.kernel.internal.table.ResolvedTableBuilderImpl;
+import io.delta.kernel.internal.CreateTableTransactionBuilderImpl;
+import io.delta.kernel.internal.commitrange.CommitRangeBuilderImpl;
+import io.delta.kernel.internal.table.SnapshotBuilderImpl;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.types.StructType;
 
-/** The entry point to load and create {@link ResolvedTable}s. */
+/**
+ * The entry point for loading and creating Delta tables.
+ *
+ * <p>TableManager provides static factory methods for creating builders that can resolve Delta
+ * tables to specific snapshots. This is the primary interface for table discovery and resolution in
+ * the Delta Kernel.
+ */
 @Experimental
 public interface TableManager {
-  // TODO static ResolvedTable forPathAtLatest(Engine engine, String path);
-  // TODO static ResolvedTable forPathAtVersion(Engine engine, String path, long version);
-  // TODO static ResolvedTable forPathAtTimestamp(Engine engine, String path, long timestamp);
 
-  // TODO: Take in a Committer for write support.
-  static ResolvedTableBuilder loadTable(String path) {
-    return new ResolvedTableBuilderImpl(path);
+  /**
+   * Creates a builder for loading a snapshot at the given path.
+   *
+   * <p>The returned builder can be configured to load the snapshot at a specific version or with
+   * additional metadata to optimize the loading process. If no version is specified, the builder
+   * will resolve to the latest version of the table.
+   *
+   * @param path the file system path to the Delta table
+   * @return a {@link SnapshotBuilder} that can be used to load a {@link Snapshot} at the given path
+   */
+  static SnapshotBuilder loadSnapshot(String path) {
+    return new SnapshotBuilderImpl(path);
   }
 
-  // TODO: static CreateTableTransactionBuilder buildCreateTableTransaction(...)
+  /**
+   * Creates a {@link CreateTableTransactionBuilder} to build a create table transaction.
+   *
+   * @param path the file system path for the delta table being created
+   * @param engineInfo information about the engine that is making the update.
+   * @param schema the schema for the delta table being created
+   * @return create table builder instance to build the transaction
+   * @since 3.4.0
+   */
+  static CreateTableTransactionBuilder buildCreateTableTransaction(
+      String path, StructType schema, String engineInfo) {
+    return new CreateTableTransactionBuilderImpl(path, schema, engineInfo);
+  }
+
+  /**
+   * Creates a builder for loading a CommitRange at a given path.
+   *
+   * <p>The returned builder can be configured with start version or timestamp and an end version or
+   * timestamp, and with additional metadata to optimize the loading process.
+   *
+   * @param path the file system path to the Delta table
+   * @return a {@link CommitRangeBuilder} that can be used to load a {@link CommitRange} at the
+   *     given path
+   */
+  static CommitRangeBuilder loadCommitRange(String path) {
+    return new CommitRangeBuilderImpl(path);
+  }
 }

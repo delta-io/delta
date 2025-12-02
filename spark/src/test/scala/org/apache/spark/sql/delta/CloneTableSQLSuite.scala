@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.immutable.NumericRange
 
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 import org.apache.hadoop.fs.Path
@@ -28,10 +29,11 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.util.Utils
 
-class CloneTableSQLSuite extends CloneTableSuiteBase
+class CloneTableSQLSuite
+  extends CloneTableSuiteBase
   with CloneTableSQLTestMixin
   with DeltaColumnMappingTestUtils
-{
+  with CatalogOwnedTestBaseSuite {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -251,6 +253,24 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
   }
 }
 
+
+class CloneTableSQLWithCatalogOwnedBatch1Suite
+  extends CloneTableSQLSuite
+{
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class CloneTableSQLWithCatalogOwnedBatch2Suite
+  extends CloneTableSQLSuite
+{
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class CloneTableSQLWithCatalogOwnedBatch100Suite
+  extends CloneTableSQLSuite
+{
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+}
 
 class CloneTableSQLIdColumnMappingSuite
   extends CloneTableSQLSuite

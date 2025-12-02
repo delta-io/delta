@@ -306,7 +306,8 @@ abstract class CloneTableBase(
     val filteredConfiguration = clonedMetadata.configuration
       // Coordinated Commit configurations are never copied over to the target table.
       .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
-      // Catalog-Owned enabled table's `ucTableId` are never copied over to the target table.
+      // Catalog-Owned enabled table's UC table ID property is never copied over to the
+      // target table.
       .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       .toMap
 
@@ -368,7 +369,7 @@ abstract class CloneTableBase(
    */
   private def determineCatalogOwnedUCTableId(
       targetSnapshot: SnapshotDescriptor): Map[String, String] = {
-    // For REPLACE TABLE command, extract the `ucTableId` from the target table
+    // For REPLACE TABLE command, extract the UC table ID from the target table
     // if it exists.
     if (tableExists(targetSnapshot)) {
       targetSnapshot.metadata.configuration.filter { case (k, _) =>
@@ -419,9 +420,9 @@ abstract class CloneTableBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       opName: String): Protocol = {
+    // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table.
     val sourceProtocol =
-      // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table.
-      CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol = sourceTable.protocol)
+      sourceTable.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
     // Pre-transaction version of the target table.
     val targetProtocol = txn.snapshot.protocol
     // Overriding properties during the CLONE can change the minimum required protocol for target.

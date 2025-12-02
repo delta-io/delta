@@ -21,18 +21,16 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.test.DeltaExcludedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 
-class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
+trait UpdateCDCTests  extends UpdateSQLMixin
+  with DeltaColumnMappingTestUtils
+  with DeltaDMLTestUtilsPathBased
+  with CDCTestMixin {
   import testImplicits._
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
 
   test("CDC for unconditional update") {
     append(Seq((1, 1), (2, 2), (3, 3), (4, 4)).toDF("key", "value"))
@@ -42,11 +40,9 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, -1) :: Row(3, -1) :: Row(4, -1) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion = log.unsafeVolatileSnapshot.version
+    val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(log, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -67,11 +63,9 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, -1) :: Row(3, -1) :: Row(4, -1) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion = log.unsafeVolatileSnapshot.version
+    val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(log, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -92,11 +86,9 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion = log.unsafeVolatileSnapshot.version
+    val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(log, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -111,11 +103,9 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion1 = log.unsafeVolatileSnapshot.version
+    val latestVersion1 = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(log, latestVersion1, latestVersion1, spark)
+      computeCDC(spark, deltaLog, latestVersion1, latestVersion1)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion1) ::
         Row(1, -1, "update_postimage", latestVersion1) ::
@@ -126,10 +116,9 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -3",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -3) :: Row(4, 4) :: Nil)
 
-    val latestVersion2 = log.unsafeVolatileSnapshot.version
+    val latestVersion2 = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(log, latestVersion1, latestVersion2, spark)
+      computeCDC(spark, deltaLog, latestVersion1, latestVersion2)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion1) ::
         Row(1, -1, "update_postimage", latestVersion1) ::
@@ -148,11 +137,9 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -1) :: Row(4, 4) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion = log.unsafeVolatileSnapshot.version
+    val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(log, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, 1, "update_postimage", latestVersion) ::
@@ -174,11 +161,11 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
       sql(s"INSERT INTO $tableName VALUES (4, 4, 4)")
       sql(s"UPDATE $tableName SET partition_column = null WHERE partition_column = 4")
       checkAnswer(
-        CDCReader.changesToBatchDF(
+        computeCDC(spark,
           DeltaLog.forTable(
             spark,
             spark.sessionState.sqlParser.parseTableIdentifier(tableName)
-          ), 1, 3, spark)
+          ), 1, 2)
           .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
         Row(4, 4, 4, "insert", 1) ::
           Row(4, 4, 4, "update_preimage", 2) ::
@@ -187,54 +174,31 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
   }
 }
 
-class UpdateCDCWithDeletionVectorsSuite extends UpdateCDCSuite
-  with DeltaExcludedTestMixin
-  with DeletionVectorsTestUtils {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectors(spark, update = true)
-  }
-
-  override def excluded: Seq[String] = super.excluded ++
-    Seq(
-      // The following two tests must fail when DV is used. Covered by another test case:
-      // "throw error when non-pinned TahoeFileIndex snapshot is used".
-      "data and partition predicates - Partition=true Skipping=false",
-      "data and partition predicates - Partition=false Skipping=false",
-      // The scan schema contains additional row index filter columns.
-      "schema pruning on finding files to update",
-      "nested schema pruning on finding files to update"
-    )
-
+trait UpdateCDCWithDeletionVectorsTests extends UpdateSQLWithDeletionVectorsMixin
+  with CDCTestMixin {
   test("UPDATE with DV write CDC files explicitly") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      val log = DeltaLog.forTable(spark, path)
-      spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
-      executeUpdate(s"delta.`$path`", "id = -1", "id % 4 = 0")
+    append(spark.range(0, 10, 1, numPartitions = 2).toDF())
+    executeUpdate(tableSQLIdentifier, "id = -1", "id % 4 = 0")
 
-      val latestVersion = log.update().version
-      checkAnswer(
-        CDCReader
-          .changesToBatchDF(log, latestVersion, latestVersion, spark)
-          .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-        Row(0, "update_preimage", latestVersion) ::
-          Row(-1, "update_postimage", latestVersion) ::
-          Row(4, "update_preimage", latestVersion) ::
-          Row(-1, "update_postimage", latestVersion) ::
-          Row(8, "update_preimage", latestVersion) ::
-          Row(-1, "update_postimage", latestVersion) ::
-          Nil)
+    val latestVersion = deltaLog.update().version
+    checkAnswer(
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+      Row(0, "update_preimage", latestVersion) ::
+        Row(-1, "update_postimage", latestVersion) ::
+        Row(4, "update_preimage", latestVersion) ::
+        Row(-1, "update_postimage", latestVersion) ::
+        Row(8, "update_preimage", latestVersion) ::
+        Row(-1, "update_postimage", latestVersion) ::
+        Nil)
 
-      val allActions = log.getChanges(latestVersion).flatMap(_._2).toSeq
-      val addActions = allActions.collect { case f: AddFile => f }
-      val removeActions = allActions.collect { case f: RemoveFile => f }
-      val cdcActions = allActions.collect { case f: AddCDCFile => f }
+    val allActions = deltaLog.getChanges(latestVersion).flatMap(_._2).toSeq
+    val addActions = allActions.collect { case f: AddFile => f }
+    val removeActions = allActions.collect { case f: RemoveFile => f }
+    val cdcActions = allActions.collect { case f: AddCDCFile => f }
 
-      assert(addActions.count(_.deletionVector != null) === 2)
-      assert(removeActions.size === 2)
-      assert(cdcActions.nonEmpty)
-    }
+    assert(addActions.count(_.deletionVector != null) === 2)
+    assert(removeActions.size === 2)
+    assert(cdcActions.nonEmpty)
   }
 }
-

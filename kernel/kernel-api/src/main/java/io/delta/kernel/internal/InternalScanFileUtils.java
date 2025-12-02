@@ -202,4 +202,9 @@ public class InternalScanFileUtils {
     Row addFileRow = getAddFileEntry(scanFile);
     return new AddFile(addFileRow).getDefaultRowCommitVersion();
   }
+
+  public static String getFilePath(Row scanFile) {
+    Row addFileRow = getAddFileEntry(scanFile);
+    return new AddFile(addFileRow).getPath();
+  }
 }

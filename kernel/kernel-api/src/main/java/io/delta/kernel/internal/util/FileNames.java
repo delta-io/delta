@@ -176,6 +176,18 @@ public final class FileNames {
     return multiPartCheckpointPartAndNumParts(new Path(path));
   }
 
+  /////////////////////
+  // Directory paths //
+  /////////////////////
+
+  public static String stagedCommitDirectory(Path logPath) {
+    return new Path(logPath, STAGED_COMMIT_DIRECTORY).toString();
+  }
+
+  public static String sidecarDirectory(Path logPath) {
+    return new Path(logPath, SIDECAR_DIRECTORY).toString();
+  }
+
   ///////////////////////////////////
   // File path and prefix builders //
   ///////////////////////////////////
@@ -185,9 +197,18 @@ public final class FileNames {
     return String.format("%s/%020d.json", path, version);
   }
 
+  /** Returns the delta (json format) path for a given delta file. */
+  public static String deltaFile(String path, long version) {
+    return deltaFile(new Path(path), version);
+  }
+
   public static String stagedCommitFile(Path logPath, long version) {
     final Path stagedCommitPath = new Path(logPath, STAGED_COMMIT_DIRECTORY);
     return String.format("%s/%020d.%s.json", stagedCommitPath, version, UUID.randomUUID());
+  }
+
+  public static String stagedCommitFile(String logPath, long version) {
+    return stagedCommitFile(new Path(logPath), version);
   }
 
   /** Example: /a/_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet */

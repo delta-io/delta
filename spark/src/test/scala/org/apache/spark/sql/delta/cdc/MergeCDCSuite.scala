@@ -28,29 +28,31 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-/**
- * The MergeCDCCoreSuite suite only includes CDC tests defined in this file while MergeCDCSuite
- * runs exhaustive tests from MergeIntoSQLSuite to verify that CDC writing mode doesn't break
- * existing functionality.
- */
-class MergeCDCCoreSuite extends MergeCDCTests
-class MergeCDCSuite extends MergeIntoSQLSuite with MergeCDCTests
+
+trait CDCEnabled extends SharedSparkSession {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
+}
+
+trait MergeCDCMixin extends SharedSparkSession
+  with MergeIntoSQLTestUtils
+  with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest
+  with MergePersistentDVDisabled
 
 /**
  * Tests for MERGE INTO in CDC output mode.
  *
  */
 trait MergeCDCTests extends QueryTest
-  with MergeIntoSQLTestUtils
-  with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
-  import testImplicits._
+  with CDCEnabled
+  with MergeCDCMixin
+  with CDCTestMixin {
 
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
-    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+  import testImplicits._
 
   // scalastyle:off argcount
   /**
@@ -93,7 +95,11 @@ trait MergeCDCTests extends QueryTest
     test(s"merge CDC - $name") {
       withSQLConf(confs: _*) {
         targetTableSchema.foreach { schema =>
-          io.delta.tables.DeltaTable.create(spark).location(tempPath).addColumns(schema).execute()
+          io.delta.tables.DeltaTable.create(spark)
+            .tableName(tableSQLIdentifier)
+            .location(deltaLog.dataPath.toUri.getPath)
+            .addColumns(schema)
+            .execute()
         }
         append(target)
         withTempView("source") {
@@ -101,26 +107,25 @@ trait MergeCDCTests extends QueryTest
 
           if (expectErrorContains != null) {
             val ex = intercept[Exception] {
-              executeMerge(s"delta.`$tempPath` t", "source s", mergeCondition,
+              executeMerge(s"$tableSQLIdentifier t", "source s", mergeCondition,
                 clauses.toSeq: _*)
             }
             assert(ex.getMessage.contains(expectErrorContains))
           } else {
-            executeMerge(s"delta.`$tempPath` t", "source s", mergeCondition,
+            executeMerge(s"$tableSQLIdentifier t", "source s", mergeCondition,
               clauses.toSeq: _*)
             checkAnswer(
-              spark.read.format("delta").load(tempPath),
+              readDeltaTableByIdentifier(),
               expectedTableData)
 
             // Craft expected CDC data
-            val latestVersion = DeltaLog.forTable(spark, tempPath).snapshot.version
+            val latestVersion = deltaLog.snapshot.version
             val expectedCdcData = expectedCdcDataWithoutVersion
               .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(latestVersion))
 
             // The timestamp is nondeterministic so we drop it when comparing results.
             checkAnswer(
-              CDCReader.changesToBatchDF(
-                DeltaLog.forTable(spark, tempPath), latestVersion, latestVersion, spark)
+              computeCDC(spark, deltaLog, latestVersion, latestVersion)
                 .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
               expectedCdcData)
           }

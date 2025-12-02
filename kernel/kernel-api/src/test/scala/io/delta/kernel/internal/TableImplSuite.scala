@@ -15,23 +15,13 @@
  */
 package io.delta.kernel.internal
 
-import java.util.Optional
-
-import scala.collection.JavaConverters._
-
 import io.delta.kernel.Snapshot
-import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.metrics.SnapshotQueryContext
-import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.{Clock, FileNames, ManualClock}
-import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
 import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromResolvePathFileSystemClient}
 import io.delta.kernel.test.MockSnapshotUtils.getMockSnapshot
-import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -44,7 +34,7 @@ class TableImplSuite extends AnyFunSuite with MockFileSystemClientUtils {
    */
   class TableImplWithMockedLatestSnapshot(tablePath: String, clock: Clock, latestVersion: Long)
       extends TableImpl(tablePath, clock) {
-    override def getLatestSnapshot(engine: Engine): Snapshot = {
+    override def getLatestSnapshot(engine: Engine): SnapshotImpl = {
       getMockSnapshot(
         new Path(tablePath),
         latestVersion)

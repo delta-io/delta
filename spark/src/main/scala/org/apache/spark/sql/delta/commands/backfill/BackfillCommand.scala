@@ -16,14 +16,14 @@
 
 package org.apache.spark.sql.delta.commands.backfill
 
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{Dataset, Row, SparkSession}
+import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 
@@ -35,75 +35,44 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 trait BackfillCommand extends LeafRunnableCommand with DeltaCommand {
   def deltaLog: DeltaLog
   def nameOfTriggeringOperation: String
-  def catalogTable: Option[CatalogTable]
+  def catalogTableOpt: Option[CatalogTable]
 
   def getBackfillExecutor(
     spark: SparkSession,
-    txn: OptimisticTransaction,
-    fileMaterializationTracker: FileMetadataMaterializationTracker,
-    maxNumBatchesInParallel: Int,
+    deltaLog: DeltaLog,
+    catalogTableOpt: Option[CatalogTable],
+    backfillId: String,
     backfillStats: BackfillCommandStats): BackfillExecutor
-
-  def filesToBackfill(txn: OptimisticTransaction): Dataset[AddFile]
 
   def opType: String
 
-  def constructBatch(files: Seq[AddFile]): BackfillBatch
-
   override def run(spark: SparkSession): Seq[Row] = {
-    val maxNumBatchesInParallel =
-      spark.conf.get(DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL)
     recordDeltaOperation(deltaLog, opType) {
-      val txn = deltaLog.startTransaction(catalogTable)
-      // This txn object is not used for commit. We need to do manual state transitions to make the
-      // concurrency testing framework happy.
-      txn.executionObserver.preparingCommit()
-      txn.executionObserver.beginDoCommit()
-      txn.executionObserver.beginBackfill()
-      txn.executionObserver.beginPostCommit()
+      val backfillId = UUID.randomUUID().toString
       val maxNumFilesPerCommit =
         spark.conf.get(DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT)
-      val metricsOpType = "delta.backfill.materialization.trackerMetrics"
-      FileMetadataMaterializationTracker.withTracker(txn, spark, metricsOpType) {
-        fileMaterializationTracker =>
-          val startTimeNs = System.nanoTime()
-          val backfillStats = BackfillCommandStats(
-            transactionId = txn.txnId,
-            nameOfTriggeringOperation,
-            maxNumBatchesInParallel = maxNumBatchesInParallel
-          )
-          try {
-            val backfillExecutor = getBackfillExecutor(
-              spark, txn, fileMaterializationTracker, maxNumBatchesInParallel, backfillStats)
+      val startTimeNs = System.nanoTime()
+      val backfillStats = BackfillCommandStats(
+        transactionId = backfillId,
+        nameOfTriggeringOperation
+      )
+      try {
+        val backfillExecutor = getBackfillExecutor(
+          spark, deltaLog, catalogTableOpt, backfillId, backfillStats)
+        val lastCommitOpt = backfillExecutor.run(maxNumFilesPerCommit)
+        backfillStats.wasSuccessful = true
+        Array.empty[Row] ++ lastCommitOpt.map(Row(_))
+      } finally {
+        val totalExecutionTimeMs =
+          TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+        backfillStats.totalExecutionTimeMs = totalExecutionTimeMs
 
-            val batches = new BackfillBatchIterator(
-              filesToBackfill(txn),
-              fileMaterializationTracker,
-              maxNumFilesPerCommit,
-              constructBatch)
-
-            try {
-              backfillExecutor.run(batches)
-            } finally {
-              batches.close()
-            }
-
-            backfillStats.wasSuccessful = true
-          } finally {
-            val totalExecutionTimeMs =
-              TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
-            backfillStats.totalExecutionTimeMs = totalExecutionTimeMs
-
-            recordDeltaEvent(
-              txn.deltaLog,
-              opType = opType + ".stats",
-              data = backfillStats
-            )
-            txn.executionObserver.transactionCommitted()
-          }
+        recordDeltaEvent(
+          deltaLog,
+          opType = opType + ".stats",
+          data = backfillStats
+        )
       }
     }
-
-    Seq.empty[Row]
   }
 }

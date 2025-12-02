@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.text.SimpleDateFormat
 
+import org.apache.spark.sql.delta.cdc.CDCEnabled
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -302,12 +303,7 @@ class DeltaSourceFastDropFeatureSuite
   }
 }
 
-class DeltaSourceFastDropFeatureCDCSuite extends DeltaSourceFastDropFeatureSuite {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
-  }
-
+class DeltaSourceFastDropFeatureCDCSuite extends DeltaSourceFastDropFeatureSuite with CDCEnabled {
   override protected def excluded: Seq[String] =
     super.excluded ++ Seq(
       // Excluded because in CDC streaming the current behaviour is to always check the protocol at
