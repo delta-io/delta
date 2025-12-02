@@ -1953,15 +1953,19 @@ When `delta.identity.allowExplicitInsert` is false, writers should meet the foll
 
 ## Materialize Partition Columns
 
-Delta supports materializing partition columns in data files. When this feature is enabled, partition columns are physically written to Parquet files alongside the data columns, which can improve query performance for certain workloads, improve compatibility with external readers, and make these data files easier to interpret for readers unfamiliar with partition values. To support this feature:
+When this feature is enabled, partition columns are physically written to Parquet files alongside the data columns. To support this feature:
  - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
 
 When supported:
  - The table respects metadata property `delta.enableMaterializePartitionColumnsFeature` for enablement of this feature. The writer feature `materializePartitionColumns` is auto-enabled when this property is set to `true`.
- - When the writer feature `materializePartitionColumns` is set in the protocol, writers must require that partition column values are materialized into any newly created data file, placed after the data columns in the parquet schema.
- - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [Iceberg Compatibility V1](#iceberg-compatibility-v1)
+ - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize partition columns into any newly created data file, placing them after the data columns in the parquet
+  schema. This mimics the same partition column materialization requirement from [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
+and
+[IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full
+  Iceberg compatibility.
+ - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
 
-This feature does not impose any requirements on readers. All Delta readers must be able to read the table regardless of whether partition columns are materialized in the data files.
+This feature does not impose any requirements on readers. All Delta readers must be able to read the table regardless of whether partition columns are materialized in the data files. If partition values are present in both parquet and AddFile metadata, Delta readers should continue to read partition values from AddFile metadata.
 
 ## Writer Version Requirements
 
