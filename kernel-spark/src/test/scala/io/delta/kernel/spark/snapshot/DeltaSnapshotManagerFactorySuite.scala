@@ -75,4 +75,52 @@ class DeltaSnapshotManagerFactorySuite extends AnyFunSuite {
       spark.stop()
     }
   }
+
+  // Null parameter validation tests
+
+  test("fromPath throws on null tablePath") {
+    assertThrows[NullPointerException] {
+      DeltaSnapshotManagerFactory.fromPath(null, new Configuration())
+    }
+  }
+
+  test("fromPath throws on null hadoopConf") {
+    assertThrows[NullPointerException] {
+      DeltaSnapshotManagerFactory.fromPath("/tmp/test", null)
+    }
+  }
+
+  test("fromCatalogTable throws on null catalogTable") {
+    val spark = SparkSession.builder().master("local[1]").appName("factory-null-table").getOrCreate()
+    try {
+      assertThrows[NullPointerException] {
+        DeltaSnapshotManagerFactory.fromCatalogTable(null, spark, new Configuration())
+      }
+    } finally {
+      spark.stop()
+    }
+  }
+
+  test("fromCatalogTable throws on null spark") {
+    val table = nonUcTable("file:/tmp/test")
+    assertThrows[NullPointerException] {
+      DeltaSnapshotManagerFactory.fromCatalogTable(table, null, new Configuration())
+    }
+  }
+
+  test("fromCatalogTable throws on null hadoopConf") {
+    val spark = SparkSession.builder().master("local[1]").appName("factory-null-conf").getOrCreate()
+    try {
+      val table = nonUcTable("file:/tmp/test")
+      assertThrows[NullPointerException] {
+        DeltaSnapshotManagerFactory.fromCatalogTable(table, spark, null)
+      }
+    } finally {
+      spark.stop()
+    }
+  }
+
+  // NOTE: Testing fromCatalogTable returning CatalogManagedSnapshotManager for valid UC tables
+  // requires full SparkSession integration with UC catalog configuration (UCSingleCatalog,
+  // endpoint, token). This is covered by integration tests rather than unit tests.
 }

@@ -182,11 +182,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     endVersion.ifPresent(v -> checkArgument(v >= 0, "endVersion must be non-negative"));
 
     return loadCommitRangeInternal(
-        engine,
-        Optional.of(startVersion),
-        Optional.empty(),
-        endVersion,
-        Optional.empty());
+        engine, Optional.of(startVersion), Optional.empty(), endVersion, Optional.empty());
   }
 
   /**
@@ -210,8 +206,8 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   /**
    * Internal method to load a snapshot at a specific version or timestamp.
    *
-   * <p>This method fetches commits from the catalog adapter, converts them to Kernel's ParsedLogData
-   * format, and uses TableManager to build the snapshot.
+   * <p>This method fetches commits from the catalog adapter, converts them to Kernel's
+   * ParsedLogData format, and uses TableManager to build the snapshot.
    */
   private Snapshot loadSnapshotInternal(Optional<Long> versionOpt, Optional<Long> timestampOpt) {
     checkArgument(
@@ -243,17 +239,21 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     if (timestampOpt.isPresent()) {
       // For timestamp queries, first build the latest snapshot for resolution
       Snapshot latestSnapshot =
-          snapshotBuilder.withLogData(logData).withMaxCatalogVersion(catalogVersion).build(kernelEngine);
-      snapshotBuilder = TableManager.loadSnapshot(tablePath)
-          .atTimestamp(timestampOpt.get(), latestSnapshot);
+          snapshotBuilder
+              .withLogData(logData)
+              .withMaxCatalogVersion(catalogVersion)
+              .build(kernelEngine);
+      snapshotBuilder =
+          TableManager.loadSnapshot(tablePath).atTimestamp(timestampOpt.get(), latestSnapshot);
     }
 
-    return snapshotBuilder.withLogData(logData).withMaxCatalogVersion(catalogVersion).build(kernelEngine);
+    return snapshotBuilder
+        .withLogData(logData)
+        .withMaxCatalogVersion(catalogVersion)
+        .build(kernelEngine);
   }
 
-  /**
-   * Internal method to load a commit range with version or timestamp boundaries.
-   */
+  /** Internal method to load a commit range with version or timestamp boundaries. */
   private CommitRange loadCommitRangeInternal(
       Engine engine,
       Optional<Long> startVersionOpt,
@@ -286,58 +286,56 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     CommitRangeBuilder builder = TableManager.loadCommitRange(tablePath);
 
     if (startVersionOpt.isPresent()) {
-      builder = builder.withStartBoundary(
-          CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get()));
+      builder =
+          builder.withStartBoundary(
+              CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get()));
     }
     if (startTimestampOpt.isPresent()) {
       Snapshot latestSnapshot = loadLatestSnapshot();
-      builder = builder.withStartBoundary(
-          CommitRangeBuilder.CommitBoundary.atTimestamp(startTimestampOpt.get(), latestSnapshot));
+      builder =
+          builder.withStartBoundary(
+              CommitRangeBuilder.CommitBoundary.atTimestamp(
+                  startTimestampOpt.get(), latestSnapshot));
     }
     if (endVersionOpt.isPresent()) {
-      builder = builder.withEndBoundary(
-          CommitRangeBuilder.CommitBoundary.atVersion(endVersionOpt.get()));
+      builder =
+          builder.withEndBoundary(CommitRangeBuilder.CommitBoundary.atVersion(endVersionOpt.get()));
     }
     if (endTimestampOpt.isPresent()) {
       Snapshot latestSnapshot = loadLatestSnapshot();
-      builder = builder.withEndBoundary(
-          CommitRangeBuilder.CommitBoundary.atTimestamp(endTimestampOpt.get(), latestSnapshot));
+      builder =
+          builder.withEndBoundary(
+              CommitRangeBuilder.CommitBoundary.atTimestamp(endTimestampOpt.get(), latestSnapshot));
     }
 
     return builder.withLogData(logData).build(engine);
   }
 
-  /**
-   * Converts catalog commits to Kernel's ParsedLogData format.
-   */
+  /** Converts catalog commits to Kernel's ParsedLogData format. */
   private List<ParsedLogData> convertToKernelLogData(List<Commit> commits) {
     return commits.stream()
         .sorted(Comparator.comparingLong(Commit::getVersion))
-        .map(commit -> ParsedCatalogCommitData.forFileStatus(
-            hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
+        .map(
+            commit ->
+                ParsedCatalogCommitData.forFileStatus(
+                    hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
         .collect(Collectors.toList());
   }
 
-  /**
-   * Converts Hadoop FileStatus to Kernel FileStatus.
-   */
+  /** Converts Hadoop FileStatus to Kernel FileStatus. */
   private static io.delta.kernel.utils.FileStatus hadoopFileStatusToKernelFileStatus(
       org.apache.hadoop.fs.FileStatus hadoopFS) {
     return io.delta.kernel.utils.FileStatus.of(
         hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
   }
 
-  /**
-   * Gets the true catalog version, handling the -1 case for newly created tables.
-   */
+  /** Gets the true catalog version, handling the -1 case for newly created tables. */
   private long getCatalogVersion(long rawVersion) {
     // UC returns -1 when only 0.json exists but hasn't been registered with UC
     return rawVersion == -1 ? 0 : rawVersion;
   }
 
-  /**
-   * Validates that the requested version exists.
-   */
+  /** Validates that the requested version exists. */
   private void validateVersionExists(long version, long maxVersion) {
     if (version > maxVersion) {
       throw new IllegalArgumentException(
@@ -347,7 +345,8 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     }
   }
 
-  private String getVersionOrTimestampString(Optional<Long> versionOpt, Optional<Long> timestampOpt) {
+  private String getVersionOrTimestampString(
+      Optional<Long> versionOpt, Optional<Long> timestampOpt) {
     if (versionOpt.isPresent()) {
       return "version=" + versionOpt.get();
     } else if (timestampOpt.isPresent()) {

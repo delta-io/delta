@@ -34,8 +34,8 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  *
  * <p>This adapter is responsible only for fetching commit metadata from Unity Catalog's commit
  * coordinator API. It does not contain any Delta/Kernel snapshot building logic - that
- * responsibility belongs to the {@link io.delta.kernel.spark.snapshot.CatalogManagedSnapshotManager}
- * layer.
+ * responsibility belongs to the {@link
+ * io.delta.kernel.spark.snapshot.CatalogManagedSnapshotManager} layer.
  */
 public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
 
