@@ -59,16 +59,18 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
+  private final Snapshot snapshotAtSourceInit;
   private final String tableId;
   private final boolean shouldValidateOffsets;
   private final SparkSession spark;
-  private final String tablePath;
 
   public SparkMicroBatchStream(
-      DeltaSnapshotManager snapshotManager, String tablePath, Configuration hadoopConf) {
+      DeltaSnapshotManager snapshotManager,
+      Snapshot snapshotAtSourceInit,
+      Configuration hadoopConf) {
     this(
         snapshotManager,
-        tablePath,
+        snapshotAtSourceInit,
         hadoopConf,
         SparkSession.active(),
         new DeltaOptions(
@@ -78,20 +80,16 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
-      String tablePath,
+      Snapshot snapshotAtSourceInit,
       Configuration hadoopConf,
       SparkSession spark,
       DeltaOptions options) {
     this.spark = spark;
     this.snapshotManager = snapshotManager;
-    this.tablePath = tablePath;
+    this.snapshotAtSourceInit = snapshotAtSourceInit;
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = options;
-
-    // Initialize snapshot at source init to get table ID, similar to DeltaSource.scala
-    Snapshot snapshotAtSourceInit = snapshotManager.loadLatestSnapshot();
     this.tableId = ((SnapshotImpl) snapshotAtSourceInit).getMetadata().getId();
-
     this.shouldValidateOffsets =
         (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
   }
@@ -394,7 +392,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         StreamingHelper.getActionsFromRangeUnsafe(
             engine,
             (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
-            tablePath,
+            snapshotAtSourceInit.getPath(),
             ACTION_SET)) {
       // Each ColumnarBatch belongs to a single commit version,
       // but a single version may span multiple ColumnarBatches.
@@ -421,7 +419,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
         // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
         // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-        validateCommit(batch, version, tablePath, endOffset);
+        validateCommit(batch, version, snapshotAtSourceInit.getPath(), endOffset);
 
         currentVersion = version;
         currentIndex =
