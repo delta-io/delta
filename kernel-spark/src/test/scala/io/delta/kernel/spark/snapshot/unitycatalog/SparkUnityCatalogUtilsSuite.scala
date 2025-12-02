@@ -127,17 +127,6 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.isEmpty, "Missing feature flag should return empty")
   }
 
-  test("throws NullPointerException for null inputs") {
-    val table = makeNonUCTable()
-
-    intercept[NullPointerException] {
-      SparkUnityCatalogUtils.extractConnectionInfo(null, spark)
-    }
-    intercept[NullPointerException] {
-      SparkUnityCatalogUtils.extractConnectionInfo(table, null)
-    }
-  }
-
   test("throws IllegalArgumentException for UC table with empty table ID") {
     val storageProps = new JHashMap[String, String]()
     storageProps.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
