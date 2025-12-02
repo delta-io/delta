@@ -21,7 +21,7 @@ import io.delta.kernel.CommitRange
 import io.delta.kernel.Snapshot
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.files.ParsedLogData
-import io.delta.kernel.spark.snapshot.unitycatalog.UnityCatalogAdapter
+
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -46,7 +46,8 @@ class CatalogManagedSnapshotManagerSuite extends AnyFunSuite {
         endTimestampOpt: Optional[java.lang.Long]): CommitRange =
       throw new UnsupportedOperationException("stub")
 
-    override def getRatifiedCommits(endVersionOpt: Optional[java.lang.Long]): java.util.List[ParsedLogData] =
+    override def getRatifiedCommits(endVersionOpt: Optional[java.lang.Long])
+        : java.util.List[ParsedLogData] =
       throw new UnsupportedOperationException("stub")
 
     override def getLatestRatifiedVersion: Long =
@@ -71,7 +72,8 @@ class CatalogManagedSnapshotManagerSuite extends AnyFunSuite {
   }
 
   test("operations are unsupported in wireframe") {
-    val manager = new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
+    val manager =
+      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
 
     assertThrows[UnsupportedOperationException] {
       manager.loadLatestSnapshot()
@@ -91,21 +93,24 @@ class CatalogManagedSnapshotManagerSuite extends AnyFunSuite {
   }
 
   test("loadSnapshotAt validates version") {
-    val manager = new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
+    val manager =
+      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
     assertThrows[IllegalArgumentException] {
       manager.loadSnapshotAt(-1L)
     }
   }
 
   test("checkVersionExists validates version") {
-    val manager = new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
+    val manager =
+      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
     assertThrows[IllegalArgumentException] {
       manager.checkVersionExists(-1L, true, false)
     }
   }
 
   test("close is tolerant") {
-    val manager = new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
+    val manager =
+      new CatalogManagedSnapshotManager(stubAdapter, tableId, tablePath, new Configuration())
     manager.close() // should not throw
   }
 }

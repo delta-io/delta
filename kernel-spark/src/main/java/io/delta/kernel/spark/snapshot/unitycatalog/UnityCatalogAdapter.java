@@ -37,10 +37,14 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
 
   private final String tableId;
   private final String tablePath;
+  private final String endpoint;
+  private final String token;
 
-  public UnityCatalogAdapter(String tableId, String tablePath) {
+  public UnityCatalogAdapter(String tableId, String tablePath, String endpoint, String token) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
+    this.endpoint = requireNonNull(endpoint, "endpoint is null");
+    this.token = requireNonNull(token, "token is null");
   }
 
   /**
@@ -59,7 +63,8 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
   /** Creates adapter from connection info (no Spark dependency). */
   public static ManagedCatalogAdapter fromConnectionInfo(UnityCatalogConnectionInfo info) {
     requireNonNull(info, "info is null");
-    return new UnityCatalogAdapter(info.getTableId(), info.getTablePath());
+    return new UnityCatalogAdapter(
+        info.getTableId(), info.getTablePath(), info.getEndpoint(), info.getToken());
   }
 
   public String getTableId() {
@@ -68,6 +73,14 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
 
   public String getTablePath() {
     return tablePath;
+  }
+
+  public String getEndpoint() {
+    return endpoint;
+  }
+
+  public String getToken() {
+    return token;
   }
 
   @Override

@@ -42,6 +42,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
   private final ManagedCatalogAdapter catalogAdapter;
   private final String tableId;
   private final String tablePath;
+  private final Configuration hadoopConf;
 
   public CatalogManagedSnapshotManager(
       ManagedCatalogAdapter catalogAdapter,
@@ -51,7 +52,7 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, Auto
     this.catalogAdapter = requireNonNull(catalogAdapter, "catalogAdapter is null");
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
-    requireNonNull(hadoopConf, "hadoopConf is null");
+    this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
 
     logger.info(
         "Created CatalogManagedSnapshotManager for table {} at path {}", tableId, tablePath);
