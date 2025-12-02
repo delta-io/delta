@@ -46,30 +46,4 @@ class DeltaSnapshotManagerFactoryTest {
         () -> DeltaSnapshotManagerFactory.fromCatalogTable(null, null, new Configuration()),
         "Null catalogTable should throw NullPointerException");
   }
-
-  @Test
-  void testFromCatalogTable_NullHadoopConf_ThrowsException() {
-    // Can't test without a real CatalogTable instance, so this test validates the pattern
-    // See integration tests for full validation
-  }
-
-  // Note: Factory behavior tests (which manager type is created) require integration test setup.
-  // The following tests cannot be implemented as unit tests because the factory requires
-  // a non-null SparkSession parameter:
-  //
-  // - testCreate_NonCatalogManagedTable_ReturnsPathBasedManager: Verify non-UC tables use PathBased
-  // - testCreate_EmptyCatalogTable_ReturnsPathBasedManager: Verify empty catalogTable uses
-  // PathBased
-  // - testCreate_UCManagedTable_ReturnsCatalogManagedManager: Verify UC tables use CatalogManaged
-  //
-  // While PathBasedSnapshotManager doesn't technically need SparkSession, the factory API requires
-  // it to maintain a clean, consistent interface (always available in production via SparkTable).
-  // Cannot mock SparkSession effectively for these tests.
-  //
-  // Note: Testing CatalogManagedSnapshotManager creation requires integration tests with
-  // real SparkSession and Unity Catalog configuration. This is because:
-  // 1. CatalogManagedSnapshotManager constructor validates UC table and extracts metadata
-  // 2. It requires configured UC catalog (spark.sql.catalog.*.uri/token)
-  // 3. Unit tests cannot easily mock SparkSession's catalog manager
-  // See CatalogManagedSnapshotManagerTest for integration tests.
 }
