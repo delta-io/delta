@@ -61,7 +61,9 @@ trait MergeIntoStructEvolutionNullnessTestUtils extends MergeHelpers {
     case class Val(displayName: String) extends super.Val
     val NonNullLeaves: Val = Val("non-null target leaves")
     val NullLeaves: Val = Val("null target leaves")
-    val NullTargetOnlyFields: Val = Val("null target-only fields")
+    val NullNestedStruct: Val = Val("null target nested struct")
+    val NullNestedArray: Val = Val("null source nested array")
+    val NullNestedMap: Val = Val("null source nested map")
     val NullCol: Val = Val("null target col")
     val Empty: Val = Val("empty target")
 
@@ -130,24 +132,34 @@ trait MergeIntoStructEvolutionNullnessTestUtils extends MergeHelpers {
   /**
    * Determines whether the target struct should be overwritten with null.
    *
+   * Conditions to set the target struct to NULL:
+   * - For UPDATE *, the source struct is null AND the target struct is null.
+   * - For whole-struct assignment (UPDATE col = s.col, INSERT), the source struct is null.
+   *
    * @param sourceCol The source column value (can be null)
    * @param targetColOpt Optional target column value corresponding to sourceCol
    * @param actionType The action type
-   * @param targetOnlyFieldKey The key of the target-only field to check (e.g., "z")
    * @return true if target should be overwritten with null, false otherwise
    */
   protected def shouldOverwriteWithNull(
       sourceCol: Map[String, Any],
       targetColOpt: Option[Map[String, Any]],
-      actionType: ActionType.Value,
-      targetOnlyFieldKey: String): Boolean = {
+      actionType: ActionType.Value): Boolean = {
     sourceCol == null && preserveNullSourceStructs && (
       // `targetColOpt` being None means it's an INSERT
       targetColOpt.isEmpty ||
       ActionType.isWholeStructAssignment(actionType) ||
       (actionType == ActionType.UpdateStar && preserveNullSourceStructsUpdateStar &&
-       getNestedValue(targetColOpt.get, targetOnlyFieldKey) == null)
+        targetColOpt.get == null)
     )
+  }
+
+  /**
+   * Checks if null source struct preservation is enabled for UPDATE SET * operations.
+   * @return true if both preserveNullSourceStructs and preserveNullSourceStructsUpdateStar are true
+   */
+  protected def shouldPreserveNullSourceStructsForUpdateStar: Boolean = {
+    preserveNullSourceStructs && preserveNullSourceStructsUpdateStar
   }
 
   /** Represents a struct evolution nullness test case. */
@@ -267,8 +279,8 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
     targetType match {
       case TargetType.NonNullLeaves =>
         Some("""{"key":1,"col":{"y":2,"z":2}}""")
-      case TargetType.NullTargetOnlyFields =>
-        Some("""{"key":1,"col":{"y":2,"z":null}}""")
+      case TargetType.NullLeaves =>
+        Some("""{"key":1,"col":{"y":null,"z":null}}""")
       case TargetType.NullCol =>
         Some("""{"key":1,"col":null}""")
       case TargetType.Empty =>
@@ -292,7 +304,7 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
     val sourceCol = castToMap(sourceRow("col"))
     val targetColOpt = targetRowOpt.map(row => castToMap(row("col")))
 
-    if (shouldOverwriteWithNull(sourceCol, targetColOpt, actionType, targetOnlyFieldKey = "z")) {
+    if (shouldOverwriteWithNull(sourceCol, targetColOpt, actionType)) {
       return """{"key":1,"col":null}"""
     }
 
@@ -324,7 +336,7 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
       targetSchema = topLevelStructTargetSchema,
       sourceTypes = Seq(SourceType.NonNullLeaves, SourceType.NullLeaves, SourceType.NullCol),
       updateTargetTypes =
-        Seq(TargetType.NonNullLeaves, TargetType.NullTargetOnlyFields, TargetType.NullCol),
+        Seq(TargetType.NonNullLeaves, TargetType.NullLeaves, TargetType.NullCol),
       actionTypes =
         Seq(
           ActionType.UpdateStar, ActionType.UpdateCol, ActionType.InsertStar, ActionType.InsertCol),
@@ -349,14 +361,14 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
   }
 
   testNestedStructsEvolution(
-      s"${testNamePrefix}null expansion - UPDATE * with null target-only field")(
-    target = Seq("""{"key":1,"col":{"y":2,"z":null}}"""),
+      s"${testNamePrefix}null expansion - UPDATE * with null target col")(
+    target = Seq("""{"key":1,"col":null}"""),
     source = Seq("""{"key":1,"col":null}"""),
     targetSchema = topLevelStructTargetSchema,
     sourceSchema = topLevelStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y":null,"z":null,"x":null}}"""
@@ -367,13 +379,13 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
     confs = preserveNullStructsConfs)
 
   testNestedStructsEvolution(
-      s"${testNamePrefix}null expansion - UPDATE * with non-null target-only field")(
-    target = Seq("""{"key":1,"col":{"y":2,"z":2}}"""),
+      s"${testNamePrefix}null expansion - UPDATE * with non-null target col")(
+    target = Seq("""{"key":1,"col":{"y":null,"z":null}}"""),
     source = Seq("""{"key":1,"col":null}"""),
     targetSchema = topLevelStructTargetSchema,
     sourceSchema = topLevelStructSourceSchema,
     clauses = update("*") :: Nil,
-    result = Seq("""{"key":1,"col":{"y":null,"z":2,"x":null}}"""),
+    result = Seq("""{"key":1,"col":{"y":null,"z":null,"x":null}}"""),
     resultSchema = topLevelStructResultSchema,
     expectErrorWithoutEvolutionContains = "Cannot cast",
     confs = preserveNullStructsConfs)
@@ -444,13 +456,15 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
     expectErrorWithoutEvolutionContains = "Cannot cast",
     confs = preserveNullStructsConfs)
 
-  // Tests for multiple target-only fields
+  // Tests for multiple target-only fields to verify the original values of all target-only
+  // fields are preserved.
   private val multiTargetOnlyFieldTargetSchema = new StructType()
     .add("key", IntegerType)
     .add("col", new StructType()
       .add("y", IntegerType)
-      .add("z", IntegerType)
-      .add("w", IntegerType))
+      .add("z", IntegerType) // target-only
+      .add("w", IntegerType) // target-only
+    )
 
   private val multiTargetOnlyFieldResultSchema = new StructType()
     .add("key", IntegerType)
@@ -467,13 +481,7 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
     targetSchema = multiTargetOnlyFieldTargetSchema,
     sourceSchema = topLevelStructSourceSchema,
     clauses = update("*") :: Nil,
-    result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
-        """{"key":1,"col":null}"""
-      } else {
-        """{"key":1,"col":{"y":null,"z":null,"w":null,"x":null}}"""
-      }
-    ),
+    result = Seq("""{"key":1,"col":{"y":null,"z":null,"w":null,"x":null}}"""),
     resultSchema = multiTargetOnlyFieldResultSchema,
     expectErrorWithoutEvolutionContains = "Cannot cast",
     confs = preserveNullStructsConfs)
@@ -486,6 +494,18 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
     sourceSchema = topLevelStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq("""{"key":1,"col":{"y":null,"z":5,"w":null,"x":null}}"""),
+    resultSchema = multiTargetOnlyFieldResultSchema,
+    expectErrorWithoutEvolutionContains = "Cannot cast",
+    confs = preserveNullStructsConfs)
+
+  testNestedStructsEvolution(
+      s"${testNamePrefix}multiple target-only fields - UPDATE * with non-null target-only fields")(
+    target = Seq("""{"key":1,"col":{"y":2,"z":5,"w":6}}"""),
+    source = Seq("""{"key":1,"col":null}"""),
+    targetSchema = multiTargetOnlyFieldTargetSchema,
+    sourceSchema = topLevelStructSourceSchema,
+    clauses = update("*") :: Nil,
+    result = Seq("""{"key":1,"col":{"y":null,"z":5,"w":6,"x":null}}"""),
     resultSchema = multiTargetOnlyFieldResultSchema,
     expectErrorWithoutEvolutionContains = "Cannot cast",
     confs = preserveNullStructsConfs)
@@ -568,8 +588,8 @@ trait MergeIntoNestedStructEvolutionNullnessTests
         Some("""{"key":1,"col":{"y":{"d":4,"e":5},"z":{"f":6,"g":7}}}""")
       case TargetType.NullLeaves =>
         Some("""{"key":1,"col":{"y":{"d":null,"e":null},"z":{"f":null,"g":null}}}""")
-      case TargetType.NullTargetOnlyFields =>
-        Some("""{"key":1,"col":{"y":{"d":4,"e":null},"z":null}}""")
+      case TargetType.NullNestedStruct =>
+        Some("""{"key":1,"col":{"y":null,"z":null}}""")
       case TargetType.NullCol =>
         Some("""{"key":1,"col":null}""")
       case TargetType.Empty =>
@@ -594,7 +614,7 @@ trait MergeIntoNestedStructEvolutionNullnessTests
     val sourceCol = castToMap(sourceRow("col"))
     val targetColOpt = targetRowOpt.map(row => castToMap(row("col")))
 
-    if (shouldOverwriteWithNull(sourceCol, targetColOpt, actionType, targetOnlyFieldKey = "z")) {
+    if (shouldOverwriteWithNull(sourceCol, targetColOpt, actionType)) {
       return """{"key":1,"col":null}"""
     }
 
@@ -604,7 +624,7 @@ trait MergeIntoNestedStructEvolutionNullnessTests
     val resultXOpt: Option[Any] = actionType match {
       case ActionType.UpdateStar =>
         if (sourceX == null) {
-          if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+          if (shouldPreserveNullSourceStructsForUpdateStar) {
             Some(null)
           } else {
             Some(Map("a" -> null, "b" -> null))
@@ -627,7 +647,7 @@ trait MergeIntoNestedStructEvolutionNullnessTests
     val sourceY = castToMap(getNestedValue(sourceCol, "y"))
     val targetY = targetColOpt.map(col => castToMap(getNestedValue(col, "y")))
     val resultY: Any = {
-      if (shouldOverwriteWithNull(sourceY, targetY, actionType, targetOnlyFieldKey = "e")) {
+      if (shouldOverwriteWithNull(sourceY, targetY, actionType)) {
         null
       } else {
         val sourceD = getNestedValue(sourceY, "d")
@@ -700,7 +720,7 @@ trait MergeIntoNestedStructEvolutionNullnessTests
         Seq(
           TargetType.NonNullLeaves,
           TargetType.NullLeaves,
-          TargetType.NullTargetOnlyFields,
+          TargetType.NullNestedStruct,
           TargetType.NullCol),
       actionTypes =
         Seq(
@@ -730,14 +750,14 @@ trait MergeIntoNestedStructEvolutionNullnessTests
   }
 
   testNestedStructsEvolution(
-      s"${testNamePrefix}null expansion - UPDATE * with null target-only field")(
-    target = Seq("""{"key":1,"col":{"y":{"d":2,"e":null},"z":null}}"""),
+      s"${testNamePrefix}null expansion - UPDATE * with null target col")(
+    target = Seq("""{"key":1,"col":null}"""),
     source = Seq("""{"key":1,"col":null}"""),
     targetSchema = nestedStructTargetSchema,
     sourceSchema = nestedStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y":{"d":null,"e":null,"c":null},"z":null,"x":{"a":null,"b":null}}}"""
@@ -749,17 +769,35 @@ trait MergeIntoNestedStructEvolutionNullnessTests
 
   // scalastyle:off line.size.limit
   testNestedStructsEvolution(
-      s"${testNamePrefix}null expansion - UPDATE * with non-null target-only field")(
-    target = Seq("""{"key":1,"col":{"y":{"d":2,"e":2},"z":{"f":2,"g":2}}}"""),
+    s"${testNamePrefix}null expansion - UPDATE * with null target nested structs")(
+    target = Seq("""{"key":1,"col":{"y":null,"z":null}}"""),
     source = Seq("""{"key":1,"col":null}"""),
     targetSchema = nestedStructTargetSchema,
     sourceSchema = nestedStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
-        """{"key":1,"col":{"y":{"d":null,"e":2,"c":null},"z":{"f":2,"g":2},"x":null}}"""
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
+        """{"key":1,"col":{"y":null,"z":null,"x":null}}"""
       } else {
-        """{"key":1,"col":{"y":{"d":null,"e":2,"c":null},"z":{"f":2,"g":2},"x":{"a":null,"b":null}}}"""
+        """{"key":1,"col":{"y":{"d":null,"e":null,"c":null},"z":null,"x":{"a":null,"b":null}}}"""
+      }
+    ),
+    resultSchema = nestedStructColEvolutionResultSchema,
+    expectErrorWithoutEvolutionContains = "Cannot cast",
+    confs = preserveNullStructsConfs)
+
+  testNestedStructsEvolution(
+      s"${testNamePrefix}null expansion - UPDATE * with null target leaves")(
+    target = Seq("""{"key":1,"col":{"y":{"d":null,"e":null},"z":{"f":null,"g":null}}}"""),
+    source = Seq("""{"key":1,"col":null}"""),
+    targetSchema = nestedStructTargetSchema,
+    sourceSchema = nestedStructSourceSchema,
+    clauses = update("*") :: Nil,
+    result = Seq(
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
+        """{"key":1,"col":{"y":{"d":null,"e":null,"c":null},"z":{"f":null,"g":null},"x":null}}"""
+      } else {
+        """{"key":1,"col":{"y":{"d":null,"e":null,"c":null},"z":{"f":null,"g":null},"x":{"a":null,"b":null}}}"""
       }
     ),
     resultSchema = nestedStructColEvolutionResultSchema,
@@ -1085,8 +1123,10 @@ trait MergeIntoNestedArrayStructEvolutionNullnessTests
         Some("""{"key":1,"col":{"y":[{"d":4,"e":5}],"z":[{"f":6,"g":7}]}}""")
       case TargetType.NullLeaves =>
         Some("""{"key":1,"col":{"y":[{"d":null,"e":null}],"z":[{"f":null,"g":null}]}}""")
-      case TargetType.NullTargetOnlyFields =>
-        Some("""{"key":1,"col":{"y":[{"d":4,"e":null}],"z":null}}""")
+      case TargetType.NullNestedStruct =>
+        Some("""{"key":1,"col":{"y":[null],"z":[null]}}""")
+      case TargetType.NullNestedArray =>
+        Some("""{"key":1,"col":{"y":null,"z":null}}""")
       case TargetType.NullCol =>
         Some("""{"key":1,"col":null}""")
       case TargetType.Empty =>
@@ -1109,7 +1149,7 @@ trait MergeIntoNestedArrayStructEvolutionNullnessTests
     val sourceCol = castToMap(sourceRow("col"))
     val targetColOpt = targetRowOpt.map(row => castToMap(row("col")))
 
-    if (shouldOverwriteWithNull(sourceCol, targetColOpt, actionType, targetOnlyFieldKey = "z")) {
+    if (shouldOverwriteWithNull(sourceCol, targetColOpt, actionType)) {
       return """{"key":1,"col":null}"""
     }
 
@@ -1204,7 +1244,8 @@ trait MergeIntoNestedArrayStructEvolutionNullnessTests
       updateTargetTypes = Seq(
         TargetType.NonNullLeaves,
         TargetType.NullLeaves,
-        TargetType.NullTargetOnlyFields,
+        TargetType.NullNestedStruct,
+        TargetType.NullNestedArray,
         TargetType.NullCol),
       actionTypes = Seq(
         ActionType.UpdateStar,
@@ -1233,14 +1274,14 @@ trait MergeIntoNestedArrayStructEvolutionNullnessTests
   }
 
   testNestedStructsEvolution(
-      s"${testNamePrefix}null expansion - UPDATE * with null target-only field")(
-    target = Seq("""{"key":1,"col":{"y":[{"d":2,"e":2}],"z":null}}"""),
+      s"${testNamePrefix}null expansion - UPDATE * with null target col struct")(
+    target = Seq("""{"key":1,"col":null}"""),
     source = Seq("""{"key":1,"col":null}"""),
     targetSchema = nestedArrayStructTargetSchema,
     sourceSchema = nestedArrayStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y":null,"z":null,"x":null}}"""
@@ -1251,16 +1292,37 @@ trait MergeIntoNestedArrayStructEvolutionNullnessTests
     confs = preserveNullStructsConfs)
 
   testNestedStructsEvolution(
-      s"${testNamePrefix}null expansion - UPDATE * with non-null target-only field")(
-    target = Seq("""{"key":1,"col":{"y":[{"d":2,"e":2}],"z":[{"f":2,"g":2}]}}"""),
+      s"${testNamePrefix}null expansion - UPDATE * with non-null target col struct")(
+    target = Seq("""{"key":1,"col":{"y":null,"z":null}}"""),
     source = Seq("""{"key":1,"col":null}"""),
     targetSchema = nestedArrayStructTargetSchema,
     sourceSchema = nestedArrayStructSourceSchema,
     clauses = update("*") :: Nil,
-    result = Seq("""{"key":1,"col":{"y":null,"z":[{"f":2,"g":2}],"x":null}}"""),
+    result = Seq("""{"key":1,"col":{"y":null,"z":null,"x":null}}"""),
     resultSchema = nestedArrayColEvolutionResultSchema,
     expectErrorWithoutEvolutionContains = "Cannot cast",
     confs = preserveNullStructsConfs)
+
+  // scalastyle:off line.size.limit
+  testNestedStructsEvolution(
+      s"${testNamePrefix}null expansion - UPDATE * with null structs nested in source array")(
+    target = Seq("""{"key":1,"col":{"y":[{"d":1,"e":2},{"d":null,"e":null}],"z":[null]}}"""),
+    source = Seq("""{"key":1,"col":{"x":[null],"y":[null]}}"""),
+    targetSchema = nestedArrayStructTargetSchema,
+    sourceSchema = nestedArrayStructSourceSchema,
+    clauses = update("*") :: Nil,
+    result = Seq(
+      // The original array value should be overwritten by source.
+      if (preserveNullSourceStructs) {
+        """{"key":1,"col":{"y":[null],"z":[null],"x":[null]}}"""
+      } else {
+        """{"key":1,"col":{"y":[{"d":null,"e":null,"c":null}],"z":[null],"x":[null]}}"""
+      }
+    ),
+    resultSchema = nestedArrayColEvolutionResultSchema,
+    expectErrorWithoutEvolutionContains = "Cannot cast",
+    confs = preserveNullStructsConfs)
+  // scalastyle:on line.size.limit
 
   private val expectedResult = if (preserveNullSourceStructs) {
     """{"key":1,"col":null}"""
@@ -1581,8 +1643,10 @@ trait MergeIntoNestedMapStructEvolutionNullnessTests
         Some("""{"key":1,"col":{"y":{"k2":{"d":4,"e":5}},"z":{"k2":{"f":6,"g":7}}}}""")
       case TargetType.NullLeaves =>
         Some("""{"key":1,"col":{"y":{"k2":{"d":null,"e":null}},"z":{"k2":{"f":null,"g":null}}}}""")
-      case TargetType.NullTargetOnlyFields =>
-        Some("""{"key":1,"col":{"y":{"k2":{"d":4,"e":null}},"z":null}}""")
+      case TargetType.NullNestedStruct =>
+        Some("""{"key":1,"col":{"y":{"k2":null},"z":{"k2":null}}}""")
+      case TargetType.NullNestedMap =>
+        Some("""{"key":1,"col":{"y":null,"z":null}}""")
       case TargetType.NullCol =>
         Some("""{"key":1,"col":null}""")
       case TargetType.Empty =>
@@ -1605,7 +1669,7 @@ trait MergeIntoNestedMapStructEvolutionNullnessTests
     val sourceCol = castToMap(sourceRow("col"))
     val targetColOpt = targetRowOpt.map(row => castToMap(row("col")))
 
-    if (shouldOverwriteWithNull(sourceCol, targetColOpt, actionType, targetOnlyFieldKey = "z")) {
+    if (shouldOverwriteWithNull(sourceCol, targetColOpt, actionType)) {
       return """{"key":1,"col":null}"""
     }
 
@@ -1701,7 +1765,8 @@ trait MergeIntoNestedMapStructEvolutionNullnessTests
       updateTargetTypes = Seq(
         TargetType.NonNullLeaves,
         TargetType.NullLeaves,
-        TargetType.NullTargetOnlyFields,
+        TargetType.NullNestedStruct,
+        TargetType.NullNestedMap,
         TargetType.NullCol),
       actionTypes = Seq(
         ActionType.UpdateStar,
@@ -1730,14 +1795,14 @@ trait MergeIntoNestedMapStructEvolutionNullnessTests
   }
 
   testNestedStructsEvolution(
-      s"${testNamePrefix}null expansion - UPDATE * with null target-only field")(
-    target = Seq("""{"key":1,"col":{"y":{"k1":{"d":2,"e":2}},"z":null}}"""),
+      s"${testNamePrefix}null expansion - UPDATE * with null target col struct")(
+    target = Seq("""{"key":1,"col":null}"""),
     source = Seq("""{"key":1,"col":null}"""),
     targetSchema = nestedMapStructTargetSchema,
     sourceSchema = nestedMapStructSourceSchema,
     clauses = update("*") :: Nil,
     result = Seq(
-      if (preserveNullSourceStructs && preserveNullSourceStructsUpdateStar) {
+      if (shouldPreserveNullSourceStructsForUpdateStar) {
         """{"key":1,"col":null}"""
       } else {
         """{"key":1,"col":{"y": null,"z": null, "x": null}}"""
@@ -1748,16 +1813,37 @@ trait MergeIntoNestedMapStructEvolutionNullnessTests
     confs = preserveNullStructsConfs)
 
   testNestedStructsEvolution(
-      s"${testNamePrefix}null expansion - UPDATE * with non-null target-only field")(
-    target = Seq("""{"key":1,"col":{"y":{"k1":{"d":2,"e":2}},"z":{"k1":{"f":2,"g":2}}}}"""),
+      s"${testNamePrefix}null expansion - UPDATE * with non-null target col struct")(
+    target = Seq("""{"key":1,"col":{"y":null,"z":null}}"""),
     source = Seq("""{"key":1,"col":null}"""),
     targetSchema = nestedMapStructTargetSchema,
     sourceSchema = nestedMapStructSourceSchema,
     clauses = update("*") :: Nil,
-    result = Seq("""{"key":1,"col":{"y":null,"z":{"k1":{"f":2,"g":2}},"x":null}}"""),
+    result = Seq("""{"key":1,"col":{"y":null,"z":null,"x":null}}"""),
     resultSchema = nestedMapColEvolutionResultSchema,
     expectErrorWithoutEvolutionContains = "Cannot cast",
     confs = preserveNullStructsConfs)
+
+  // scalastyle:off line.size.limit
+  testNestedStructsEvolution(
+      s"${testNamePrefix}null expansion - UPDATE * with null structs nested in source map")(
+    target = Seq("""{"key":1,"col":{"y":{"k2":{"d":1,"e":2},"k3":{"d":null,"e":null}},"z":{"k2":null}}}"""),
+    source = Seq("""{"key":1,"col":{"x":{"k1":null},"y":{"k1":null}}}"""),
+    targetSchema = nestedMapStructTargetSchema,
+    sourceSchema = nestedMapStructSourceSchema,
+    clauses = update("*") :: Nil,
+    result = Seq(
+      // The original map value should be overwritten by source.
+      if (preserveNullSourceStructs) {
+        """{"key":1,"col":{"y":{"k1":null},"z":{"k2":null},"x":{"k1":null}}}"""
+      } else {
+        """{"key":1,"col":{"y":{"k1":{"d":null,"e":null,"c":null}},"z":{"k2":null},"x":{"k1":null}}}"""
+      }
+    ),
+    resultSchema = nestedMapColEvolutionResultSchema,
+    expectErrorWithoutEvolutionContains = "Cannot cast",
+    confs = preserveNullStructsConfs)
+  // scalastyle:on line.size.limit
 
   private val expectedResult = if (preserveNullSourceStructs) {
     """{"key":1,"col":null}"""

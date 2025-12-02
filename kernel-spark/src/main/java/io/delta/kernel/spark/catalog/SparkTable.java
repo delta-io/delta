@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.table;
+package io.delta.kernel.spark.catalog;
 
 import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
@@ -25,6 +25,7 @@ import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.*;
@@ -44,6 +45,7 @@ public class SparkTable implements Table, SupportsRead {
           EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
 
   private final Identifier identifier;
+  private final String tablePath;
   private final Map<String, String> options;
   private final DeltaSnapshotManager snapshotManager;
   /** Snapshot created during connector setup */
@@ -117,6 +119,7 @@ public class SparkTable implements Table, SupportsRead {
       Map<String, String> userOptions,
       Optional<CatalogTable> catalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
     // Merge options: file system options from catalog + user options (user takes precedence)
     // This follows the same pattern as DeltaTableV2 in delta-spark
@@ -183,9 +186,12 @@ public class SparkTable implements Table, SupportsRead {
   /**
    * Helper method to decode URI path handling URL-encoded characters correctly. E.g., converts
    * "spark%25dir%25prefix" to "spark%dir%prefix"
+   *
+   * <p>Uses Hadoop's Path class to properly handle all URI schemes (file, s3, abfss, gs, hdfs,
+   * etc.), not just file:// URIs.
    */
   private static String getDecodedPath(java.net.URI location) {
-    return new java.io.File(location).getPath();
+    return new Path(location).toString();
   }
 
   /**
@@ -197,9 +203,20 @@ public class SparkTable implements Table, SupportsRead {
     return catalogTable;
   }
 
+  /**
+   * Returns the table name in a format compatible with DeltaTableV2.
+   *
+   * <p>For catalog-based tables, returns the fully qualified table name (e.g.,
+   * "spark_catalog.default.table_name"). For path-based tables, returns the path-based identifier
+   * (e.g., "delta.`/path/to/table`").
+   *
+   * @return the table name string
+   */
   @Override
   public String name() {
-    return identifier.name();
+    return catalogTable
+        .map(ct -> ct.identifier().unquotedString())
+        .orElse("delta.`" + tablePath + "`");
   }
 
   @Override

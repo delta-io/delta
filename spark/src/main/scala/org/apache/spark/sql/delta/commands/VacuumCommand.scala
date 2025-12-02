@@ -220,7 +220,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val startTimeToIdentifyEligibleFiles = System.currentTimeMillis()
 
-      val validFiles =
+
+      val validFilesResult =
         getValidFilesFromSnapshot(
           spark,
           basePath,
@@ -235,6 +236,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             dvDiscoveryDisabled = None
           )
         )
+
+      val validFiles = validFilesResult.validFiles // Extract DataFrame
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
@@ -478,6 +481,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       Some(eligibleEndCommitVersion)
     )
   }
+
+  case class ValidFilesResult(
+    validFiles: DataFrame
+  )
 }
 
 trait VacuumCommandImpl extends DeltaCommand {
@@ -932,6 +939,7 @@ trait VacuumCommandImpl extends DeltaCommand {
     files
   }
 
+
   /**
    * Helper to compute all valid files based on basePath and Snapshot provided.
    * Returns a DataFrame with a single column "path" containing all files that should be
@@ -946,7 +954,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       retentionMillis: Option[Long],
       hadoopConf: Broadcast[SerializableConfiguration],
       clock: Clock,
-      config: ValidFilesConfig): DataFrame = {
+      config: ValidFilesConfig): VacuumCommand.ValidFilesResult = {
     import org.apache.spark.sql.delta.implicits._
     require(snapshot.version >= 0, "No state defined for this table. Is this really " +
       "a Delta table? Refusing to garbage collect.")
@@ -973,7 +981,9 @@ trait VacuumCommandImpl extends DeltaCommand {
     )
 
     val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
-    snapshot.stateDS.mapPartitions { actions =>
+
+
+    val files = snapshot.stateDS.mapPartitions { actions =>
       val reservoirBase = new Path(basePath)
       val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
       actions.flatMap {
@@ -994,7 +1004,13 @@ trait VacuumCommandImpl extends DeltaCommand {
           case _ => Nil
         }
       }
-    }.toDF("path")
+    }
+
+    val validFiles = files
+    .toDF("path")
+    VacuumCommand.ValidFilesResult(
+      validFiles
+      )
   }
 
   /**

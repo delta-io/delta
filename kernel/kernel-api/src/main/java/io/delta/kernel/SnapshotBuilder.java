@@ -118,6 +118,37 @@ public interface SnapshotBuilder {
   SnapshotBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata);
 
   /**
+   * Specifies the maximum table version known by the catalog.
+   *
+   * <p>This method is used by catalog implementations for catalog-managed Delta tables to indicate
+   * the latest ratified version of the table. This ensures that any snapshot resolution operations
+   * respect the catalog's view of the table state.
+   *
+   * <p>Important: This method is required for catalog-managed tables and must not be used for
+   * file-system managed tables. An {@link IllegalArgumentException} will be thrown at build time if
+   * this constraint is violated.
+   *
+   * <p>When specified, the following additional constraints are enforced:
+   *
+   * <ul>
+   *   <li>If {@link #atVersion(long)} is used for time travel, the requested version must be less
+   *       than or equal to the max catalog version.
+   *   <li>If {@link #atTimestamp(long, Snapshot)} is used for time travel, the provided {@code
+   *       latestSnapshot} must have a version equal to the max catalog version.
+   *   <li>If {@link #withLogData(List)} is provided and {@link #atVersion(long)} is used, the log
+   *       data must include the requested version (i.e., the tail of the log data must have a
+   *       version greater than or equal to the requested version).
+   *   <li>If {@link #withLogData(List)} is provided and no version is specified (resolving to
+   *       latest), the log data must end with the max catalog version.
+   * </ul>
+   *
+   * @param version the maximum table version known by the catalog (must be {@code >= 0})
+   * @return a new builder instance with the specified max catalog version
+   * @throws IllegalArgumentException if version is negative
+   */
+  SnapshotBuilder withMaxCatalogVersion(long version);
+
+  /**
    * Constructs the {@link Snapshot} using the provided engine.
    *
    * <p>This method will read any missing information from the filesystem using the provided engine

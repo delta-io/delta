@@ -520,17 +520,21 @@ lazy val spark = (project in file("spark-unified"))
     // Set Test baseDirectory before sparkDependentSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
-    // Test sources from spark/ directory (sparkV1's directory)
-    // MUST be set BEFORE sparkDependentSettings() to avoid overwriting version-specific directories
+    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory
+    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
+      val unifiedDir = baseDirectory.value
       Seq(
         sparkDir / "src" / "test" / "scala",
-        sparkDir / "src" / "test" / "java"
+        sparkDir / "src" / "test" / "java",
+        unifiedDir / "src" / "test" / "scala",
+        unifiedDir / "src" / "test" / "java"
       )
     },
     Test / unmanagedResourceDirectories := Seq(
-      (sparkV1 / baseDirectory).value / "src" / "test" / "resources"
+      (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
+      baseDirectory.value / "src" / "test" / "resources"
     ),
 
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
@@ -585,7 +589,10 @@ lazy val spark = (project in file("spark-unified"))
         override def transform(n: Node): Seq[Node] = n match {
           case e: Elem if e.label == "dependency" =>
             val artifactId = (e \ "artifactId").text
-            if (internalModules.contains(artifactId)) Seq.empty else Seq(n)
+            // Check if artifactId starts with any internal module name
+            // (e.g., "delta-spark-v1_4.1_2.13" starts with "delta-spark-v1")
+            val isInternal = internalModules.exists(module => artifactId.startsWith(module))
+            if (isInternal) Seq.empty else Seq(n)
           case _ => Seq(n)
         }
       }).transform(node).head
@@ -708,10 +715,26 @@ lazy val sharing = (project in file("sharing"))
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Test / javaOptions ++= Seq("-ea"),
+    Compile / compile := runTaskOnlyOnSparkMaster(
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-sharing-spark",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkMaster(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-sharing-spark",
+      emptyValue = ()).value,
+    publish := runTaskOnlyOnSparkMaster(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-sharing-spark",
+      emptyValue = ()).value,
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.2.4",
+      "io.delta" %% "delta-sharing-client" % "1.3.6",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -760,7 +783,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
@@ -867,7 +891,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.13.2" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
@@ -891,6 +916,7 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage % "test->test")
+  .dependsOn(kernelUnityCatalog % "test->test")
   .settings(
     name := "delta-kernel-benchmarks",
     commonSettings,
@@ -905,12 +931,12 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
     ),
   )
 
-lazy val unity = (project in file("unity"))
+lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelDefaults % "test->test")
   .dependsOn(storage)
   .settings (
-    name := "delta-unity",
+    name := "delta-kernel-unitycatalog",
     commonSettings,
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
@@ -930,6 +956,8 @@ lazy val unity = (project in file("unity"))
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
     ),
     unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
   ).configureUnidoc()
