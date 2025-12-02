@@ -20,27 +20,38 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 
-class UpdateSQLSuite extends UpdateSuiteBase
-  with DeltaSQLCommandTest {
+trait UpdateSQLMixin extends UpdateBaseMixin
+  with DeltaSQLCommandTest
+  with DeltaDMLTestUtils {
 
+  override protected def executeUpdate(
+      target: String,
+      set: String,
+      where: String = null): Unit = {
+    val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
+    sql(s"UPDATE $target SET $set $whereClause")
+  }
+}
+
+trait UpdateSQLTests extends UpdateSQLMixin {
   import testImplicits._
 
   test("explain") {
     append(Seq((2, 2)).toDF("key", "value"))
-    val df = sql(s"EXPLAIN UPDATE delta.`$tempPath` SET key = 1, value = 2 WHERE key = 2")
+    val df = sql(s"EXPLAIN UPDATE $tableSQLIdentifier SET key = 1, value = 2 WHERE key = 2")
     val outputs = df.collect().map(_.mkString).mkString
     assert(outputs.contains("Delta"))
     assert(!outputs.contains("index") && !outputs.contains("ActionLog"))
     // no change should be made by explain
-    checkAnswer(readDeltaTable(tempPath), Row(2, 2))
+    checkAnswer(readDeltaTableByIdentifier(), Row(2, 2))
   }
 
   test("SC-11376: Update command should check target columns during analysis, same key") {
@@ -118,7 +129,7 @@ class UpdateSQLSuite extends UpdateSuiteBase
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
     checkError(
       intercept[AnalysisException] {
-        executeUpdate(target = s"delta.`$tempPath`", set = "value = 'false'")
+        executeUpdate(target = tableSQLIdentifier, set = "value = 'false'")
       },
       "CANNOT_UP_CAST_DATATYPE",
       parameters = Map(
@@ -140,7 +151,7 @@ class UpdateSQLSuite extends UpdateSuiteBase
         DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
     checkError(
       intercept[AnalysisException] {
-        executeUpdate(target = s"delta.`$tempPath`", set = "value = '5'")
+        executeUpdate(target = tableSQLIdentifier, set = "value = '5'")
       },
       "CANNOT_UP_CAST_DATATYPE",
       parameters = Map(
@@ -152,23 +163,15 @@ class UpdateSQLSuite extends UpdateSuiteBase
           "object")))
     }
   }
-
-  override protected def executeUpdate(
-      target: String,
-      set: String,
-      where: String = null): Unit = {
-    val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
-    sql(s"UPDATE $target SET $set $whereClause")
-  }
 }
 
-class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
+trait UpdateSQLWithDeletionVectorsMixin extends UpdateSQLMixin
   with DeltaExcludedTestMixin
   with DeletionVectorsTestUtils {
+
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, update = true)
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
   override def excluded: Seq[String] = super.excluded ++
@@ -181,7 +184,9 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
       "schema pruning on finding files to update",
       "nested schema pruning on finding files to update"
     )
+}
 
+trait UpdateSQLWithDeletionVectorsTests extends UpdateSQLWithDeletionVectorsMixin {
   test("repeated UPDATE produces deletion vectors") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
@@ -334,14 +339,4 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
       for (a <- addFiles) assert(a.deletionVector === null)
     }
   }
-}
-
-class UpdateSQLWithDeletionVectorsAndPredicatePushdownSuite
-    extends UpdateSQLWithDeletionVectorsSuite {
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
-  }
-
 }

@@ -20,7 +20,7 @@ import java.io.Closeable
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaColumnMappingMode, NoMapping, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaLog, NoMapping, SerializableFileStatus}
 
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.functions.sum
@@ -95,4 +95,5 @@ case class ConvertTargetFile(
   fileStatus: SerializableFileStatus,
   partitionValues: Option[Map[String, String]] = None,
   parquetSchemaDDL: Option[String] = None,
-  stats: Option[String] = None) extends Serializable
+  stats: Option[String] = None
+) extends Serializable

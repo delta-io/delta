@@ -20,11 +20,12 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.test.TestUtils
 import io.delta.kernel.types.{ArrayType, IntegerType, StringType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class ProtocolSuite extends AnyFunSuite {
+class ProtocolSuite extends AnyFunSuite with TestUtils {
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Tests for TableFeature related methods on Protocol                                          //
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -284,6 +285,11 @@ class ProtocolSuite extends AnyFunSuite {
     // expect the dependency features also to be supported
     Set("icebergCompatV2") ->
       (2, 7, Set[String](), Set[String]("icebergCompatV2", "columnMapping")),
+    Set("variantShredding-preview") -> (
+      3,
+      7,
+      Set[String]("variantType", "variantShredding-preview"),
+      Set[String]("variantType", "variantShredding-preview")),
     Set("rowTracking") -> (
       1,
       7,
@@ -392,5 +398,31 @@ class ProtocolSuite extends AnyFunSuite {
 
     val expected = new Protocol(42, 43, Set("foo").asJava, Set("bar").asJava)
     assert(Protocol.fromRow(row) === expected)
+  }
+
+  test("Protocol serialization round trip") {
+    val source = new Protocol(
+      3,
+      7,
+      Set("columnMapping", "v2Checkpoint").asJava,
+      Set("columnMapping", "domainMetadata").asJava)
+    val deserialized = roundTripSerialize(source)
+
+    // Verify all public methods return the same values
+    assert(deserialized.getMinReaderVersion === source.getMinReaderVersion)
+    assert(deserialized.getMinWriterVersion === source.getMinWriterVersion)
+    assert(deserialized.getReaderFeatures === source.getReaderFeatures)
+    assert(deserialized.getWriterFeatures === source.getWriterFeatures)
+    assert(deserialized.getReaderAndWriterFeatures === source.getReaderAndWriterFeatures)
+    assert(deserialized.supportsReaderFeatures() === source.supportsReaderFeatures())
+    assert(deserialized.supportsWriterFeatures() === source.supportsWriterFeatures())
+    assert(deserialized.getImplicitlySupportedFeatures === source.getImplicitlySupportedFeatures)
+    assert(deserialized.getExplicitlySupportedFeatures === source.getExplicitlySupportedFeatures)
+    assert(deserialized.getImplicitlyAndExplicitlySupportedFeatures ===
+      source.getImplicitlyAndExplicitlySupportedFeatures)
+
+    // Verify equals and hashCode
+    assert(deserialized === source)
+    assert(deserialized.hashCode() === source.hashCode())
   }
 }

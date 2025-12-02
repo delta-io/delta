@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types._
 
 /**
@@ -42,7 +43,7 @@ import org.apache.spark.sql.types._
 
 object IcebergCompatV1 extends IcebergCompatBase(
   version = 1,
-  icebergFormatVersion = 1,
+  icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED,
   tableFeature = IcebergCompatV1TableFeature,
   requiredTableProperties = Seq(RequireColumnMapping),
@@ -59,7 +60,7 @@ object IcebergCompatV1 extends IcebergCompatBase(
 
 object IcebergCompatV2 extends IcebergCompatBase(
   version = 2,
-  icebergFormatVersion = 1,
+  icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED,
   tableFeature = IcebergCompatV2TableFeature,
   requiredTableProperties = Seq(RequireColumnMapping),
@@ -124,6 +125,7 @@ case class IcebergCompatBase(
    */
   def enforceInvariantsAndDependencies(
       spark: SparkSession,
+      catalogTable: Option[CatalogTable],
       prevSnapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -204,6 +206,7 @@ case class IcebergCompatBase(
         // Apply additional checks
         val context = IcebergCompatContext(
           spark,
+          catalogTable,
           prevSnapshot,
           protocolResult.getOrElse(newestProtocol),
           metadataResult.getOrElse(newestMetadata),
@@ -336,7 +339,6 @@ class RequireColumnMapping(allowedModes: Seq[DeltaColumnMappingMode])
       isCreatingNewTable: Boolean): Metadata = {
     if (!prevMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key) &&
         newMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)) {
-      assert(isCreatingNewTable, "we only auto-upgrade Column Mapping on new tables")
       val tmpNewMetadata = DeltaColumnMapping.assignColumnIdAndPhysicalName(
         newMetadata = newMetadata,
         oldMetadata = prevMetadata,
@@ -356,6 +358,7 @@ object RequireColumnMapping extends RequireColumnMapping(Seq(NameMapping, IdMapp
 
 case class IcebergCompatContext(
     spark: SparkSession,
+    catalogTable: Option[CatalogTable],
     prevSnapshot: Snapshot,
     newestProtocol: Protocol,
     newestMetadata: Metadata,

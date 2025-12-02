@@ -46,6 +46,7 @@ import org.apache.spark.internal.LogKeyShims
  */
 trait DeltaLogKeysBase {
   case object APP_ID extends LogKeyShims
+  case object ATTEMPT extends LogKeyShims
   case object BATCH_ID extends LogKeyShims
   case object BATCH_SIZE extends LogKeyShims
   case object CATALOG extends LogKeyShims

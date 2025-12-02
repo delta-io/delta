@@ -18,6 +18,9 @@ package org.apache.spark.sql.delta
 
 import java.util.UUID
 
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+
 import org.apache.spark.sql.{DataFrame, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 
@@ -35,12 +38,7 @@ trait IcebergCompatUtilsBase extends QueryTest {
 
   protected val compatColumnMappingMode: String = "name"
 
-  protected val allCompatTFs = Map(
-    IcebergCompatV1 -> IcebergCompatV1TableFeature,
-    IcebergCompatV2 -> IcebergCompatV2TableFeature
-  )
-
-  protected def compatTableFeature: TableFeature = allCompatTFs(compatObject)
+  protected def compatTableFeature: TableFeature = compatObject.tableFeature
 
   protected val allReaderWriterVersions: Seq[(Int, Int)] = (1 to 3)
     .flatMap { r => (1 to 7).map(w => (r, w)) }
@@ -67,16 +65,18 @@ trait IcebergCompatUtilsBase extends QueryTest {
   protected def executeSql(sqlStr: String): DataFrame
 
   protected def getProperties(tableId: String): Map[String, String] = {
-    DeltaLog.forTable(spark, TableIdentifier(tableId)).update().getProperties.toMap
+    val table = DeltaTableV2(spark, TableIdentifier(tableId))
+    table.update.getProperties.toMap
   }
 
   protected def assertIcebergCompatProtocolAndProperties(
       tableId: String,
       compatObj: IcebergCompatBase = compatObject): Unit = {
-    val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableId)).update()
+    val table = DeltaTableV2(spark, TableIdentifier(tableId))
+    val snapshot = table.update
     val protocol = snapshot.protocol
     val tblProperties = snapshot.getProperties
-    val tableFeature = allCompatTFs(compatObj)
+    val tableFeature = compatObj.tableFeature
 
     val expectedMinReaderVersion = Math.max(
       ColumnMappingTableFeature.minReaderVersion,

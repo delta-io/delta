@@ -22,18 +22,53 @@ import java.util.UUID
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeletionVectorUtils}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.{DataFrame, QueryTest, RuntimeConfig, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.SharedSparkSession
+
+trait MergePersistentDVDisabled extends SharedSparkSession {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+}
+
+trait PersistentDVDisabled extends SharedSparkSession {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
+}
+
+trait PersistentDVEnabled extends DeletionVectorsTestUtils {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectorsInNewTables(spark.conf)
+  }
+}
+
+trait PredicatePushdownDisabled extends SharedSparkSession {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
+  }
+}
+
+trait PredicatePushdownEnabled extends SharedSparkSession {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
+  }
+}
 
 /** Collection of test utilities related with persistent Deletion Vectors. */
 trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with DeltaSQLTestUtils {
@@ -60,6 +95,30 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
 
   def enableDeletionVectorsForAllSupportedOperations(spark: SparkSession): Unit =
     enableDeletionVectors(spark, delete = true, update = true)
+
+  def deletionVectorsEnabledInCommand(
+      sparkSession: SparkSession,
+      deltaLog: DeltaLog,
+      dmlConfig: ConfigEntry[Boolean]): Boolean =
+    DeletionVectorUtils.deletionVectorsWritable(deltaLog.update()) &&
+      sparkSession.sessionState.conf.getConf(dmlConfig)
+
+  /** Whether persistent Deletion Vectors are enabled in MERGE command. */
+  def deletionVectorsEnabledInMerge(spark: SparkSession, deltaLog: DeltaLog): Boolean = {
+    deletionVectorsEnabledInCommand(spark, deltaLog,
+      DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)
+  }
+
+  /** Whether persistent Deletion Vectors are enabled in UPDATE command. */
+  def deletionVectorsEnabledInUpdate(spark: SparkSession, deltaLog: DeltaLog): Boolean =
+    deletionVectorsEnabledInCommand(spark, deltaLog,
+      DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS)
+
+  /** Whether persistent Deletion Vectors are enabled in DELETE command. */
+  def deletionVectorsEnabledInDelete(spark: SparkSession, deltaLog: DeltaLog): Boolean = {
+    deletionVectorsEnabledInCommand(
+      spark, deltaLog, DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS)
+  }
 
   def testWithDVs(testName: String, testTags: org.scalatest.Tag*)(thunk: => Unit): Unit = {
     test(testName, testTags : _*) {
@@ -95,26 +154,47 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
       dataDF: DataFrame,
       partitionBy: Seq[String] = Seq.empty,
       enableDVs: Boolean = true,
-      conf: Seq[(String, String)] = Nil)
+      conf: Seq[(String, String)] = Nil,
+      createNameBasedTable: Boolean = false)
       (fn: (() => io.delta.tables.DeltaTable, DeltaLog) => Unit): Unit = {
-    withTempPath { path =>
-      val tablePath = new Path(path.getAbsolutePath)
+    def createTable(tableNameOpt: Option[String], tablePathOpt: Option[Path]): Unit = {
+      assert((tableNameOpt.isDefined && tablePathOpt.isEmpty) ||
+        (tableNameOpt.isEmpty && tablePathOpt.isDefined))
       withSQLConf(conf: _*) {
-        dataDF.write
+        val df = dataDF.write
           .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, enableDVs.toString)
           .partitionBy(partitionBy: _*)
           .format("delta")
-          .save(tablePath.toString)
+        (tableNameOpt, tablePathOpt) match {
+          case (Some(tableName), None) => df.saveAsTable(tableName)
+          case (None, Some(tablePath)) => df.save(tablePath.toString)
+        }
       }
       // DeltaTable hangs on to the DataFrame it is created with for the entire object lifetime.
       // That means subsequent `targetTable.toDF` calls will return the same snapshot.
       // The DV tests are generally written assuming `targetTable.toDF` would return a new snapshot.
-      // So create a function here instead of a n instance, so `targetTable().toDF`
+      // So create a function here instead of an instance, so `targetTable().toDF`
       // will actually provide a new snapshot.
-      val targetTable =
-        () => io.delta.tables.DeltaTable.forPath(tablePath.toString)
-      val targetLog = DeltaLog.forTable(spark, tablePath)
+      val targetTable = (tableNameOpt, tablePathOpt) match {
+        case (Some(tableName), None) => () => io.delta.tables.DeltaTable.forName(tableName)
+        case (None, Some(tablePath)) => () => io.delta.tables.DeltaTable.forPath(tablePath.toString)
+      }
+
+      val targetLog = (tableNameOpt, tablePathOpt) match {
+        case (Some(tableName), None) => DeltaLog.forTable(spark, TableIdentifier(tableName))
+        case (None, Some(tablePath)) => DeltaLog.forTable(spark, tablePath)
+      }
       fn(targetTable, targetLog)
+    }
+    if (createNameBasedTable) {
+      withTempTable(createTable = false) { tableName =>
+        createTable(tableNameOpt = Some(tableName), tablePathOpt = None)
+      }
+    } else {
+      withTempPath { path =>
+        val tablePath = new Path(path.getAbsolutePath)
+        createTable(tableNameOpt = None, tablePathOpt = Some(tablePath))
+      }
     }
   }
 
@@ -169,10 +249,14 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
   def enableDeletionVectorsInNewTables(conf: RuntimeConfig): Unit =
     conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "true")
 
-  /** Enable persistent Deletion Vectors in a Delta table. */
+  /** Enable persistent Deletion Vectors in a Delta table with table path. */
   def enableDeletionVectorsInTable(tablePath: Path, enable: Boolean): Unit =
+    enableDeletionVectorsInTable(tableName = s"delta.`$tablePath`", enable)
+
+  /** Enable persistent Deletion Vectors in a Delta table with table name. */
+  def enableDeletionVectorsInTable(tableName: String, enable: Boolean): Unit =
     spark.sql(
-      s"""ALTER TABLE delta.`$tablePath`
+      s"""ALTER TABLE $tableName
          |SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = '$enable')
          |""".stripMargin)
 

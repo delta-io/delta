@@ -2315,7 +2315,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 1,
               "minWriterVersion" -> 2,
               "supportedFeatures" -> List("appendOnly", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
 
       // Upgrade protocol
@@ -2333,7 +2334,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "minReaderVersion" -> 1,
           "minWriterVersion" -> 3,
           "supportedFeatures" -> List("appendOnly", "checkConstraints", "invariants")
-        )))
+        ),
+        "operationName" -> "SET TBLPROPERTIES"))
 
       // Add feature
       assert(captureProtocolChangeEventBlob {
@@ -2351,7 +2353,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "minWriterVersion" -> 7,
           "supportedFeatures" ->
             List("appendOnly", "checkConstraints", "deletionVectors", "invariants")
-        )))
+        ),
+        "operationName" -> "SET TBLPROPERTIES"))
     }
   }
 
@@ -2368,7 +2371,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 1,
               "minWriterVersion" -> 2,
               "supportedFeatures" -> List("appendOnly", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
 
       // Clone table to invoke commitLarge
@@ -2383,7 +2387,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 3,
               "minWriterVersion" -> 7,
               "supportedFeatures" -> List("appendOnly", "deletionVectors", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
     }
   }
@@ -3790,8 +3795,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       downgradeFailsWithException: Option[String] = None,
       featureExpectedAtTheEnd: Boolean = false): Unit = {
     val featureName = VacuumProtocolCheckTableFeature.name
-    withTempDir { dir =>
-      val deltaLog = DeltaLog.forTable(spark, dir)
+    withTempTable(createTable = false) { tableName =>
+      // Register a temporary InMemory-CC builder to support CatalogOwned table creation.
+      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1)
+      )
       val finalAdditionalTableProperty = if (enableFeatureInitially) {
         additionalTableProperties ++
           Seq((s"$FEATURE_PROP_PREFIX${featureName}", "supported"))
@@ -3804,14 +3814,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         additionalTablePropertyString = s", $additionalTablePropertyString"
       }
       sql(
-        s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
+        s"""CREATE TABLE $tableName (id bigint) USING delta
            |TBLPROPERTIES (
            |  delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
            |  delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION
            |  $additionalTablePropertyString
            |)""".stripMargin)
 
-      val protocol = deltaLog.update().protocol
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+      val protocol = snapshot.protocol
       assert(protocol.minReaderVersion ==
         (if (enableFeatureInitially) TABLE_FEATURES_MIN_READER_VERSION else 1))
       assert(protocol.minWriterVersion ==
@@ -3841,11 +3852,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   test("Removing VacuumProtocolCheckTableFeature should fail when dependent feature " +
-      "Coordinated Commits is enabled") {
+      "Catalog Owned is enabled") {
     testRemoveVacuumProtocolCheckTableFeature(
       enableFeatureInitially = true,
       additionalTableProperties = Seq(
-        (s"$FEATURE_PROP_PREFIX${CoordinatedCommitsTableFeature.name}", "supported")),
+        (s"$FEATURE_PROP_PREFIX${CatalogOwnedTableFeature.name}", "supported")),
       downgradeFailsWithException = Some("DELTA_FEATURE_DROP_DEPENDENT_FEATURE"),
       featureExpectedAtTheEnd = true)
   }

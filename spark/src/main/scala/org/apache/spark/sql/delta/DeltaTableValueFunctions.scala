@@ -110,10 +110,11 @@ trait CDCStatementBase extends DeltaTableValueFunction {
 
   protected def getOptions: CaseInsensitiveStringMap = {
     def toDeltaOption(keyPrefix: String, value: Expression): (String, String) = {
-      if (value == Literal(null)) {
-        throw DeltaErrors.nullRangeBoundaryInCDCRead()
+      val evaluated = try {
+        DeltaTableValueFunctionsShims.evaluateTimeOption(value)
+      } catch {
+        case _: NullPointerException => throw DeltaErrors.nullRangeBoundaryInCDCRead()
       }
-      val evaluated = DeltaTableValueFunctionsShims.evaluateTimeOption(value)
       value.dataType match {
         // We dont need to explicitly handle ShortType as it is parsed as IntegerType.
         case _: IntegerType | LongType => (keyPrefix + "Version") -> evaluated

@@ -27,10 +27,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.apache.iceberg.{DataFile, PartitionData, PartitionField, Schema, StructLike, Table}
-import org.apache.iceberg.types.{Conversions, Type => IcebergType}
-import org.apache.iceberg.types.Type.{PrimitiveType => IcebergPrimitiveType, TypeID}
-import org.apache.iceberg.types.Types.{
+import shadedForDelta.org.apache.iceberg.{DataFile, PartitionData, PartitionField, Schema, StructLike, Table}
+import shadedForDelta.org.apache.iceberg.types.{Conversions, Type => IcebergType}
+import shadedForDelta.org.apache.iceberg.types.Type.{PrimitiveType => IcebergPrimitiveType, TypeID}
+import shadedForDelta.org.apache.iceberg.types.Types.{
   DateType => IcebergDateType,
   ListType => IcebergListType,
   MapType => IcebergMapType,
@@ -39,7 +39,7 @@ import org.apache.iceberg.types.Types.{
   StructType => IcebergStructType,
   TimestampType => IcebergTimestampType
 }
-import org.apache.iceberg.util.DateTimeUtil
+import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.SparkSession
 
@@ -110,7 +110,8 @@ object IcebergStatsUtils extends DeltaLogging {
       icebergSchema: Schema,
       dataFile: DataFile,
       statsAllowTypes: Set[TypeID],
-      shouldSkipForFile: DataFile => Boolean): Option[String] = {
+      shouldSkipForFile: DataFile => Boolean
+  ): Option[String] = {
     if (shouldSkipForFile(dataFile)) {
       return None
     }
@@ -200,7 +201,8 @@ object IcebergStatsUtils extends DeltaLogging {
       maxMap: Option[Map[JInt, ByteBuffer]],
       minMap: Option[Map[JInt, ByteBuffer]],
       nullCountMap: Option[Map[JInt, JLong]],
-      statsAllowTypes: Set[TypeID]): String = {
+      statsAllowTypes: Set[TypeID]
+  ): String = {
 
     def deserialize(ftype: IcebergType, value: Any): Any = {
       (ftype, value) match {

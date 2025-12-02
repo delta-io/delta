@@ -16,6 +16,10 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import scala.collection.mutable
+
+import org.apache.spark.sql.delta._
+
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 
@@ -30,6 +34,17 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
 
   var compatVersions: Seq[Int] = Seq(1, 2)
 
+  def extraTableProperties(compatVersion: Int): String = {
+    val extraProps = mutable.HashMap[String, String]()
+    val compat = IcebergCompat.getForVersion(compatVersion)
+
+    if (compat.incompatibleTableFeatures.contains(DeletionVectorsTableFeature)) {
+      extraProps.put(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, "false")
+    }
+
+    extraProps.map(pair => s", '${pair._1}' = '${pair._2}'").mkString(" ")
+  }
+
   compatVersions.foreach { compatVersion =>
     test(s"Basic Insert - compatV$compatVersion") {
       withTable(testTableName) {
@@ -39,6 +54,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.columnMapping.mode' = 'name',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
         write(s"INSERT INTO $testTableName VALUES (123)")
         readAndVerify(testTableName, "col1", "col1", Seq(Row(123)))
@@ -55,6 +71,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.columnMapping.mode' = 'name',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
         write(s"INSERT INTO `$testTableName` VALUES (123),(456),(567),(331)")
         readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(331), Row(456), Row(567)))
@@ -62,6 +79,47 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
         readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(191), Row(331), Row(456)))
         write(s"DELETE FROM `$testTableName` WHERE col1 = 456")
         readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(191), Row(331)))
+      }
+    }
+  }
+
+  compatVersions.foreach { compatVersion =>
+    test(s"CTAS - compatV$compatVersion") {
+      withTable(testTableName, "source") {
+        write("CREATE TABLE source (col1 INT) USING DELTA")
+        write("INSERT INTO source VALUES (1), (2), (3)")
+        write(
+          s"""CREATE TABLE `$testTableName` USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
+             |) AS SELECT col1 FROM source""".stripMargin)
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2), Row(3)))
+        write(s"UPDATE `$testTableName` SET col1 = 100 WHERE col1 = 1")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(3), Row(100)))
+        write(s"DELETE FROM `$testTableName` WHERE col1 = 3")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(100)))
+      }
+    }
+  }
+
+  compatVersions.foreach { compatVersion =>
+    test(s"Table with partition - compatV$compatVersion") {
+      withTable(testTableName) {
+        write(
+          s"""CREATE TABLE $testTableName (id INT, part STRING) USING delta
+             |PARTITIONED BY (part)
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
+             |)""".stripMargin)
+        write(s"INSERT INTO `$testTableName` VALUES (123, 'p1'), (456, 'p2'), (789, 'p1')")
+        readAndVerify(testTableName, "id, part", "id",
+          Seq(Row(123, "p1"), Row(456, "p2"), Row(789, "p1")))
       }
     }
   }
@@ -77,6 +135,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.columnMapping.mode' = 'name',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
 
         val data = Seq(
@@ -118,7 +177,8 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
            |TBLPROPERTIES (
            |  'delta.columnMapping.mode' = 'name',
            |  'delta.enableIcebergCompatV1' = 'true',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |  'delta.universalFormat.enabledFormats' = 'iceberg',
+           |  'delta.enableDeletionVectors' = 'false'
            |)""".stripMargin)
       write(s"INSERT INTO $testTableName VALUES (1)")
       readAndVerify(testTableName, "col1", "col1", Seq(Row(1)))

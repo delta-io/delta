@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.util.ScalaExtensions._
 
@@ -35,9 +36,10 @@ object RowCommitVersion {
   def createMetadataStructField(
       protocol: Protocol,
       metadata: Metadata,
-      nullable: Boolean = false): Option[StructField] =
+      nullable: Boolean = false,
+      shouldSetIcebergReservedFieldId: Boolean): Option[StructField] =
     MaterializedRowCommitVersion.getMaterializedColumnName(protocol, metadata)
-      .map(MetadataStructField(_, nullable))
+      .map(MetadataStructField(_, nullable, shouldSetIcebergReservedFieldId))
 
   /**
    * Add a new column to `dataFrame` that has the name of the materialized Row Commit Version column
@@ -56,22 +58,35 @@ object RowCommitVersion {
 
     val rowCommitVersionColumn =
       DeltaTableUtils.getFileMetadataColumn(dataFrame).getField(METADATA_STRUCT_FIELD_NAME)
-    preserveRowCommitVersionsUnsafe(dataFrame, materializedColumnName, rowCommitVersionColumn)
+    val shouldSetIcebergReservedFieldId = IcebergCompat.isGeqEnabled(snapshot.metadata, 3)
+
+    preserveRowCommitVersionsUnsafe(
+      dataFrame,
+      materializedColumnName,
+      rowCommitVersionColumn,
+      shouldSetIcebergReservedFieldId
+    )
   }
 
   private[delta] def preserveRowCommitVersionsUnsafe(
       dataFrame: DataFrame,
       materializedColumnName: String,
-      rowCommitVersionColumn: Column): DataFrame = {
+      rowCommitVersionColumn: Column,
+      shouldSetIcebergReservedFieldId: Boolean): DataFrame = {
     dataFrame
       .withColumn(materializedColumnName, rowCommitVersionColumn)
-      .withMetadata(materializedColumnName, MetadataStructField.metadata(materializedColumnName))
+      .withMetadata(
+        materializedColumnName,
+        MetadataStructField.metadata(materializedColumnName, shouldSetIcebergReservedFieldId))
   }
 
   object MetadataStructField {
     private val METADATA_COL_ATTR_KEY = "__row_commit_version_metadata_col"
 
-    def apply(materializedColumnName: String, nullable: Boolean = false): StructField =
+    def apply(
+        materializedColumnName: String,
+        nullable: Boolean = false,
+        shouldSetIcebergReservedFieldId: Boolean): StructField =
       StructField(
         METADATA_STRUCT_FIELD_NAME,
         LongType,
@@ -80,17 +95,32 @@ object RowCommitVersion {
         // injected before the optimizer pass by the [[GenerateRowIDs] rule at which point the Row
         // commit version field is non-nullable.
         nullable,
-        metadata = metadata(materializedColumnName))
+        metadata = metadata(materializedColumnName, shouldSetIcebergReservedFieldId))
 
     def unapply(field: StructField): Option[StructField] =
       Option.when(isValid(field.dataType, field.metadata))(field)
 
-    def metadata(materializedColumnName: String): types.Metadata = new MetadataBuilder()
-      .withMetadata(
-        FileSourceGeneratedMetadataStructField.metadata(
-          METADATA_STRUCT_FIELD_NAME, materializedColumnName))
-      .putBoolean(METADATA_COL_ATTR_KEY, value = true)
-      .build()
+    def metadata(
+        materializedColumnName: String,
+        shouldSetIcebergReservedFieldId: Boolean): types.Metadata = {
+      val metadataBuilder = new MetadataBuilder()
+        .withMetadata(
+          FileSourceGeneratedMetadataStructField.metadata(
+            METADATA_STRUCT_FIELD_NAME, materializedColumnName))
+        .putBoolean(METADATA_COL_ATTR_KEY, value = true)
+
+      // If IcebergCompatV3 or higher is enabled, assign the field ID of Delta
+      // Row commit version column to match the reserved `_last_updated_sequence_number`
+      // field defined in the Iceberg spec.
+      // This ensures that Iceberg can recognize and track the same column for row lineage purposes.
+      if (shouldSetIcebergReservedFieldId) {
+        metadataBuilder.putLong(
+          PARQUET_FIELD_ID_METADATA_KEY,
+          IcebergConstants.ICEBERG_ROW_TRACKING_LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID
+        )
+      }
+      metadataBuilder.build()
+    }
 
     /** Return true if the column is a Row Commit Version column. */
     def isRowCommitVersionColumn(structField: StructField): Boolean =
@@ -103,12 +133,21 @@ object RowCommitVersion {
     }
   }
 
-  def columnMetadata(materializedColumnName: String): types.Metadata =
-    MetadataStructField.metadata(materializedColumnName)
+  def columnMetadata(
+      materializedColumnName: String,
+      shouldSetIcebergReservedFieldId: Boolean): types.Metadata =
+    MetadataStructField.metadata(materializedColumnName, shouldSetIcebergReservedFieldId)
 
   object MetadataAttribute {
-    def apply(materializedColumnName: String): AttributeReference =
-      DataTypeUtils.toAttribute(MetadataStructField(materializedColumnName))
+    def apply(
+        materializedColumnName: String,
+        shouldSetIcebergReservedFieldId: Boolean): AttributeReference =
+      DataTypeUtils
+        .toAttribute(
+          MetadataStructField(
+            materializedColumnName,
+            shouldSetIcebergReservedFieldId = shouldSetIcebergReservedFieldId
+          ))
         .withName(materializedColumnName)
 
     def unapply(attr: Attribute): Option[Attribute] =

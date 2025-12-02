@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
-import static io.delta.kernel.internal.data.TransactionStateRow.getColumnMappingMode;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
@@ -30,6 +29,7 @@ import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndU
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /** Utilities related to the column mapping feature. */
@@ -63,6 +63,11 @@ public class ColumnMapping {
     public String toString() {
       return this.value;
     }
+  }
+
+  private enum SchemaConversionDirection {
+    LOGICAL_TO_PHYSICAL,
+    PHYSICAL_TO_LOGICAL
   }
 
   public static final String COLUMN_MAPPING_MODE_KEY = "delta.columnMapping.mode";
@@ -118,6 +123,33 @@ public class ColumnMapping {
     }
   }
 
+  /**
+   * Converts a logical column to a physical column based on the table's column mapping mode. The
+   * field-id metadata is preserved when cmMode = ID, all column metadata is otherwise removed.
+   *
+   * <p>We require {@code fullSchema} in addition to the logical field we want to convert since we
+   * need the complete field metadata as it is stored in the schema in the _delta_log. We cannot be
+   * sure (and do not enforce) that this metadata is preserved by the connector.
+   *
+   * @param logicalField the logical read column requested by the connector
+   * @param fullSchema the full delta schema (with complete metadata) as read from the _delta_log
+   * @param columnMappingMode Column mapping mode
+   */
+  public static StructField convertToPhysicalColumn(
+      StructField logicalField, StructType fullSchema, ColumnMappingMode columnMappingMode) {
+    switch (columnMappingMode) {
+      case NONE:
+        return logicalField;
+      case ID: // fall through
+      case NAME:
+        boolean includeFieldIds = columnMappingMode == ColumnMappingMode.ID;
+        return convertToPhysicalColumn(logicalField, fullSchema, includeFieldIds);
+      default:
+        throw new UnsupportedOperationException(
+            "Unsupported column mapping mode: " + columnMappingMode);
+    }
+  }
+
   /** Returns the physical name for a given {@link StructField} */
   public static String getPhysicalName(StructField field) {
     if (hasPhysicalName(field)) {
@@ -136,12 +168,12 @@ public class ColumnMapping {
   }
 
   public static void verifyColumnMappingChange(
-      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+      Map<String, String> oldConfig, Map<String, String> newConfig) {
     ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
     ColumnMappingMode newMappingMode = getColumnMappingMode(newConfig);
 
     checkArgument(
-        isNewTable || validModeChange(oldMappingMode, newMappingMode),
+        validModeChange(oldMappingMode, newMappingMode),
         "Changing column mapping mode from '%s' to '%s' is not supported",
         oldMappingMode,
         newMappingMode);
@@ -179,26 +211,13 @@ public class ColumnMapping {
   /** Returns the physical column and data type for a given logical column based on the schema. */
   public static Tuple2<Column, DataType> getPhysicalColumnNameAndDataType(
       StructType schema, Column logicalColumn) {
-    List<String> physicalNameParts = new ArrayList<>();
-    DataType currentType = schema;
+    return convertColumnName(schema, logicalColumn, SchemaConversionDirection.LOGICAL_TO_PHYSICAL);
+  }
 
-    // Traverse through each level of the logical name to resolve its corresponding physical name.
-    for (String namePart : logicalColumn.getNames()) {
-      if (!(currentType instanceof StructType)) {
-        throw columnNotFoundInSchema(logicalColumn, schema);
-      }
-
-      StructType structType = (StructType) currentType;
-      // Find the field in the current structure that matches the given name
-      StructField field =
-          structType.fields().stream()
-              .filter(f -> f.getName().equalsIgnoreCase(namePart))
-              .findFirst()
-              .orElseThrow(() -> columnNotFoundInSchema(logicalColumn, schema));
-      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
-      currentType = field.getDataType();
-    }
-    return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
+  /** Returns the logical column and data type for a given physical column based on the schema. */
+  public static Tuple2<Column, DataType> getLogicalColumnNameAndDataType(
+      StructType schema, Column physicalColumn) {
+    return convertColumnName(schema, physicalColumn, SchemaConversionDirection.PHYSICAL_TO_LOGICAL);
   }
 
   /**
@@ -218,6 +237,58 @@ public class ColumnMapping {
   ////////////////////////////
   // Private Helper Methods //
   ////////////////////////////
+
+  /**
+   * Common helper method for column name conversion between logical and physical representations.
+   *
+   * @param schema The schema to traverse
+   * @param inputColumn The column to convert
+   * @param conversionDirection The direction of schema conversion, either from logical to physical
+   *     or physical to logical
+   * @return Tuple of the converted column and its data type
+   */
+  private static Tuple2<Column, DataType> convertColumnName(
+      StructType schema, Column inputColumn, SchemaConversionDirection conversionDirection) {
+    Function<StructField, String> sourceNameExtractor;
+    Function<StructField, String> targetNameExtractor;
+
+    switch (conversionDirection) {
+      case LOGICAL_TO_PHYSICAL:
+        sourceNameExtractor = StructField::getName;
+        targetNameExtractor = ColumnMapping::getPhysicalName;
+        break;
+      case PHYSICAL_TO_LOGICAL:
+        sourceNameExtractor = ColumnMapping::getPhysicalName;
+        targetNameExtractor = StructField::getName;
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown conversion direction: " + conversionDirection);
+    }
+
+    final List<String> outputNameParts = new ArrayList<>();
+    DataType currentType = schema;
+
+    // Traverse through each level to resolve the corresponding name mapping
+    for (String inputNamePart : inputColumn.getNames()) {
+      if (!(currentType instanceof StructType)) {
+        throw columnNotFoundInSchema(inputColumn, schema);
+      }
+
+      final StructType structType = (StructType) currentType;
+
+      // Find the field that matches the input name using the appropriate matching function
+      final StructField field =
+          structType.fields().stream()
+              .filter(f -> sourceNameExtractor.apply(f).equalsIgnoreCase(inputNamePart))
+              .findFirst()
+              .orElseThrow(() -> columnNotFoundInSchema(inputColumn, schema));
+
+      outputNameParts.add(targetNameExtractor.apply(field));
+      currentType = field.getDataType();
+    }
+
+    return new Tuple2<>(new Column(outputNameParts.toArray(new String[0])), currentType);
+  }
 
   /** Visible for testing */
   static int findMaxColumnId(StructType schema) {
@@ -251,34 +322,42 @@ public class ColumnMapping {
       StructType prunedSchema, StructType fullSchema, boolean includeFieldId) {
     StructType newSchema = new StructType();
     for (StructField prunedField : prunedSchema.fields()) {
-      StructField completeField = fullSchema.get(prunedField.getName());
-      DataType physicalType =
-          convertToPhysicalType(
-              prunedField.getDataType(), completeField.getDataType(), includeFieldId);
-      String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-
-      if (includeFieldId) {
-        Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
-        FieldMetadata.Builder builder =
-            FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
-
-        // convertToPhysicalSchema(..) gets called when trying to find the read schema
-        // for the Parquet reader. This currently assumes that if the nested field IDs for
-        // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
-        // then IcebergCompatV2 is enabled because the schema we are looking at is from
-        // the DeltaLog and has nested field IDs setup
-        if (hasNestedColumnIds(completeField)) {
-          builder.putFieldMetadata(
-              PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
-        }
-
-        newSchema =
-            newSchema.add(physicalName, physicalType, prunedField.isNullable(), builder.build());
-      } else {
-        newSchema = newSchema.add(physicalName, physicalType, prunedField.isNullable());
-      }
+      newSchema = newSchema.add(convertToPhysicalColumn(prunedField, fullSchema, includeFieldId));
     }
     return newSchema;
+  }
+
+  /**
+   * Utility method to convert the given logical field to a physical field, recursively converting
+   * sub-types in case of complex types. When {@code includeFieldId} is true, converted physical
+   * schema will have field ids in the metadata. Column metadata is otherwise removed.
+   */
+  private static StructField convertToPhysicalColumn(
+      StructField logicalField, StructType fullSchema, boolean includeFieldId) {
+    StructField completeField = fullSchema.get(logicalField.getName());
+    DataType physicalType =
+        convertToPhysicalType(
+            logicalField.getDataType(), completeField.getDataType(), includeFieldId);
+    String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+
+    if (!includeFieldId) {
+      return new StructField(physicalName, physicalType, logicalField.isNullable());
+    }
+
+    Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+    FieldMetadata.Builder builder = FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
+
+    // convertToPhysicalSchema(..) gets called when trying to find the read schema
+    // for the Parquet reader. This currently assumes that if the nested field IDs for
+    // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
+    // then IcebergCompatV2 is enabled because the schema we are looking at is from
+    // the DeltaLog and has nested field IDs setup
+    if (hasNestedColumnIds(completeField)) {
+      builder.putFieldMetadata(
+          PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
+    }
+
+    return new StructField(physicalName, physicalType, logicalField.isNullable(), builder.build());
   }
 
   private static DataType convertToPhysicalType(
@@ -328,9 +407,11 @@ public class ColumnMapping {
       Metadata metadata, boolean isNewTable) {
     StructType oldSchema = metadata.getSchema();
 
-    // When icebergWriterCompatV1 is enabled we require physicalName='col-[columnId]'
+    // When icebergWriterCompatV1 or icebergWriterCompatV3 is enabled we require
+    // physicalName='col-[columnId]'
     boolean useColumnIdForPhysicalName =
-        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata);
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata)
+            || TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
 
     // This is the maxColumnId to use when assigning any new field-ids; we update this as we
     // traverse the schema and after traversal this is the value that should be stored in the

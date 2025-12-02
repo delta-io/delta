@@ -24,24 +24,23 @@ import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V3_W_FEATURE, ROW_TRACKING_W_FEATURE, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{ALLOW_COLUMN_DEFAULTS_W_FEATURE, COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V3_W_FEATURE, ROW_TRACKING_W_FEATURE, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 
 import org.assertj.core.util.Maps
 
 trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase
-    extends IcebergCompatMetadataValidatorAndUpdaterSuiteBase {
+    extends IcebergCompatMetadataValidatorAndUpdaterSuiteBase
+    with TestFixtures {
 
   override def icebergCompatVersion: String = "V3"
 
-  override def supportedDataColumnTypes: Set[DataType] =
-    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.SIMPLE_TYPES ++
-      IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
+  override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES + VariantType.VARIANT
 
-  override def unsupportedDataColumnTypes: Set[DataType] = Set(VariantType.VARIANT)
+  override def unsupportedDataColumnTypes: Set[DataType] = Set.empty
 
-  override def unsupportedPartitionColumnTypes: Set[DataType] =
-    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
+  override def unsupportedPartitionColumnTypes: Set[DataType] = NESTED_TYPES
 
   override def isDeletionVectorsSupported: Boolean = true
 
@@ -158,6 +157,25 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       assert(ex.getMessage.contains(
         s"icebergCompat$icebergCompatVersion: Only one IcebergCompat version can be enabled. " +
           "Incompatible version enabled: delta.enableIcebergCompatV2"))
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(
+      s"icebergCompatV3 requires column default to be literal, " +
+        s"isNewTable = $isNewTable") {
+      val schema = new StructType().add(
+        "col",
+        IntegerType.INTEGER,
+        new FieldMetadata.Builder().putString("CURRENT_DEFAULT", "CURRENT_TIMESTAMP()").build())
+      val metadata = getCompatEnabledMetadata(schema)
+      val protocol = getCompatEnabledProtocol(ALLOW_COLUMN_DEFAULTS_W_FEATURE)
+
+      val ex = intercept[KernelException] {
+        validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+      }
+      assert(ex.getMessage.contains("icebergCompatV3 requires the default value to be literal " +
+        "with correct data types for a column. 'integer: CURRENT_TIMESTAMP()' is invalid."))
     }
   }
 }

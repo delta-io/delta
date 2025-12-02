@@ -24,7 +24,7 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeature
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, TYPE_WIDENING_RW_FEATURE, TYPE_WIDENING_RW_PREVIEW_FEATURE}
 import io.delta.kernel.internal.util.ColumnMappingSuiteBase
-import io.delta.kernel.test.VectorTestUtils
+import io.delta.kernel.test.{TestFixtures, VectorTestUtils}
 import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -34,8 +34,11 @@ import org.scalatest.funsuite.AnyFunSuite
  * This trait provides common functionality and test cases
  * that can be used by both writer and compat test suites.
  */
-trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
-    with VectorTestUtils with ColumnMappingSuiteBase {
+trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase
+    extends AnyFunSuite
+    with VectorTestUtils
+    with ColumnMappingSuiteBase
+    with TestFixtures {
 
   /** The version of Iceberg compatibility being tested (e.g., "V2" or "V3") */
   def icebergCompatVersion: String
@@ -89,7 +92,7 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
       }
   }
 
-  IcebergCompatMetadataValidatorAndUpdaterSuiteBase.SIMPLE_TYPES.diff(simpleTypesToSkip).foreach {
+  PRIMITIVE_TYPES.diff(simpleTypesToSkip).foreach {
     dataType: DataType =>
       Seq(true, false).foreach { isNewTable =>
         test(s"allowed partition column types: $dataType, new table = $isNewTable") {
@@ -218,28 +221,4 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
           "Incompatible version enabled: delta.enableIcebergCompatV1"))
     }
   }
-}
-
-object IcebergCompatMetadataValidatorAndUpdaterSuiteBase {
-  // Allowed simple types as data or partition columns
-  val SIMPLE_TYPES: Set[DataType] = Set(
-    BooleanType.BOOLEAN,
-    ByteType.BYTE,
-    ShortType.SHORT,
-    IntegerType.INTEGER,
-    LongType.LONG,
-    FloatType.FLOAT,
-    DoubleType.DOUBLE,
-    DateType.DATE,
-    TimestampType.TIMESTAMP,
-    TimestampNTZType.TIMESTAMP_NTZ,
-    StringType.STRING,
-    BinaryType.BINARY,
-    new DecimalType(10, 5))
-
-  // Allowed complex types as data columns
-  val COMPLEX_TYPES: Set[DataType] = Set(
-    new ArrayType(BooleanType.BOOLEAN, true),
-    new MapType(IntegerType.INTEGER, LongType.LONG, true),
-    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
 }

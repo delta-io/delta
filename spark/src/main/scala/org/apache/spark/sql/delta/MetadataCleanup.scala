@@ -33,6 +33,7 @@ import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.{col, isnull, lit, not, when}
 
 private[delta] object TruncationGranularity extends Enumeration {
@@ -62,25 +63,29 @@ trait MetadataCleanup extends DeltaLogging {
     DeltaConfigs.getMilliSeconds(interval)
   }
 
-  override def doLogCleanup(snapshotToCleanup: Snapshot): Unit = {
-    if (enableExpiredLogCleanup(snapshot.metadata)) {
-      cleanUpExpiredLogs(snapshotToCleanup)
+  override def doLogCleanup(
+      snapshotToCleanup: Snapshot,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    if (enableExpiredLogCleanup(unsafeVolatileSnapshot.metadata)) {
+      cleanUpExpiredLogs(snapshotToCleanup, catalogTableOpt)
     }
   }
 
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
   private[delta] def cleanUpExpiredLogs(
       snapshotToCleanup: Snapshot,
+      catalogTableOpt: Option[CatalogTable] = None,
       deltaRetentionMillisOpt: Option[Long] = None,
       cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
     recordDeltaOperation(this, "delta.log.cleanup") {
       val retentionMillis =
-        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(snapshot.metadata))
+        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(unsafeVolatileSnapshot.metadata))
       val fileCutOffTime =
         truncateDate(clock.getTimeMillis() - retentionMillis, cutoffTruncationGranularity).getTime
       val formattedDate = fileCutOffTime.toGMTString
-      logInfo(log"Starting the deletion of log files older than " +
-        log"${MDC(DeltaLogKeys.DATE, formattedDate)}")
+      logInfo(
+        log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Starting the deletion " +
+        log"of log files older than ${MDC(DeltaLogKeys.DATE, formattedDate)}")
 
       if (!metadataCleanupAllowed(snapshotToCleanup, fileCutOffTime.getTime)) {
         logInfo("Metadata cleanup was skipped due to not satisfying the requirements " +
@@ -142,7 +147,8 @@ trait MetadataCleanup extends DeltaLogging {
           sidecarDeletionMetrics)
         logInfo(log"Sidecar deletion metrics: ${MDC(DeltaLogKeys.METRICS, sidecarDeletionMetrics)}")
       }
-      logInfo(log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, numDeleted.toLong)} log files and " +
+      logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Deleted " +
+        log"${MDC(DeltaLogKeys.NUM_FILES, numDeleted.toLong)} log files and " +
         log"${MDC(DeltaLogKeys.NUM_FILES2, numDeletedUnbackfilled.toLong)} unbackfilled commit " +
         log"files older than ${MDC(DeltaLogKeys.DATE, formattedDate)}")
     }
@@ -436,10 +442,13 @@ trait MetadataCleanup extends DeltaLogging {
       .collect { case file if file.getModificationTime < retentionTimestamp => file.getPath }
       .filterNot(path => activeSidecarFiles.contains(path.getName))
     val sidecarDeletionStartTimeMs = System.currentTimeMillis()
-    logInfo(log"Starting the deletion of unreferenced sidecar files")
+    logInfo(
+      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Starting the deletion of " +
+      log"unreferenced sidecar files")
     val count = deleteMultiple(fs, sidecarFilesToDelete)
 
-    logInfo(log"Deleted ${MDC(DeltaLogKeys.COUNT, count)} sidecar files")
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Deleted " +
+      log"${MDC(DeltaLogKeys.COUNT, count)} sidecar files")
     metrics.numSidecarFilesDeleted = count
     val endTimeMs = System.currentTimeMillis()
     metrics.identifyAndDeleteSidecarsTimeTakenMs =
@@ -507,15 +516,23 @@ trait MetadataCleanup extends DeltaLogging {
       getLatestCompleteCheckpointFromList(instances).isDefined
     }
 
+    // Iterate logs files in ascending order to find the earliest reliable checkpoint, for the same
+    // version, checkpoint is always processed before commit so that we can identify the candidate
+    // checkpoint first and then verify commits since the candidate's version (inclusive)
     store.listFrom(listingPrefix(logPath, 0L), hadoopConf)
       .map(_.getPath)
       .foreach {
-        case CheckpointFile(f, checkpointVersion) if earliestCheckpointVersionOpt.isEmpty =>
-          if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
-            // If it's a different checkpoint, clear the existing one.
-            currentCheckpointFiles.clear()
-          }
-          currentCheckpointFiles += f
+        case CheckpointFile(f, checkpointVersion)
+          // Invalidate the candidate if we observe missing commits before the current checkpoint.
+          // the incoming commit will invalidate the candidate as well, but then we miss the current
+          // checkpoint, which is also a valid candidate.
+          if earliestCheckpointVersionOpt.isEmpty || checkpointVersion > prevCommitVersion + 1 =>
+            earliestCheckpointVersionOpt = None
+            if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
+              // If it's a different checkpoint, clear the existing one.
+              currentCheckpointFiles.clear()
+            }
+            currentCheckpointFiles += f
         case DeltaFile(_, deltaVersion) =>
           if (earliestCheckpointVersionOpt.isEmpty && isCurrentCheckpointComplete) {
             // We have found a complete checkpoint, but we should not stop here. If a future

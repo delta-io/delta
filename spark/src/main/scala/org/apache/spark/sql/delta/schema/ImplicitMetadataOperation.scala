@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.util.PartitionUtils
 
 import org.apache.spark.internal.MDC
@@ -222,7 +223,8 @@ object ImplicitMetadataOperation {
 
       val typeWideningMode = if (TypeWidening.isEnabled(txn.protocol, txn.metadata)) {
         TypeWideningMode.TypeEvolution(
-          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(txn.metadata))
+          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(txn.metadata),
+          allowAutomaticWidening = AllowAutomaticWideningMode.fromConf(spark.sessionState.conf))
       } else {
         TypeWideningMode.NoTypeWidening
       }

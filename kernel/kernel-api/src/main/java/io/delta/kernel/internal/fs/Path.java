@@ -29,7 +29,6 @@ import java.util.regex.Pattern;
  * <p>Taken from https://github.com/apache/hadoop/blob/branch-3.3
  * .4/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Path.java
  */
-// TODO remove this class
 public class Path implements Comparable<Path>, Serializable, ObjectInputValidation {
 
   /** The directory separator, a slash. */
@@ -218,8 +217,15 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
    * @return the normalized path string
    */
   private static String normalizePath(String scheme, String path) {
-    // Remove duplicated slashes.
-    path = SLASHES.matcher(path).replaceAll("/");
+    // In most cases the path is expected to not have repeated slashes.
+    // Validating this first before applying the regex saves ~40-50% of
+    // Path construction time, with a potentially small overhead for
+    // cases when paths need normalization.
+    if (containsRepeatedSlash(path)) {
+      // Remove duplicated slashes to ensure all equivalent Path's have
+      // the same representation.
+      path = SLASHES.matcher(path).replaceAll("/");
+    }
 
     // Remove backslashes if this looks like a Windows path. Avoid
     // the substitution if it looks like a non-local URI.
@@ -238,6 +244,14 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
     }
 
     return path;
+  }
+
+  private static boolean containsRepeatedSlash(String path) {
+    // Not inlining this method back into normalizePath() appears
+    // to be slightly faster (there is a high probability this is noise
+    // but keep out-of-line for now until there is definitive evidence
+    // one way or another).
+    return path.contains("//");
   }
 
   private static boolean hasWindowsDrive(String path) {

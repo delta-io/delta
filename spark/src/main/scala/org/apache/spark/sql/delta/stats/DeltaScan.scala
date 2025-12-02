@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.stats
 
 // scalastyle:off import.ordering.noEmptyLine
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
@@ -94,6 +96,20 @@ case class DeltaScan(
     val dataSkippingType: DeltaDataSkippingType) {
   assert(version == scannedSnapshot.version)
 
+  /**
+   * For unresolved expressions, converting the expression to SQL may throw an exception (if the
+   * conversion to SQL requires the child types to be resolved). This method safely handles these
+   * cases by returning a placeholder string for unresolved expressions.
+   */
+  def safeExprToSQL(expr: Expression): String = {
+    try {
+      expr.sql
+    } catch {
+      case NonFatal(_) => s"UNRESOLVED_EXPRESSION_(${expr.getClass.getSimpleName})"
+    }
+  }
+
+  lazy val rewrittenPartitionLikeFilterSQL = rewrittenPartitionLikeDataFilters.map(safeExprToSQL)
   lazy val filtersUsedForSkipping: ExpressionSet = partitionFilters ++ dataFilters
   lazy val allFilters: ExpressionSet = filtersUsedForSkipping ++ unusedFilters
 }

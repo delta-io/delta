@@ -403,11 +403,12 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Replace: fail if table does not exist") {
-    val exc = intercept[CannotReplaceMissingTableException] {
+    val exc = intercept[AnalysisException] {
       spark.table("source").writeTo("table_name").using("delta").replace()
     }
 
-    assert(exc.getMessage.contains("table_name"))
+    checkError(exc, "TABLE_OR_VIEW_NOT_FOUND", Some("42P01"),
+      Map("relationName" -> "`default`.`table_name`"))
   }
 
   test("CreateOrReplace: table does not exist") {

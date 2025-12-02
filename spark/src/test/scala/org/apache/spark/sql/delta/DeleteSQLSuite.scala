@@ -17,29 +17,32 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.Row
 
-class DeleteSQLSuite extends DeleteSuiteBase
+trait DeleteSQLMixin extends DeleteBaseMixin
+  with DeltaDMLTestUtils
   with DeltaSQLCommandTest {
-
-  import testImplicits._
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
     val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
     sql(s"DELETE FROM $target $whereClause")
   }
+}
+
+trait DeleteSQLTests extends DeleteSQLMixin {
+  import testImplicits._
 
   // For EXPLAIN, which is not supported in OSS
   test("explain") {
     append(Seq((2, 2)).toDF("key", "value"))
-    val df = sql(s"EXPLAIN DELETE FROM delta.`$tempPath` WHERE key = 2")
+    val df = sql(s"EXPLAIN DELETE FROM $tableSQLIdentifier WHERE key = 2")
     val outputs = df.collect().map(_.mkString).mkString
     assert(outputs.contains("Delta"))
     assert(!outputs.contains("index") && !outputs.contains("ActionLog"))
     // no change should be made by explain
-    checkAnswer(readDeltaTable(tempPath), Row(2, 2))
+    checkAnswer(readDeltaTableByIdentifier(), Row(2, 2))
   }
 
   test("delete from a temp view") {
@@ -85,13 +88,11 @@ class DeleteSQLSuite extends DeleteSuiteBase
   }
 }
 
-
-class DeleteSQLNameColumnMappingSuite extends DeleteSQLSuite
-  with DeltaColumnMappingEnableNameMode {
-
+trait DeleteSQLNameColumnMappingMixin extends DeleteSQLMixin
+  with DeltaColumnMappingSelectedTestMixin {
 
   protected override def runOnlyTests: Seq[String] = Seq(true, false).map { isPartitioned =>
-    s"basic case - delete from a Delta table by name - Partition=$isPartitioned"
+    s"basic case - delete from a Delta table - Partition=$isPartitioned"
   } ++ Seq(true, false).flatMap { isPartitioned =>
     Seq(
       s"where key columns - Partition=$isPartitioned",
@@ -100,13 +101,13 @@ class DeleteSQLNameColumnMappingSuite extends DeleteSQLSuite
 
 }
 
-class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite
+trait DeleteSQLWithDeletionVectorsMixin extends DeleteSQLMixin
   with DeltaExcludedTestMixin
-  with DeletionVectorsTestUtils {
+  with DeletionVectorsTestUtils
+  with DeltaDMLTestUtilsPathBased {
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, delete = true)
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
   override def excluded: Seq[String] = super.excluded ++
@@ -127,13 +128,5 @@ class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite
     testComplexTempViews("superset cols")(
       text = "SELECT key, value, 1 FROM tab",
       expectResult = Row(0, 3, 1) :: Nil)
-  }
-}
-
-class DeleteSQLWithDeletionVectorsAndPredicatePushdownSuite
-    extends DeleteSQLWithDeletionVectorsSuite {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 }

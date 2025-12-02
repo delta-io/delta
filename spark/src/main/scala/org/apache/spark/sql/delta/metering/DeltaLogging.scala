@@ -75,7 +75,7 @@ trait DeltaLogging
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty,
       data: AnyRef = null,
-      path: Option[Path] = None): Unit = {
+      path: Option[Path] = None): Unit = recordFrameProfile("Delta", "recordDeltaEvent") {
     try {
       val json = if (data != null) JsonUtils.toJson(data) else ""
       val tableTags = if (deltaLog != null) {

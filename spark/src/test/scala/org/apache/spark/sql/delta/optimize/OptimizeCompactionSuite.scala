@@ -187,7 +187,8 @@ trait OptimizeCompactionSuiteBase extends QueryTest
         spark.range(start = 1, end = 2, step = 1, numPartitions = 1)
             .toDF("id").withColumn(colName = "extra", lit(""))
           .write.format("delta").mode("append").save(path) // v4
-        val smallFiles = addedFiles(deltaLog.getChanges(startVersion = 4).next()._2)
+        val smallFiles = addedFiles(
+          deltaLog.getChanges(startVersion = 4, catalogTableOpt = None).next()._2)
         assert(smallFiles.size == 1)
 
         // Save the data before optimize for comparing it later with optimize
@@ -199,7 +200,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
         withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> targetSmallSize.toString) {
           executeOptimizePath(path) // v5
         }
-        val changes = deltaLog.getChanges(startVersion = 5).next()._2
+        val changes = deltaLog.getChanges(startVersion = 5, catalogTableOpt = None).next()._2
 
         // We expect the two files containing more than the threshold rows to be compacted.
         var expectedRemoveFiles = Set(file0.path, file1.path)

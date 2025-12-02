@@ -83,7 +83,7 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                 partitionFilters = preparedScan.partitionFilters.map(_.sql).toSeq,
                 partitionLikeDataFilters = preparedScan.partitionLikeDataFilters.map(_.sql).toSeq,
                 rewrittenPartitionLikeDataFilters =
-                  preparedScan.rewrittenPartitionLikeDataFilters.map(_.sql).toSeq,
+                  preparedScan.rewrittenPartitionLikeFilterSQL.toSeq,
                 dataFilters = preparedScan.dataFilters.map(_.sql).toSeq,
                 unusedFilters = preparedScan.unusedFilters.map(_.sql).toSeq,
                 size = Map(

@@ -25,7 +25,6 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
@@ -37,7 +36,6 @@ import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
-import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
@@ -358,6 +356,39 @@ trait DeltaErrorsBase
     )
   }
 
+  def checkConstraintReferToWrongColumns(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
+      messageParameters = Array(colName)
+    )
+  }
+
+  def checkConstraintUDF(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UDF_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintNonDeterministicExpression(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintAggregateExpression(expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AGGREGATE_IN_CHECK_CONSTRAINT",
+      messageParameters = Array(expr.sql))
+  }
+
+  def checkConstraintUnsupportedExpression(expr: Expression): Throwable = {
+    val expressionSql = expr.sql
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT",
+      messageParameters = Array(expressionSql, expressionSql)
+    )
+  }
+
   def deltaRelationPathMismatch(
       relationPath: Seq[String],
       targetType: String,
@@ -668,6 +699,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def cloneWithRowTrackingWithoutStats(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CLONE_WITH_ROW_TRACKING_WITHOUT_STATS",
+      messageParameters = Array.empty
+    )
+  }
+
   def incorrectArrayAccess(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS",
@@ -933,7 +971,7 @@ trait DeltaErrorsBase
     )
   }
 
-  def logFileNotFoundException(
+  def truncatedTransactionLogException(
       path: Path,
       version: Long,
       metadata: Metadata): Throwable = {
@@ -948,6 +986,19 @@ trait DeltaErrorsBase
         logRetention.toString,
         DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key,
         checkpointRetention.toString)
+    )
+  }
+
+  def logFileNotFoundException(
+      path: Path,
+      version: Option[Long],
+      checkpointVersion: Long): Throwable = {
+    new DeltaFileNotFoundException(
+      errorClass = "DELTA_LOG_FILE_NOT_FOUND",
+      messageParameters = Array(
+        version.map(_.toString).getOrElse("LATEST"),
+        checkpointVersion.toString,
+        path.toString)
     )
   }
 
@@ -1164,6 +1215,13 @@ trait DeltaErrorsBase
   def specifySchemaAtReadTimeException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_SCHEMA_DURING_READ",
+      messageParameters = Array.empty
+    )
+  }
+
+  def readSourceSchemaConflictException: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_READ_SOURCE_SCHEMA_CONFLICT",
       messageParameters = Array.empty
     )
   }
@@ -1494,10 +1552,10 @@ trait DeltaErrorsBase
   case class TimestampEarlierThanCommitRetentionException(
       userTimestamp: java.sql.Timestamp,
       commitTs: java.sql.Timestamp,
-      timestampString: String) extends AnalysisException(
-    s"""The provided timestamp ($userTimestamp) is before the earliest version available to this
-         |table ($commitTs). Please use a timestamp after $timestampString.
-         """.stripMargin)
+      timestampString: String) extends DeltaAnalysisException(
+    errorClass = "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION",
+    messageParameters = Array(userTimestamp.toString, commitTs.toString, timestampString)
+  )
 
   def timestampGreaterThanLatestCommit(
       userTs: java.sql.Timestamp,
@@ -1566,6 +1624,14 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS",
       messageParameters = Array.empty
+    )
+  }
+
+  def timeTravelBeyondDeletedFileRetentionDurationException(
+    deletedFileRetentionDurationHours: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_BEYOND_DELETED_FILE_RETENTION_DURATION",
+      messageParameters = Array(deletedFileRetentionDurationHours)
     )
   }
 
@@ -1853,10 +1919,10 @@ trait DeltaErrorsBase
     val catalogImplConfig = SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key
     new DeltaAnalysisException(
       errorClass = "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG",
-      messageParameters = Array(classOf[DeltaSparkSessionExtension].getName,
-        catalogImplConfig, classOf[DeltaCatalog].getName,
-        classOf[DeltaSparkSessionExtension].getName,
-        catalogImplConfig, classOf[DeltaCatalog].getName),
+      messageParameters = Array("io.delta.sql.DeltaSparkSessionExtension",
+        catalogImplConfig, "org.apache.spark.sql.delta.catalog.DeltaCatalog",
+        "io.delta.sql.DeltaSparkSessionExtension",
+        catalogImplConfig, "org.apache.spark.sql.delta.catalog.DeltaCatalog"),
       cause = originalException)
   }
 
@@ -2729,6 +2795,19 @@ trait DeltaErrorsBase
         rowTrackingDefaultPropertyKey))
   }
 
+  def rowTrackingBackfillRunningConcurrentlyWithUnbackfill(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_BACKFILL_RUNNING_CONCURRENTLY_WITH_UNBACKFILL")
+  }
+
+  def rowTrackingIllegalPropertyCombination(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION",
+      messageParameters = Array(
+        DeltaConfigs.ROW_TRACKING_ENABLED.key,
+        DeltaConfigs.ROW_TRACKING_SUSPENDED.key))
+  }
+
   /** This is a method only used for testing Py4J exception handling. */
   def throwDeltaIllegalArgumentException(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
@@ -3473,6 +3552,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatUnsupportedFieldException(
+      version: Int, field: StructField, schema: StructType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(version.toString, version.toString,
+        s"${field.dataType.typeName}:${field.name}", schema.treeString)
+    )
+  }
+
   def icebergCompatUnsupportedPartitionDataTypeException(
       version: Int, dataType: DataType, schema: StructType): Throwable = {
     new DeltaUnsupportedOperationException(
@@ -3763,6 +3851,19 @@ trait DeltaErrorsBase
       messageParameters = Array(operation, id.toString)
     )
   }
+
+  def catalogManagedTablePathBasedAccessNotAllowed(path: Path): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED",
+      messageParameters = Array(path.toString)
+    )
+  }
+
+  def cannotResolveSourceColumnException(columnPath: Seq[String]): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
+      messageParameters = Array(s"${UnresolvedAttribute(columnPath).name}"))
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -3799,10 +3900,10 @@ class ConcurrentWriteException(message: String)
 case class VersionNotFoundException(
     userVersion: Long,
     earliest: Long,
-    latest: Long) extends AnalysisException(
-      s"Cannot time travel Delta table to version $userVersion. " +
-      s"Available versions: [$earliest, $latest]."
-    )
+    latest: Long) extends DeltaAnalysisException(
+  errorClass = "DELTA_VERSION_NOT_FOUND",
+  messageParameters = Array(userVersion.toString, earliest.toString, latest.toString)
+)
 
 /**
  * This class is kept for backward compatibility.

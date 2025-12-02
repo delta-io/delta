@@ -25,17 +25,25 @@ import io.delta.kernel.utils.FileStatus;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * Log compaction file containing compacted delta entries across a version range.
+ *
+ * <p>These files compact multiple delta files into a single JSON file to reduce the number of files
+ * readers need to process. Example: {@code
+ * 00000000000000000001.00000000000000000009.compacted.json} represents compacted entries from
+ * version 1 to 9.
+ */
 // TODO: Add the comparable logic from CheckpointInstance.
-public class ParsedLogCompactionData extends ParsedLogData {
+public final class ParsedLogCompactionData extends ParsedLogData {
   public static ParsedLogCompactionData forFileStatus(FileStatus fileStatus) {
+    checkArgument(
+        FileNames.isLogCompactionFile(fileStatus.getPath()),
+        "Expected a log compaction file but got %s",
+        fileStatus.getPath());
+
     final Tuple2<Long, Long> startEnd = FileNames.logCompactionVersions(fileStatus.getPath());
     return new ParsedLogCompactionData(
         startEnd._1, startEnd._2, Optional.of(fileStatus), Optional.empty());
-  }
-
-  public static ParsedLogCompactionData forInlineData(
-      int start, int end, ColumnarBatch inlineData) {
-    return new ParsedLogCompactionData(start, end, Optional.empty(), Optional.of(inlineData));
   }
 
   public final long startVersion;
@@ -46,12 +54,17 @@ public class ParsedLogCompactionData extends ParsedLogData {
       long endVersion,
       Optional<FileStatus> fileStatusOpt,
       Optional<ColumnarBatch> inlineDataOpt) {
-    super(endVersion, ParsedLogType.LOG_COMPACTION, fileStatusOpt, inlineDataOpt);
+    super(endVersion, fileStatusOpt, inlineDataOpt);
     checkArgument(
         startVersion >= 0 && endVersion >= 0, "startVersion and endVersion must be non-negative");
     checkArgument(startVersion < endVersion, "startVersion must be less than endVersion");
     this.startVersion = startVersion;
     this.endVersion = endVersion;
+  }
+
+  @Override
+  public Class<? extends ParsedLogData> getGroupByCategoryClass() {
+    return ParsedLogCompactionData.class;
   }
 
   @Override

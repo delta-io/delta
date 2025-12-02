@@ -24,8 +24,9 @@ import java.util.stream.Collectors
 
 import scala.collection.JavaConverters._
 
-import org.apache.iceberg.{DataFile, FileContent, FileFormat, ManifestContent, ManifestFile, PartitionData, StructLike}
-import org.apache.iceberg.ManifestFile.PartitionFieldSummary
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import shadedForDelta.org.apache.iceberg.{DataFile, DeleteFile, FileContent, FileFormat, ManifestContent, ManifestFile, PartitionData, StructLike}
+import shadedForDelta.org.apache.iceberg.ManifestFile.PartitionFieldSummary
 
 /**
  * The classes in this file are wrappers of Iceberg classes
@@ -37,6 +38,7 @@ case class ManifestFileWrapper(
     path: String,
     length: Long,
     partitionSpecId: Int,
+    content: ManifestContent,
     sequenceNumber: Long,
     minSequenceNumber: Long,
     snapshotId: JLong,
@@ -54,6 +56,7 @@ case class ManifestFileWrapper(
       manifest.path,
       manifest.length,
       manifest.partitionSpecId,
+      manifest.content(),
       manifest.sequenceNumber,
       manifest.minSequenceNumber,
       manifest.snapshotId,
@@ -65,7 +68,6 @@ case class ManifestFileWrapper(
       manifest.deletedRowsCount,
       Option(manifest.partitions).map(_.asScala.map(new PartitionFieldSummaryWrapper(_)).toSeq)
     )
-  override def content: ManifestContent = ManifestContent.DATA
   override def partitions: JList[PartitionFieldSummary] =
     _partitions.map(_.asJava.asInstanceOf[JList[PartitionFieldSummary]]).orNull
   override def copy: ManifestFile = this.copy
