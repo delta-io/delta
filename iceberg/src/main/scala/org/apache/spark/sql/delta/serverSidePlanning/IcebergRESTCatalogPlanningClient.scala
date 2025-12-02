@@ -165,6 +165,14 @@ class IcebergRESTCatalogPlanningClient(
       }
     }
 
+    // Convert Spark StructType to Iceberg Schema and add to request if projection is present.
+    // This enables the server to optimize file listing for large tables with many columns.
+    projection.foreach { sparkSchema =>
+      SparkToIcebergSchemaConverter.convert(sparkSchema).foreach { icebergSchema =>
+        builder.withProjectedSchema(icebergSchema)
+      }
+    }
+
     val request = builder.build()
 
     val requestJson = PlanTableScanRequestParser.toJson(request)
