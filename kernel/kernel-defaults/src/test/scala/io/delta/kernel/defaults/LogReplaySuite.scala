@@ -337,20 +337,10 @@ trait AbstractLogReplaySuite extends AnyFunSuite {
     }
   }
 
-  /**
-   * Test for GitHub issue #4807: Kernel assumes sidecar files have a specific filename pattern.
-   *
-   * This test creates a table with v2 checkpoints using Spark (JSON format), then renames the
-   * sidecar files to simulate sidecars without version prefixes (like "part-00000-*.parquet")
-   * and updates the JSON checkpoint manifest to reference the new filenames.
-   * Without the fix, reading this table would throw NumberFormatException.
-   */
   test("read v2 checkpoint with sidecars lacking version prefix") {
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
 
-      // Create a Delta table with v2 checkpoint policy enabled
-      // (JSON format for easier manifest manipulation)
       withSQLConf(
         DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> "json",
         "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
@@ -363,7 +353,6 @@ trait AbstractLogReplaySuite extends AnyFunSuite {
              |)
              |""".stripMargin)
 
-        // Insert data to trigger checkpoints (checkpoint interval is 2)
         spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'a'), (2, 'b')")
         spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (3, 'c'), (4, 'd')")
       }
@@ -409,13 +398,10 @@ trait AbstractLogReplaySuite extends AnyFunSuite {
         if (crcFile.exists()) crcFile.delete()
       }
 
-      // Read the table using Kernel - this should NOT throw NumberFormatException
-      // Without the fix, this would fail because Kernel tried to parse version from filename
       val snapshot = latestSnapshot(tablePath)
       val scan = snapshot.getScanBuilder().build()
       val rows = collectScanFileRows(scan)
 
-      // Verify we can read scan files (data content verification skipped due to manipulation)
       assert(rows != null, "Should be able to read scan files without NumberFormatException")
     }
   }
