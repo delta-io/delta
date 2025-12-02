@@ -810,6 +810,23 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
   )
 
   testSkipping(
+    "nulls - IsNull pushdown on complex expressions",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(
+      "(a > 0 OR a == -1 OR a == -2 OR b == -1 OR b == -2 OR b > 10 OR b == 7) IS NULL"
+    ),
+    misses = Seq(
+      "(a > 0 OR b > 1) IS NULL"
+    ),
+    sqlConfs = Seq((DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH.key -> "1"))
+  )
+
+  testSkipping(
     "nulls - non-nulls only in file",
     """
       {"a": 1 }

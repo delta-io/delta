@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, IdMapping, SerializableFileStatus, Snapshot}
 import org.apache.spark.sql.delta.DeltaErrors.{cloneFromIcebergSourceWithoutSpecs, cloneFromIcebergSourceWithPartitionEvolution}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Snapshot => IcebergSnapshot, Table, TableProperties}
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
@@ -141,9 +142,13 @@ class IcebergTable(
     } else {
       None
     }
+    val timestampNtz = if (SchemaUtils.checkForTimestampNTZColumnsRecursively(convertedSchema)) {
+      Some("delta.feature.timestampNtz" -> "supported")
+    } else None
     icebergTable.properties().asScala.toMap + (DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id") +
     (DeltaConfigs.LOG_RETENTION.key -> s"$maxSnapshotAgeMs millisecond") ++
       castTimeTypeConf ++
+      timestampNtz ++
       bucketPartitionToNonPartition
   }
 

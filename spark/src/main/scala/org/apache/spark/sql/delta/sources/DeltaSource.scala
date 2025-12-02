@@ -76,7 +76,7 @@ private[delta] case class IndexedFile(
     add: AddFile,
     remove: RemoveFile = null,
     cdc: AddCDCFile = null,
-    shouldSkip: Boolean = false) {
+    shouldSkip: Boolean = false) extends AdmittableFile {
 
   require(Option(add).size + Option(remove).size + Option(cdc).size <= 1,
     "IndexedFile must have at most one of add, remove, or cdc")
@@ -91,11 +91,11 @@ private[delta] case class IndexedFile(
     }
   }
 
-  def hasFileAction: Boolean = {
+  override def hasFileAction(): Boolean = {
     getFileAction != null
   }
 
-  def getFileSize: Long = {
+  override def getFileSize(): Long = {
     if (add != null) {
       add.size
     } else if (remove != null) {
@@ -294,7 +294,8 @@ trait DeltaSourceBase extends Source
       fromVersion: Long,
       fromIndex: Long,
       isInitialSnapshot: Boolean,
-      limits: Option[AdmissionLimits] = Some(AdmissionLimits())): ClosableIterator[IndexedFile] = {
+      limits: Option[DeltaSource.AdmissionLimits] = Some(DeltaSource.AdmissionLimits(options)))
+    : ClosableIterator[IndexedFile] = {
     val iter = if (options.readChangeFeed) {
       // In this CDC use case, we need to consider RemoveFile and AddCDCFiles when getting the
       // offset.
@@ -418,7 +419,7 @@ trait DeltaSourceBase extends Source
   protected def getStartingOffsetFromSpecificDeltaVersion(
       fromVersion: Long,
       isInitialSnapshot: Boolean,
-      limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
+      limits: Option[DeltaSource.AdmissionLimits]): Option[DeltaSourceOffset] = {
     // Initialize schema tracking log if possible, no-op if already initialized
     // This is one of the two places can initialize schema tracking.
     // This case specifically handles when we have a fresh stream.
@@ -440,7 +441,12 @@ trait DeltaSourceBase extends Source
       // Block latestOffset() from generating an invalid offset by proactively verifying
       // incompatible schema changes under column mapping. See more details in the method doc.
       checkReadIncompatibleSchemaChangeOnStreamStartOnce(fromVersion)
-      buildOffsetFromIndexedFile(lastFileChange.get, fromVersion, isInitialSnapshot)
+      Some(DeltaSource.buildOffsetFromIndexedFile(
+        tableId,
+        lastFileChange.get.version,
+        lastFileChange.get.index,
+        fromVersion,
+        isInitialSnapshot))
     }
   }
 
@@ -449,7 +455,7 @@ trait DeltaSourceBase extends Source
    */
   protected def getNextOffsetFromPreviousOffset(
       previousOffset: DeltaSourceOffset,
-      limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
+      limits: Option[DeltaSource.AdmissionLimits]): Option[DeltaSourceOffset] = {
     if (trackingMetadataChange) {
       getNextOffsetFromPreviousOffsetIfPendingSchemaChange(previousOffset) match {
         case None =>
@@ -474,46 +480,13 @@ trait DeltaSourceBase extends Source
       // verifying incompatible schema changes under column mapping. See more details in the
       // method scala doc.
       checkReadIncompatibleSchemaChangeOnStreamStartOnce(previousOffset.reservoirVersion)
-      buildOffsetFromIndexedFile(lastFileChange.get, previousOffset.reservoirVersion,
-        previousOffset.isInitialSnapshot)
-    }
-  }
-
-  /**
-   * Build the latest offset based on the last indexedFile. The function also checks if latest
-   * version is valid by comparing with previous version.
-   * @param indexedFile The last indexed file used to build offset from.
-   * @param version Previous offset reservoir version.
-   * @param isInitialSnapshot Whether previous offset is starting version or not.
-   */
-  private def buildOffsetFromIndexedFile(
-      indexedFile: IndexedFile,
-      version: Long,
-      isInitialSnapshot: Boolean): Option[DeltaSourceOffset] = {
-    val (v, i) = (indexedFile.version, indexedFile.index)
-    assert(v >= version,
-      s"buildOffsetFromIndexedFile returns an invalid version: $v (expected: >= $version), " +
-        s"tableId: $tableId")
-
-    // If the last file in previous batch is the end index of that version, automatically bump
-    // to next version to skip accessing that version file altogether. The END_INDEX should never
-    // be returned as an offset.
-    val offset = if (indexedFile.index == DeltaSourceOffset.END_INDEX) {
-      // isInitialSnapshot must be false here as we have bumped the version.
-      Some(DeltaSourceOffset(
+      Some(DeltaSource.buildOffsetFromIndexedFile(
         tableId,
-        v + 1,
-        index = DeltaSourceOffset.BASE_INDEX,
-        isInitialSnapshot = false))
-    } else {
-      // isInitialSnapshot will be true only if previous isInitialSnapshot is true and the next file
-      // is still at the same version (i.e v == version).
-      Some(DeltaSourceOffset(
-        tableId, v, i,
-        isInitialSnapshot = v == version && isInitialSnapshot
-      ))
+        lastFileChange.get.version,
+        lastFileChange.get.index,
+        previousOffset.reservoirVersion,
+        previousOffset.isInitialSnapshot))
     }
-    offset
   }
 
   /**
@@ -690,14 +663,11 @@ trait DeltaSourceBase extends Source
       // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
       // will cause the stream to fail with a retryable exception, and the stream will restart using
       // the new schema.
-      val typeWideningMode =
-        if (typeWideningEnabled && !enableSchemaTrackingForTypeWidening) {
-          TypeWideningMode.AllTypeWidening
-        } else {
-         TypeWideningMode.NoTypeWidening
-        }
+      val allowWideningTypeChanges = typeWideningEnabled && !enableSchemaTrackingForTypeWidening
+
       if (!SchemaUtils.isReadCompatible(
-          schemaChange, schema,
+          existingSchema = schemaChange,
+          readSchema = schema,
           forbidTightenNullability = shouldForbidTightenNullability,
           // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
           // column mapping schema changes, we can allow the standard check to allow missing columns
@@ -710,7 +680,13 @@ trait DeltaSourceBase extends Source
             isStreamingFromColumnMappingTable &&
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
               backfilling,
-          typeWideningMode = typeWideningMode,
+          // When backfilling after a type change, allow processing the data using the new, wider
+          // type.
+          typeWideningMode = if (allowWideningTypeChanges && backfilling) {
+              TypeWideningMode.AllTypeWidening
+            } else {
+              TypeWideningMode.NoTypeWidening
+            },
           // Partition column change will be ignored if user enable the unsafe flag
           newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
             else newMetadata.partitionColumns,
@@ -726,10 +702,15 @@ trait DeltaSourceBase extends Source
         // and if it works (including that `schemaChange` should not tighten the nullability
         // constraint from `schema`), it is a retryable exception.
         val retryable = !backfilling && SchemaUtils.isReadCompatible(
-          schema,
-          schemaChange,
+          existingSchema = schema,
+          readSchema = schemaChange,
           forbidTightenNullability = shouldForbidTightenNullability,
-          typeWideningMode = typeWideningMode
+          // Check for widening type changes that would succeed on retry when we backfill batches.
+          typeWideningMode = if (allowWideningTypeChanges) {
+              TypeWideningMode.AllTypeWidening
+            } else {
+              TypeWideningMode.NoTypeWidening
+            }
         )
 
         recordDeltaEvent(
@@ -969,7 +950,8 @@ case class DeltaSource(
     }
   }
 
-  private def getStartingOffset(limits: Option[AdmissionLimits]): Option[DeltaSourceOffset] = {
+  private def getStartingOffset(
+      limits: Option[DeltaSource.AdmissionLimits]): Option[DeltaSourceOffset] = {
 
     val (version, isInitialSnapshot) = getStartingVersion match {
       case Some(v) => (v, false)
@@ -983,7 +965,7 @@ case class DeltaSource(
   }
 
   override def getDefaultReadLimit: ReadLimit = {
-    AdmissionLimits().toReadLimit
+    DeltaSource.AdmissionLimits.toReadLimit(options)
   }
 
   def toDeltaSourceOffset(offset: streaming.Offset): DeltaSourceOffset = {
@@ -1004,7 +986,7 @@ case class DeltaSource(
 
   override protected def latestOffsetInternal(
     startOffset: Option[DeltaSourceOffset], limit: ReadLimit): Option[DeltaSourceOffset] = {
-    val limits = AdmissionLimits(limit)
+    val limits = DeltaSource.AdmissionLimits(options, limit)
 
     val endOffset = startOffset.map(getNextOffsetFromPreviousOffset(_, limits))
       .getOrElse(getStartingOffset(limits))
@@ -1295,108 +1277,6 @@ case class DeltaSource(
 
   override def toString(): String = s"DeltaSource[${deltaLog.dataPath}]"
 
-  trait DeltaSourceAdmissionBase { self: AdmissionLimits =>
-    // This variable indicates whether a commit has already been processed by a batch or not.
-    var commitProcessedInBatch = false
-
-    protected def take(files: Int, bytes: Long): Unit = {
-      filesToTake -= files
-      bytesToTake -= bytes
-    }
-
-    /**
-     * This overloaded method checks if all the FileActions for a commit can be accommodated by
-     * the rate limit.
-     */
-    def admit(indexedFiles: Seq[IndexedFile]): Boolean = {
-      def getSize(actions: Seq[IndexedFile]): Long = {
-        actions.filter(_.hasFileAction).foldLeft(0L) { (l, r) => l + r.getFileAction.getFileSize }
-      }
-      if (indexedFiles.isEmpty) {
-        true
-      } else {
-        // if no files have been admitted, then admit all to avoid deadlock
-        // else check if all of the files together satisfy the limit, only then admit
-        val bytesInFiles = getSize(indexedFiles)
-        val shouldAdmit = !commitProcessedInBatch ||
-          (filesToTake - indexedFiles.size >= 0 && bytesToTake - bytesInFiles >= 0)
-
-        commitProcessedInBatch = true
-        take(files = indexedFiles.size, bytes = bytesInFiles)
-        shouldAdmit
-      }
-    }
-
-    /**
-     * Whether to admit the next file. Dummy IndexedFile entries with no attached file action are
-     * always admitted.
-     */
-    def admit(indexedFile: IndexedFile): Boolean = {
-      commitProcessedInBatch = true
-
-      if (!indexedFile.hasFileAction) {
-        // Don't count placeholders. They are not files. If we have empty commits, then we should
-        // not count the placeholders as files, or else we'll end up with under-filled batches.
-        return true
-      }
-
-      // We always admit a file if we still have capacity _before_ we take it. This ensures that we
-      // will even admit a file when it is larger than the remaining capacity, and that we will
-      // admit at least one file.
-      val shouldAdmit = hasCapacity
-      take(files = 1, bytes = indexedFile.getFileAction.getFileSize)
-      shouldAdmit
-    }
-
-    /** Returns whether admission limits has capacity to accept files or bytes */
-    def hasCapacity: Boolean = {
-      filesToTake > 0 && bytesToTake > 0
-    }
-
-  }
-
-  /**
-   * Class that helps controlling how much data should be processed by a single micro-batch.
-   */
-  case class AdmissionLimits(
-      maxFiles: Option[Int] = options.maxFilesPerTrigger,
-      var bytesToTake: Long = options.maxBytesPerTrigger.getOrElse(Long.MaxValue)
-  ) extends DeltaSourceAdmissionBase {
-
-    var filesToTake = maxFiles.getOrElse {
-      if (options.maxBytesPerTrigger.isEmpty) {
-        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
-      } else {
-        Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
-      }
-    }
-
-    def toReadLimit: ReadLimit = {
-      if (options.maxFilesPerTrigger.isDefined && options.maxBytesPerTrigger.isDefined) {
-        CompositeLimit(
-          ReadMaxBytes(options.maxBytesPerTrigger.get),
-          ReadLimit.maxFiles(options.maxFilesPerTrigger.get).asInstanceOf[ReadMaxFiles])
-      } else if (options.maxBytesPerTrigger.isDefined) {
-        ReadMaxBytes(options.maxBytesPerTrigger.get)
-      } else {
-        ReadLimit.maxFiles(
-          options.maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT))
-      }
-    }
-  }
-
-  object AdmissionLimits {
-
-    def apply(limit: ReadLimit): Option[AdmissionLimits] = limit match {
-      case _: ReadAllAvailable => None
-      case maxFiles: ReadMaxFiles => Some(new AdmissionLimits(Some(maxFiles.maxFiles())))
-      case maxBytes: ReadMaxBytes => Some(new AdmissionLimits(None, maxBytes.maxBytes))
-      case composite: CompositeLimit =>
-        Some(new AdmissionLimits(Some(composite.maxFiles.maxFiles()), composite.bytes.maxBytes))
-      case other => throw DeltaErrors.unknownReadLimit(other.toString())
-    }
-  }
-
   /**
    * Extracts whether users provided the option to time travel a relation. If a query restarts from
    * a checkpoint and the checkpoint has recorded the offset, this method should never been called.
@@ -1440,10 +1320,124 @@ case class DeltaSource(
       None
     }
   }
-
 }
 
 object DeltaSource extends DeltaLogging {
+
+  trait DeltaSourceAdmissionBase { self: AdmissionLimits =>
+    // This variable indicates whether a commit has already been processed by a batch or not.
+    var commitProcessedInBatch = false
+
+    protected def take(files: Int, bytes: Long): Unit = {
+      filesToTake -= files
+      bytesToTake -= bytes
+    }
+
+    /**
+     * This overloaded method checks if all the FileActions for a commit can be accommodated by
+     * the rate limit.
+     */
+    def admit(admittableFiles: Seq[AdmittableFile]): Boolean = {
+      def getSize(actions: Seq[AdmittableFile]): Long = {
+        actions.filter(_.hasFileAction).foldLeft(0L) { (l, r) => l + r.getFileSize }
+      }
+      if (admittableFiles.isEmpty) {
+        true
+      } else {
+        // if no files have been admitted, then admit all to avoid deadlock
+        // else check if all of the files together satisfy the limit, only then admit
+        val bytesInFiles = getSize(admittableFiles)
+        val shouldAdmit = !commitProcessedInBatch ||
+          (filesToTake - admittableFiles.size >= 0 && bytesToTake - bytesInFiles >= 0)
+
+        commitProcessedInBatch = true
+        take(files = admittableFiles.size, bytes = bytesInFiles)
+        shouldAdmit
+      }
+    }
+
+    /**
+     * Whether to admit the next file. Dummy IndexedFile entries with no attached file action are
+     * always admitted.
+     */
+    def admit(admittableFile: AdmittableFile): Boolean = {
+      commitProcessedInBatch = true
+
+      if (!admittableFile.hasFileAction) {
+        // Don't count placeholders. They are not files. If we have empty commits, then we should
+        // not count the placeholders as files, or else we'll end up with under-filled batches.
+        return true
+      }
+
+      // We always admit a file if we still have capacity _before_ we take it. This ensures that we
+      // will even admit a file when it is larger than the remaining capacity, and that we will
+      // admit at least one file.
+      val shouldAdmit = hasCapacity
+      take(files = 1, bytes = admittableFile.getFileSize)
+      shouldAdmit
+    }
+
+    /** Returns whether admission limits has capacity to accept files or bytes */
+    def hasCapacity: Boolean = {
+      filesToTake > 0 && bytesToTake > 0
+    }
+
+  }
+
+  /**
+   * Class that helps controlling how much data should be processed by a single micro-batch.
+   */
+  case class AdmissionLimits(
+    options: DeltaOptions,
+    maxFiles: Option[Int] = None,
+    maxBytes: Option[Long] = None
+  ) extends DeltaSourceAdmissionBase {
+    var bytesToTake = maxBytes.getOrElse(options.maxBytesPerTrigger.getOrElse(Long.MaxValue))
+    var filesToTake = maxFiles.getOrElse {
+      if (options.maxBytesPerTrigger.isEmpty) {
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT
+      } else {
+        Int.MaxValue - 8 // - 8 to prevent JVM Array allocation OOM
+      }
+    }
+  }
+
+  object AdmissionLimits {
+
+    def toReadLimit(options: DeltaOptions): ReadLimit = {
+      if (options.maxFilesPerTrigger.isDefined && options.maxBytesPerTrigger.isDefined) {
+        CompositeLimit(
+          ReadMaxBytes(options.maxBytesPerTrigger.get),
+          ReadLimit.maxFiles(options.maxFilesPerTrigger.get).asInstanceOf[ReadMaxFiles])
+      } else if (options.maxBytesPerTrigger.isDefined) {
+        ReadMaxBytes(options.maxBytesPerTrigger.get)
+      } else {
+        ReadLimit.maxFiles(
+          options.maxFilesPerTrigger.getOrElse(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION_DEFAULT))
+      }
+    }
+
+    def apply(options: DeltaOptions, limit: ReadLimit): Option[AdmissionLimits] = limit match {
+      case _: ReadAllAvailable => None
+      case maxFiles: ReadMaxFiles =>
+        Some(new AdmissionLimits(
+          options = options,
+          maxFiles = Some(maxFiles.maxFiles()),
+          maxBytes = None))
+      case maxBytes: ReadMaxBytes =>
+        Some(new AdmissionLimits(
+          options = options,
+          maxFiles = None,
+          maxBytes = Some(maxBytes.maxBytes)))
+      case composite: CompositeLimit =>
+        Some(new AdmissionLimits(
+          options = options,
+          maxFiles = Some(composite.maxFiles.maxFiles()),
+          maxBytes = Some(composite.bytes.maxBytes)))
+      case other => throw DeltaErrors.unknownReadLimit(other.toString())
+    }
+  }
+
   /**
    * Validate the protocol at a given version. If the snapshot reconstruction fails for any other
    * reason than table feature exception, we suppress it. This allows to fallback to previous
@@ -1586,6 +1580,49 @@ object DeltaSource extends DeltaLogging {
     } finally {
       iter.close()
     }
+  }
+
+  /**
+   * Build the latest offset based on the last indexedFile. The function also checks if latest
+   * version is valid by comparing with previous version.
+   * Public for use by SparkMicroBatchStream.
+   * @param tableId The table ID
+   * @param fileVersion The version of the last indexed file.
+   * @param fileIndex The index of the last indexed file.
+   * @param previousVersion Previous offset reservoir version.
+   * @param isInitialSnapshot Whether previous offset is starting version or not.
+   * @return A DeltaSourceOffset representing the next offset to read from.
+   */
+  def buildOffsetFromIndexedFile(
+      tableId: String,
+      fileVersion: Long,
+      fileIndex: Long,
+      previousVersion: Long,
+      isInitialSnapshot: Boolean): DeltaSourceOffset = {
+    val (v, i) = (fileVersion, fileIndex)
+    assert(v >= previousVersion,
+      s"buildOffsetFromIndexedFile returns an invalid version: $v " +
+        s"(expected: >= $previousVersion), tableId: $tableId")
+
+    // If the last file in previous batch is the end index of that version, automatically bump
+    // to next version to skip accessing that version file altogether. The END_INDEX should never
+    // be returned as an offset.
+    val offset = if (i == DeltaSourceOffset.END_INDEX) {
+      // isInitialSnapshot must be false here as we have bumped the version.
+      DeltaSourceOffset(
+        tableId,
+        v + 1,
+        index = DeltaSourceOffset.BASE_INDEX,
+        isInitialSnapshot = false)
+    } else {
+      // isInitialSnapshot will be true only if previous isInitialSnapshot is true and the next file
+      // is still at the same version.
+      DeltaSourceOffset(
+        tableId, v, i,
+        isInitialSnapshot = v == previousVersion && isInitialSnapshot
+        )
+    }
+    offset
   }
 }
 

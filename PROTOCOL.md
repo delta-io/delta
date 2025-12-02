@@ -2339,7 +2339,7 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |    |-- maxValues: struct
 |    |    |    |-- asset: string
 |    |    |    |-- quantity: double
-|    |    |-- nullCounts: struct
+|    |    |-- nullCount: struct
 |    |    |    |-- asset: long
 |    |    |    |-- quantity: long
 |-- remove: struct
@@ -2428,7 +2428,7 @@ Checkpoint schema (just the `add` column):
 |    |    |-- maxValues: struct
 |    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: string
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: double
-|    |    |-- nullCounts: struct
+|    |    |-- nullCount: struct
 |    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: long
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: long
 ```

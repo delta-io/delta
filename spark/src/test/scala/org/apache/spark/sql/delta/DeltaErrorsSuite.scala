@@ -1547,6 +1547,18 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_VERSION_INVALID", "42815", Map("version" -> version))
     }
     {
+      val version = 2
+      val earliest = 0
+      val latest = 1
+      val e = intercept[DeltaAnalysisException] {
+        throw VersionNotFoundException(version, earliest, latest)
+      }
+      checkError(e, "DELTA_VERSION_NOT_FOUND", "22003", Map(
+        "userVersion" -> version.toString,
+        "earliest" -> earliest.toString,
+        "latest" -> latest.toString))
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.notADeltaSourceException("sample")
       }

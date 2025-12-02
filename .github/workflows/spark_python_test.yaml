@@ -80,15 +80,6 @@ jobs:
           pipenv run pip install pandas==1.1.3
           pipenv run pip install pyarrow==8.0.0
           pipenv run pip install numpy==1.20.3
-          # Download and setup Spark 3.5.3 with Scala 2.13 for compatibility with Delta Scala 2.13
-          # Future note for Spark 4.0 upgrade: PySpark 3.5.3 from pip includes Scala 2.12 JARs, but
-          # because of the upgrade to Scala 2.13, it was causing binary incompatibility errors.
-          # For now (before Spark 4.0), we install PySpark without dependencies and use Spark 3.5.3 compiled 
-          # for Scala 2.13 to ensure compatibility. Remove the four steps below for Spark 4.0 upgrade.
-          curl -LO https://archive.apache.org/dist/spark/spark-3.5.3/spark-3.5.3-bin-hadoop3-scala2.13.tgz
-          tar -xzf spark-3.5.3-bin-hadoop3-scala2.13.tgz
-          echo "SPARK_HOME=$PWD/spark-3.5.3-bin-hadoop3-scala2.13" >> $GITHUB_ENV
-          echo "$PWD/spark-3.5.3-bin-hadoop3-scala2.13/bin" >> $GITHUB_PATH
         if: steps.git-diff.outputs.diff
       - name: Run Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml

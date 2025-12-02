@@ -35,11 +35,13 @@ import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import java.io.Serializable;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-public class Protocol {
+public class Protocol implements Serializable {
+  private static final long serialVersionUID = 1L;
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Public static variables and methods                                                       ///
@@ -587,4 +589,9 @@ public class Protocol {
     // writerOnly or readerWriter features, but no readerOnly features.
     return supportsWriterFeatures;
   }
+
+  // Note: Protocol uses default Java serialization because all fields are Serializable:
+  // - int, boolean: primitive types (automatically serializable)
+  // - Set<String>: Set and String both implement Serializable
+  // No need for custom writeObject/readObject!
 }

@@ -32,7 +32,7 @@ public class LoggingMetricsReporter implements MetricsReporter {
   @Override
   public void report(MetricsReport report) {
     try {
-      logger.info("{} = {}", report.getClass().getSimpleName(), report.toJson());
+      logger.info("{} = {}", report.getClass().getName(), report.toJson());
     } catch (JsonProcessingException e) {
       logger.warn("Serialization issue while logging metrics report {}: {}", report, e.toString());
     } catch (Exception e) {

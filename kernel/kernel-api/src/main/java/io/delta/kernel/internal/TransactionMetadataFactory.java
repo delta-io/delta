@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.ReplaceTableTransactionBuilderV2Impl.TABLE_PROPERTY_KEYS_TO_PRESERVE;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.ALLOW_COLUMN_DEFAULTS_W_FEATURE;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -459,7 +460,7 @@ public class TransactionMetadataFactory {
     }
 
     // Case 2: Txn is explicitly disabling ICT on a catalogManaged table. Throw.
-    if (getEffectiveProtocol().supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+    if (getEffectiveProtocol().supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE)) {
       throw new KernelException("Cannot disable inCommitTimestamp on a catalogManaged table");
     }
 
@@ -653,6 +654,7 @@ public class TransactionMetadataFactory {
                 SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
                     oldMetadata,
                     getEffectiveMetadata(),
+                    getEffectiveProtocol(),
                     clusteringColumnPhysicalNames,
                     false /* allowNewRequiredFields */);
 
@@ -685,6 +687,7 @@ public class TransactionMetadataFactory {
             SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
                 latestSnapshotOpt.get().getMetadata(),
                 getEffectiveMetadata(),
+                getEffectiveProtocol(),
                 // We already validate clustering columns elsewhere for isCreateOrReplace no
                 // need to
                 // duplicate this check here
@@ -773,14 +776,19 @@ public class TransactionMetadataFactory {
     // New table verify the given schema and partition columns
     ColumnMappingMode mappingMode = ColumnMapping.getColumnMappingMode(tableProperties);
 
-    SchemaUtils.validateSchema(schema, isColumnMappingModeEnabled(mappingMode));
+    SchemaUtils.validateSchema(
+        schema,
+        isColumnMappingModeEnabled(mappingMode),
+        TableFeatures.isPropertiesManuallySupportingTableFeature(
+            tableProperties, ALLOW_COLUMN_DEFAULTS_W_FEATURE),
+        TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(tableProperties));
     SchemaUtils.validatePartitionColumns(schema, partitionColumns);
   }
 
   private static void validateNotEnablingCatalogManagedOnReplace(
       Map<String, String> userInputTableProperties) {
     if (TableFeatures.isPropertiesManuallySupportingTableFeature(
-        userInputTableProperties, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+        userInputTableProperties, TableFeatures.CATALOG_MANAGED_RW_FEATURE)) {
       throw new UnsupportedOperationException(
           "Cannot enable the catalogManaged feature during a REPLACE command.");
     }

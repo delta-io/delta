@@ -47,7 +47,7 @@ class DataSkippingDeltaConstructDataFiltersSuite
       IsNotNull(literal),
       And(EqualTo(literal, literal), LessThan(literal, literal))
     ).foreach { expression =>
-      assert(dataFilterBuilder.constructDataFilters(expression).isEmpty)
+      assert(dataFilterBuilder.constructDataFilters(expression, isNullExpansionDepth = 0).isEmpty)
     }
   }
 

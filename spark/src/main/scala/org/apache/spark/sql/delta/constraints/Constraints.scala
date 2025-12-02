@@ -18,11 +18,22 @@ package org.apache.spark.sql.delta.constraints
 
 import java.util.Locale
 
-import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
+
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, GetArrayItem, GetMapValue, GetStructField, IsNotNull, UserDefinedExpression}
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.types.{BooleanType, StructType}
 
 /**
  * A constraint defined on a Delta table, which writers must verify before writing.
@@ -37,7 +48,7 @@ sealed trait Constraint {
  *   an old style of CHECK constraint specified in the column metadata
  * - Table-level CHECK constraints
  */
-object Constraints {
+object Constraints extends DeltaLogging {
   /**
    * A constraint that the specified column must not be NULL. Note that when the column is nested,
    * this implies its parents must also not be NULL.
@@ -112,6 +123,114 @@ object Constraints {
           metadata.schema,
           sparkSession.sessionState.conf.resolver)
       case _ => false
+    }
+  }
+
+  /**
+   * Validates check constraints with rollout logic for safe deployment.
+   * This wrapper handles feature flag checks, error logging, and mode-based error handling.
+   */
+  def validateCheckConstraints(
+      spark: SparkSession,
+      constraints: Seq[Constraint],
+      deltaLog: DeltaLog,
+      schema: StructType): Unit = {
+    val validateCheckConstraints = ValidateCheckConstraintsMode.fromConf(spark.sessionState.conf)
+    if (validateCheckConstraints == ValidateCheckConstraintsMode.OFF) return
+
+    try {
+      validateCheckConstraintsInternal(spark, constraints, schema)
+    } catch {
+      case NonFatal(e) =>
+        val errorClassName = e match {
+          case sparkEx: SparkThrowable => sparkEx.getErrorClass
+          case _ => e.getClass
+        }
+        recordDeltaEvent(
+          deltaLog,
+          "delta.checkConstraints.validationFailure",
+          data = Map(
+            "errorClassName" -> errorClassName,
+            "errorMessage" -> e.getMessage
+          )
+        )
+        if (validateCheckConstraints == ValidateCheckConstraintsMode.ASSERT) {
+          throw e
+        }
+    }
+  }
+
+  /**
+   * Internal validation logic for check constraints.
+   */
+  private def validateCheckConstraintsInternal(
+      spark: SparkSession,
+      constraints: Seq[Constraint],
+      schema: StructType): Unit = {
+    // Create NamedExpressions for analysis (type checking will happen after resolution)
+    // We unresolve expressions to validate against the `LocalRelation` we later create
+    val selectExprs = constraints.map {
+      case Check(name, expression) =>
+        Alias(expression, name)()
+      case NotNull(columnPath) =>
+        // Create an IsNotNull expression to validate the column exists
+        val columnRef = UnresolvedAttribute(columnPath)
+        val isNotNullExpr = IsNotNull(columnRef)
+        Alias(isNotNullExpr, s"NOT NULL ${columnPath.mkString(".")}")()
+    }
+
+    // Analyze all constraint expressions to ensure they can be properly resolved
+    // Use LocalRelation with the table schema to ensure column references can be validated
+    val analyzed = try {
+      val analyzer = spark.sessionState.analyzer
+      val relation = LocalRelation(DataTypeUtils.toAttributes(schema))
+      val plan = analyzer.execute(Project(selectExprs, relation))
+      analyzer.checkAnalysis(plan)
+      plan
+    } catch {
+      case e: SparkThrowable
+        if e.getErrorClass != null && e.getErrorClass.startsWith("UNRESOLVED_COLUMN") =>
+          // Check if this is an unresolved column/field error by examining the error class
+          throw DeltaErrors.checkConstraintReferToWrongColumns(
+            e.getMessageParameters.getOrDefault("objectName", "")
+          )
+      case e => throw e
+    }
+
+    // Check that all Check constraints return boolean type
+    analyzed match {
+      case Project(projectList, _) =>
+        projectList.foreach {
+          case a: Alias =>
+            if (a.dataType != BooleanType) {
+              throw DeltaErrors.checkConstraintNotBoolean(a.name, a.child.sql)
+            }
+          case _ => // We should only the Aliases we previously created.
+        }
+      case _ => // We should only have a single projection
+    }
+
+    // Validate the analyzed expressions
+    analyzed.transformAllExpressions {
+      case expr: Alias =>
+        // Alias will be non deterministic if it points to a non deterministic expression.
+        // Skip `Alias` to provide a better error for a non deterministic expression.
+        expr
+      case expr@(_: GetStructField | _: GetArrayItem | _: GetMapValue) =>
+        // The complex type extractors don't have a function name, so we need to check them
+        // separately. Unlike generated columns we do allow `GetMapValue`.
+        expr
+      case expr: UserDefinedExpression =>
+        throw DeltaErrors.checkConstraintUDF(expr)
+      case expr if !expr.deterministic =>
+        throw DeltaErrors.checkConstraintNonDeterministicExpression(expr)
+      case expr if expr.isInstanceOf[AggregateExpression] =>
+        throw DeltaErrors.checkConstraintAggregateExpression(expr)
+      case expr if
+        !AllowedUserProvidedExpressions.expressions.contains(expr.getClass) &&
+          !AllowedUserProvidedExpressions
+            .checkConstraintExpressions.contains(expr.getClass) =>
+        throw DeltaErrors.checkConstraintUnsupportedExpression(expr)
     }
   }
 }
