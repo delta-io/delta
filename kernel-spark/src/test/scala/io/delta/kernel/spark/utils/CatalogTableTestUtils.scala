@@ -53,8 +53,7 @@ object CatalogTableTestUtils {
       if (nullStorageProperties) null else ScalaUtils.toScalaMap(storageProperties)
 
     val identifier = catalogName match {
-      case Some(catalog) =>
-        TableIdentifier(tableName, Some("default") /* database */, Some(catalog) /* catalog */ )
+      case Some(catalog) => TableIdentifier(tableName, Some("default"), Some(catalog))
       case None => TableIdentifier(tableName)
     }
 
@@ -67,76 +66,8 @@ object CatalogTableTestUtils {
         outputFormat = None,
         serde = None,
         compressed = false,
-        properties = scalaStorageProps),
-      schema = new StructType(),
-      provider = None,
-      partitionColumnNames = Seq.empty,
-      bucketSpec = None,
-      properties = scalaProps)
-  }
-
-  /**
-   * Creates a [[CatalogTable]] with a specific catalog name in the identifier.
-   * This is needed for testing Unity Catalog integration where the catalog name
-   * is used to look up catalog configurations.
-   */
-  def catalogTableWithCatalogName(
-      catalogName: String,
-      tableName: String,
-      properties: java.util.Map[String, String],
-      storageProperties: java.util.Map[String, String],
-      locationUri: java.net.URI): CatalogTable = {
-    val scalaProps = ScalaUtils.toScalaMap(properties)
-    val scalaStorageProps = ScalaUtils.toScalaMap(storageProperties)
-
-    CatalogTable(
-      identifier = TableIdentifier(tableName, Some("default"), Some(catalogName)),
-      tableType = CatalogTableType.MANAGED,
-      storage = CatalogStorageFormat(
-        locationUri = Some(locationUri),
-        inputFormat = None,
-        outputFormat = None,
-        serde = None,
-        compressed = false,
-        properties = scalaStorageProps),
-      schema = new StructType(),
-      provider = None,
-      partitionColumnNames = Seq.empty,
-      bucketSpec = None,
-      properties = scalaProps)
-  }
-
-  /**
-   * Creates a [[CatalogTable]] with storage location but no catalog name.
-   * Uses the default catalog from the session's catalog manager.
-   */
-  def catalogTableWithLocation(
-      properties: java.util.Map[String, String],
-      storageProperties: java.util.Map[String, String],
-      locationUri: java.net.URI): CatalogTable = {
-    val scalaProps = ScalaUtils.toScalaMap(properties)
-    val scalaStorageProps = ScalaUtils.toScalaMap(storageProperties)
-
-    CatalogTable(
-      identifier = TableIdentifier("tbl"),
-      tableType = CatalogTableType.MANAGED,
-      storage = CatalogStorageFormat(
-        locationUri = Some(locationUri),
-        inputFormat = None,
-        outputFormat = None,
-        serde = None,
-        compressed = false,
-        properties = scalaStorageProps),
-      schema = new StructType(),
-      provider = None,
-      partitionColumnNames = Seq.empty,
-      bucketSpec = None,
-      properties = scalaProps)
-  }
-
-  def catalogTableWithNullStorage(
-      properties: java.util.Map[String, String]): CatalogTable = {
-    val scalaProps = ScalaUtils.toScalaMap(properties)
+        properties = scalaStorageProps)
+    }
 
     CatalogTable(
       identifier = identifier,
