@@ -1339,7 +1339,8 @@ trait SnapshotManagement { self: DeltaLog =>
       catalogTableOpt: Option[CatalogTable],
       committedVersion: Long): Snapshot = {
     logInfo(
-      log"Creating a new snapshot v${MDC(DeltaLogKeys.VERSION, initSegment.version)} " +
+      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] " +
+        log"Creating a new snapshot v${MDC(DeltaLogKeys.VERSION, initSegment.version)} " +
         log"for commit version ${MDC(DeltaLogKeys.VERSION2, committedVersion)}")
     // Guard against race condition when a txn commits after this txn but before
     // reaching createLogSegment(...) above.
