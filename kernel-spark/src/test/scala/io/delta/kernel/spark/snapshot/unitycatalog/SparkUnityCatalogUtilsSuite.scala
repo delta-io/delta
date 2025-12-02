@@ -20,6 +20,7 @@ import java.util.{HashMap => JHashMap}
 
 import io.delta.kernel.spark.utils.CatalogTableTestUtils
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.scalatest.BeforeAndAfterAll
@@ -66,11 +67,7 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
   // ==================== Helper Methods ====================
 
   private def makeNonUCTable(): CatalogTable = {
-    CatalogTableTestUtils.catalogTableWithLocation(
-      new JHashMap[String, String](),
-      new JHashMap[String, String](),
-      new URI(TABLE_PATH_ALPHA)
-    )
+    CatalogTableTestUtils.createCatalogTable(locationUri = Some(new URI(TABLE_PATH_ALPHA)))
   }
 
   private def makeUCTable(
@@ -81,25 +78,20 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
     storageProps.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
     storageProps.put(UC_TABLE_ID_KEY, tableId)
 
-    catalogName match {
-      case Some(catalog) =>
-        CatalogTableTestUtils.catalogTableWithCatalogName(
-          catalog, "tbl", new JHashMap[String, String](), storageProps, new URI(tablePath)
-        )
-      case None =>
-        CatalogTableTestUtils.catalogTableWithLocation(
-          new JHashMap[String, String](), storageProps, new URI(tablePath)
-        )
-    }
+    CatalogTableTestUtils.createCatalogTable(
+      catalogName = catalogName,
+      storageProperties = storageProps,
+      locationUri = Some(new URI(tablePath)))
   }
 
-  private def withUCCatalogConfig(catalogName: String, uri: String, token: String)
-                                 (testCode: => Unit): Unit = {
+  private def withUCCatalogConfig(
+      catalogName: String,
+      uri: String,
+      token: String)(testCode: => Unit): Unit = {
     val configs = Seq(
       s"spark.sql.catalog.$catalogName" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogName.uri" -> uri,
-      s"spark.sql.catalog.$catalogName.token" -> token
-    )
+      s"spark.sql.catalog.$catalogName.token" -> token)
     val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
 
     try {
@@ -128,9 +120,9 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
     storageProps.put(UC_TABLE_ID_KEY, "orphan_id_9x7y5z")
     // No FEATURE_CATALOG_MANAGED - simulates corrupted/partial metadata
 
-    val table = CatalogTableTestUtils.catalogTableWithLocation(
-      new JHashMap[String, String](), storageProps, new URI("gs://other-bucket/path")
-    )
+    val table = CatalogTableTestUtils.createCatalogTable(
+      storageProperties = storageProps,
+      locationUri = Some(new URI("gs://other-bucket/path")))
     val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
     assert(result.isEmpty, "Missing feature flag should return empty")
   }
@@ -151,9 +143,9 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
     storageProps.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
     storageProps.put(UC_TABLE_ID_KEY, "")
 
-    val table = CatalogTableTestUtils.catalogTableWithLocation(
-      new JHashMap[String, String](), storageProps, new URI("s3://empty-id-bucket/path")
-    )
+    val table = CatalogTableTestUtils.createCatalogTable(
+      storageProperties = storageProps,
+      locationUri = Some(new URI("s3://empty-id-bucket/path")))
     val exception = intercept[IllegalArgumentException] {
       SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
     }
@@ -165,9 +157,7 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
     storageProps.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
     storageProps.put(UC_TABLE_ID_KEY, "no_location_tbl_id_3k9m")
 
-    val table = CatalogTableTestUtils.catalogTableWithProperties(
-      new JHashMap[String, String](), storageProps
-    )
+    val table = CatalogTableTestUtils.createCatalogTable(storageProperties = storageProps)
     // Spark throws AnalysisException when location is missing
     val exception = intercept[Exception] {
       SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
@@ -196,7 +186,9 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
       val info = result.get()
       // Each assertion uses the specific expected value - would fail if hardcoded
       assert(info.getTableId == TABLE_ID_ALPHA, s"Table ID mismatch: got ${info.getTableId}")
-      assert(info.getTablePath == TABLE_PATH_ALPHA, s"Table path mismatch: got ${info.getTablePath}")
+      assert(
+        info.getTablePath == TABLE_PATH_ALPHA,
+        s"Table path mismatch: got ${info.getTablePath}")
       assert(info.getEndpoint == ENDPOINT_ALPHA, s"Endpoint mismatch: got ${info.getEndpoint}")
       assert(info.getToken == TOKEN_ALPHA, s"Token mismatch: got ${info.getToken}")
     }
@@ -218,8 +210,7 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
     val table = makeUCTable(
       tableId = tableIdBeta,
       tablePath = tablePathBeta,
-      catalogName = Some(catalogBeta)
-    )
+      catalogName = Some(catalogBeta))
 
     val configs = Seq(
       // catalogGamma config (should NOT be used)
@@ -229,8 +220,7 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
       // catalogBeta config (should be used)
       s"spark.sql.catalog.$catalogBeta" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogBeta.uri" -> endpointBeta,
-      s"spark.sql.catalog.$catalogBeta.token" -> tokenBeta
-    )
+      s"spark.sql.catalog.$catalogBeta.token" -> tokenBeta)
     val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
 
     try {
@@ -241,13 +231,13 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
 
       val info = result.get()
       // Verify it selected catalogBeta's config, not catalogGamma's
-      assert(info.getEndpoint == endpointBeta,
+      assert(
+        info.getEndpoint == endpointBeta,
         s"Should use catalogBeta's endpoint, got: ${info.getEndpoint}")
-      assert(info.getToken == tokenBeta,
-        s"Should use catalogBeta's token, got: ${info.getToken}")
-      assert(info.getTableId == tableIdBeta,
-        s"Should extract tableIdBeta, got: ${info.getTableId}")
-      assert(info.getTablePath == tablePathBeta,
+      assert(info.getToken == tokenBeta, s"Should use catalogBeta's token, got: ${info.getToken}")
+      assert(info.getTableId == tableIdBeta, s"Should extract tableIdBeta, got: ${info.getTableId}")
+      assert(
+        info.getTablePath == tablePathBeta,
         s"Should extract tablePathBeta, got: ${info.getTablePath}")
     } finally {
       configs.foreach { case (key, _) =>

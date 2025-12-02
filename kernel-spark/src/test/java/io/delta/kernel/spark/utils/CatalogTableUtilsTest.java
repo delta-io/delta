@@ -21,9 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.junit.jupiter.api.Test;
+import scala.Option;
 
 /** Tests for {@link CatalogTableUtils}. */
 class CatalogTableUtilsTest {
@@ -151,15 +153,30 @@ class CatalogTableUtilsTest {
 
   private static CatalogTable catalogTable(
       Map<String, String> properties, Map<String, String> storageProperties) {
-    return CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(properties, storageProperties);
+    return CatalogTableTestUtils$.MODULE$.createCatalogTable(
+        "tbl", Option.empty(), properties, storageProperties, Option.empty(), false, false);
   }
 
   private static CatalogTable catalogTableWithNullStorage(Map<String, String> properties) {
-    return CatalogTableTestUtils$.MODULE$.catalogTableWithNullStorage(properties);
+    return CatalogTableTestUtils$.MODULE$.createCatalogTable(
+        "tbl",
+        Option.empty(),
+        properties,
+        new HashMap<>(),
+        Option.empty(),
+        true, // nullStorage
+        false);
   }
 
   private static CatalogTable catalogTableWithNullStorageProperties(
       Map<String, String> properties) {
-    return CatalogTableTestUtils$.MODULE$.catalogTableWithNullStorageProperties(properties);
+    return CatalogTableTestUtils$.MODULE$.createCatalogTable(
+        "tbl",
+        Option.empty(),
+        properties,
+        new HashMap<>(),
+        Option.empty(),
+        false,
+        true); // nullStorageProperties
   }
 }
