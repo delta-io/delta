@@ -101,11 +101,8 @@ public final class DeltaSnapshotManagerFactory {
 
     if (adapterOpt.isPresent()) {
       ManagedCatalogAdapter adapter = adapterOpt.get();
-      // Cast to UnityCatalogAdapter to access tableId and tablePath
-      UnityCatalogAdapter ucAdapter = (UnityCatalogAdapter) adapter;
-      String tableId = ucAdapter.getTableId();
-      String tablePath = ucAdapter.getTablePath();
-      return new CatalogManagedSnapshotManager(adapter, tableId, tablePath, hadoopConf);
+      return new CatalogManagedSnapshotManager(
+          adapter, adapter.getTableId(), adapter.getTablePath(), hadoopConf);
     }
 
     // Fallback to path-based snapshot manager
