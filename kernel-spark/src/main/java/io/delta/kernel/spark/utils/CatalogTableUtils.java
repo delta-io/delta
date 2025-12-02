@@ -114,12 +114,4 @@ public final class CatalogTableUtils {
     Map<String, String> javaStorageProperties = ScalaUtils.toJavaMap(table.storage().properties());
     return javaStorageProperties == null ? Collections.emptyMap() : javaStorageProperties;
   }
-
-  private static Map<String, String> toJavaMap(
-      scala.collection.immutable.Map<String, String> scalaMap) {
-    if (scalaMap == null || scalaMap.isEmpty()) {
-      return Collections.emptyMap();
-    }
-    return CollectionConverters.asJava(scalaMap);
-  }
 }
