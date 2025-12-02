@@ -24,19 +24,8 @@ import shadedForDelta.org.apache.iceberg.types.{Type, Types}
 import org.apache.spark.sql.types._
 
 /**
- * ICEBERG-SPECIFIC IMPLEMENTATION DETAIL - NOT SHARED INFRASTRUCTURE
- *
  * Converts Spark StructType schemas to Iceberg Schema objects for Iceberg REST catalog
- * integration. This converter is specific to Iceberg and should NOT be used as a generic
- * schema conversion utility for other catalog implementations.
- *
- * Catalog-Agnostic Design Pattern:
- * The `ServerSidePlanningClient` interface uses Spark's standard `StructType` as the
- * universal representation for projection pushdown. Each catalog implementation provides
- * its own converter to translate Spark schemas to their native format:
- *  - Iceberg catalogs: Use this converter (Spark StructType to Iceberg Schema)
- *  - Unity Catalog: Should implement UC-specific converter (Spark StructType to UC schema)
- *  - Other catalogs: Implement their own conversion logic as needed
+ * integration.
  *
  * Field ID Assignment:
  * Iceberg schemas require unique field IDs for each field. This converter assigns sequential
