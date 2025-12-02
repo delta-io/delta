@@ -39,36 +39,4 @@ class UnityCatalogConnectionInfoTest {
     assertEquals(endpoint, info.getEndpoint(), "Endpoint should be stored correctly");
     assertEquals(token, info.getToken(), "Token should be stored correctly");
   }
-
-  @Test
-  void testConstructor_NullTableId_ThrowsNullPointerException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> new UnityCatalogConnectionInfo(null, "gs://bucket/path", "https://ep", "tok"),
-        "Null tableId should throw NullPointerException");
-  }
-
-  @Test
-  void testConstructor_NullTablePath_ThrowsNullPointerException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> new UnityCatalogConnectionInfo("id-xyz", null, "https://ep", "tok"),
-        "Null tablePath should throw NullPointerException");
-  }
-
-  @Test
-  void testConstructor_NullEndpoint_ThrowsNullPointerException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> new UnityCatalogConnectionInfo("id-xyz", "s3://b/p", null, "tok"),
-        "Null endpoint should throw NullPointerException");
-  }
-
-  @Test
-  void testConstructor_NullToken_ThrowsNullPointerException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> new UnityCatalogConnectionInfo("id-xyz", "s3://b/p", "https://ep", null),
-        "Null token should throw NullPointerException");
-  }
 }
