@@ -211,7 +211,7 @@ class ServerSidePlannedScanBuilder(
   // Filters that have been pushed down and will be sent to the server
   private var _pushedFilters: Array[Filter] = Array.empty
 
-  // Required schema (columns) that have been pushed down
+  // Required schema (columns to read). Defaults to full table schema.
   private var _requiredSchema: StructType = tableSchema
 
   override def pushFilters(filters: Array[Filter]): Array[Filter] = {
@@ -246,7 +246,7 @@ class ServerSidePlannedScan(
     pushedFilters: Array[Filter],
     requiredSchema: StructType) extends Scan with Batch {
 
-  override def readSchema(): StructType = tableSchema
+  override def readSchema(): StructType = requiredSchema
 
   override def toBatch: Batch = this
 
@@ -283,7 +283,7 @@ class ServerSidePlannedScan(
   }
 
   override def createReaderFactory(): PartitionReaderFactory = {
-    new ServerSidePlannedFilePartitionReaderFactory(spark, tableSchema)
+    new ServerSidePlannedFilePartitionReaderFactory(spark, tableSchema, requiredSchema)
   }
 }
 
@@ -298,10 +298,14 @@ case class ServerSidePlannedFileInputPartition(
 /**
  * Factory for creating PartitionReaders that read server-side planned files.
  * Builds reader functions on the driver for Parquet files.
+ *
+ * @param tableSchema The full table schema (all columns in the file)
+ * @param requiredSchema The required schema (columns to read after projection pushdown)
  */
 class ServerSidePlannedFilePartitionReaderFactory(
     spark: SparkSession,
-    tableSchema: StructType)
+    tableSchema: StructType,
+    requiredSchema: StructType)
     extends PartitionReaderFactory {
 
   import org.apache.spark.util.SerializableConfiguration
@@ -319,11 +323,13 @@ class ServerSidePlannedFilePartitionReaderFactory(
 
   // Pre-build reader function for Parquet on the driver
   // This function will be serialized and sent to executors
+  // tableSchema: All columns in the file (full table schema)
+  // requiredSchema: Columns to actually read (after projection pushdown)
   private val parquetReaderBuilder = new ParquetFileFormat().buildReaderWithPartitionValues(
     sparkSession = spark,
     dataSchema = tableSchema,
     partitionSchema = StructType(Nil),
-    requiredSchema = tableSchema,
+    requiredSchema = requiredSchema,
     filters = Seq.empty,
     options = Map(
       FileFormat.OPTION_RETURNING_BATCH -> "false"
