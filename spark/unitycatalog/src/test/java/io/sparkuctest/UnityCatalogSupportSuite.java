@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.sparkuctest;
+package io.sparkuctest;
 
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.api.TablesApi;
