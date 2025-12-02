@@ -291,8 +291,8 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
             // Additional behavior when originalTargetExpr is provided (MERGE ... UPDATE * with
             // schema evolution):
             // For target-only fields (fields in target but not in source), we need to preserve
-            // their original values from the target. The null check becomes more sophisticated:
-            //   IF(source_struct IS NULL AND all_target_only_fields_are_null,
+            // their original values from the target. The expression becomes:
+            //   IF(source_struct IS NULL AND target_struct IS NULL,
             //      NULL,
             //      named_struct(
             //        source_fields...,
@@ -307,7 +307,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                 sourceType = from,
                 targetType = to.asNullable,
                 targetNamedStructExpr = nameMappedStruct,
-                originalTargetChildExprsOpt = originalTargetChildExprsOpt)
+                originalTargetExprOpt = originalTargetExprOpt)
             cast(wrappedWithNullPreservation, to.asNullable, castingBehavior, columnName)
 
           case (from, to) if from != to =>
@@ -353,10 +353,9 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    * `DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS` is enabled:
    *   IF(sourceExpr IS NULL, NULL, targetNamedStructExpr)
    *
-   * When originalTargetChildExprsOpt is defined (MERGE ... UPDATE * with schema evolution), the
-   * null condition is extended to check both the source expression and target-only struct
-   * fields:
-   *   IF(sourceExpr IS NULL AND all_target_only_fields_are_null, NULL, targetNamedStructExpr)
+   * When originalTargetExprOpt is defined (MERGE ... UPDATE * with schema evolution), the
+   * null condition is extended to check whether both the source and target struct are null:
+   *   IF(sourceExpr IS NULL AND targetExpr IS NULL, NULL, targetNamedStructExpr)
    * This prevents data loss when the source is null but the target has non-null values in
    * target-only fields.
    * This is to match the behavior of UPDATE * that target-only fields retain their values.
@@ -365,35 +364,21 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    * @param sourceType The source struct type
    * @param targetType The target struct type
    * @param targetNamedStructExpr The generated target named struct expression
-   * @param originalTargetChildExprsOpt Pre-computed map of field name to extracted expression
-   *                                    from the original target column. None when the fix is
-   *                                    disabled or no original target expression is provided.
+   * @param originalTargetExprOpt The expression of the original target column. None when the
+   *                              fix is disabled or no original target expression is provided.
    */
   private def maybeWrapWithNullPreservation(
       sourceExpr: Expression,
       sourceType: StructType,
       targetType: StructType,
       targetNamedStructExpr: Expression,
-      originalTargetChildExprsOpt: Option[Map[String, Expression]]): Expression = {
+      originalTargetExprOpt: Option[Expression]): Expression = {
     if (conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)) {
       val sourceNullCondition = IsNull(sourceExpr)
-      val fullNullCondition = originalTargetChildExprsOpt match {
-        case Some(fieldExtractions) =>
-          // Find fields that are in target but not in source (target-only fields)
-          val targetOnlyFieldNames = targetType.fields.filterNot { targetField =>
-            sourceType.fields.exists(sourceField =>
-              SchemaUtils.DELTA_COL_RESOLVER(sourceField.name, targetField.name))
-          }.map(_.name).toSet
-
-          // For each target-only field, check if it's null using pre-computed extractions
-          val targetOnlyNullChecks = fieldExtractions.collect {
-            case (fieldName, extractedExpr) if targetOnlyFieldNames.contains(fieldName) =>
-              IsNull(extractedExpr)
-          }
-
-          // Combine: source is null AND all target-only fields are null
-          targetOnlyNullChecks.foldLeft[Expression](sourceNullCondition)(
-            (acc, check) => And(acc, check))
+      val fullNullCondition = originalTargetExprOpt match {
+        case Some(originalTargetExpr) =>
+          // Combine: source is null AND target is null
+          And(sourceNullCondition, IsNull(originalTargetExpr))
 
         case None =>
           sourceNullCondition
