@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -66,13 +67,38 @@ object TypeWidening {
   /**
    * Returns whether the given type change is eligible for widening. This only checks atomic types.
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
+   * 
+   * Type widening supports:
+   * - byte -> short -> int -> long.
+   * - float -> double.
+   * - date -> timestamp_ntz.
+   * - {byte, short, int} -> double.
+   * - decimal -> wider decimal.
+   * - {byte, short, int} -> decimal(10, 0) and wider.
+   * - long -> decimal(20, 0) and wider.
    */
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType)
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      // All supported type changes below are supposed to be widening, but to be safe, reject any
+      // non-widening change upfront.
+      case (from, to) if !Cast.canUpCast(from, to) => false
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (DateType, TimestampNTZType) => true
+      case (ByteType | ShortType | IntegerType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
+      // Byte, Short, Integer are all stored as INT32 in parquet. The parquet readers support
+      // converting INT32 to Decimal(10, 0) and wider.
+      case (ByteType | ShortType | IntegerType, d: DecimalType) => d.isWiderThan(IntegerType)
+      // The parquet readers support converting INT64 to Decimal(20, 0) and wider.
+      case (LongType, d: DecimalType) => d.isWiderThan(LongType)
+      case _ => false
+    }
 
   def isTypeChangeSupported(
      fromType: AtomicType, toType: AtomicType, uniformIcebergCompatibleOnly: Boolean): Boolean =
-    TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType) &&
+    isTypeChangeSupported(fromType, toType) &&
       (!uniformIcebergCompatibleOnly ||
         isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType))
 
@@ -83,14 +109,22 @@ object TypeWidening {
   def isTypeChangeSupportedForSchemaEvolution(
       fromType: AtomicType,
       toType: AtomicType,
-      uniformIcebergCompatibleOnly: Boolean): Boolean =
-    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(
-      fromType = fromType,
-      toType = toType
-    ) && (
+      uniformIcebergCompatibleOnly: Boolean): Boolean = {
+    val supportedForSchemaEvolution = (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
+      case (DateType, TimestampNTZType) => true
+      case _ => false
+    }
+    
+    supportedForSchemaEvolution && (
       !uniformIcebergCompatibleOnly ||
         isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType)
     )
+  }
 
   /**
    * Returns whether the given type change is supported by Iceberg, and by extension can be read
