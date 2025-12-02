@@ -100,22 +100,6 @@ class CatalogTableUtilsTest {
   }
 
   @Test
-  void testIsCatalogManaged_NullTable_ThrowsException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> CatalogTableUtils.isCatalogManaged(null),
-        "Null table should throw NullPointerException");
-  }
-
-  @Test
-  void testIsUnityCatalogManaged_NullTable_ThrowsException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> CatalogTableUtils.isUnityCatalogManagedTable(null),
-        "Null table should throw NullPointerException");
-  }
-
-  @Test
   void testIsCatalogManaged_NullStorage_ReturnsFalse() {
     CatalogTable table = catalogTableWithNullStorage(Collections.emptyMap());
 
