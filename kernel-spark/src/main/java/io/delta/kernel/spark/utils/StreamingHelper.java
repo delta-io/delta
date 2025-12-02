@@ -104,8 +104,7 @@ public class StreamingHelper {
    * API which requires a snapshot at the exact start version for protocol validation.
    *
    * <p>This is necessary for streaming scenarios where the start version might not have a
-   * recreatable snapshot (e.g., after log cleanup) or where {@code startingVersion} is
-   * used.
+   * recreatable snapshot (e.g., after log cleanup) or where {@code startingVersion} is used.
    *
    * @param engine the Delta engine
    * @param commitRange the commit range to read actions from
