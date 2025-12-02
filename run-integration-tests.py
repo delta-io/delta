@@ -323,10 +323,10 @@ def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_ve
 
 def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
-    clear_artifact_cache()
+    # clear_artifact_cache()
     delta_pip_name = "delta-spark"
     # uninstall packages if they exist
-    run_cmd(["pip", "uninstall", "--yes", delta_pip_name, "pyspark"], stream_output=True)
+    run_cmd(["pip", "uninstall", "--yes", delta_pip_name], stream_output=True)
 
     # install packages
     delta_pip_name_with_version = "%s==%s" % (delta_pip_name, str(version))
