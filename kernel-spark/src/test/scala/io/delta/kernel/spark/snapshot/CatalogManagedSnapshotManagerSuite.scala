@@ -242,4 +242,131 @@ class CatalogManagedSnapshotManagerSuite extends AnyFunSuite with UCCatalogManag
       manager.close()
     }
   }
+
+  // Time-travel tests for getActiveCommitAtTime
+
+  test("getActiveCommitAtTime returns commit at exact timestamp") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        // Timestamp at v1 should return version 1
+        val commit = manager.getActiveCommitAtTime(
+          v1Ts,
+          /* canReturnLastCommit = */ false,
+          /* mustBeRecreatable = */ true,
+          /* canReturnEarliestCommit = */ false)
+
+        assert(commit != null, "Commit should not be null")
+        assert(commit.getVersion == 1L, s"Expected version 1, got ${commit.getVersion}")
+      } finally {
+        manager.close()
+      }
+    }
+  }
+
+  test("getActiveCommitAtTime returns latest when canReturnLastCommit is true") {
+    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        // Timestamp after all commits with canReturnLastCommit=true
+        val futureTs = v2Ts + 1000000L
+        val commit = manager.getActiveCommitAtTime(
+          futureTs,
+          /* canReturnLastCommit = */ true,
+          /* mustBeRecreatable = */ true,
+          /* canReturnEarliestCommit = */ false)
+
+        assert(commit != null, "Commit should not be null")
+        assert(commit.getVersion == maxRatifiedVersion,
+          s"Expected version $maxRatifiedVersion, got ${commit.getVersion}")
+      } finally {
+        manager.close()
+      }
+    }
+  }
+
+  test("getActiveCommitAtTime returns earliest when canReturnEarliestCommit is true") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        // Timestamp before all commits with canReturnEarliestCommit=true
+        val pastTs = v0Ts - 1000000L
+        val commit = manager.getActiveCommitAtTime(
+          pastTs,
+          /* canReturnLastCommit = */ false,
+          /* mustBeRecreatable = */ true,
+          /* canReturnEarliestCommit = */ true)
+
+        assert(commit != null, "Commit should not be null")
+        // Should return the earliest available version
+        assert(commit.getVersion >= 0L, s"Expected version >= 0, got ${commit.getVersion}")
+      } finally {
+        manager.close()
+      }
+    }
+  }
+
+  test("getActiveCommitAtTime returns commit between versions") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        // Timestamp between v1 and v2 should return v1
+        val betweenTs = (v1Ts + v2Ts) / 2
+        val commit = manager.getActiveCommitAtTime(
+          betweenTs,
+          /* canReturnLastCommit = */ false,
+          /* mustBeRecreatable = */ true,
+          /* canReturnEarliestCommit = */ false)
+
+        assert(commit != null, "Commit should not be null")
+        assert(commit.getVersion == 1L, s"Expected version 1, got ${commit.getVersion}")
+      } finally {
+        manager.close()
+      }
+    }
+  }
+
+  test("loadSnapshotAt loads version 0") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val adapter = new UnityCatalogAdapter(testUcTableId, tablePath, ucClient)
+      val manager = new CatalogManagedSnapshotManager(
+        adapter,
+        testUcTableId,
+        tablePath,
+        new Configuration())
+
+      try {
+        val snapshot = manager.loadSnapshotAt(0L)
+
+        assert(snapshot != null, "Snapshot should not be null")
+        assert(snapshot.getVersion == 0L, "Should load version 0")
+      } finally {
+        manager.close()
+      }
+    }
+  }
 }

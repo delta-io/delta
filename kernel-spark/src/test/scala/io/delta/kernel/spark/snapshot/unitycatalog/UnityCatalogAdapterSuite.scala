@@ -109,4 +109,163 @@ class UnityCatalogAdapterSuite extends AnyFunSuite {
       adapter.getRatifiedCommits(/* endVersionOpt = */ Optional.empty())
     }
   }
+
+  test("getRatifiedCommits passes endVersionOpt to UCClient") {
+    var capturedEndVersion: Optional[java.lang.Long] = null
+    val commits = List(0L, 1L, 2L).map(commit)
+
+    val capturingClient = new UCClient {
+      override def getMetastoreId(): String = "meta"
+      override def commit(
+          tableId: String,
+          tableUri: URI,
+          commit: Optional[Commit],
+          lastKnownBackfilledVersion: Optional[java.lang.Long],
+          disown: Boolean,
+          newMetadata: Optional[AbstractMetadata],
+          newProtocol: Optional[AbstractProtocol]): Unit = {
+        throw new UnsupportedOperationException("not used")
+      }
+      override def getCommits(
+          tableId: String,
+          tableUri: URI,
+          startVersion: Optional[java.lang.Long],
+          endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
+        capturedEndVersion = endVersion
+        new GetCommitsResponse(commits.asJava, /* latest */ 2L)
+      }
+      override def close(): Unit = {}
+    }
+
+    val adapter = new UnityCatalogAdapter(tableId, tablePath, capturingClient)
+
+    // Test with specific endVersion
+    adapter.getRatifiedCommits(Optional.of(java.lang.Long.valueOf(1L)))
+    assert(capturedEndVersion.isPresent)
+    assert(capturedEndVersion.get() == 1L)
+
+    // Test with empty endVersion
+    adapter.getRatifiedCommits(/* endVersionOpt = */ Optional.empty())
+    assert(!capturedEndVersion.isPresent)
+  }
+
+  test("getRatifiedCommits filters commits up to endVersion") {
+    val allCommits = List(0L, 1L, 2L, 3L).map(commit)
+
+    // Client returns filtered commits when endVersion specified
+    def clientWithEndVersionFilter(endOpt: Optional[java.lang.Long]): UCClient = new UCClient {
+      override def getMetastoreId(): String = "meta"
+      override def commit(
+          tableId: String,
+          tableUri: URI,
+          commit: Optional[Commit],
+          lastKnownBackfilledVersion: Optional[java.lang.Long],
+          disown: Boolean,
+          newMetadata: Optional[AbstractMetadata],
+          newProtocol: Optional[AbstractProtocol]): Unit = {
+        throw new UnsupportedOperationException("not used")
+      }
+      override def getCommits(
+          tableId: String,
+          tableUri: URI,
+          startVersion: Optional[java.lang.Long],
+          endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
+        val filtered = if (endVersion.isPresent) {
+          allCommits.filter(_.getVersion <= endVersion.get())
+        } else {
+          allCommits
+        }
+        new GetCommitsResponse(filtered.asJava, /* latest */ 3L)
+      }
+      override def close(): Unit = {}
+    }
+
+    // Request commits up to version 1
+    val adapter = new UnityCatalogAdapter(tableId, tablePath, clientWithEndVersionFilter(Optional.of(1L)))
+    val parsed = adapter.getRatifiedCommits(Optional.of(java.lang.Long.valueOf(1L))).asScala.map(_.getVersion)
+    assert(parsed == Seq(0L, 1L))
+  }
+
+  test("getTableId and getTablePath return constructor values") {
+    val adapter = new UnityCatalogAdapter(tableId, tablePath, new StubUCClient(
+      new GetCommitsResponse(List.empty[Commit].asJava, /* latest */ -1L)))
+
+    assert(adapter.getTableId == tableId)
+    assert(adapter.getTablePath == tablePath)
+  }
+
+  test("close calls UCClient close") {
+    var closeCalled = false
+    val client = new UCClient {
+      override def getMetastoreId(): String = "meta"
+      override def commit(
+          tableId: String,
+          tableUri: URI,
+          commit: Optional[Commit],
+          lastKnownBackfilledVersion: Optional[java.lang.Long],
+          disown: Boolean,
+          newMetadata: Optional[AbstractMetadata],
+          newProtocol: Optional[AbstractProtocol]): Unit = {}
+      override def getCommits(
+          tableId: String,
+          tableUri: URI,
+          startVersion: Optional[java.lang.Long],
+          endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
+        new GetCommitsResponse(List.empty[Commit].asJava, -1L)
+      }
+      override def close(): Unit = { closeCalled = true }
+    }
+
+    val adapter = new UnityCatalogAdapter(tableId, tablePath, client)
+    adapter.close()
+    assert(closeCalled)
+  }
+
+  test("close swallows exceptions from UCClient") {
+    val client = new UCClient {
+      override def getMetastoreId(): String = "meta"
+      override def commit(
+          tableId: String,
+          tableUri: URI,
+          commit: Optional[Commit],
+          lastKnownBackfilledVersion: Optional[java.lang.Long],
+          disown: Boolean,
+          newMetadata: Optional[AbstractMetadata],
+          newProtocol: Optional[AbstractProtocol]): Unit = {}
+      override def getCommits(
+          tableId: String,
+          tableUri: URI,
+          startVersion: Optional[java.lang.Long],
+          endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
+        new GetCommitsResponse(List.empty[Commit].asJava, -1L)
+      }
+      override def close(): Unit = { throw new RuntimeException("close failed") }
+    }
+
+    val adapter = new UnityCatalogAdapter(tableId, tablePath, client)
+    // Should not throw
+    adapter.close()
+  }
+
+  // Factory method tests
+
+  test("fromConnectionInfo throws on null input") {
+    assertThrows[NullPointerException] {
+      UnityCatalogAdapter.fromConnectionInfo(null)
+    }
+  }
+
+  test("fromConnectionInfo creates adapter with correct tableId and tablePath") {
+    val info = new UnityCatalogConnectionInfo(
+      /* tableId = */ "test-table-id-123",
+      /* tablePath = */ "/path/to/delta/table",
+      /* endpoint = */ "https://example.net/api",
+      /* token = */ "test-token")
+
+    val adapter = UnityCatalogAdapter.fromConnectionInfo(info)
+      .asInstanceOf[UnityCatalogAdapter]
+
+    assert(adapter.getTableId == "test-table-id-123")
+    assert(adapter.getTablePath == "/path/to/delta/table")
+  }
 }
