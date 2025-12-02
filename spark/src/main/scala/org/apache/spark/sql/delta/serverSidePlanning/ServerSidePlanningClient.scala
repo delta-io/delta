@@ -39,6 +39,20 @@ case class ScanPlan(
  * Interface for planning table scans via server-side planning (e.g., Iceberg REST catalog).
  * This interface is intentionally simple and has no dependencies
  * on Iceberg libraries, allowing it to live in delta-spark module.
+ *
+ * Filter Conversion Pattern:
+ * This interface uses Spark's standard `org.apache.spark.sql.sources.Filter` as the universal
+ * representation for filter pushdown. This keeps the interface catalog-agnostic while allowing
+ * each catalog implementation to convert filters to their own native format:
+ *  - Iceberg catalogs: Convert Spark Filter to Iceberg Expression (for REST API)
+ *  - Unity Catalog: Convert Spark Filter to UC's filter format
+ *  - Other catalogs: Implement their own conversion logic as needed
+ *
+ * Each catalog's implementation module (e.g., `iceberg/`) provides its own converter utility
+ * as a private implementation detail. See `SparkToIcebergExpressionConverter` in the iceberg
+ * module as an example.
+ *
+ * Note: Server-side planning only supports reading the current snapshot.
  */
 trait ServerSidePlanningClient {
   /**
@@ -46,7 +60,9 @@ trait ServerSidePlanningClient {
    *
    * @param databaseName The database or schema name
    * @param table The table name
-   * @param filter Optional filter expression to push down to server (Spark Filter format)
+   * @param filter Optional filter expression to push down to server (Spark Filter format).
+   *               Each catalog implementation is responsible for converting this to their
+   *               native filter format (e.g., Iceberg Expression, UC filter format, etc.)
    * @return ScanPlan containing files to read
    */
   def planScan(
