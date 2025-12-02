@@ -22,7 +22,7 @@ Additionally, having partition information embedded in the data files themselves
 > ***New Section after Identity Columns section***
 ## Materialize Partition Columns
 
-When this feature is enabled, partition columns are physically written to Parquet files alongside the data columns, which can improve flexibility with respect to data layout changes in the future, and make these data files easier to interpret for readers unfamiliar with partition values. To support this feature:
+When this feature is enabled, partition columns are physically written to Parquet files alongside the data columns. To support this feature:
  - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
 
 When supported:
