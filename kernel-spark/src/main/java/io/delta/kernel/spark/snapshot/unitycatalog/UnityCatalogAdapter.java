@@ -134,7 +134,7 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
 
   @Override
   public long getLatestRatifiedVersion() {
-    GetCommitsResponse response = getCommitsFromUC(Optional.empty());
+    GetCommitsResponse response = getCommitsFromUC(/* endVersionOpt = */ Optional.empty());
     long maxRatified = response.getLatestTableVersion();
     // UC returns -1 when only 0.json exists (CREATE not yet registered with UC)
     return maxRatified == -1 ? 0 : maxRatified;
