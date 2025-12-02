@@ -41,7 +41,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: "zulu"
-          java-version: "11"
+          java-version: "17"
       - name: Cache SBT and dependencies
         id: cache-sbt
         uses: actions/cache@v4
@@ -59,7 +59,8 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
-      - name: Run tests
+      # Run unit tests with JDK 17. These unit tests depend on Spark, and Spark 4.0+ is JDK 17.
+      - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
 
@@ -73,6 +74,7 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "11"
+      # Run integration tests with JDK 11, as they have no Spark dependency
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local

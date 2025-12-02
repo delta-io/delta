@@ -13,7 +13,7 @@ def get_version_from_sbt():
         version = fp.read().strip()
     return version.split('"')[1]
 
-
+# TODO: decide how to treat this going forward
 VERSION = get_version_from_sbt()
 MAJOR_VERSION = int(VERSION.split(".")[0])
 

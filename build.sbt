@@ -66,7 +66,7 @@ val sparkVersion = settingKey[String]("Spark version")
 
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -715,22 +715,6 @@ lazy val sharing = (project in file("sharing"))
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Test / javaOptions ++= Seq("-ea"),
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-sharing-spark",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-sharing-spark",
-      emptyValue = ()).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-sharing-spark",
-      emptyValue = ()).value,
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 

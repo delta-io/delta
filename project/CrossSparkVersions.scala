@@ -209,17 +209,10 @@ case class SparkVersionSpec(
 
 object SparkVersionSpec {
 
-  private val spark35 = SparkVersionSpec(
-    fullVersion = "3.5.7",
-    targetJvm = "11",
-    additionalSourceDir = Some("scala-spark-3.5"),
-    antlr4Version = "4.9.3",
-    additionalJavaOptions = Seq.empty
-  )
-
-  private val spark40Snapshot = SparkVersionSpec(
-    fullVersion = "4.0.2-SNAPSHOT",
+  private val spark40 = SparkVersionSpec(
+    fullVersion = "4.0.1",
     targetJvm = "17",
+    // TODO: merge shims and remove this until we add 2nd Spark version
     additionalSourceDir = Some("scala-spark-master"),
     antlr4Version = "4.13.1",
     additionalJavaOptions = Seq(
@@ -240,13 +233,13 @@ object SparkVersionSpec {
   )
 
   /** Default Spark version */
-  val DEFAULT = spark35
+  val DEFAULT = spark40
 
   /** Spark master branch version (optional). Release branches should not build against master */
-  val MASTER: Option[SparkVersionSpec] = Some(spark40Snapshot)
+  val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark35, spark40Snapshot)
+  val ALL_SPECS = Seq(spark40)
 }
 
 /** See docs on top of this file */
@@ -263,6 +256,7 @@ object CrossSparkVersions extends AutoPlugin {
     // Resolve aliases first
     val resolvedInput = input match {
       case "default" => SparkVersionSpec.DEFAULT.fullVersion
+      /*
       case "master" => SparkVersionSpec.MASTER match {
         case Some(masterSpec) => masterSpec.fullVersion
         case None => throw new IllegalArgumentException(
@@ -270,6 +264,7 @@ object CrossSparkVersions extends AutoPlugin {
           SparkVersionSpec.ALL_SPECS.map(_.fullVersion).mkString(", ")
         )
       }
+      */
       case other => other
     }
 
