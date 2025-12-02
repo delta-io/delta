@@ -723,6 +723,7 @@ trait DeltaSourceBase extends Source
             "backfilling" -> backfilling,
             "readChangeDataFeed" -> options.readChangeFeed,
             "typeWideningEnabled" -> typeWideningEnabled,
+            "enableSchemaTrackingForTypeWidening" -> enableSchemaTrackingForTypeWidening,
             "containsWideningTypeChanges" ->
               TypeWidening.containsWideningTypeChanges(schema, schemaChange)
           )
