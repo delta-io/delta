@@ -39,9 +39,8 @@ object DeltaSQLConfV2 extends DeltaSQLConfUtils {
     buildConf("v2.enableMode")
       .doc(
         "Controls the Delta V2 connector enable mode. " +
-        "Valid values: NONE (disabled, default), STRICT (should ONLY be enabled for testing).")
+          "Valid values: NONE (disabled, default), STRICT (should ONLY be enabled for testing).")
       .stringConf
       .checkValues(Set("NONE", "STRICT"))
       .createWithDefault("NONE")
 }
-
