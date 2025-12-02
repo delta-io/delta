@@ -97,6 +97,24 @@ public class StreamingHelper {
     return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();
   }
 
+  /**
+   * Gets actions from a commit range without requiring a snapshot at the exact start version.
+   *
+   * <p>This method is "unsafe" because it bypasses the standard {@code CommitRange.getActions()}
+   * API which requires a snapshot at the exact start version for protocol validation. Instead, it
+   * directly reads commit files and validates protocol per-commit, allowing a newer snapshot to be
+   * used for reading historical commits.
+   *
+   * <p>This is necessary for streaming scenarios where the start version might not have a
+   * recreatable snapshot (e.g., after log cleanup) or where {@code startingVersion="latest"} is
+   * used.
+   *
+   * @param engine the Delta engine
+   * @param commitRange the commit range to read actions from
+   * @param tablePath the path to the Delta table
+   * @param actionSet the set of actions to read (e.g., ADD, REMOVE)
+   * @return an iterator over columnar batches containing the requested actions
+   */
   public static CloseableIterator<ColumnarBatch> getActionsFromRangeUnsafe(
       Engine engine,
       CommitRangeImpl commitRange,

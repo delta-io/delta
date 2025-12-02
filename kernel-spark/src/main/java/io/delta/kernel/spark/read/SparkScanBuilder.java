@@ -39,7 +39,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 public class SparkScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
-  private ScanBuilder kernelScanBuilder;
+  private io.delta.kernel.ScanBuilder kernelScanBuilder;
   private final Snapshot initialSnapshot;
   private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;

@@ -56,10 +56,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     createEmptyTestTable(testPath, testTableName);
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
-    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     microBatchStream =
-        new SparkMicroBatchStream(
-            snapshotManager, initialSnapshot, spark.sessionState().newHadoopConf());
+        new SparkMicroBatchStream(snapshotManager, testPath, spark.sessionState().newHadoopConf());
   }
 
   @Test
@@ -179,9 +177,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv2 SparkMicroBatchStream
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
-    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(snapshotManager, initialSnapshot, new Configuration());
+        new SparkMicroBatchStream(snapshotManager, testTablePath, new Configuration());
     Option<DeltaSourceOffset> endOffsetOption = scalaEndOffset;
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
@@ -292,9 +289,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv2 SparkMicroBatchStream
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
-    io.delta.kernel.Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(snapshotManager, initialSnapshot, new Configuration());
+        new SparkMicroBatchStream(snapshotManager, testTablePath, new Configuration());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
     Option<DeltaSource.AdmissionLimits> dsv2Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
@@ -418,10 +414,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // Test DSv2 SparkMicroBatchStream
     PathBasedSnapshotManager dsv2SnapshotManager =
         new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
-    io.delta.kernel.Snapshot dsv2InitialSnapshot = dsv2SnapshotManager.loadLatestSnapshot();
     SparkMicroBatchStream stream =
         new SparkMicroBatchStream(
-            dsv2SnapshotManager, dsv2InitialSnapshot, spark.sessionState().newHadoopConf());
+            dsv2SnapshotManager, testTablePath, spark.sessionState().newHadoopConf());
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -513,9 +508,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
     SparkMicroBatchStream stream =
         new SparkMicroBatchStream(
-            snapshotManager,
-            snapshotManager.loadLatestSnapshot(),
-            spark.sessionState().newHadoopConf());
+            snapshotManager, testTablePath, spark.sessionState().newHadoopConf());
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
@@ -643,9 +636,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
     SparkMicroBatchStream stream =
         new SparkMicroBatchStream(
-            snapshotManager,
-            snapshotManager.loadLatestSnapshot(),
-            spark.sessionState().newHadoopConf());
+            snapshotManager, testTablePath, spark.sessionState().newHadoopConf());
 
     // Get file changes from version 1 onwards
     try (CloseableIterator<IndexedFile> kernelChanges =
