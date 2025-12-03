@@ -18,6 +18,8 @@ import datetime
 import os
 import py4j
 import unittest
+import time
+import tempfile
 
 from delta.tables import DeltaTable
 from pyspark.errors.exceptions.captured import AnalysisException, UnsupportedOperationException
@@ -555,6 +557,20 @@ class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
             # Streaming from a catalog owned table fails as it attempts to access the table by path.
             # This could also throw a better error than jsut 'access denied'.
             assert("AccessDeniedException" in str(error))
+
+    def test_streaming_write(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="to_table") as tmpdir:
+            df = spark.readStream.format("rate").option("rowsPerSecond", 10).load()
+            q = df.writeStream\
+                .format("delta")\
+                .option("checkpointLocation", tmpdir)\
+                .toTable(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+            assert(q.isActive)
+            time.sleep(10)
+            q.stop()
+            result = spark.sql("SELECT * FROM " + MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).collect()
+            assert(len(result) > 0)
+
 
 
 if __name__ == "__main__":
