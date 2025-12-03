@@ -200,7 +200,7 @@ class CrossSparkPublishTest:
 
     def test_run_only_for_spark_modules(self) -> bool:
         """runOnlyForReleasableSparkModules should publish only Spark-dependent modules."""
-        spark_version = "4.0.2-SNAPSHOT"
+        spark_version = "4.0.1"
         spark_spec = SPARK_VERSIONS[spark_version]
 
         print("\n" + "="*70)
