@@ -16,9 +16,45 @@
 
 package org.apache.spark.sql.delta.serverSidePlanning
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
+/**
+ * Test client that captures the filter passed to planScan() for verification.
+ * Stores captured filter in thread-local variable accessible via companion object.
+ */
+class FilterCapturingTestClient(spark: SparkSession) extends ServerSidePlanningClient {
+  override def planScan(
+      database: String,
+      table: String,
+      filter: Option[org.apache.spark.sql.sources.Filter] = None): ScanPlan = {
+    // Capture the filter for test verification
+    FilterCapturingTestClient.capturedFilter.set(filter)
+
+    // Delegate to TestServerSidePlanningClient for actual file discovery
+    new TestServerSidePlanningClient(spark).planScan(database, table, filter)
+  }
+}
+
+object FilterCapturingTestClient {
+  private val capturedFilter =
+    new ThreadLocal[Option[org.apache.spark.sql.sources.Filter]]()
+
+  def getCapturedFilter: Option[org.apache.spark.sql.sources.Filter] = capturedFilter.get()
+  def clearCapturedFilter(): Unit = capturedFilter.remove()
+}
+
+/**
+ * Factory for creating FilterCapturingTestClient instances.
+ */
+class FilterCapturingTestClientFactory extends ServerSidePlanningClientFactory {
+  override def buildForCatalog(
+      spark: SparkSession,
+      catalogName: String): ServerSidePlanningClient = {
+    new FilterCapturingTestClient(spark)
+  }
+}
 
 /**
  * Tests for server-side planning with a mock client.
@@ -174,6 +210,118 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
         sql("SELECT * FROM readonly_test"),
         Seq(Row(1, "initial"))
       )
+    }
+  }
+
+  test("filter pushdown - simple EqualTo filter") {
+    val originalConfig = spark.conf.getOption(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+    ServerSidePlanningClientFactory.setFactory(new FilterCapturingTestClientFactory())
+    spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "true")
+
+    try {
+      // Clear any previous captured filter
+      FilterCapturingTestClient.clearCapturedFilter()
+
+      // Execute query with WHERE clause
+      sql("SELECT id, name, value FROM test_db.shared_test WHERE id = 2").collect()
+
+      // Verify filter was captured
+      val capturedFilter = FilterCapturingTestClient.getCapturedFilter
+      assert(capturedFilter.isDefined, "Filter should be pushed down")
+
+      // Spark may wrap EqualTo with IsNotNull check: And(IsNotNull("id"), EqualTo("id", 2))
+      // We need to handle both cases
+      val filter = capturedFilter.get
+      val equalToFilter = filter match {
+        case and: org.apache.spark.sql.sources.And =>
+          // Wrapped case - extract the EqualTo from the And
+          and.right match {
+            case eq: org.apache.spark.sql.sources.EqualTo => eq
+            case _ => and.left.asInstanceOf[org.apache.spark.sql.sources.EqualTo]
+          }
+        case eq: org.apache.spark.sql.sources.EqualTo =>
+          // Unwrapped case
+          eq
+        case other =>
+          fail(s"Expected EqualTo or And(IsNotNull, EqualTo) but got ${other.getClass.getName}")
+      }
+
+      assert(equalToFilter.attribute == "id",
+        s"Expected attribute 'id' but got '${equalToFilter.attribute}'")
+      assert(equalToFilter.value == 2, s"Expected value 2 but got ${equalToFilter.value}")
+    } finally {
+      FilterCapturingTestClient.clearCapturedFilter()
+      ServerSidePlanningClientFactory.clearFactory()
+      originalConfig match {
+        case Some(value) => spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, value)
+        case None => spark.conf.unset(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+      }
+    }
+  }
+
+  test("filter pushdown - compound And filter") {
+    val originalConfig = spark.conf.getOption(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+    ServerSidePlanningClientFactory.setFactory(new FilterCapturingTestClientFactory())
+    spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "true")
+
+    try {
+      // Clear any previous captured filter
+      FilterCapturingTestClient.clearCapturedFilter()
+
+      // Execute query with compound WHERE clause
+      sql("SELECT id, name, value FROM test_db.shared_test WHERE id > 1 AND value < 30").collect()
+
+      // Verify filter was captured
+      val capturedFilter = FilterCapturingTestClient.getCapturedFilter
+      assert(capturedFilter.isDefined, "Filter should be pushed down")
+
+      // Spark may wrap filters with IsNotNull checks in nested And structures:
+      // And(And(IsNotNull("id"), GreaterThan("id", 1)), And(IsNotNull("value"), LessThan("value", 30)))
+      // We just verify that the top-level is an And filter and contains the expected predicates
+      val filter = capturedFilter.get
+      assert(filter.isInstanceOf[org.apache.spark.sql.sources.And],
+        s"Expected And filter but got ${filter.getClass.getName}")
+
+      // Convert filter to string and verify it contains both predicates
+      val filterStr = filter.toString
+      assert(filterStr.contains("GreaterThan") && filterStr.contains("id"),
+        s"Filter should contain GreaterThan on id: $filterStr")
+      assert(filterStr.contains("LessThan") && filterStr.contains("value"),
+        s"Filter should contain LessThan on value: $filterStr")
+    } finally {
+      FilterCapturingTestClient.clearCapturedFilter()
+      ServerSidePlanningClientFactory.clearFactory()
+      originalConfig match {
+        case Some(value) => spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, value)
+        case None => spark.conf.unset(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+      }
+    }
+  }
+
+  test("filter pushdown - no filter when no WHERE clause") {
+    val originalConfig = spark.conf.getOption(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+    ServerSidePlanningClientFactory.setFactory(new FilterCapturingTestClientFactory())
+    spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "true")
+
+    try {
+      // Clear any previous captured filter
+      FilterCapturingTestClient.clearCapturedFilter()
+
+      // Execute query without WHERE clause
+      sql("SELECT id, name, value FROM test_db.shared_test").collect()
+
+      // Verify no filter was pushed
+      // getCapturedFilter returns Option[Filter] - should be None when no WHERE clause
+      val capturedFilter = FilterCapturingTestClient.getCapturedFilter
+      assert(capturedFilter != null, "planScan should have been called")
+      assert(capturedFilter.isEmpty, s"Expected no filter (None) but got ${capturedFilter}")
+    } finally {
+      FilterCapturingTestClient.clearCapturedFilter()
+      ServerSidePlanningClientFactory.clearFactory()
+      originalConfig match {
+        case Some(value) => spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, value)
+        case None => spark.conf.unset(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+      }
     }
   }
 }
