@@ -490,10 +490,9 @@ private[sharing] object DeltaSharingDataSource {
 
   def redactOptions(options: Map[String, String]): Map[String, String] = {
     options.map {
-      case (k, _) if k.equalsIgnoreCase(DeltaSharingOptions.BEARER_TOKEN) => (k, "REDACTED")
-      case (k, _) if k.equalsIgnoreCase(DeltaSharingOptions.PROFILE_CLIENT_ID) => (k, "REDACTED")
-      case (k, _) if k.equalsIgnoreCase(DeltaSharingOptions.PROFILE_CLIENT_SECRET) =>
-        (k, "REDACTED")
+      case (k, _) if k.equalsIgnoreCase("bearerToken") => (k, "REDACTED")
+      case (k, _) if k.equalsIgnoreCase("clientId") => (k, "REDACTED")
+      case (k, _) if k.equalsIgnoreCase("clientSecret") => (k, "REDACTED")
       case (k, v) => (k, v)
     }
   }
