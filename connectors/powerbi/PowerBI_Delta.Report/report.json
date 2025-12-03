@@ -1,0 +1,60 @@
+{
+  "config": "{\"version\":\"5.37\",\"themeCollection\":{\"baseTheme\":{\"name\":\"CY20SU09\",\"version\":\"5.17\",\"type\":2}},\"activeSectionIndex\":0,\"defaultDrillFilterOtherVisuals\":true,\"slowDataSourceSettings\":{\"isCrossHighlightingDisabled\":false,\"isSlicerSelectionsButtonEnabled\":false,\"isFilterSelectionsButtonEnabled\":false,\"isFieldWellButtonEnabled\":false,\"isApplyAllButtonEnabled\":false},\"linguisticSchemaSyncVersion\":2,\"settings\":{\"useNewFilterPaneExperience\":true,\"allowChangeFilterTypes\":true,\"useStylableVisualContainerHeader\":true,\"exportDataMode\":1},\"objects\":{\"section\":[{\"properties\":{\"verticalAlignment\":{\"expr\":{\"Literal\":{\"Value\":\"'Top'\"}}}}}]}}",
+  "layoutOptimization": 0,
+  "resourcePackages": [
+    {
+      "resourcePackage": {
+        "disabled": false,
+        "items": [
+          {
+            "name": "CY20SU09",
+            "path": "BaseThemes/CY20SU09.json",
+            "type": 202
+          }
+        ],
+        "name": "SharedResources",
+        "type": 2
+      }
+    }
+  ],
+  "sections": [
+    {
+      "config": "{}",
+      "displayName": "Page 1",
+      "displayOption": 1,
+      "filters": "[]",
+      "height": 720.00,
+      "name": "ReportSection",
+      "visualContainers": [
+        {
+          "config": "{\"name\":\"17dd014bcb84b2e86c7a\",\"layouts\":[{\"id\":0,\"position\":{\"x\":41.03052120832681,\"y\":0,\"z\":0,\"width\":300.0356863358898,\"height\":150.0178431679449}}],\"singleVisual\":{\"visualType\":\"card\",\"projections\":{\"Values\":[{\"queryRef\":\"DeltaTableData_CurrentFunction.RowCount\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"d\",\"Entity\":\"DeltaTableData_CurrentFunction\",\"Type\":0}],\"Select\":[{\"Measure\":{\"Expression\":{\"SourceRef\":{\"Source\":\"d\"}},\"Property\":\"RowCount\"},\"Name\":\"DeltaTableData_CurrentFunction.RowCount\"}],\"OrderBy\":[{\"Direction\":2,\"Expression\":{\"Measure\":{\"Expression\":{\"SourceRef\":{\"Source\":\"d\"}},\"Property\":\"RowCount\"}}}]},\"drillFilterOtherVisuals\":true,\"objects\":{}}}",
+          "filters": "[]",
+          "height": 150.02,
+          "width": 300.04,
+          "x": 41.03,
+          "y": 0.00,
+          "z": 0.00
+        },
+        {
+          "config": "{\"name\":\"ab30bfc2485357da0d28\",\"layouts\":[{\"id\":0,\"position\":{\"x\":401.32978556894665,\"y\":96.16528408201596,\"z\":2000,\"width\":751.3714196274848,\"height\":235.92549694787917}}],\"singleVisual\":{\"visualType\":\"tableEx\",\"projections\":{\"Values\":[{\"queryRef\":\"RowCounts.GoldenTable\"},{\"queryRef\":\"Sum(RowCounts.RowCounts)\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"r\",\"Entity\":\"RowCounts\",\"Type\":0}],\"Select\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"r\"}},\"Property\":\"GoldenTable\"},\"Name\":\"RowCounts.GoldenTable\",\"NativeReferenceName\":\"GoldenTable\"},{\"Aggregation\":{\"Expression\":{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"r\"}},\"Property\":\"RowCounts\"}},\"Function\":0},\"Name\":\"Sum(RowCounts.RowCounts)\",\"NativeReferenceName\":\"RowCounts\"}]},\"drillFilterOtherVisuals\":true}}",
+          "filters": "[]",
+          "height": 235.93,
+          "width": 751.37,
+          "x": 401.33,
+          "y": 96.17,
+          "z": 2000.00
+        },
+        {
+          "config": "{\"name\":\"faeabc8e9d35160bee93\",\"layouts\":[{\"id\":0,\"position\":{\"x\":0,\"y\":138.47800907810299,\"z\":1000,\"width\":380.81452496478323,\"height\":162.83988104554703}}],\"singleVisual\":{\"visualType\":\"card\",\"projections\":{\"Values\":[{\"queryRef\":\"DeltaTableData_Generic.Function Up-to-Date\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"d\",\"Entity\":\"DeltaTableData_CurrentFunction\",\"Type\":0}],\"Select\":[{\"Measure\":{\"Expression\":{\"SourceRef\":{\"Source\":\"d\"}},\"Property\":\"Function Up-to-Date\"},\"Name\":\"DeltaTableData_Generic.Function Up-to-Date\"}]},\"drillFilterOtherVisuals\":true}}",
+          "filters": "[]",
+          "height": 162.84,
+          "width": 380.81,
+          "x": 0.00,
+          "y": 138.48,
+          "z": 1000.00
+        }
+      ],
+      "width": 1280.00
+    }
+  ]
+}

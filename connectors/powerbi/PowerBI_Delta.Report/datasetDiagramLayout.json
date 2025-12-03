@@ -1,0 +1,287 @@
+{
+  "version": "1.1.0",
+  "diagrams": [
+    {
+      "ordinal": 0,
+      "scrollPosition": {
+        "x": 0,
+        "y": 0
+      },
+      "nodes": [
+        {
+          "location": {
+            "x": 0,
+            "y": 0
+          },
+          "nodeIndex": "ADLS_DimProduct",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 425,
+            "y": 0
+          },
+          "nodeIndex": "ADLS_DimProduct_Buffered",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 850.1,
+            "y": 0
+          },
+          "nodeIndex": "ADLS_DimProduct_UTC+2",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 2125.2,
+            "y": 0
+          },
+          "nodeIndex": "ADLSGen1_DimProduct",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 2550.2,
+            "y": 0
+          },
+          "nodeIndex": "ADLSGen1_FactInternetSales_part",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 2975.2,
+            "y": 0
+          },
+          "nodeIndex": "Blob_BasicDataTypes",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 3400.3,
+            "y": 0
+          },
+          "nodeIndex": "Blob_part",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 4675.3,
+            "y": 0
+          },
+          "nodeIndex": "DeltaTableData_Generic",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 5100.4,
+            "y": 0
+          },
+          "nodeIndex": "Local_part",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 5525.4,
+            "y": 86
+          },
+          "nodeIndex": "PQ_DataTypes",
+          "size": {
+            "height": 128,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 5950.4,
+            "y": 0
+          },
+          "nodeIndex": "Test_Partition_Elimination",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 6375.5,
+            "y": 0
+          },
+          "nodeIndex": "Test_Time_Travel",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 6808.2,
+            "y": 0
+          },
+          "nodeIndex": "Data",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 7240.9,
+            "y": 0
+          },
+          "nodeIndex": "Blob_AllDataTypes",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 7673.6,
+            "y": 0
+          },
+          "nodeIndex": "ADLS_DimProduct_prevVersion",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 1275.1,
+            "y": 0
+          },
+          "nodeIndex": "ADLS_FactInternetSales_part",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 1700.1,
+            "y": 0
+          },
+          "nodeIndex": "ADLS_FactInternetSales_part_Hierarchical",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 8037.4,
+            "y": 0
+          },
+          "nodeIndex": "RowCounts",
+          "size": {
+            "height": 128,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 8470.1,
+            "y": 0
+          },
+          "nodeIndex": "Blob_AllDataTypes_expanded",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 8902.8,
+            "y": 0
+          },
+          "nodeIndex": "Sample_ADLS_Gen2",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 9335.5,
+            "y": 0
+          },
+          "nodeIndex": "Sample_Blob",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 9699.3,
+            "y": 0
+          },
+          "nodeIndex": "Blob_with_file_name",
+          "nodeLineageTag": "95e9d529-5a1f-4e95-80a2-8dba48e3f01d",
+          "size": {
+            "height": 128,
+            "width": 234
+          },
+          "zIndex": 0
+        }
+      ],
+      "name": "All tables",
+      "zoomValue": 100,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
+    }
+  ],
+  "selectedDiagram": "All tables",
+  "defaultDiagram": "All tables"
+}
