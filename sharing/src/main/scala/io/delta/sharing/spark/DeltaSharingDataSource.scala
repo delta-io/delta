@@ -493,6 +493,7 @@ private[sharing] object DeltaSharingDataSource {
       case (k, _) if k.equalsIgnoreCase("bearerToken") => (k, "REDACTED")
       case (k, _) if k.equalsIgnoreCase("clientId") => (k, "REDACTED")
       case (k, _) if k.equalsIgnoreCase("clientSecret") => (k, "REDACTED")
+      case (k, _) if k.equalsIgnoreCase("scope") => (k, "REDACTED")
       case (k, v) => (k, v)
     }
   }
