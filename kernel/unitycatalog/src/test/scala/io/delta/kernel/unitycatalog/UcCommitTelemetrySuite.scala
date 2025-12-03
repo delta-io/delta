@@ -18,14 +18,18 @@ package io.delta.kernel.unitycatalog
 
 import java.util.Optional
 
+import scala.collection.mutable.ArrayBuffer
+
 import io.delta.kernel.Operation
 import io.delta.kernel.commit.{CommitFailedException, CommitMetadata}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.exceptions.MaxCommitRetryLimitReachedException
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils}
+import io.delta.kernel.unitycatalog.InMemoryUCClient.TableData
 import io.delta.kernel.unitycatalog.metrics.UcCommitTelemetry
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
+import io.delta.storage.commit.Commit
 
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
@@ -44,16 +48,16 @@ class UcCommitTelemetrySuite
 
       // CREATE -- v0.json
       val result0 = ucCatalogManagedClient
-        .buildCreateTableTransaction("ucTableId", tablePath, testSchema, "test-engine")
+        .buildCreateTableTransaction("testUcTableId", tablePath, testSchema, "test-engine")
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable() /* dataActions */ )
-      initializeUCTable(ucClient, "ucTableId")
+      ucClient.insertTableDataAfterCreate("testUcTableId")
 
       // Verify CREATE metrics
       assert(reporter.reports.size === 1)
       val createReport = reporter.reports.head
       assert(createReport.operationType === "UcCommit")
-      assert(createReport.ucTableId === "ucTableId")
+      assert(createReport.ucTableId === "testUcTableId")
       assert(createReport.ucTablePath === tablePath)
       assert(createReport.commitVersion === 0)
       assert(createReport.commitType === CommitMetadata.CommitType.CATALOG_CREATE)
@@ -78,7 +82,7 @@ class UcCommitTelemetrySuite
       assert(reporter.reports.size === 1)
       val writeReport = reporter.reports.head
       assert(writeReport.operationType === "UcCommit")
-      assert(writeReport.ucTableId === "ucTableId")
+      assert(writeReport.ucTableId === "testUcTableId")
       assert(writeReport.ucTablePath === tablePath)
       assert(writeReport.commitVersion === 1)
       assert(writeReport.commitType === CommitMetadata.CommitType.CATALOG_WRITE)
@@ -118,7 +122,7 @@ class UcCommitTelemetrySuite
       // ===== WHEN =====
       intercept[MaxCommitRetryLimitReachedException] {
         ucCatalogManagedClient
-          .buildCreateTableTransaction("ucTableId", tablePath, testSchema, "test-engine")
+          .buildCreateTableTransaction("testUcTableId", tablePath, testSchema, "test-engine")
           .withMaxRetries(0)
           .build(throwingEngineWithReporter)
           .commit(throwingEngineWithReporter, CloseableIterable.emptyIterable())
@@ -128,7 +132,7 @@ class UcCommitTelemetrySuite
       assert(reporter.reports.size === 1)
       val report = reporter.reports.head
       assert(report.operationType === "UcCommit")
-      assert(report.ucTableId === "ucTableId")
+      assert(report.ucTableId === "testUcTableId")
       assert(report.commitVersion === 0)
       assert(report.commitType === CommitMetadata.CommitType.CATALOG_CREATE)
       assert(report.exception.isPresent)
@@ -146,7 +150,7 @@ class UcCommitTelemetrySuite
       newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
       newMetadataOpt = Optional.of(basicPartitionedMetadata))
 
-    val telemetry = new UcCommitTelemetry("ucTableId", "ucTablePath", commitMetadata)
+    val telemetry = new UcCommitTelemetry("testUcTableId", "ucTablePath", commitMetadata)
     telemetry.getMetricsCollector.totalCommitTimer.record(200)
     telemetry.getMetricsCollector.writeCommitFileTimer.record(200)
     // Note: commitToUcServerTimer is not invoked for CREATE operations
@@ -158,7 +162,7 @@ class UcCommitTelemetrySuite
       s"""
          |{"operationType":"UcCommit",
          |"reportUUID":"${report.reportUUID}",
-         |"ucTableId":"ucTableId",
+         |"ucTableId":"testUcTableId",
          |"ucTablePath":"ucTablePath",
          |"commitVersion":0,
          |"commitType":"CATALOG_CREATE",
@@ -173,7 +177,7 @@ class UcCommitTelemetrySuite
   test("JSON serialization: success + update (version >= 1)") {
     val commitMetadata = catalogManagedWriteCommitMetadata(version = 5)
 
-    val telemetry = new UcCommitTelemetry("ucTableId", "ucTablePath", commitMetadata)
+    val telemetry = new UcCommitTelemetry("testUcTableId", "ucTablePath", commitMetadata)
     telemetry.getMetricsCollector.totalCommitTimer.record(300)
     telemetry.getMetricsCollector.writeCommitFileTimer.record(200)
     telemetry.getMetricsCollector.commitToUcServerTimer.record(100)
@@ -185,7 +189,7 @@ class UcCommitTelemetrySuite
       s"""
          |{"operationType":"UcCommit",
          |"reportUUID":"${report.reportUUID}",
-         |"ucTableId":"ucTableId",
+         |"ucTableId":"testUcTableId",
          |"ucTablePath":"ucTablePath",
          |"commitVersion":5,
          |"commitType":"CATALOG_WRITE",
@@ -200,7 +204,7 @@ class UcCommitTelemetrySuite
   test("JSON serialization: fail + update") {
     val commitMetadata = catalogManagedWriteCommitMetadata(version = 3)
 
-    val telemetry = new UcCommitTelemetry("ucTableId", "ucTablePath", commitMetadata)
+    val telemetry = new UcCommitTelemetry("testUcTableId", "ucTablePath", commitMetadata)
     telemetry.getMetricsCollector.totalCommitTimer.record(300)
     telemetry.getMetricsCollector.writeCommitFileTimer.record(200)
     telemetry.getMetricsCollector.commitToUcServerTimer.record(100)
@@ -213,7 +217,7 @@ class UcCommitTelemetrySuite
       s"""
          |{"operationType":"UcCommit",
          |"reportUUID":"${report.reportUUID}",
-         |"ucTableId":"ucTableId",
+         |"ucTableId":"testUcTableId",
          |"ucTablePath":"ucTablePath",
          |"commitVersion":3,
          |"commitType":"CATALOG_WRITE",
