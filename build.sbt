@@ -763,6 +763,10 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
+
+      "org.junit.jupiter" % "junit-jupiter" % "5.10.3" % Test,
+      "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
+      "org.assertj" % "assertj-core" % "3.26.3" % Test,
     ),
 
     Test / testOptions += Tests.Argument("-oDF"),
