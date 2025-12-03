@@ -41,7 +41,7 @@ import org.apache.spark.annotation.Experimental;
 
 /** SnapshotManager that loads Delta snapshots using catalog-managed commits (CCv2). */
 @Experimental
-public class CatalogManagedSnapshotManager implements DeltaSnapshotManager {
+public class CatalogManagedSnapshotManager implements DeltaSnapshotManager, AutoCloseable {
 
   private final CatalogWithManagedCommits catalog;
   private final String tableId;
@@ -223,5 +223,10 @@ public class CatalogManagedSnapshotManager implements DeltaSnapshotManager {
       }
       prev = current;
     }
+  }
+
+  @Override
+  public void close() {
+    // No-op: CatalogWithManagedCommits may manage its own lifecycle.
   }
 }

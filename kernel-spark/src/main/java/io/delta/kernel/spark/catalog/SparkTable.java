@@ -19,7 +19,6 @@ import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.catalog.CatalogWithManagedCommits;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManagerFactory;
@@ -70,7 +69,7 @@ public class SparkTable implements Table, SupportsRead {
    * @throws NullPointerException if identifier or tablePath is null
    */
   public SparkTable(Identifier identifier, String tablePath) {
-    this(identifier, tablePath, Collections.emptyMap(), Optional.empty(), Optional.empty());
+    this(identifier, tablePath, Collections.emptyMap(), Optional.empty());
   }
 
   /**
@@ -82,7 +81,7 @@ public class SparkTable implements Table, SupportsRead {
    * @throws NullPointerException if identifier or tablePath is null
    */
   public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
-    this(identifier, tablePath, options, Optional.empty(), Optional.empty());
+    this(identifier, tablePath, options, Optional.empty());
   }
 
   /**
@@ -99,34 +98,7 @@ public class SparkTable implements Table, SupportsRead {
         identifier,
         getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
         options,
-        Optional.of(catalogTable),
-        Optional.empty());
-  }
-
-  /**
-   * Creates a SparkTable with an explicit managed-commit catalog implementation (for engines that
-   * can expose it directly, e.g., non-Spark callers or tests).
-   */
-  public SparkTable(
-      Identifier identifier,
-      CatalogTable catalogTable,
-      Map<String, String> options,
-      CatalogWithManagedCommits managedCatalog) {
-    this(
-        identifier,
-        getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
-        options,
-        Optional.of(catalogTable),
-        Optional.ofNullable(managedCatalog));
-  }
-
-  /** Path-based constructor that still allows passing a managed catalog for testing. */
-  public SparkTable(
-      Identifier identifier,
-      String tablePath,
-      Map<String, String> options,
-      CatalogWithManagedCommits managedCatalog) {
-    this(identifier, tablePath, options, Optional.empty(), Optional.ofNullable(managedCatalog));
+        Optional.of(catalogTable));
   }
 
   /**
@@ -145,8 +117,7 @@ public class SparkTable implements Table, SupportsRead {
       Identifier identifier,
       String tablePath,
       Map<String, String> userOptions,
-      Optional<CatalogTable> catalogTable,
-      Optional<CatalogWithManagedCommits> managedCatalog) {
+      Optional<CatalogTable> catalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
@@ -168,16 +139,13 @@ public class SparkTable implements Table, SupportsRead {
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
 
-    Map<String, String> tableProperties =
-        catalogTable
-            .map(table -> scala.collection.JavaConverters.mapAsJavaMap(table.properties()))
-            .orElse(Collections.emptyMap());
-
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.snapshotManager =
-        DeltaSnapshotManagerFactory.create(
-            tablePath, tableProperties, managedCatalog, hadoopConf);
+        catalogTable.isPresent()
+            ? DeltaSnapshotManagerFactory.fromCatalogTable(
+                catalogTable.get(), SparkSession.active(), hadoopConf)
+            : DeltaSnapshotManagerFactory.fromPath(tablePath, hadoopConf);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
