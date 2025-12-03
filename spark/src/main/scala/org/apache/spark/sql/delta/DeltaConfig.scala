@@ -193,7 +193,7 @@ trait DeltaConfigsBase extends DeltaLogging {
           kv
         case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
           // This is a table feature, we should allow it.
-          lKey -> value
+          key -> value
         case lKey if lKey.startsWith("delta.") =>
           Option(entries.get(lKey.stripPrefix("delta."))) match {
             case Some(deltaConfig) if (

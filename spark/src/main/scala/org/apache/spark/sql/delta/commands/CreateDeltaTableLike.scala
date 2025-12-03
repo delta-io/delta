@@ -26,6 +26,7 @@ import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -130,6 +131,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     } else {
       table.storage.copy(properties = Map.empty)
     }
+    // These table protocol properties, along with the uc table id, are needed when the create table
+    // request is sent to server.
+    val tableProtocolProperties = table.properties.view.filterKeys { k =>
+      TableFeatureProtocolUtils.isTableProtocolProperty(k) ||
+      k == TableFeatureProtocolUtils.UC_TABLE_ID_KEY
+    }
 
     // If we have to update the catalog, use the correct schema and table properties, otherwise
     // empty out the schema and property information
@@ -149,13 +156,13 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         // we store the partition columns as regular data columns.
         partitionColumnNames = Nil,
         properties = UpdateCatalog.updatedProperties(snapshot)
-          ++ additionalProperties,
+          ++ additionalProperties ++ tableProtocolProperties,
         storage = storageProps,
         tracksPartitionsInCatalog = true)
     } else {
       table.copy(
         schema = new StructType(),
-        properties = Map.empty,
+        properties = tableProtocolProperties.toMap,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,
