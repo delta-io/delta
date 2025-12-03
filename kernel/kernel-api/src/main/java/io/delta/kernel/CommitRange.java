@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
@@ -92,6 +91,7 @@ public interface CommitRange {
    *
    * <p>The iterator must be closed after use to release any underlying resources.
    *
+   * @deprecated Use {@link #getCommitActions(Engine, Snapshot, Set)} instead
    * @param engine the {@link Engine} to use for reading the Delta log files
    * @param startSnapshot the snapshot for startVersion, required to ensure the table is readable by
    *     Kernel at startVersion
@@ -103,6 +103,7 @@ public interface CommitRange {
    * @throws KernelException if the version range contains a version with reader protocol that is
    *     unsupported by Kernel
    */
+  @Deprecated
   CloseableIterator<ColumnarBatch> getActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet);
 
