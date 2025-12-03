@@ -604,8 +604,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           lastCheckpointVersion.map(Long.box),
           versionToLoad.map(Long.box),
           expectedErrorMessageContains =
-            "Missing delta files: versions are not contiguous. Expected version 12 after " +
-              "version 11, but found version 13.")
+            "Missing delta files: versions are not contiguous: ([11, 13])")
       }
     }
   }
