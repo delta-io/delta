@@ -67,7 +67,7 @@ object TypeWidening {
   /**
    * Returns whether the given type change is eligible for widening. This only checks atomic types.
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
-   * 
+   *
    * Type widening supports:
    * - byte -> short -> int -> long.
    * - float -> double.
@@ -119,7 +119,7 @@ object TypeWidening {
       case (DateType, TimestampNTZType) => true
       case _ => false
     }
-    
+
     supportedForSchemaEvolution && (
       !uniformIcebergCompatibleOnly ||
         isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType)
