@@ -28,14 +28,12 @@ public class UnityCatalogExtensionUtil {
 
   // The unity catalog URI endpoint environment variable.
   public static final String UC_URI = "UC_URI";
+  public static final String UC_CATALOG_NAME = "UC_CATALOG_NAME";
+  public static final String UC_SCHEMA_NAME = "UC_SCHEMA_NAME";
+  public static final String UC_BASE_LOCATION = "UC_BASE_LOCATION";
 
   // The unity catalog token environment variable, for personal access token (PAT).
   public static final String UC_TOKEN = "UC_TOKEN";
-
-  // The unity catalog OAuth environment variables.
-  public static final String UC_OAUTH_URI = "UC_OAUTH_URI";
-  public static final String UC_OAUTH_CLIENT_ID = "UC_OAUTH_CLIENT_ID";
-  public static final String UC_OAUTH_CLIENT_SECRET = "UC_OAUTH_CLIENT_SECRET";
 
   public static UnityCatalogExtension initialize() {
     UnityCatalogExtension extension;

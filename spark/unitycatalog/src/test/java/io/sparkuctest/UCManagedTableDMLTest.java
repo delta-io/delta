@@ -16,17 +16,21 @@
 
 package io.sparkuctest;
 
-import io.sparkuctest.extension.UnityCatalogExtension;
-import io.sparkuctest.extension.UnityCatalogExtensionUtil;
+import com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.RegisterExtension;
 
-public class UnityCatalogTest {
-
-  @RegisterExtension
-  public static UnityCatalogExtension UC_EXTENSION = UnityCatalogExtensionUtil.initialize();
+public class UCManagedTableDMLTest extends UnityCatalogTestBase {
 
   @Test
-  public void test() {
+  public void testBasicOperation() {
+    String tableName = fullTableName("testBasicOperation");
+    sql("CREATE TABLE %s (id INT, val STRING) USING DELTA LOCATION '%s'",
+        tableName, path("testBasicOperation"));
+
+    sql("INSERT INTO %s VALUES (1, 'AAA'), (2, 'BBB')", tableName);
+
+    assertEquals("Should have the expected results",
+        ImmutableList.of(row(1, "AAA"), row(2, "BBB")),
+        sql("SELECT * FROM %s ORDER BY id ASC", tableName));
   }
 }

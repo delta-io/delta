@@ -24,7 +24,11 @@ public interface UnityCatalogExtension extends BeforeAllCallback, AfterAllCallba
 
   String catalogName();
 
+  String schemaName();
+
   String catalogUri();
+
+  String rootTestingDir();
 
   Map<String, String> catalogSparkConf();
 }

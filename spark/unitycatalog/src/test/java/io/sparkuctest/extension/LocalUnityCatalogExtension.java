@@ -26,10 +26,11 @@ import io.unitycatalog.server.utils.ServerProperties;
 import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.nio.file.Files;
 import java.util.Map;
 import java.util.Properties;
+import org.apache.commons.io.FileUtils;
 import org.junit.jupiter.api.extension.ExtensionContext;
-import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,15 +38,14 @@ public class LocalUnityCatalogExtension implements UnityCatalogExtension {
 
   private static final Logger LOG = LoggerFactory.getLogger(LocalUnityCatalogExtension.class);
 
-  @TempDir
-  public File tempDir;
-
+  private File tempDir;
   private UnityCatalogServer ucServer;
   private int ucPort;
-  private String ucToken = "a-fake-token";
+  private String ucToken = "mock-token";
 
   @Override
   public void beforeAll(ExtensionContext context) throws Exception {
+    tempDir = Files.createTempDirectory("spark-uc-test-").toFile();
     ucServer = startUnityCatalogServer();
   }
 
@@ -53,6 +53,10 @@ public class LocalUnityCatalogExtension implements UnityCatalogExtension {
   public void afterAll(ExtensionContext context) throws Exception {
     if (ucServer != null) {
       ucServer.stop();
+    }
+
+    if (tempDir != null) {
+      FileUtils.deleteDirectory(tempDir);
     }
   }
 
@@ -62,8 +66,18 @@ public class LocalUnityCatalogExtension implements UnityCatalogExtension {
   }
 
   @Override
+  public String schemaName() {
+    return "default";
+  }
+
+  @Override
   public String catalogUri() {
     return "http://localhost:" + ucPort;
+  }
+
+  @Override
+  public String rootTestingDir() {
+    return tempDir.getAbsolutePath();
   }
 
   @Override
@@ -139,12 +153,12 @@ public class LocalUnityCatalogExtension implements UnityCatalogExtension {
     // Create default schema
     schemasApi.createSchema(
         new CreateSchema()
-            .name("default")
+            .name(schemaName())
             .catalogName(catalogName())
     );
 
     LOG.info("Unity Catalog server started and ready at {}", catalogUri());
-    LOG.info("Created catalog '{}' with schema 'default'", catalogName());
+    LOG.info("Created catalog '{}' with schema '{}'", catalogName(), schemaName());
 
     return server;
   }
