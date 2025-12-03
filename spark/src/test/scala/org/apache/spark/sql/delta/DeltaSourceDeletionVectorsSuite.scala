@@ -489,6 +489,8 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
           true
         },
         // One file is read out 3 times!
+        // This matches the expectation for ignoreChanges & ignoreFileDeletion:
+        // After a data changing operation, unchanged rows are re-emitted.
         // - v0: rows 0-9
         // - v1: file re-added with rows 1-9 (DV excludes 0)
         // - v2: file re-added with rows 2-9 (DV excludes 0,1)
