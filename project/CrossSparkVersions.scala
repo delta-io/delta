@@ -176,7 +176,7 @@ import Unidoc._
 case class SparkVersionSpec(
   fullVersion: String,
   targetJvm: String,
-  additionalSourceDir: Option[String],
+  additionalSourceDir: Option[String] = None,
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2"
