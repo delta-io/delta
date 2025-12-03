@@ -147,9 +147,14 @@ public class SnapshotManager {
   public static void verifyDeltaVersionsContiguous(List<Long> versions, Path tablePath) {
     for (int i = 1; i < versions.size(); i++) {
       if (versions.get(i) != versions.get(i - 1) + 1) {
+        long expectedVersion = versions.get(i - 1) + 1;
+        long foundVersion = versions.get(i);
         throw new InvalidTableException(
             tablePath.toString(),
-            String.format("Missing delta files: versions are not contiguous: (%s)", versions));
+            String.format(
+                "Missing delta files: versions are not contiguous. Expected version %d after "
+                    + "version %d, but found version %d. All versions: %s",
+                expectedVersion, versions.get(i - 1), foundVersion, versions));
       }
     }
   }
