@@ -77,12 +77,11 @@ class SparkVersionSpec:
 
 # Spark versions to test (key = full version string, value = spec with suffix)
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "3.5.7": SparkVersionSpec(""),      # Default Spark version without suffix
-    "4.0.2-SNAPSHOT": SparkVersionSpec("_4.0") # Other Spark versions with suffix
+    "4.0.1": SparkVersionSpec("")      # Default Spark version without suffix
 }
 
 # The default Spark version (no suffix in artifact names)
-DEFAULT_SPARK = "3.5.7"
+DEFAULT_SPARK = "4.0.1"
 
 
 def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str]:
