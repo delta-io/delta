@@ -212,8 +212,6 @@ object SparkVersionSpec {
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
     targetJvm = "17",
-    // TODO: merge shims and remove this until we add 2nd Spark version
-    additionalSourceDir = Some("scala-spark-master"),
     antlr4Version = "4.13.1",
     additionalJavaOptions = Seq(
       // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
