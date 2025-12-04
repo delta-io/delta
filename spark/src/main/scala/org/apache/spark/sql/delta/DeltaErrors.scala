@@ -3858,6 +3858,12 @@ trait DeltaErrorsBase
       messageParameters = Array(path.toString)
     )
   }
+
+  def cannotResolveSourceColumnException(columnPath: Seq[String]): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
+      messageParameters = Array(s"${UnresolvedAttribute(columnPath).name}"))
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
