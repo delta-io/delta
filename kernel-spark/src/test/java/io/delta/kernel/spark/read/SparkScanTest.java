@@ -3,7 +3,6 @@ package io.delta.kernel.spark.read;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
-import org.apache.spark.sql.delta.DeltaOptions;
 import io.delta.kernel.spark.catalog.SparkTable;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -18,6 +17,7 @@ import org.apache.spark.sql.connector.expressions.LiteralValue;
 import org.apache.spark.sql.connector.expressions.filter.Predicate;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
