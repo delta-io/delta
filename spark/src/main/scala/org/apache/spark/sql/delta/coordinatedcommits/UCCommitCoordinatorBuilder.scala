@@ -230,13 +230,14 @@ object UCCommitCoordinatorBuilder
   }
 
   /**
-   * Returns catalog configurations as a Map for O(1) lookup by catalog name.
-   * Wraps [[getCatalogConfigs]] results in [[UCCatalogConfig]] for better readability.
+   * Java-friendly wrapper for [[getCatalogConfigs]] that returns a Java List of
+   * [[UCCatalogConfig]] objects instead of Scala tuples.
    */
-  private[delta] def getCatalogConfigMap(spark: SparkSession): Map[String, UCCatalogConfig] = {
+  private[delta] def getCatalogConfigsJava(
+      spark: SparkSession): java.util.List[UCCatalogConfig] = {
     getCatalogConfigs(spark).map {
-      case (name, uri, token) => name -> UCCatalogConfig(name, uri, token)
-    }.toMap
+      case (name, uri, token) => UCCatalogConfig(name, uri, token)
+    }.asJava
   }
 
   private def safeClose(ucClient: UCClient, uri: String): Unit = {
@@ -264,7 +265,7 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
 }
 
 /**
- * Holder for Unity Catalog configuration extracted from Spark configs.
- * Used by [[UCCommitCoordinatorBuilder.getCatalogConfigMap]].
+ * Java-friendly holder for Unity Catalog configuration extracted from Spark configs.
+ * Used by [[UCCommitCoordinatorBuilder.getCatalogConfigsJava]].
  */
 case class UCCatalogConfig(catalogName: String, uri: String, token: String)
