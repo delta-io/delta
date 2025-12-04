@@ -21,10 +21,9 @@ import java.util.{HashMap => JHashMap}
 import io.delta.kernel.spark.utils.CatalogTableTestUtils
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
+import org.apache.spark.sql.test.SharedSparkSession
 
 /**
  * Unit tests for [[SparkUnityCatalogUtils]].
@@ -32,9 +31,7 @@ import org.scalatest.funsuite.AnyFunSuite
  * Tests use distinctive, high-entropy values that would fail if the implementation
  * had hardcoded defaults instead of actually extracting values from the inputs.
  */
-class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
-
-  private var spark: SparkSession = _
+class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession {
 
   // String values matching the implementation's constants (package-private access)
   private val FEATURE_CATALOG_MANAGED = "delta.feature.catalogManaged"
@@ -48,21 +45,6 @@ class SparkUnityCatalogUtilsSuite extends AnyFunSuite with BeforeAndAfterAll {
   private val ENDPOINT_ALPHA = "https://uc-server-westus2.example.net/api/2.1/unity-catalog"
   private val TOKEN_ALPHA = "dapi_Xk7mP$9qRs#2vWz_prod"
   private val CATALOG_ALPHA = "uc_catalog_westus2_prod"
-
-  override protected def beforeAll(): Unit = {
-    super.beforeAll()
-    spark = SparkSession.builder()
-      .master("local[1]")
-      .appName("SparkUnityCatalogUtilsSuite")
-      .getOrCreate()
-  }
-
-  override protected def afterAll(): Unit = {
-    if (spark != null) {
-      spark.stop()
-    }
-    super.afterAll()
-  }
 
   // ==================== Helper Methods ====================
 
