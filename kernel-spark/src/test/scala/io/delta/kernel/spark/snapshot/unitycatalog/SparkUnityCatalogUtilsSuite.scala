@@ -18,6 +18,7 @@ package io.delta.kernel.spark.snapshot.unitycatalog
 import java.net.URI
 import java.util.{HashMap => JHashMap}
 
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.spark.utils.CatalogTableTestUtils
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
@@ -33,9 +34,11 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession {
 
-  // String values matching the implementation's constants (package-private access)
-  private val FEATURE_CATALOG_MANAGED = "delta.feature.catalogManaged"
-  private val FEATURE_SUPPORTED = "supported"
+  // Use the same constants as CatalogTableUtils to ensure consistency
+  private val FEATURE_CATALOG_MANAGED =
+    TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX +
+      TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName()
+  private val FEATURE_SUPPORTED = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE
   private val UC_TABLE_ID_KEY = UCCommitCoordinatorClient.UC_TABLE_ID_KEY
   private val UC_CATALOG_CONNECTOR = "io.unitycatalog.spark.UCSingleCatalog"
 
