@@ -60,7 +60,7 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
   public void testCreateTableWithTblProperties() throws Exception {
     withTempDir((File dir) -> {
       File tablePath = new File(dir, "table_with_props");
-      String tableName = getUnityCatalogName() + ".default.table_with_props";
+      String tableName = getCatalogName() + ".default.table_with_props";
 
       // Create table with table properties
       sql("CREATE TABLE " + tableName + " (id INT, value STRING) " +
@@ -92,7 +92,7 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
 
       withTempDir((File dir) -> {
         File tablePath = new File(dir, "ctas_result");
-        String resultTable = getUnityCatalogName() + ".default.ctas_result";
+        String resultTable = getCatalogName() + ".default.ctas_result";
 
         // Create table using CTAS
         sql("CREATE TABLE " + resultTable + " USING DELTA " +
@@ -118,7 +118,7 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
   public void testDropTableOperation() throws Exception {
     withTempDir((File dir) -> {
       File tablePath = new File(dir, "drop_test");
-      String tableName = getUnityCatalogName() + ".default.drop_test";
+      String tableName = getCatalogName() + ".default.drop_test";
 
       // Create and populate table
       sql("CREATE TABLE " + tableName + " (id INT, name STRING) " +
@@ -147,7 +147,7 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
       sql("INSERT INTO " + tableName + " VALUES (1)");
 
       // Show tables in the schema
-      List<List<String>> tables = sql("SHOW TABLES IN " + getUnityCatalogName() + ".default");
+      List<List<String>> tables = sql("SHOW TABLES IN " + getCatalogName() + ".default");
       List<String> tableNames = tables.stream()
           .map(row -> row.get(1))
           .collect(Collectors.toList());
@@ -223,7 +223,7 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
   public void testCreateTableIfNotExists() throws Exception {
     withTempDir((File dir) -> {
       File tablePath = new File(dir, "if_not_exists_test");
-      String tableName = getUnityCatalogName() + ".default.if_not_exists_test";
+      String tableName = getCatalogName() + ".default.if_not_exists_test";
 
       // First creation should succeed
       sql("CREATE TABLE IF NOT EXISTS " + tableName + " (id INT, name STRING) " +
@@ -256,7 +256,7 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
   public void testTableNamingWithSpecialCharacters() throws Exception {
     withTempDir((File dir) -> {
       File tablePath = new File(dir, "special_name_test");
-      String tableName = getUnityCatalogName() + ".default.`test_table_with_underscores`";
+      String tableName = getCatalogName() + ".default.`test_table_with_underscores`";
 
       // Create table with special characters in name
       sql("CREATE TABLE " + tableName + " (id INT, value STRING) " +
@@ -268,7 +268,7 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
         check(tableName, Arrays.asList(Arrays.asList("1", "special")));
 
         // Verify table appears in SHOW TABLES
-        List<List<String>> tables = sql("SHOW TABLES IN " + getUnityCatalogName() + ".default");
+        List<List<String>> tables = sql("SHOW TABLES IN " + getCatalogName() + ".default");
         List<String> tableNames = tables.stream()
             .map(row -> row.get(1))
             .collect(Collectors.toList());
