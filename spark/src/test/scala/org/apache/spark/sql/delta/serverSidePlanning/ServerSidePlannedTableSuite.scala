@@ -43,12 +43,10 @@ class ServerSidePlannedTableSuite extends QueryTest with SharedSparkSession {
       // Configure factory to use test client
       val testFactory = new TestServerSidePlanningClientFactory()
       ServerSidePlanningClientFactory.setFactory(testFactory)
-      assert(ServerSidePlanningClientFactory.getFactory() == testFactory,
-        "Factory should be set to test factory")
 
       try {
         // Create client and verify it's the test client
-        val client = ServerSidePlanningClientFactory.buildForCatalog(spark, "spark_catalog")
+        val client = ServerSidePlanningClientFactory.getClient(spark, "spark_catalog")
         assert(client.isInstanceOf[TestServerSidePlanningClient],
           "Client should be TestServerSidePlanningClient")
 
@@ -66,7 +64,7 @@ class ServerSidePlannedTableSuite extends QueryTest with SharedSparkSession {
         // Create ServerSidePlannedTable using schema from the table
         val table = new ServerSidePlannedTable(
           spark = spark,
-          database = "default",
+          databaseName = "default",
           tableName = "test_table",
           tableSchema = tableSchema,
           planningClient = client
