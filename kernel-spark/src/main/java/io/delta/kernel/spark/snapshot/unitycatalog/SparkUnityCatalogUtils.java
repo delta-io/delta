@@ -19,10 +19,12 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
 
 /**
@@ -64,24 +66,21 @@ public final class SparkUnityCatalogUtils {
             : spark.sessionState().catalogManager().currentCatalog().name();
 
     // Get UC endpoint and token from Spark configs
-    scala.collection.immutable.List<scala.Tuple3<String, String, String>> scalaConfigs =
-        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigs(spark);
+    List<UCCatalogConfig> ucConfigs =
+        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigsJava(spark);
 
-    Optional<scala.Tuple3<String, String, String>> configTuple =
-        scala.jdk.javaapi.CollectionConverters.asJava(scalaConfigs).stream()
-            .filter(tuple -> tuple._1().equals(catalogName))
-            .findFirst();
+    Optional<UCCatalogConfig> config =
+        ucConfigs.stream().filter(c -> c.catalogName().equals(catalogName)).findFirst();
 
-    if (!configTuple.isPresent()) {
+    if (!config.isPresent()) {
       throw new IllegalArgumentException(
           "Cannot create UC client: Unity Catalog configuration not found for catalog '"
               + catalogName
               + "'.");
     }
 
-    scala.Tuple3<String, String, String> config = configTuple.get();
-    String endpoint = config._2();
-    String token = config._3();
+    String endpoint = config.get().uri();
+    String token = config.get().token();
 
     return Optional.of(new UnityCatalogConnectionInfo(tableId, tablePath, endpoint, token));
   }

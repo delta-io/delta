@@ -229,6 +229,17 @@ object UCCommitCoordinatorBuilder
       .toList
   }
 
+  /**
+   * Java-friendly wrapper for [[getCatalogConfigs]] that returns a Java List of
+   * [[UCCatalogConfig]] objects instead of Scala tuples.
+   */
+  private[delta] def getCatalogConfigsJava(
+      spark: SparkSession): java.util.List[UCCatalogConfig] = {
+    getCatalogConfigs(spark).map {
+      case (name, uri, token) => UCCatalogConfig(name, uri, token)
+    }.asJava
+  }
+
   private def safeClose(ucClient: UCClient, uri: String): Unit = {
     try {
       ucClient.close()
@@ -252,3 +263,9 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
   override def createUCClient(uri: String, token: String): UCClient =
     new UCTokenBasedRestClient(uri, token)
 }
+
+/**
+ * Java-friendly holder for Unity Catalog configuration extracted from Spark configs.
+ * Used by [[UCCommitCoordinatorBuilder.getCatalogConfigsJava]].
+ */
+case class UCCatalogConfig(catalogName: String, uri: String, token: String)
