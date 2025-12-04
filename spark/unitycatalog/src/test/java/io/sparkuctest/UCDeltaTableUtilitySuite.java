@@ -129,16 +129,16 @@ public class UCDeltaTableUtilitySuite extends UCDeltaTableIntegrationSuiteBase {
         .collect(Collectors.toList());
 
     Assert.assertTrue(
-        "Unity Catalog '" + getUnityCatalogName() + "' should appear in catalogs. Found: " +
+        "Unity Catalog '" + getCatalogName() + "' should appear in catalogs. Found: " +
         String.join(", ", catalogNames),
-        catalogNames.contains(getUnityCatalogName())
+        catalogNames.contains(getCatalogName())
     );
   }
 
   @Test
   public void testShowSchemasOperation() {
     // Show schemas in our catalog
-    List<List<String>> schemas = sql("SHOW SCHEMAS IN " + getUnityCatalogName());
+    List<List<String>> schemas = sql("SHOW SCHEMAS IN " + getCatalogName());
 
     // Verify default schema exists
     List<String> schemaNames = schemas.stream()
