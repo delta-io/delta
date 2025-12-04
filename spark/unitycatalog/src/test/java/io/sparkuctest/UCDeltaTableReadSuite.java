@@ -130,7 +130,7 @@ public class UCDeltaTableReadSuite extends UCDeltaTableIntegrationSuiteBase {
           Arrays.asList(Arrays.asList("2")));
 
       // Verify the table appears in Unity Catalog's SHOW TABLES
-      List<List<String>> ucTables = sql("SHOW TABLES IN " + getUnityCatalogName() + ".default");
+      List<List<String>> ucTables = sql("SHOW TABLES IN " + getCatalogName() + ".default");
       List<String> tableNames = ucTables.stream()
           .map(row -> row.get(1))
           .collect(Collectors.toList());
