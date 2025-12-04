@@ -19,7 +19,6 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
@@ -58,29 +57,35 @@ public final class SparkUnityCatalogUtils {
     String tableId = extractUCTableId(catalogTable);
     String tablePath = extractTablePath(catalogTable);
 
-    // Get catalog name
+    // Get catalog name - require explicit catalog in identifier
     scala.Option<String> catalogOption = catalogTable.identifier().catalog();
-    String catalogName =
-        catalogOption.isDefined()
-            ? catalogOption.get()
-            : spark.sessionState().catalogManager().currentCatalog().name();
+    if (catalogOption.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Unable to determine Unity Catalog for table "
+              + catalogTable.identifier()
+              + ": catalog name is missing. Use a fully-qualified table name with an explicit "
+              + "catalog (e.g., catalog.schema.table).");
+    }
+    String catalogName = catalogOption.get();
 
     // Get UC endpoint and token from Spark configs
-    List<UCCatalogConfig> ucConfigs =
-        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigsJava(spark);
+    scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
+        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigs(spark);
 
-    Optional<UCCatalogConfig> config =
-        ucConfigs.stream().filter(c -> c.catalogName().equals(catalogName)).findFirst();
+    scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
 
-    if (!config.isPresent()) {
+    if (configOpt.isEmpty()) {
       throw new IllegalArgumentException(
-          "Cannot create UC client: Unity Catalog configuration not found for catalog '"
+          "Cannot create UC client for table "
+              + catalogTable.identifier()
+              + ": Unity Catalog configuration not found for catalog '"
               + catalogName
               + "'.");
     }
 
-    String endpoint = config.get().uri();
-    String token = config.get().token();
+    UCCatalogConfig config = configOpt.get();
+    String endpoint = config.uri();
+    String token = config.token();
 
     return Optional.of(new UnityCatalogConnectionInfo(tableId, tablePath, endpoint, token));
   }
