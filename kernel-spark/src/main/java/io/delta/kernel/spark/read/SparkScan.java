@@ -17,6 +17,7 @@ package io.delta.kernel.spark.read;
 
 import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
@@ -61,6 +62,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   private final io.delta.kernel.Scan kernelScan;
+  private final Snapshot initialSnapshot;
   private final Configuration hadoopConf;
   private final CaseInsensitiveStringMap options;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
@@ -80,6 +82,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
+      Snapshot initialSnapshot,
       CaseInsensitiveStringMap options) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
@@ -90,6 +93,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
+    this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.options = Objects.requireNonNull(options, "options is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
@@ -123,7 +127,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataFilters,
         totalBytes,
         scalaOptions,
-        hadoopConf);
+        hadoopConf,
+        initialSnapshot);
   }
 
   @Override
