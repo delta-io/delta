@@ -47,8 +47,8 @@ public class StreamingHelper {
   }
 
   /**
-   * Get the version from a batch. Assumes all rows in the batch have the same version, so it reads
-   * from the first row (rowId=0).
+   * Get the version from a {@link ColumnarBatch} of Delta log actions. Assumes all rows in the
+   * batch belong to the same commit version, so it reads the version from the first row (rowId=0).
    */
   public static long getVersion(ColumnarBatch batch) {
     int versionColIdx = getFieldIndex(batch, "version");

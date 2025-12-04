@@ -126,10 +126,12 @@ public class UCCatalogManagedClient {
 
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
-                final long ucTableVersion =
-                    getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
+                final long maxUcTableVersion = response.getLatestTableVersion();
+
                 versionOpt.ifPresent(
-                    version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));
+                    version ->
+                        validateTimeTravelVersionNotPastMax(ucTableId, version, maxUcTableVersion));
+
                 final List<ParsedLogData> logData =
                     getSortedKernelParsedDeltaDataFromRatifiedCommits(
                         ucTableId, response.getCommits());
@@ -151,7 +153,11 @@ public class UCCatalogManagedClient {
                                 .timeChecked(
                                     () ->
                                         loadLatestSnapshotForTimestampResolution(
-                                            engine, ucTableId, tablePath, logData, ucTableVersion));
+                                            engine,
+                                            ucTableId,
+                                            tablePath,
+                                            logData,
+                                            maxUcTableVersion));
                         snapshotBuilder =
                             snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
                       }
@@ -160,7 +166,7 @@ public class UCCatalogManagedClient {
                           snapshotBuilder
                               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
                               .withLogData(logData)
-                              .withMaxCatalogVersion(ucTableVersion)
+                              .withMaxCatalogVersion(maxUcTableVersion)
                               .build(engine);
                       metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
                       return snapshot;
@@ -276,7 +282,7 @@ public class UCCatalogManagedClient {
         endVersionOpt.filter(v -> !startTimestampOpt.isPresent());
     final GetCommitsResponse response =
         getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
-    final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
+    final long ucTableVersion = response.getLatestTableVersion();
     validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
     final List<ParsedLogData> logData =
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
@@ -414,22 +420,7 @@ public class UCCatalogManagedClient {
     return response;
   }
 
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-  /**
-   * As of this writing, UC catalog service is not informed when 0.json is successfully written
-   * during table creation. Thus, when 0.json exists, the max ratified version returned by UC is -1.
-   */
-  private long getTrueUCTableVersion(String ucTableId, long maxRatifiedVersion) {
-    if (maxRatifiedVersion == -1) {
-      logger.info(
-          "[{}] UC max ratified version is -1. This means 0.json exists. Version is 0.", ucTableId);
-      return 0;
-    }
-
-    return maxRatifiedVersion;
-  }
-
-  private void validateLoadTableVersionExists(
+  private void validateTimeTravelVersionNotPastMax(
       String ucTableId, long tableVersionToLoad, long maxRatifiedVersion) {
     if (tableVersionToLoad > maxRatifiedVersion) {
       throw new IllegalArgumentException(
