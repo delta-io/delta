@@ -17,6 +17,7 @@ package io.delta.kernel.spark.read;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
@@ -39,6 +40,7 @@ public class SparkScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
+  private final Snapshot initialSnapshot;
   private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -70,8 +72,8 @@ public class SparkScanBuilder
       StructType dataSchema,
       StructType partitionSchema,
       CaseInsensitiveStringMap options) {
-    this.kernelScanBuilder =
-        requireNonNull(initialSnapshot, "initialSnapshot is null").getScanBuilder();
+    this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.kernelScanBuilder = initialSnapshot.getScanBuilder();
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
@@ -158,6 +160,7 @@ public class SparkScanBuilder
   public org.apache.spark.sql.connector.read.Scan build() {
     return new SparkScan(
         snapshotManager,
+        initialSnapshot,
         dataSchema,
         partitionSchema,
         requiredDataSchema,

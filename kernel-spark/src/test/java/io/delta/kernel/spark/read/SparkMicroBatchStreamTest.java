@@ -62,6 +62,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
     return new SparkMicroBatchStream(
         snapshotManager,
+        snapshotManager.loadLatestSnapshot(),
         hadoopConf,
         spark,
         new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf()));
@@ -195,7 +196,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
     Optional<DeltaSourceOffset> endOffsetOption = ScalaUtils.toJavaOptional(scalaEndOffset);
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
@@ -311,7 +314,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
     Optional<DeltaSource.AdmissionLimits> dsv2Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
@@ -436,7 +441,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(
             fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset))) {
@@ -528,7 +535,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
@@ -633,6 +642,62 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             "MERGE: Matched (REMOVE+ADD) and not matched (ADD)"));
   }
 
+  @Test
+  public void testGetFileChanges_StartingVersionAfterCheckpointAndLogCleanup(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_checkpoint_cleanup_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Insert 5 versions
+    for (int i = 1; i <= 5; i++) {
+      sql("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, i, i);
+    }
+
+    // Create checkpoint at version 5
+    DeltaLog.forTable(spark, new Path(testTablePath)).checkpoint();
+
+    // Delete 0.json to simulate log cleanup
+    Path logPath = new Path(testTablePath, "_delta_log");
+    Path logFile0 = new Path(logPath, "00000000000000000000.json");
+    File file0 = new File(logFile0.toUri().getPath());
+    if (file0.exists()) {
+      file0.delete();
+    }
+
+    // Now test with startingVersion=1
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
+            spark.sessionState().newHadoopConf());
+
+    // Get file changes from version 1 onwards
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(
+            /* fromVersion= */ 1L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* endOffset= */ Optional.empty())) {
+
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+
+      // Filter to get only actual data files (addFile != null)
+      long actualFileCount = kernelFilesList.stream().filter(f -> f.getAddFile() != null).count();
+
+      // Should be able to read 5 data files from versions 1-5
+      assertEquals(
+          5,
+          actualFileCount,
+          "Should read 5 data files from versions 1-5 even though version 0 log is deleted");
+    }
+  }
+
   // ================================================================================================
   // Tests for latestOffset parity between DSv1 and DSv2
   // ================================================================================================
@@ -674,7 +739,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
     Offset v2EndOffset = stream.latestOffset(startOffset, readLimit);
 
     compareOffsets(v1EndOffset, v2EndOffset, testDescription);
@@ -792,7 +859,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
     List<Offset> dsv2Offsets =
         advanceOffsetSequenceDsv2(stream, startOffset, numIterations, readLimit);
 
@@ -917,7 +986,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
-    SparkMicroBatchStream stream = new SparkMicroBatchStream(snapshotManager, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
     Offset dsv2Offset = stream.latestOffset(startOffset, readLimit);
 
     compareOffsets(dsv1Offset, dsv2Offset, testDescription);
