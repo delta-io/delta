@@ -81,8 +81,8 @@ object UCCommitCoordinatorBuilder
 
   override def buildForCatalog(
       spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
-    val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, token)) => ucClientFactory.createUCClient(uri, token)
+    val client = getCatalogConfigs(spark).get(catalogName) match {
+      case Some(config) => ucClientFactory.createUCClient(config.uri, config.token)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
@@ -101,7 +101,9 @@ object UCCommitCoordinatorBuilder
    */
   private def getMatchingUCClient(spark: SparkSession, metastoreId: String): UCClient = {
     val matchingClients: List[(String, String)] = getCatalogConfigs(spark)
-      .map { case (name, uri, token) => (uri, token) }
+      .values
+      .map { config => (config.uri, config.token) }
+      .toList
       .distinct // Remove duplicates since multiple catalogs can have the same uri and token
       .filter { case (uri, token) => getMetastoreId(uri, token).contains(metastoreId) }
 
@@ -183,9 +185,9 @@ object UCCommitCoordinatorBuilder
    *   spark.sql.catalog.catalog5.token = "dapi0987654321"
    *
    * This method would return:
-   * List(
-   *   ("catalog1", "https://dbc-123abc.databricks.com", "dapi1234567890"),
-   *   ("catalog2", "https://dbc-456def.databricks.com", "dapi0987654321")
+   * Map(
+   *   "catalog1" -> UCCatalogConfig("catalog1", "https://dbc-123abc.databricks.com", "dapi..."),
+   *   "catalog2" -> UCCatalogConfig("catalog2", "https://dbc-456def.databricks.com", "dapi...")
    * )
    *
    * Note: catalog3 is not included in the result because it's missing the token configuration.
@@ -193,9 +195,9 @@ object UCCommitCoordinatorBuilder
    * Note: catalog5 is not included in the result because its URI is not a valid URI.
    *
    * @return
-   *   A list of tuples containing (catalogName, uri, token) for each properly configured catalog
+   *   A map of catalogName to UCCatalogConfig for each properly configured catalog
    */
-  private[delta] def getCatalogConfigs(spark: SparkSession): List[(String, String, String)] = {
+  private[delta] def getCatalogConfigs(spark: SparkSession): Map[String, UCCatalogConfig] = {
     val catalogConfigs = spark.conf.getAll.filterKeys(_.startsWith(SPARK_SQL_CATALOG_PREFIX))
 
     catalogConfigs
@@ -213,7 +215,7 @@ object UCCommitCoordinatorBuilder
           case (Some(u), Some(t)) =>
             try {
               new URI(u) // Validate the URI
-              Some((catalogName, u, t))
+              Some(catalogName -> UCCatalogConfig(catalogName, u, t))
             } catch {
               case _: URISyntaxException =>
                 logWarning(log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
@@ -225,17 +227,7 @@ object UCCommitCoordinatorBuilder
               "not have both uri and token configured in Spark Session.")
             None
         }}
-      .toList
-  }
-
-  /**
-   * Returns catalog configurations as a Map for O(1) lookup by catalog name.
-   * Wraps [[getCatalogConfigs]] results in [[UCCatalogConfig]] for better readability.
-   */
-  private[delta] def getCatalogConfigMap(spark: SparkSession): Map[String, UCCatalogConfig] = {
-    getCatalogConfigs(spark).map {
-      case (name, uri, token) => name -> UCCatalogConfig(name, uri, token)
-    }.toMap
+      .toMap
   }
 
   private def safeClose(ucClient: UCClient, uri: String): Unit = {
@@ -264,6 +256,6 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
 
 /**
  * Holder for Unity Catalog configuration extracted from Spark configs.
- * Used by [[UCCommitCoordinatorBuilder.getCatalogConfigMap]].
+ * Used by [[UCCommitCoordinatorBuilder.getCatalogConfigs]].
  */
 case class UCCatalogConfig(catalogName: String, uri: String, token: String)

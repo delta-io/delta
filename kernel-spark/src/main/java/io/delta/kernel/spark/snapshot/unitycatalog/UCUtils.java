@@ -70,7 +70,7 @@ public final class UCUtils {
 
     // Get UC endpoint and token from Spark configs
     scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
-        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
+        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigs(spark);
 
     scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
 
