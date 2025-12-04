@@ -164,7 +164,10 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
 
       // Now create it again but with catalogManaged supported. This should NOT throw.
       TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
-        .withTableProperties(Map("delta.feature.catalogManaged" -> "supported").asJava)
+        .withTableProperties(
+          Map(
+            TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey
+              -> "supported").asJava)
         .build(engine)
     }
   }
