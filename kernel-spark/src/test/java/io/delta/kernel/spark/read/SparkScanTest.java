@@ -4,12 +4,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.catalog.SparkTable;
+import io.delta.kernel.spark.utils.ScalaUtils;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Expression;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -271,14 +274,13 @@ public class SparkScanTest extends SparkDsv2TestBase {
   @Test
   public void testValidateStreamingOptions_SupportedOptions() {
     // Test with supported options (case insensitive) and custom user options
+    Map<String, String> javaOptions = new HashMap<>();
+    javaOptions.put("startingVersion", "0");
+    javaOptions.put("MaxFilesPerTrigger", "100");
+    javaOptions.put("MAXBYTESPERTRIGGER", "1g");
+    javaOptions.put("myCustomOption", "value");
     scala.collection.immutable.Map<String, String> supportedOptions =
-        scala.collection.immutable.Map$.MODULE$
-            .<String, String>newBuilder()
-            .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
-            .$plus$eq(scala.Tuple2.apply("MaxFilesPerTrigger", "100"))
-            .$plus$eq(scala.Tuple2.apply("MAXBYTESPERTRIGGER", "1g"))
-            .$plus$eq(scala.Tuple2.apply("myCustomOption", "value"))
-            .result();
+        ScalaUtils.toScalaMap(javaOptions);
     DeltaOptions deltaOptions = new DeltaOptions(supportedOptions, spark.sessionState().conf());
 
     // Verify DeltaOptions can recognize the options (case insensitive)
@@ -293,13 +295,12 @@ public class SparkScanTest extends SparkDsv2TestBase {
   @Test
   public void testValidateStreamingOptions_UnsupportedOptions() {
     // Test with blocked DeltaOptions, supported options, and custom user options
+    Map<String, String> javaOptions = new HashMap<>();
+    javaOptions.put("startingVersion", "0");
+    javaOptions.put("readChangeFeed", "true");
+    javaOptions.put("myCustomOption", "value");
     scala.collection.immutable.Map<String, String> mixedOptions =
-        scala.collection.immutable.Map$.MODULE$
-            .<String, String>newBuilder()
-            .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
-            .$plus$eq(scala.Tuple2.apply("readChangeFeed", "true"))
-            .$plus$eq(scala.Tuple2.apply("myCustomOption", "value"))
-            .result();
+        ScalaUtils.toScalaMap(javaOptions);
     DeltaOptions deltaOptions = new DeltaOptions(mixedOptions, spark.sessionState().conf());
 
     UnsupportedOperationException exception =
