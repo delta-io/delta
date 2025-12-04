@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,18 +44,18 @@ trait ServerSidePlanningClient {
   /**
    * Plan a table scan and return the list of files to read.
    *
-   * @param database The database or schema name
+   * @param databaseName The database or schema name
    * @param table The table name
    * @return ScanPlan containing files to read
    */
-  def planScan(database: String, table: String): ScanPlan
+  def planScan(databaseName: String, table: String): ScanPlan
 }
 
 /**
  * Factory for creating ServerSidePlanningClient instances.
  * This allows for configurable implementations (REST, mock, Spark-based, etc.)
  */
-trait ServerSidePlanningClientFactory {
+private[serverSidePlanning] trait ServerSidePlanningClientFactory {
   /**
    * Create a client for a specific catalog by reading catalog-specific configuration.
    * This method reads configuration from spark.sql.catalog.<catalogName>.uri and
@@ -75,39 +75,37 @@ trait ServerSidePlanningClientFactory {
  * By default, no factory is registered. Production code should register an appropriate
  * factory implementation before attempting to create clients.
  */
-object ServerSidePlanningClientFactory {
+private[serverSidePlanning] object ServerSidePlanningClientFactory {
   @volatile private var registeredFactory: Option[ServerSidePlanningClientFactory] = None
 
   /**
    * Set a factory for production use or testing.
    */
-  def setFactory(factory: ServerSidePlanningClientFactory): Unit = {
+  private[serverSidePlanning] def setFactory(factory: ServerSidePlanningClientFactory): Unit = {
     registeredFactory = Some(factory)
   }
 
   /**
    * Clear the registered factory.
    */
-  def clearFactory(): Unit = {
+  private[serverSidePlanning] def clearFactory(): Unit = {
     registeredFactory = None
   }
 
   /**
-   * Get the currently registered factory.
-   * Throws IllegalStateException if no factory has been registered.
+   * Get a client for a specific catalog using the registered factory.
+   * This is the single public entry point for obtaining a ServerSidePlanningClient.
+   *
+   * @param spark The SparkSession
+   * @param catalogName The name of the catalog (e.g., "spark_catalog", "unity")
+   * @return A ServerSidePlanningClient configured for the specified catalog
+   * @throws IllegalStateException if no factory has been registered
    */
-  def getFactory(): ServerSidePlanningClientFactory = {
+  def getClient(spark: SparkSession, catalogName: String): ServerSidePlanningClient = {
     registeredFactory.getOrElse {
       throw new IllegalStateException(
         "No ServerSidePlanningClientFactory has been registered. " +
         "Call ServerSidePlanningClientFactory.setFactory() to register an implementation.")
-    }
-  }
-
-  /**
-   * Convenience method to create a client for a specific catalog using the registered factory.
-   */
-  def buildForCatalog(spark: SparkSession, catalogName: String): ServerSidePlanningClient = {
-    getFactory().buildForCatalog(spark, catalogName)
+    }.buildForCatalog(spark, catalogName)
   }
 }

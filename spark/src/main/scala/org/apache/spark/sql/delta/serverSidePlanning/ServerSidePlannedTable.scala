@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.catalog
+package org.apache.spark.sql.delta.serverSidePlanning
 
 import java.util
 import java.util.Locale
@@ -42,15 +42,15 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  */
 class ServerSidePlannedTable(
     spark: SparkSession,
-    database: String,
+    databaseName: String,
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient) extends Table with SupportsRead {
 
   // Returns fully qualified name (e.g., "catalog.database.table").
-  // The database parameter receives ident.namespace().mkString(".") from DeltaCatalog,
+  // The databaseName parameter receives ident.namespace().mkString(".") from DeltaCatalog,
   // which includes the catalog name when present, similar to DeltaTableV2's name() method.
-  override def name(): String = s"$database.$tableName"
+  override def name(): String = s"$databaseName.$tableName"
 
   override def schema(): StructType = tableSchema
 
@@ -59,7 +59,7 @@ class ServerSidePlannedTable(
   }
 
   override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
-    new ServerSidePlannedScanBuilder(spark, database, tableName, tableSchema, planningClient)
+    new ServerSidePlannedScanBuilder(spark, databaseName, tableName, tableSchema, planningClient)
   }
 }
 
@@ -68,13 +68,13 @@ class ServerSidePlannedTable(
  */
 class ServerSidePlannedScanBuilder(
     spark: SparkSession,
-    database: String,
+    databaseName: String,
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient) extends ScanBuilder {
 
   override def build(): Scan = {
-    new ServerSidePlannedScan(spark, database, tableName, tableSchema, planningClient)
+    new ServerSidePlannedScan(spark, databaseName, tableName, tableSchema, planningClient)
   }
 }
 
@@ -83,7 +83,7 @@ class ServerSidePlannedScanBuilder(
  */
 class ServerSidePlannedScan(
     spark: SparkSession,
-    database: String,
+    databaseName: String,
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient) extends Scan with Batch {
@@ -94,7 +94,7 @@ class ServerSidePlannedScan(
 
   override def planInputPartitions(): Array[InputPartition] = {
     // Call the server-side planning API to get the scan plan
-    val scanPlan = planningClient.planScan(database, tableName)
+    val scanPlan = planningClient.planScan(databaseName, tableName)
 
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>
@@ -121,7 +121,7 @@ case class ServerSidePlannedFileInputPartition(
  */
 class ServerSidePlannedFilePartitionReaderFactory(
     spark: SparkSession,
-    schema: StructType)
+    tableSchema: StructType)
     extends PartitionReaderFactory {
 
   import org.apache.spark.util.SerializableConfiguration
@@ -129,9 +129,11 @@ class ServerSidePlannedFilePartitionReaderFactory(
   // scalastyle:off deltahadoopconfiguration
   // We use sessionState.newHadoopConf() here instead of deltaLog.newDeltaHadoopConf().
   // This means DataFrame options (like custom S3 credentials) passed by users will NOT be
-  // included in the Hadoop configuration. This would fail if users specify credentials in
-  // DataFrame read options expecting them to be used when accessing the underlying files.
-  // However, for now we accept this limitation to avoid requiring a DeltaLog parameter.
+  // included in the Hadoop configuration. This is intentional:
+  // - Server-side planning uses server-provided credentials, not user-specified credentials
+  // - ServerSidePlannedTable is NOT a Delta table, so we don't want Delta-specific options
+  //   from deltaLog.newDeltaHadoopConf()
+  // - General Spark options from spark.hadoop.* are included and work for all tables
   private val hadoopConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
   // scalastyle:on deltahadoopconfiguration
 
@@ -139,9 +141,9 @@ class ServerSidePlannedFilePartitionReaderFactory(
   // This function will be serialized and sent to executors
   private val parquetReaderBuilder = new ParquetFileFormat().buildReaderWithPartitionValues(
     sparkSession = spark,
-    dataSchema = schema,
+    dataSchema = tableSchema,
     partitionSchema = StructType(Nil),
-    requiredSchema = schema,
+    requiredSchema = tableSchema,
     filters = Seq.empty,
     options = Map(
       FileFormat.OPTION_RETURNING_BATCH -> "false"
