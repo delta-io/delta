@@ -163,14 +163,13 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testPath, spark.sessionState().newHadoopConf());
 
-    // Test with blocked DeltaOptions and custom user options
+    // Test with blocked DeltaOptions, supported options, and custom user options
     scala.collection.immutable.Map<String, String> mixedOptions =
         scala.collection.immutable.Map$.MODULE$
             .<String, String>newBuilder()
             .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
             .$plus$eq(scala.Tuple2.apply("readChangeFeed", "true"))
-            .$plus$eq(scala.Tuple2.apply("ignoreDeletes", "true"))
-            .$plus$eq(scala.Tuple2.apply("myCustomOption", "value")) // Custom option should be OK
+            .$plus$eq(scala.Tuple2.apply("myCustomOption", "value"))
             .result();
     DeltaOptions deltaOptions = new DeltaOptions(mixedOptions, spark.sessionState().conf());
 
@@ -181,13 +180,10 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                 new SparkMicroBatchStream(
                     snapshotManager, spark.sessionState().newHadoopConf(), spark, deltaOptions));
 
-    // Verify only blocked DeltaOptions are in the error message
-    String message = exception.getMessage();
-    assertTrue(message.contains("readChangeFeed"));
-    assertTrue(message.contains("ignoreDeletes"));
-    // Supported and custom options should not be in the error message
-    assertFalse(message.contains("startingVersion"));
-    assertFalse(message.contains("myCustomOption"));
+    // Verify exact error message - only the blocked option should appear
+    assertEquals(
+        "The following streaming options are not supported: readChangeFeed. ",
+        exception.getMessage());
   }
 
   // ================================================================================================
