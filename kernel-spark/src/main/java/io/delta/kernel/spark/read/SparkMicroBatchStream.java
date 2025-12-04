@@ -388,6 +388,12 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
       return Utils.toCloseableIterator(allIndexedFiles.iterator());
     }
 
+    // Use getActionsFromRangeUnsafe instead of CommitRange.getActions() because:
+    // 1. CommitRange.getActions() requires a snapshot at exactly the startVersion, but when
+    //    startingVersion option is used, we may not be able to recreate that exact snapshot
+    //    (e.g., if log files have been cleaned up after checkpointing).
+    // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
+    //    AddFile actions and performs per-commit protocol validation.
     try (CloseableIterator<ColumnarBatch> actionsIter =
         StreamingHelper.getActionsFromRangeUnsafe(
             engine,

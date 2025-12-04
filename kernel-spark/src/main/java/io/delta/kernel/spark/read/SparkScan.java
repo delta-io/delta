@@ -76,7 +76,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   public SparkScan(
       DeltaSnapshotManager snapshotManager,
-      io.delta.kernel.Snapshot initialSnapshot,
+      Snapshot initialSnapshot,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
