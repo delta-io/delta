@@ -24,10 +24,11 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -52,9 +53,9 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
 
   private SparkSession spark;
 
-  @Before
+  @BeforeEach
   public void setUp() throws Exception {
-    super.setupUnityCatalog(); // Start UC server first
+    super.setup(); // Start UC server first
 
     SparkConf conf = new SparkConf()
         .setAppName("UnityCatalog Support Tests")
@@ -71,13 +72,13 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
     spark = SparkSession.builder().config(conf).getOrCreate();
   }
 
-  @After
+  @AfterEach
   public void tearDown() throws Exception {
     if (spark != null) {
       spark.stop();
       spark = null;
     }
-    super.tearDownUnityCatalog(); // Stop UC server last
+    super.tearDown(); // Stop UC server last
   }
 
   /**
@@ -116,7 +117,7 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
    * Helper to list tables in UC server directly via SDK.
    */
   private List<String> listTables(String catalogName, String schemaName) throws Exception {
-    ApiClient client = createUnityCatalogClient();
+    ApiClient client = createClient();
     TablesApi tablesApi = new TablesApi(client);
     ListTablesResponse response = tablesApi.listTables(catalogName, schemaName, null, null);
 
@@ -134,40 +135,40 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
    */
   private void checkAnswer(Dataset<Row> df, List<Row> expected) {
     Row[] actual = (Row[]) df.collect();
-    Assert.assertEquals("Row count mismatch", expected.size(), actual.length);
+    assertEquals(expected.size(), actual.length, "Row count mismatch");
     for (int i = 0; i < expected.size(); i++) {
-      Assert.assertEquals("Row " + i + " mismatch", expected.get(i), actual[i]);
+      assertEquals(expected.get(i), actual[i], "Row " + i + " mismatch");
     }
   }
 
   @Test
   public void testUnityCatalogSupportStartsServerAndConfiguresSpark() throws Exception {
     // 1. Verify UC server is accessible via URI
-    Assert.assertTrue(
-        "Unity Catalog URI should be localhost, got: " + getUnityCatalogUri(),
-        getUnityCatalogUri().startsWith("http://localhost:")
+    assertTrue(
+        getServerUri().startsWith("http://localhost:"),
+        "Unity Catalog URI should be localhost, got: " + getServerUri()
     );
 
     // 2. Verify we can access schemas in the UC catalog via Spark
-    Dataset<Row> schemasDs = spark.sql("SHOW SCHEMAS IN " + getUnityCatalogName());
+    Dataset<Row> schemasDs = spark.sql("SHOW SCHEMAS IN " + getCatalogName());
     Row[] schemasArr = (Row[]) schemasDs.collect();
     List<String> schemas = Arrays.stream(schemasArr)
         .map(row -> row.getString(0))
         .collect(Collectors.toList());
-    Assert.assertTrue(
-        "Unity Catalog should have 'default' schema. Found: " + String.join(", ", schemas),
-        schemas.contains("default")
+    assertTrue(
+        schemas.contains("default"),
+        "Unity Catalog should have 'default' schema. Found: " + String.join(", ", schemas)
     );
 
     // 3. Verify we can query UC server directly via SDK
-    List<String> ucTables = listTables(getUnityCatalogName(), "default");
-    Assert.assertNotNull("Should be able to query UC server via SDK", ucTables);
+    List<String> ucTables = listTables(getCatalogName(), "default");
+    assertNotNull(ucTables, "Should be able to query UC server via SDK");
 
     // 4. Verify we can create a table in the UC catalog
     withTempDir((File dir) -> {
       File tableDir = new File(dir, "test_verify");
       String tablePath = tableDir.getAbsolutePath();
-      String testTable = getUnityCatalogName() + ".default.test_verify_catalog";
+      String testTable = getCatalogName() + ".default.test_verify_catalog";
 
       spark.sql(
           "CREATE TABLE " + testTable + " (id INT) USING PARQUET LOCATION '" + tablePath + "'"
@@ -179,10 +180,10 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
       // Verify we can select the data
       Dataset<Row> result = spark.sql("SELECT * FROM " + testTable + " ORDER BY id");
       Row[] actualRows = (Row[]) result.collect();
-      Assert.assertEquals("Should have 3 rows", 3, actualRows.length);
-      Assert.assertEquals(1, actualRows[0].getInt(0));
-      Assert.assertEquals(2, actualRows[1].getInt(0));
-      Assert.assertEquals(3, actualRows[2].getInt(0));
+      assertEquals(3, actualRows.length, "Should have 3 rows");
+      assertEquals(1, actualRows[0].getInt(0));
+      assertEquals(2, actualRows[1].getInt(0));
+      assertEquals(3, actualRows[2].getInt(0));
 
       // Cleanup
       spark.sql("DROP TABLE " + testTable);
@@ -195,7 +196,7 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
       File tableDir = new File(dir, "test_table");
       String tablePath = tableDir.getAbsolutePath();
       String tableName = "test_table_create";
-      String fullTableName = getUnityCatalogName() + ".default." + tableName;
+      String fullTableName = getCatalogName() + ".default." + tableName;
 
       // Create an external Delta table via Spark
       spark.sql(
@@ -208,22 +209,22 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
 
       try {
         // Verify table is visible via Spark
-        Dataset<Row> sparkTablesDs = spark.sql("SHOW TABLES IN " + getUnityCatalogName() + ".default");
+        Dataset<Row> sparkTablesDs = spark.sql("SHOW TABLES IN " + getCatalogName() + ".default");
         Row[] sparkTablesArr = (Row[]) sparkTablesDs.collect();
         List<String> sparkTables = Arrays.stream(sparkTablesArr)
             .map(row -> row.getString(1))
             .collect(Collectors.toList());
-        Assert.assertTrue(
-            "Table should be visible via Spark: " + String.join(", ", sparkTables),
-            sparkTables.contains(tableName)
+        assertTrue(
+            sparkTables.contains(tableName),
+            "Table should be visible via Spark: " + String.join(", ", sparkTables)
         );
 
         // Verify table is registered in UC server by querying directly via SDK
-        List<String> ucTables = listTables(getUnityCatalogName(), "default");
-        Assert.assertTrue(
+        List<String> ucTables = listTables(getCatalogName(), "default");
+        assertTrue(
+            ucTables.contains(tableName),
             "Table '" + tableName + "' should be registered in UC server. Found: " +
-            String.join(", ", ucTables),
-            ucTables.contains(tableName)
+            String.join(", ", ucTables)
         );
       } finally {
         spark.sql("DROP TABLE IF EXISTS " + fullTableName);
@@ -237,7 +238,7 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
       File tableDir = new File(dir, "test_insert");
       String tablePath = tableDir.getAbsolutePath();
       String tableName = "test_table_insert";
-      String fullTableName = getUnityCatalogName() + ".default." + tableName;
+      String fullTableName = getCatalogName() + ".default." + tableName;
 
       // Create table
       spark.sql(
@@ -250,10 +251,10 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
 
       try {
         // Verify table exists in UC server via SDK before insert
-        List<String> tablesBeforeInsert = listTables(getUnityCatalogName(), "default");
-        Assert.assertTrue(
-            "Table should exist in UC before INSERT",
-            tablesBeforeInsert.contains(tableName)
+        List<String> tablesBeforeInsert = listTables(getCatalogName(), "default");
+        assertTrue(
+            tablesBeforeInsert.contains(tableName),
+            "Table should exist in UC before INSERT"
         );
 
         // Insert data via Spark
@@ -267,19 +268,19 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
         // Verify data via Spark
         Dataset<Row> result = spark.sql("SELECT * FROM " + fullTableName + " ORDER BY id");
         Row[] actualRows = (Row[]) result.collect();
-        Assert.assertEquals(3, actualRows.length);
-        Assert.assertEquals(1, actualRows[0].getInt(0));
-        Assert.assertEquals("row1", actualRows[0].getString(1));
-        Assert.assertEquals(2, actualRows[1].getInt(0));
-        Assert.assertEquals("row2", actualRows[1].getString(1));
-        Assert.assertEquals(3, actualRows[2].getInt(0));
-        Assert.assertEquals("row3", actualRows[2].getString(1));
+        assertEquals(3, actualRows.length);
+        assertEquals(1, actualRows[0].getInt(0));
+        assertEquals("row1", actualRows[0].getString(1));
+        assertEquals(2, actualRows[1].getInt(0));
+        assertEquals("row2", actualRows[1].getString(1));
+        assertEquals(3, actualRows[2].getInt(0));
+        assertEquals("row3", actualRows[2].getString(1));
 
         // Verify table still exists in UC server via SDK after insert
-        List<String> tablesAfterInsert = listTables(getUnityCatalogName(), "default");
-        Assert.assertTrue(
-            "Table should still exist in UC after INSERT",
-            tablesAfterInsert.contains(tableName)
+        List<String> tablesAfterInsert = listTables(getCatalogName(), "default");
+        assertTrue(
+            tablesAfterInsert.contains(tableName),
+            "Table should still exist in UC after INSERT"
         );
       } finally {
         spark.sql("DROP TABLE IF EXISTS " + fullTableName);
@@ -293,7 +294,7 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
       File tableDir = new File(dir, "test_update_delete");
       String tablePath = tableDir.getAbsolutePath();
       String tableName = "test_table_update_delete";
-      String fullTableName = getUnityCatalogName() + ".default." + tableName;
+      String fullTableName = getCatalogName() + ".default." + tableName;
 
       // Create and populate table
       spark.sql(
@@ -314,10 +315,10 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
 
       try {
         // Verify table exists in UC server via SDK before UPDATE
-        List<String> tablesBeforeUpdate = listTables(getUnityCatalogName(), "default");
-        Assert.assertTrue(
-            "Table should exist in UC before UPDATE",
-            tablesBeforeUpdate.contains(tableName)
+        List<String> tablesBeforeUpdate = listTables(getCatalogName(), "default");
+        assertTrue(
+            tablesBeforeUpdate.contains(tableName),
+            "Table should exist in UC before UPDATE"
         );
 
         // Perform UPDATE
@@ -332,13 +333,13 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
             "SELECT * FROM " + fullTableName + " WHERE status = 'completed' ORDER BY id"
         );
         Row[] updateRows = (Row[]) afterUpdate.collect();
-        Assert.assertEquals(3, updateRows.length);
-        Assert.assertEquals(1, updateRows[0].getInt(0));
-        Assert.assertEquals("completed", updateRows[0].getString(1));
-        Assert.assertEquals(2, updateRows[1].getInt(0));
-        Assert.assertEquals("completed", updateRows[1].getString(1));
-        Assert.assertEquals(3, updateRows[2].getInt(0));
-        Assert.assertEquals("completed", updateRows[2].getString(1));
+        assertEquals(3, updateRows.length);
+        assertEquals(1, updateRows[0].getInt(0));
+        assertEquals("completed", updateRows[0].getString(1));
+        assertEquals(2, updateRows[1].getInt(0));
+        assertEquals("completed", updateRows[1].getString(1));
+        assertEquals(3, updateRows[2].getInt(0));
+        assertEquals("completed", updateRows[2].getString(1));
 
         // Perform DELETE
         spark.sql(
@@ -351,19 +352,19 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
             "SELECT * FROM " + fullTableName + " ORDER BY id"
         );
         Row[] deleteRows = (Row[]) afterDelete.collect();
-        Assert.assertEquals(3, deleteRows.length);
-        Assert.assertEquals(1, deleteRows[0].getInt(0));
-        Assert.assertEquals("completed", deleteRows[0].getString(1));
-        Assert.assertEquals(2, deleteRows[1].getInt(0));
-        Assert.assertEquals("completed", deleteRows[1].getString(1));
-        Assert.assertEquals(3, deleteRows[2].getInt(0));
-        Assert.assertEquals("completed", deleteRows[2].getString(1));
+        assertEquals(3, deleteRows.length);
+        assertEquals(1, deleteRows[0].getInt(0));
+        assertEquals("completed", deleteRows[0].getString(1));
+        assertEquals(2, deleteRows[1].getInt(0));
+        assertEquals("completed", deleteRows[1].getString(1));
+        assertEquals(3, deleteRows[2].getInt(0));
+        assertEquals("completed", deleteRows[2].getString(1));
 
         // Verify table still exists in UC server via SDK after operations
-        List<String> tablesAfterOperations = listTables(getUnityCatalogName(), "default");
-        Assert.assertTrue(
-            "Table should still exist in UC after UPDATE and DELETE",
-            tablesAfterOperations.contains(tableName)
+        List<String> tablesAfterOperations = listTables(getCatalogName(), "default");
+        assertTrue(
+            tablesAfterOperations.contains(tableName),
+            "Table should still exist in UC after UPDATE and DELETE"
         );
       } finally {
         spark.sql("DROP TABLE IF EXISTS " + fullTableName);

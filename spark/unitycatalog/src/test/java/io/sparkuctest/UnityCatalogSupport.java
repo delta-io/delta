@@ -25,8 +25,8 @@ import io.unitycatalog.server.UnityCatalogServer;
 import io.unitycatalog.server.utils.ServerProperties;
 import org.apache.log4j.Logger;
 import org.apache.spark.SparkConf;
-import org.junit.After;
-import org.junit.Before;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 
 import java.io.File;
 import java.io.IOException;
@@ -58,8 +58,8 @@ import java.util.Properties;
  *
  *   {@literal @}Test
  *   public void myTest() {
- *     // Use getUnityCatalogName() to reference the catalog
- *     getSparkSession().sql("CREATE TABLE " + getUnityCatalogName() + ".default.test_table ...");
+ *     // Use getCatalogName() to reference the catalog
+ *     getSparkSession().sql("CREATE TABLE " + getCatalogName() + ".default.test_table ...");
  *   }
  * }
  * </pre>
@@ -87,7 +87,7 @@ public abstract class UnityCatalogSupport {
    * The name of the Unity Catalog in Spark's catalog registry.
    * Subclasses can override this if they need a different catalog name.
    */
-  protected String getUnityCatalogName() {
+  protected String getCatalogName() {
     return "unity";
   }
 
@@ -95,7 +95,7 @@ public abstract class UnityCatalogSupport {
    * The URI of the Unity Catalog server.
    * Available after setup() is called.
    */
-  protected String getUnityCatalogUri() {
+  protected String getServerUri() {
     return "http://localhost:" + ucPort;
   }
 
@@ -103,14 +103,14 @@ public abstract class UnityCatalogSupport {
    * The authentication token for the Unity Catalog server.
    * Currently using a test token; in production scenarios this would be more secure.
    */
-  protected String getUnityCatalogToken() {
+  protected String getServerToken() {
     return "not-a-token";
   }
 
   /**
    * Creates a Unity Catalog API client configured for this server.
    */
-  protected ApiClient createUnityCatalogClient() {
+  protected ApiClient createClient() {
     ApiClient client = new ApiClient();
     client.setScheme("http");
     client.setHost("localhost");
@@ -132,8 +132,8 @@ public abstract class UnityCatalogSupport {
    * IMPORTANT: Starts the server BEFORE calling other setup to ensure
    * the server is running when SharedSparkSession creates the SparkSession.
    */
-  @Before
-  public void setupUnityCatalog() throws Exception {
+  @BeforeEach
+  public void setup() throws Exception {
     // Create temporary directory for UC server data
     ucTempDir = Files.createTempDirectory("unity-catalog-test-").toFile();
     ucTempDir.deleteOnExit();
@@ -183,10 +183,7 @@ public abstract class UnityCatalogSupport {
     }
 
     // Create the catalog and default schema in the UC server
-    ApiClient client = new ApiClient();
-    client.setScheme("http");
-    client.setHost("localhost");
-    client.setPort(ucPort);
+    ApiClient client = createClient();
 
     CatalogsApi catalogsApi = new CatalogsApi(client);
     SchemasApi schemasApi = new SchemasApi(client);
@@ -194,7 +191,7 @@ public abstract class UnityCatalogSupport {
     // Create catalog
     catalogsApi.createCatalog(
         new CreateCatalog()
-            .name(getUnityCatalogName())
+            .name(getCatalogName())
             .comment("Test catalog for Delta Lake integration")
     );
 
@@ -202,18 +199,18 @@ public abstract class UnityCatalogSupport {
     schemasApi.createSchema(
         new CreateSchema()
             .name("default")
-            .catalogName(getUnityCatalogName())
+            .catalogName(getCatalogName())
     );
 
-    logger.info("Unity Catalog server started and ready at " + getUnityCatalogUri());
-    logger.info("Created catalog '" + getUnityCatalogName() + "' with schema 'default'");
+    logger.info("Unity Catalog server started and ready at " + getServerUri());
+    logger.info("Created catalog '" + getCatalogName() + "' with schema 'default'");
   }
 
   /**
    * Stops the Unity Catalog server after all tests.
    */
-  @After
-  public void tearDownUnityCatalog() throws Exception {
+  @AfterEach
+  public void tearDown() throws Exception {
     if (ucServer != null) {
       ucServer.stop();
       logger.info("Unity Catalog server stopped");
@@ -241,11 +238,11 @@ public abstract class UnityCatalogSupport {
    * @return The configured SparkConf with Unity Catalog settings
    */
   protected SparkConf configureSparkWithUnityCatalog(SparkConf conf) {
-    String catalogName = getUnityCatalogName();
+    String catalogName = getCatalogName();
     return conf
         .set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
-        .set("spark.sql.catalog." + catalogName + ".uri", getUnityCatalogUri())
-        .set("spark.sql.catalog." + catalogName + ".token", getUnityCatalogToken());
+        .set("spark.sql.catalog." + catalogName + ".uri", getServerUri())
+        .set("spark.sql.catalog." + catalogName + ".token", getServerToken());
   }
 
   /**
