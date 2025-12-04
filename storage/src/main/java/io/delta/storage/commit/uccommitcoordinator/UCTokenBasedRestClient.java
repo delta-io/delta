@@ -49,11 +49,8 @@ import org.apache.http.message.BasicHeader;
 
 import java.io.IOException;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
+import java.util.function.Supplier;
 
 /**
  * A REST client implementation of [[UCClient]] for interacting with Unity Catalog's commit
@@ -186,7 +183,8 @@ public class UCTokenBasedRestClient implements UCClient {
       Optional<Long> lastKnownBackfilledVersion,
       boolean disown,
       Optional<AbstractMetadata> newMetadata,
-      Optional<AbstractProtocol> newProtocol
+      Optional<AbstractProtocol> newProtocol,
+      Supplier<Map<String, String>> committerProperties
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
     // Validate required parameters
     Objects.requireNonNull(tableId, "tableId must not be null.");

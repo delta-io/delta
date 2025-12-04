@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.lang.{Long => JLong}
 import java.net.URI
+import java.util.Collections
 import java.util.Optional
+import java.util.function.Supplier
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import io.delta.storage.commit.{Commit => JCommit, GetCommitsResponse => JGetCommitsResponse}
@@ -63,7 +65,9 @@ class InMemoryUCClient(
       lastKnownBackfilledVersion: Optional[JLong],
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
-      newProtocol: Optional[AbstractProtocol]): Unit = {
+      newProtocol: Optional[AbstractProtocol],
+      committerProperties: Supplier[java.util.Map[String, String]] =
+        () => Collections.emptyMap()): Unit = {
     ucCommitCoordinator.commitToCoordinator(
       tableId,
       tableUri,

@@ -373,7 +373,8 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
                 false /* isDisown */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
-                commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new));
+                commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
+                commitMetadata.getCommitterProperties());
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);

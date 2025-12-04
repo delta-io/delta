@@ -18,8 +18,10 @@ package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
-import java.util.Optional
+import java.util
+import java.util.{Collections, Map, Optional}
 import java.util.concurrent.ConcurrentHashMap
+import java.util.function.Supplier
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -153,7 +155,9 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       lastKnownBackfilledVersionOpt: Optional[JLong],
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
-      newProtocol: Optional[AbstractProtocol]): Unit = {
+      newProtocol: Optional[AbstractProtocol],
+      committerProperties: Supplier[util.Map[String, String]] =
+        () => Collections.emptyMap()): Unit = {
     forceThrowInCommitMethod()
 
     if (disown) {
