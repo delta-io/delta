@@ -28,7 +28,6 @@ import io.delta.storage.commit.CommitCoordinatorClient
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
 
 import org.apache.spark.internal.MDC
-import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 
 /**
