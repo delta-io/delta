@@ -1,8 +1,9 @@
 package io.delta.kernel.spark.read;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
+import org.apache.spark.sql.delta.DeltaOptions;
 import io.delta.kernel.spark.catalog.SparkTable;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -261,5 +262,55 @@ public class SparkScanTest extends SparkDsv2TestBase {
     Field field = SparkScan.class.getDeclaredField("totalBytes");
     field.setAccessible(true);
     return (long) field.get(scan);
+  }
+
+  // ================================================================================================
+  // Tests for streaming options validation
+  // ================================================================================================
+
+  @Test
+  public void testValidateStreamingOptions_SupportedOptions() {
+    // Test with supported options (case insensitive) and custom user options
+    scala.collection.immutable.Map<String, String> supportedOptions =
+        scala.collection.immutable.Map$.MODULE$
+            .<String, String>newBuilder()
+            .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
+            .$plus$eq(scala.Tuple2.apply("MaxFilesPerTrigger", "100"))
+            .$plus$eq(scala.Tuple2.apply("MAXBYTESPERTRIGGER", "1g"))
+            .$plus$eq(scala.Tuple2.apply("myCustomOption", "value"))
+            .result();
+    DeltaOptions deltaOptions = new DeltaOptions(supportedOptions, spark.sessionState().conf());
+
+    // Verify DeltaOptions can recognize the options (case insensitive)
+    assertEquals(true, deltaOptions.maxFilesPerTrigger().isDefined());
+    assertEquals(100, deltaOptions.maxFilesPerTrigger().get());
+    assertEquals(true, deltaOptions.maxBytesPerTrigger().isDefined());
+
+    // Should not throw - supported and custom options are allowed
+    SparkScan.validateStreamingOptions(deltaOptions);
+  }
+
+  @Test
+  public void testValidateStreamingOptions_UnsupportedOptions() {
+    // Test with blocked DeltaOptions, supported options, and custom user options
+    scala.collection.immutable.Map<String, String> mixedOptions =
+        scala.collection.immutable.Map$.MODULE$
+            .<String, String>newBuilder()
+            .$plus$eq(scala.Tuple2.apply("startingVersion", "0"))
+            .$plus$eq(scala.Tuple2.apply("readChangeFeed", "true"))
+            .$plus$eq(scala.Tuple2.apply("myCustomOption", "value"))
+            .result();
+    DeltaOptions deltaOptions = new DeltaOptions(mixedOptions, spark.sessionState().conf());
+
+    UnsupportedOperationException exception =
+        assertThrows(
+            UnsupportedOperationException.class,
+            () -> SparkScan.validateStreamingOptions(deltaOptions));
+
+    // Verify exact error message - only the blocked option should appear
+    assertEquals(
+        "The following streaming options are not supported: [readChangeFeed]. "
+            + "Supported options are: [startingVersion, maxFilesPerTrigger, maxBytesPerTrigger].",
+        exception.getMessage());
   }
 }
