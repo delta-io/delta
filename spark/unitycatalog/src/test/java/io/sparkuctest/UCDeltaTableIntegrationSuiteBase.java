@@ -48,7 +48,7 @@ public abstract class UCDeltaTableIntegrationSuiteBase extends UnityCatalogSuppo
    */
   @Before
   public void setUpSpark() throws Exception {
-    super.setupUnityCatalog(); // Start UC server first
+    super.setup(); // Start UC server first
     
     SparkConf conf = new SparkConf()
         .setAppName("UnityCatalog Integration Tests")
@@ -76,7 +76,7 @@ public abstract class UCDeltaTableIntegrationSuiteBase extends UnityCatalogSuppo
       sparkSession.stop();
       sparkSession = null;
     }
-    super.tearDownUnityCatalog(); // Stop UC server last
+    super.tearDown(); // Stop UC server last
   }
 
   /**
@@ -143,7 +143,7 @@ public abstract class UCDeltaTableIntegrationSuiteBase extends UnityCatalogSuppo
   protected void withNewTable(String tableName, String schema, TestCode testCode) throws Exception {
     withTempDir((File dir) -> {
       File tablePath = new File(dir, tableName);
-      String fullTableName = getUnityCatalogName() + ".default." + tableName;
+      String fullTableName = getCatalogName() + ".default." + tableName;
 
       // Create the table
       sql(
