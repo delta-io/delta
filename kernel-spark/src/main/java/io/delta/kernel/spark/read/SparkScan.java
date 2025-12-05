@@ -17,6 +17,7 @@ package io.delta.kernel.spark.read;
 
 import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
@@ -55,6 +56,7 @@ import scala.collection.JavaConverters;
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final DeltaSnapshotManager snapshotManager;
+  private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -74,6 +76,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   public SparkScan(
       DeltaSnapshotManager snapshotManager,
+      Snapshot initialSnapshot,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -83,6 +86,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       CaseInsensitiveStringMap options) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
+    this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -130,7 +134,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
     DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
     return new SparkMicroBatchStream(
-        snapshotManager, hadoopConf, SparkSession.active(), deltaOptions);
+        snapshotManager, initialSnapshot, hadoopConf, SparkSession.active(), deltaOptions);
   }
 
   @Override

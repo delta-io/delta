@@ -59,13 +59,18 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
+  private final Snapshot snapshotAtSourceInit;
   private final String tableId;
   private final boolean shouldValidateOffsets;
   private final SparkSession spark;
 
-  public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
+  public SparkMicroBatchStream(
+      DeltaSnapshotManager snapshotManager,
+      Snapshot snapshotAtSourceInit,
+      Configuration hadoopConf) {
     this(
         snapshotManager,
+        snapshotAtSourceInit,
         hadoopConf,
         SparkSession.active(),
         new DeltaOptions(
@@ -75,18 +80,16 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
+      Snapshot snapshotAtSourceInit,
       Configuration hadoopConf,
       SparkSession spark,
       DeltaOptions options) {
     this.spark = spark;
     this.snapshotManager = snapshotManager;
+    this.snapshotAtSourceInit = snapshotAtSourceInit;
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = options;
-
-    // Initialize snapshot at source init to get table ID, similar to DeltaSource.scala
-    Snapshot snapshotAtSourceInit = snapshotManager.loadLatestSnapshot();
     this.tableId = ((SnapshotImpl) snapshotAtSourceInit).getMetadata().getId();
-
     this.shouldValidateOffsets =
         (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
   }
@@ -385,11 +388,18 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
       return Utils.toCloseableIterator(allIndexedFiles.iterator());
     }
 
-    // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
-    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
-    String tablePath = startSnapshot.getPath();
+    // Use getActionsFromRangeUnsafe instead of CommitRange.getActions() because:
+    // 1. CommitRange.getActions() requires a snapshot at exactly the startVersion, but when
+    //    startingVersion option is used, we may not be able to recreate that exact snapshot
+    //    (e.g., if log files have been cleaned up after checkpointing).
+    // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
+    //    AddFile actions and performs per-commit protocol validation.
     try (CloseableIterator<ColumnarBatch> actionsIter =
-        commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
+        StreamingHelper.getActionsFromRangeUnsafe(
+            engine,
+            (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
+            snapshotAtSourceInit.getPath(),
+            ACTION_SET)) {
       // Each ColumnarBatch belongs to a single commit version,
       // but a single version may span multiple ColumnarBatches.
       long currentVersion = -1;
@@ -415,7 +425,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
         // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
         // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-        validateCommit(batch, version, tablePath, endOffset);
+        validateCommit(batch, version, snapshotAtSourceInit.getPath(), endOffset);
 
         currentVersion = version;
         currentIndex =

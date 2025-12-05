@@ -212,21 +212,25 @@ public class UCCatalogManagedClient {
   }
 
   /**
-   * Loads a Kernel {@link CommitRange} for the provided boundaries. If no start boundary is
-   * provided, defaults to version 0. If no end boundary is provided, defaults to the latest
-   * version.
+   * Loads a Kernel {@link CommitRange} for the provided boundaries. If no end boundary is provided,
+   * defaults to the latest version.
+   *
+   * <p>A start boundary is required and must be specified using either {@code startVersionOpt} or
+   * {@code startTimestampOpt}. These parameters are mutually exclusive and at least one must be
+   * provided.
    *
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
    * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
    * @param tablePath The path to the Delta table in the underlying storage system.
    * @param startVersionOpt The optional start version boundary. This must be mutually exclusive
-   *     with startTimestampOpt.
+   *     with startTimestampOpt. Either this or startTimestampOpt must be provided.
    * @param startTimestampOpt The optional start timestamp boundary. This must be mutually exclusive
-   *     with startVersionOpt.
+   *     with startVersionOpt. Either this or startVersionOpt must be provided.
    * @param endVersionOpt The optional end version boundary. This must be mutually exclusive with
    *     endTimestampOpt.
    * @param endTimestampOpt The optional end timestamp boundary. This must be mutually exclusive
    *     with endVersionOpt.
+   * @throws IllegalArgumentException if neither startVersionOpt nor startTimestampOpt is provided
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
    * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and is
@@ -253,6 +257,9 @@ public class UCCatalogManagedClient {
     checkArgument(
         !endVersionOpt.isPresent() || !endTimestampOpt.isPresent(),
         "Cannot provide both an end timestamp and start version");
+    checkArgument(
+        startVersionOpt.isPresent() || startTimestampOpt.isPresent(),
+        "Must provide either a start timestamp or start version");
     if (startVersionOpt.isPresent() && endVersionOpt.isPresent()) {
       checkArgument(
           startVersionOpt.get() <= endVersionOpt.get(),
@@ -290,19 +297,20 @@ public class UCCatalogManagedClient {
         "TableManager.loadCommitRange",
         ucTableId,
         () -> {
-          CommitRangeBuilder commitRangeBuilder = TableManager.loadCommitRange(tablePath);
-
+          // Determine the start boundary (required - validated above)
+          CommitRangeBuilder.CommitBoundary startBoundary;
           if (startVersionOpt.isPresent()) {
-            commitRangeBuilder =
-                commitRangeBuilder.withStartBoundary(
-                    CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get()));
+            startBoundary = CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get());
+          } else {
+            // startTimestampOpt must be present due to validation above
+            startBoundary =
+                CommitRangeBuilder.CommitBoundary.atTimestamp(
+                    startTimestampOpt.get(), latestSnapshot.get());
           }
-          if (startTimestampOpt.isPresent()) {
-            commitRangeBuilder =
-                commitRangeBuilder.withStartBoundary(
-                    CommitRangeBuilder.CommitBoundary.atTimestamp(
-                        startTimestampOpt.get(), latestSnapshot.get()));
-          }
+
+          CommitRangeBuilder commitRangeBuilder =
+              TableManager.loadCommitRange(tablePath, startBoundary);
+
           if (endVersionOpt.isPresent()) {
             commitRangeBuilder =
                 commitRangeBuilder.withEndBoundary(

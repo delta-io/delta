@@ -69,28 +69,22 @@ class CommitRangeFactory {
       logger.info("{}: Resolved end-boundary to the latest version {}", tablePath, endVersion);
     }
     return new CommitRangeImpl(
-        tablePath, ctx.startBoundaryOpt, ctx.endBoundaryOpt, startVersion, endVersion, deltas);
+        tablePath, ctx.startBoundary, ctx.endBoundaryOpt, startVersion, endVersion, deltas);
   }
 
   private long resolveStartVersion(Engine engine, List<ParsedCatalogCommitData> catalogCommits) {
-    if (!ctx.startBoundaryOpt.isPresent()) {
-      // Default to version 0 if no start boundary is provided
-      return 0L;
-    }
-    CommitRangeBuilder.CommitBoundary startBoundary = ctx.startBoundaryOpt.get();
-
-    if (startBoundary.isVersion()) {
-      return startBoundary.getVersion();
+    if (ctx.startBoundary.isVersion()) {
+      return ctx.startBoundary.getVersion();
     } else {
       logger.info(
           "{}: Trying to resolve start-boundary timestamp {} to version",
           tablePath,
-          startBoundary.getTimestamp());
+          ctx.startBoundary.getTimestamp());
       return DeltaHistoryManager.getVersionAtOrAfterTimestamp(
           engine,
           logPath,
-          startBoundary.getTimestamp(),
-          (SnapshotImpl) startBoundary.getLatestSnapshot(),
+          ctx.startBoundary.getTimestamp(),
+          (SnapshotImpl) ctx.startBoundary.getLatestSnapshot(),
           catalogCommits);
     }
   }
@@ -143,7 +137,7 @@ class CommitRangeFactory {
         tablePath,
         startVersion,
         endVersionOpt,
-        ctx.startBoundaryOpt,
+        ctx.startBoundary,
         ctx.endBoundaryOpt);
   }
 

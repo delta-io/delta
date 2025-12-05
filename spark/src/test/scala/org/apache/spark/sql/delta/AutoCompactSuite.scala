@@ -56,14 +56,19 @@ trait AutoCompactTestUtils {
  * This class extends the [[CompactionSuiteBase]] and runs all the [[CompactionSuiteBase]] tests
  * with AutoCompaction.
  *
- * It also tests any AutoCompaction specific behavior.
+ * It also tests AutoCompaction specific behavior around configuration settings.
  */
-class AutoCompactSuite extends
+class AutoCompactConfigurationSuite extends
     CompactionTestHelperForAutoCompaction
   with DeltaSQLCommandTest
   with SharedSparkSession
   with AutoCompactTestUtils
   with DeltaExcludedBySparkVersionTestMixinShims {
+
+  private def setTableProperty(log: DeltaLog, key: String, value: String): Unit = {
+    spark.sql(s"ALTER TABLE delta.`${log.dataPath}` SET TBLPROPERTIES " +
+      s"($key = $value)")
+  }
 
   test("auto-compact-type: test table properties") {
     withTempDir { tempDir =>
@@ -107,6 +112,20 @@ class AutoCompactSuite extends
     }
   }
 
+}
+
+/**
+ * This class extends the [[CompactionSuiteBase]] and runs all the [[CompactionSuiteBase]] tests
+ * with AutoCompaction.
+ *
+ * It also tests AutoCompaction specific behavior around compaction execution.
+ */
+class AutoCompactExecutionSuite extends
+    CompactionTestHelperForAutoCompaction
+  with DeltaSQLCommandTest
+  with SharedSparkSession
+  with AutoCompactTestUtils
+  with DeltaExcludedBySparkVersionTestMixinShims {
   private def testBothModesViaProperty(testName: String)(f: String => Unit): Unit = {
     def runTest(autoCompactConfValue: String): Unit = {
       withTempDir { dir =>
@@ -351,12 +370,22 @@ class AutoCompactSuite extends
   }
 }
 
-class AutoCompactIdColumnMappingSuite extends AutoCompactSuite
+class AutoCompactConfigurationIdColumnMappingSuite extends AutoCompactConfigurationSuite
   with DeltaColumnMappingEnableIdMode {
   override def runAllTests: Boolean = true
 }
 
-class AutoCompactNameColumnMappingSuite extends AutoCompactSuite
+class AutoCompactExecutionIdColumnMappingSuite extends AutoCompactExecutionSuite
+  with DeltaColumnMappingEnableIdMode {
+  override def runAllTests: Boolean = true
+}
+
+class AutoCompactConfigurationNameColumnMappingSuite extends AutoCompactConfigurationSuite
+  with DeltaColumnMappingEnableNameMode {
+  override def runAllTests: Boolean = true
+}
+
+class AutoCompactExecutionNameColumnMappingSuite extends AutoCompactExecutionSuite
   with DeltaColumnMappingEnableNameMode {
   override def runAllTests: Boolean = true
 }
