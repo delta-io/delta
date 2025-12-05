@@ -231,16 +231,19 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .build(defaultEngine)
 
       def checkStartBoundary(timestamp: Long, expectedVersion: Long): Unit = {
-        assert(TableManager.loadCommitRange(tablePath)
+        assert(TableManager.loadCommitRange(
+          tablePath,
+          CommitBoundary.atTimestamp(timestamp, latestSnapshot))
           .withLogData(parsedLogData.asJava)
-          .withStartBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
-          .build(defaultEngine).getStartVersion == expectedVersion)
+          .build(defaultEngine)
+          .getStartVersion == expectedVersion)
       }
       def checkEndBoundary(timestamp: Long, expectedVersion: Long): Unit = {
-        assert(TableManager.loadCommitRange(tablePath)
+        assert(TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
           .withLogData(parsedLogData.asJava)
           .withEndBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
-          .build(defaultEngine).getEndVersion == expectedVersion)
+          .build(defaultEngine)
+          .getEndVersion == expectedVersion)
       }
 
       // startTimestamp is before V0
@@ -284,7 +287,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
 
       // Verify the fileList in the CommitRange
       val commitRange = TableManager
-        .loadCommitRange(tablePath)
+        .loadCommitRange(tablePath, CommitBoundary.atVersion(0))
         .withLogData(parsedLogData.asJava)
         .build(defaultEngine)
 
