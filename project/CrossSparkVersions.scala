@@ -194,11 +194,8 @@ case class SparkVersionSpec(
   /** Whether this is the master Spark version */
   def isMaster: Boolean = SparkVersionSpec.MASTER.contains(this)
 
-  /** Returns log4j config file based on source directory */
-  def log4jConfig: String = {
-    if (additionalSourceDir.exists(_.contains("master"))) "log4j2_spark_master.properties"
-    else "log4j2.properties"
-  }
+  /** Returns log4j config file */
+  def log4jConfig: String = "log4j2.properties"
 
   /** Whether to export JARs instead of class directories (needed for Spark Connect on master) */
   def exportJars: Boolean = additionalSourceDir.exists(_.contains("master"))
