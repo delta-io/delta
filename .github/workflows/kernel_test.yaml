@@ -1,6 +1,14 @@
 name: "Delta Kernel"
 
-on: [push, pull_request]
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
 
 # Cancel previous runs when new commits are pushed
 concurrency:
