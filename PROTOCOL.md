@@ -152,7 +152,7 @@ The state of a table at a given version is called a _snapshot_ and is defined by
 ## File Types
 A Delta table is stored within a directory and is composed of the following different types of files.
 
-Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
+Here is an example of a Delta table with four entries in the commit log, stored in the directory `mytable`.
 ```
 /mytable/_delta_log/00000000000000000000.json
 /mytable/_delta_log/00000000000000000001.json
