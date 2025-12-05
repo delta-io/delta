@@ -39,7 +39,8 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, Sink, StreamExecution}
+import org.apache.spark.sql.execution.streaming.Sink
+import org.apache.spark.sql.execution.streaming.runtime.{IncrementalExecution, StreamExecution}
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, NullType, StructType}
 import org.apache.spark.util.Utils

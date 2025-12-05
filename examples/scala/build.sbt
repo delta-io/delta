@@ -18,7 +18,7 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala213 = "2.13.16"
+val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
@@ -132,13 +132,9 @@ def getLibraryDependencies(
     deltaArtifactName: String,
     icebergSparkRuntimeArtifactName: String): Seq[ModuleID] = {
   Seq(
-    "io.delta" %% deltaArtifactName % deltaVersion,
-    "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
-      getMajorMinor(deltaVersion)
-    ),
-    "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
-      getMajorMinor(deltaVersion)
-    ),
+    "io.delta" %% "delta-spark_4.1" % deltaVersion,
+    "org.apache.spark" %% "spark-sql" % "4.1.0",
+    "org.apache.spark" %% "spark-hive" % "4.1.0",
     "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
   ) ++ (getMajorMinor(deltaVersion) match {
     case (major, _) if major >= 4 =>
@@ -161,6 +157,7 @@ lazy val root = (project in file("."))
       getDeltaVersion.value,
       getDeltaArtifactName.value,
       getIcebergSparkRuntimeArtifactName.value),
+    resolvers += "Spark RC" at "https://repository.apache.org/content/repositories/orgapachespark-1507/",
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(

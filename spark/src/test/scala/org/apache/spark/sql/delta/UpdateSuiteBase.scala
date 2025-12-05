@@ -516,8 +516,10 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
           parameters = Map("tableName" -> tableSQLIdentifier.stripPrefix("delta.")))
       // Thrown when running with name-based SQL
       case e: SparkUnsupportedOperationException =>
-        checkError(e, "_LEGACY_ERROR_TEMP_2096",
-          parameters = Map("ddl" -> "UPDATE TABLE"))
+        checkError(e, "UNSUPPORTED_FEATURE.TABLE_OPERATION",
+          parameters = Map(
+            "tableName" -> "`spark_catalog`.`default`.`test_delta_table`",
+            "operation" -> "UPDATE TABLE"))
     }
   }
 
