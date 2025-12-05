@@ -55,7 +55,7 @@ import scala.collection.JavaConverters;
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   /**
-   * Block list of DeltaOptions that are not supported for streaming in Delta Kernel. Only
+   * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
    * startingVersion, maxFilesPerTrigger, and maxBytesPerTrigger are supported. User-defined custom
    * options (not in DeltaOptions) are allowed to pass through.
    */
