@@ -54,6 +54,14 @@ import scala.collection.JavaConverters;
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
+  /** Supported streaming options for the V2 connector. */
+  private static final List<String> SUPPORTED_STREAMING_OPTIONS =
+      Collections.unmodifiableList(
+          Arrays.asList(
+              DeltaOptions.STARTING_VERSION_OPTION(),
+              DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
+              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
+
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
    * startingVersion, maxFilesPerTrigger, and maxBytesPerTrigger are supported. User-defined custom
@@ -372,9 +380,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
     while (keysIterator.hasNext()) {
       String key = keysIterator.next();
-      // DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration,
-      // so we need toLowerCase() to match against our block list
-      if (UNSUPPORTED_STREAMING_OPTIONS.contains(key.toLowerCase())) {
+      // DeltaOptions uses CaseInsensitiveMap with keys already lowercased.
+      if (UNSUPPORTED_STREAMING_OPTIONS.contains(key)) {
         unsupportedOptions.add(key);
       }
     }
@@ -383,11 +390,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       throw new UnsupportedOperationException(
           String.format(
               "The following streaming options are not supported: [%s]. "
-                  + "Supported options are: [%s, %s, %s].",
+                  + "Supported options are: [%s].",
               String.join(", ", unsupportedOptions),
-              DeltaOptions.STARTING_VERSION_OPTION(),
-              DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
-              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
+              String.join(", ", SUPPORTED_STREAMING_OPTIONS)));
     }
   }
 }
