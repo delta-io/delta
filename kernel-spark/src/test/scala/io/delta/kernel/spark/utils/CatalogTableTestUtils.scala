@@ -53,7 +53,8 @@ object CatalogTableTestUtils {
       if (nullStorageProperties) null else ScalaUtils.toScalaMap(storageProperties)
 
     val identifier = catalogName match {
-      case Some(catalog) => TableIdentifier(tableName, Some("default"), Some(catalog))
+      case Some(catalog) =>
+        TableIdentifier(tableName, Some("default") /* database */, Some(catalog) /* catalog */ )
       case None => TableIdentifier(tableName)
     }
 
