@@ -156,6 +156,7 @@ Here is an example of a Delta table with three entries in the commit log, stored
 ```
 /mytable/_delta_log/00000000000000000000.json
 /mytable/_delta_log/00000000000000000001.json
+/mytable/_delta_log/00000000000000000002.json
 /mytable/_delta_log/00000000000000000003.json
 /mytable/_delta_log/00000000000000000003.checkpoint.parquet
 /mytable/_delta_log/_last_checkpoint
