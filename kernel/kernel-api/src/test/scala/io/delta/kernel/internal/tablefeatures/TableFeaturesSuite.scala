@@ -40,7 +40,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   // Tests for [[TableFeature]] implementations                                                  //
   /////////////////////////////////////////////////////////////////////////////////////////////////
   val readerWriterFeatures = Seq(
-    "catalogManaged",
+    "catalogOwned-preview",
     "columnMapping",
     "deletionVectors",
     "timestampNtz",
@@ -201,7 +201,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "domainMetadata",
     "vacuumProtocolCheck",
     "clustering",
-    "catalogManaged",
+    "catalogOwned-preview",
     "allowColumnDefaults").foreach {
     feature =>
       test(s"doesn't support auto enable by metadata: $feature") {
@@ -234,7 +234,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       .collect(toList()).asScala
 
     val expected = Seq(
-      "catalogManaged",
+      "catalogOwned-preview",
       "columnMapping",
       "v2Checkpoint",
       "variantType",
@@ -258,7 +258,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     // are writable because the metadata has not been set the info that
     // these features are enabled
     val expected = Seq(
-      "catalogManaged",
+      "catalogOwned-preview",
       "columnMapping",
       "allowColumnDefaults",
       "v2Checkpoint",
@@ -323,7 +323,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   // Reads: Supported table features represented as readerFeatures in the protocol
   Seq(
-    "catalogManaged",
+    "catalogOwned-preview",
     "variantType",
     "variantType-preview",
     "variantShredding-preview",
@@ -380,7 +380,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with catalogManaged",
-    new Protocol(3, 7, singleton("catalogManaged"), singleton("catalogManaged")),
+    new Protocol(3, 7, singleton("catalogOwned-preview"), singleton("catalogOwned-preview")),
     testMetadata())
 
   checkWriteUnsupported(

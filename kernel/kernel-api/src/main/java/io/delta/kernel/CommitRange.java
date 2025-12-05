@@ -59,10 +59,9 @@ public interface CommitRange {
    * <p>The boundary indicates whether the range was defined using a specific version number or a
    * timestamp.
    *
-   * @return an {@link Optional} containing the start boundary, or empty if the range was created
-   *     with default start parameters (version 0)
+   * @return the start boundary for this commit range
    */
-  Optional<CommitRangeBuilder.CommitBoundary> getQueryStartBoundary();
+  CommitRangeBuilder.CommitBoundary getQueryStartBoundary();
 
   /**
    * Returns the original query boundary used to define the end boundary of this commit range, if
