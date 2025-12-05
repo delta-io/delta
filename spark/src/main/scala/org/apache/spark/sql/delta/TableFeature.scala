@@ -987,7 +987,8 @@ object AllowColumnDefaultsTableFeature extends WriterFeature(name = "allowColumn
  *
  * This is a writer-only feature because:
  * - Writers need to understand when to materialize partition columns into data files
- * - Readers can read the data regardless of whether partition columns are materialized or not
+ * - Readers can read the data regardless of whether partition columns are materialized or not, as
+ *   they read the partition values from the AddFile.
  *
  * The feature is automatically enabled when the table property
  * `delta.enableMaterializePartitionColumnsFeature` is set to true.
