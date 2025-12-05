@@ -26,7 +26,7 @@ import org.scalactic.source.Position
 import org.scalatest.Tag
 
 import java.util.Optional
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 /**
  * Unit tests for ProtocolMetadataAdapterV2.
