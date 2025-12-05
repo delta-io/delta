@@ -137,29 +137,35 @@ class CatalogTableUtilsTest {
   private static CatalogTable catalogTable(
       Map<String, String> properties, Map<String, String> storageProperties) {
     return CatalogTableTestUtils$.MODULE$.createCatalogTable(
-        "tbl", Option.empty(), properties, storageProperties, Option.empty(), false, false);
+        "tbl" /* tableName */,
+        Option.empty() /* catalogName */,
+        properties,
+        storageProperties,
+        Option.empty() /* locationUri */,
+        false /* nullStorage */,
+        false /* nullStorageProperties */);
   }
 
   private static CatalogTable catalogTableWithNullStorage(Map<String, String> properties) {
     return CatalogTableTestUtils$.MODULE$.createCatalogTable(
-        "tbl",
-        Option.empty(),
+        "tbl" /* tableName */,
+        Option.empty() /* catalogName */,
         properties,
-        new HashMap<>(),
-        Option.empty(),
-        true, // nullStorage
-        false);
+        new HashMap<>() /* storageProperties */,
+        Option.empty() /* locationUri */,
+        true /* nullStorage */,
+        false /* nullStorageProperties */);
   }
 
   private static CatalogTable catalogTableWithNullStorageProperties(
       Map<String, String> properties) {
     return CatalogTableTestUtils$.MODULE$.createCatalogTable(
-        "tbl",
-        Option.empty(),
+        "tbl" /* tableName */,
+        Option.empty() /* catalogName */,
         properties,
-        new HashMap<>(),
-        Option.empty(),
-        false,
-        true); // nullStorageProperties
+        new HashMap<>() /* storageProperties */,
+        Option.empty() /* locationUri */,
+        false /* nullStorage */,
+        true /* nullStorageProperties */);
   }
 }
