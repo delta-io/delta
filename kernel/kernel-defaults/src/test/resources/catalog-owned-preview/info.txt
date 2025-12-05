@@ -45,7 +45,7 @@ FROM (
 )
 """)
 
-# Then, add `"readerFeatures":["catalogOwned-preview"]` to the _delta_log/001.json protocol
+# Then, add `"readerFeatures":["catalogManaged"]` to the _delta_log/001.json protocol
 # Then, for commits version $v in [1, 2] move _delta_log/$v.json into
 # _delta_log/_staged_commits/$v.$uuid.json, where $uuid is taken from the commitInfo.txnId in
 # $v.json
