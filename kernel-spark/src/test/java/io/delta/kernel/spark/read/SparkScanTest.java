@@ -309,8 +309,9 @@ public class SparkScanTest extends SparkDsv2TestBase {
             () -> SparkScan.validateStreamingOptions(deltaOptions));
 
     // Verify exact error message - only the blocked option should appear
+    // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
-        "The following streaming options are not supported: [readChangeFeed]. "
+        "The following streaming options are not supported: [readchangefeed]. "
             + "Supported options are: [startingVersion, maxFilesPerTrigger, maxBytesPerTrigger].",
         exception.getMessage());
   }

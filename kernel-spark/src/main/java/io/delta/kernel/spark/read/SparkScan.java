@@ -372,7 +372,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
     while (keysIterator.hasNext()) {
       String key = keysIterator.next();
-      // DeltaOptions uses CaseInsensitiveMap which preserves original key casing,
+      // DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration,
       // so we need toLowerCase() to match against our block list
       if (UNSUPPORTED_STREAMING_OPTIONS.contains(key.toLowerCase())) {
         unsupportedOptions.add(key);
