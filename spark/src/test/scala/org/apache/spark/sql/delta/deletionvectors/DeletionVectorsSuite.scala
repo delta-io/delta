@@ -51,8 +51,7 @@ class DeletionVectorsSuite extends QueryTest
   with DeltaSQLCommandTest
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews
-  with DeltaExceptionTestUtils
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaExceptionTestUtils {
   import testImplicits._
 
   override def beforeAll(): Unit = {

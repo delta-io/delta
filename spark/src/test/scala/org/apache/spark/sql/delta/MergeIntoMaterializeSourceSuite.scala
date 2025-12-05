@@ -48,8 +48,7 @@ trait MergeIntoMaterializeSourceMixin
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils
-    with DeltaTestUtilsBase
-  {
+    with DeltaTestUtilsBase {
 
   override def beforeAll(): Unit = {
     super.beforeAll()

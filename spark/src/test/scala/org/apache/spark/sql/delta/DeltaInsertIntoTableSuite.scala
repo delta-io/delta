@@ -44,8 +44,7 @@ class DeltaInsertIntoSQLSuite
   extends DeltaInsertIntoTestsWithTempViews(
     supportsDynamicOverwrite = true,
     includeSQLOnlyTests = true)
-  with DeltaSQLCommandTest
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -58,7 +57,7 @@ class DeltaInsertIntoSQLSuite
     }
   }
 
-  testSparkMasterOnly("Variant type") {
+  test("Variant type") {
     withTable("t") {
       sql("CREATE TABLE t (id LONG, v VARIANT) USING delta")
       sql("INSERT INTO t (id, v) VALUES (1, parse_json('{\"a\": 1}'))")

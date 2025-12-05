@@ -540,8 +540,7 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 }
 
-abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
-  {
+abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
   test("cannot time travel target tables of insert/delete/update/merge") {
     val tblName = "delta_table"
     withTable(tblName) {

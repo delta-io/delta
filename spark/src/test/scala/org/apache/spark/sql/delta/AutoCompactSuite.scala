@@ -21,7 +21,6 @@ import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.DeltaExcludedBySparkVersionTestMixinShims
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.hooks.{AutoCompact, AutoCompactType}
@@ -62,8 +61,7 @@ class AutoCompactSuite extends
     CompactionTestHelperForAutoCompaction
   with DeltaSQLCommandTest
   with SharedSparkSession
-  with AutoCompactTestUtils
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with AutoCompactTestUtils {
 
   test("auto-compact-type: test table properties") {
     withTempDir { tempDir =>
@@ -223,7 +221,7 @@ class AutoCompactSuite extends
     checkAutoCompactionWorks(dir, spark.range(10).toDF("id"))
   }
 
-  testSparkMasterOnly("variant auto compact kicks in when enabled - table config") {
+  test("variant auto compact kicks in when enabled - table config") {
     withTempDir { dir =>
       withSQLConf(
           "spark.databricks.delta.properties.defaults.autoOptimize.autoCompact" -> "true",
@@ -235,7 +233,7 @@ class AutoCompactSuite extends
     }
   }
 
-  testSparkMasterOnly("variant auto compact kicks in when enabled - session config") {
+  test("variant auto compact kicks in when enabled - session config") {
     withTempDir { dir =>
       withSQLConf(
           DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
