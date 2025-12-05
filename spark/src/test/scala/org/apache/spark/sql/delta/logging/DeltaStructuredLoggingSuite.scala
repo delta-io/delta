@@ -43,20 +43,38 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.regex.Pattern
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.apache.logging.log4j.Level
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.internal.{LogEntry, LoggingShims, LogKeyShims, MDC}
+import org.apache.spark.internal.{LogEntry, Logging, LogKey, MDC}
 
-trait DeltaStructuredLoggingSuiteBase
-  extends SparkFunSuite
-    with LoggingShims {
-  def className: String
-  def logFilePath: String
+class DeltaStructuredLoggingSuite extends SparkFunSuite with Logging {
+  private def className: String = classOf[DeltaStructuredLoggingSuite].getSimpleName
+  private def logFilePath: String = "target/structured.log"
 
   private lazy val logFile: File = {
     val pwd = new File(".").getCanonicalPath
     new File(pwd + "/" + logFilePath)
+  }
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    Logging.enableStructuredLogging()
+  }
+
+  override def afterAll(): Unit = {
+    Logging.disableStructuredLogging()
+    super.afterAll()
+  }
+
+  private val jsonMapper = new ObjectMapper().registerModule(DefaultScalaModule)
+  private def compactAndToRegexPattern(json: String): String = {
+    jsonMapper.readTree(json).toString.
+      replace("<timestamp>", """[^"]+""").
+      replace(""""<stacktrace>"""", """.*""").
+      replace("{", """\{""") + "\n"
   }
 
   // Return the newly added log contents in the log file after executing the function `f`
@@ -72,38 +90,136 @@ trait DeltaStructuredLoggingSuiteBase
     newContent.substring(content.length)
   }
 
-  def basicMsg: String = "This is a log message"
+  private def basicMsg: String = "This is a log message"
 
-  def msgWithMDC: LogEntry = log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, "1")}."
+  private def msgWithMDC: LogEntry = log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, "1")}."
 
-  def msgWithMDCValueIsNull: LogEntry = log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, null)}."
+  private def msgWithMDCValueIsNull: LogEntry = log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, null)}."
 
-  def msgWithMDCAndException: LogEntry =
+  private def msgWithMDCAndException: LogEntry =
     log"Error in executor ${MDC(DeltaLogKeys.EXECUTOR_ID, "1")}."
 
-  def msgWithConcat: LogEntry = log"Min Size: ${MDC(DeltaLogKeys.MIN_SIZE, "2")}, " +
+  private def msgWithConcat: LogEntry = log"Min Size: ${MDC(DeltaLogKeys.MIN_SIZE, "2")}, " +
     log"Max Size: ${MDC(DeltaLogKeys.MAX_SIZE, "4")}. " +
     log"Please double check."
 
-  // test for basic message (without any mdc)
-  def expectedPatternForBasicMsg(level: Level): String
+  private val customLog = log"${MDC(CustomLogKeys.CUSTOM_LOG_KEY, "Custom log message.")}"
 
-  // test for basic message and exception
-  def expectedPatternForBasicMsgWithException(level: Level): String
+  def expectedPatternForBasicMsg(level: Level): String = {
+    compactAndToRegexPattern(
+      s"""
+        {
+          "ts": "<timestamp>",
+          "level": "$level",
+          "msg": "This is a log message",
+          "logger": "$className"
+        }""")
+  }
 
-  // test for message (with mdc)
-  def expectedPatternForMsgWithMDC(level: Level): String
+  def expectedPatternForBasicMsgWithException(level: Level): String = {
+    compactAndToRegexPattern(
+      s"""
+        {
+          "ts": "<timestamp>",
+          "level": "$level",
+          "msg": "This is a log message",
+          "exception": {
+            "class": "java.lang.RuntimeException",
+            "msg": "OOM",
+            "stacktrace": "<stacktrace>"
+          },
+          "logger": "$className"
+        }""")
+  }
 
-  // test for message (with mdc - the value is null)
-  def expectedPatternForMsgWithMDCValueIsNull(level: Level): String
+  def expectedPatternForMsgWithMDC(level: Level): String = {
+    compactAndToRegexPattern(
+      s"""
+        {
+          "ts": "<timestamp>",
+          "level": "$level",
+          "msg": "Lost executor 1.",
+          "context": {
+             "executor_id": "1"
+          },
+          "logger": "$className"
+        }""")
+  }
 
-  // test for message and exception
-  def expectedPatternForMsgWithMDCAndException(level: Level): String
+  def expectedPatternForMsgWithMDCValueIsNull(level: Level): String = {
+    compactAndToRegexPattern(
+      s"""
+        {
+          "ts": "<timestamp>",
+          "level": "$level",
+          "msg": "Lost executor null.",
+          "context": {
+             "executor_id": null
+          },
+          "logger": "$className"
+        }""")
+  }
 
-  // test for custom LogKey
-  def expectedPatternForCustomLogKey(level: Level): String
+  def expectedPatternForMsgWithMDCAndException(level: Level): String = {
+    compactAndToRegexPattern(
+      s"""
+        {
+          "ts": "<timestamp>",
+          "level": "$level",
+          "msg": "Error in executor 1.",
+          "context": {
+            "executor_id": "1"
+          },
+          "exception": {
+            "class": "java.lang.RuntimeException",
+            "msg": "OOM",
+            "stacktrace": "<stacktrace>"
+          },
+          "logger": "$className"
+        }""")
+  }
 
-  def verifyMsgWithConcat(level: Level, logOutput: String): Unit
+  def expectedPatternForCustomLogKey(level: Level): String = {
+    compactAndToRegexPattern(
+      s"""
+        {
+          "ts": "<timestamp>",
+          "level": "$level",
+          "msg": "Custom log message.",
+          "logger": "$className"
+        }"""
+    )
+  }
+
+  def verifyMsgWithConcat(level: Level, logOutput: String): Unit = {
+    val pattern1 = compactAndToRegexPattern(
+      s"""
+        {
+          "ts": "<timestamp>",
+          "level": "$level",
+          "msg": "Min Size: 2, Max Size: 4. Please double check.",
+          "context": {
+            "min_size": "2",
+            "max_size": "4"
+          },
+          "logger": "$className"
+        }""")
+
+    val pattern2 = compactAndToRegexPattern(
+      s"""
+        {
+          "ts": "<timestamp>",
+          "level": "$level",
+          "msg": "Min Size: 2, Max Size: 4. Please double check.",
+          "context": {
+            "max_size": "4",
+            "min_size": "2"
+          },
+          "logger": "$className"
+        }""")
+    assert(Pattern.compile(pattern1).matcher(logOutput).matches() ||
+      Pattern.compile(pattern2).matcher(logOutput).matches())
+  }
 
   test("Basic logging") {
     Seq(
@@ -167,7 +283,6 @@ trait DeltaStructuredLoggingSuiteBase
     }
   }
 
-  private val customLog = log"${MDC(CustomLogKeys.CUSTOM_LOG_KEY, "Custom log message.")}"
   test("Logging with custom LogKey") {
     Seq(
       (Level.ERROR, () => logError(customLog)),
@@ -192,6 +307,6 @@ trait DeltaStructuredLoggingSuiteBase
 }
 
 object CustomLogKeys {
-  // Custom `LogKey` must be `extends LogKeyShims`
-  case object CUSTOM_LOG_KEY extends LogKeyShims
+  // Custom `LogKey` must extend LogKey
+  case object CUSTOM_LOG_KEY extends LogKey
 }
