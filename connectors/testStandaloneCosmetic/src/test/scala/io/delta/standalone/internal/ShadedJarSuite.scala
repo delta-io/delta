@@ -35,8 +35,11 @@ class ShadedJarSuite extends FunSuite {
   test("audit files in delta-standalone jar") {
     val allowedFilePrefixes = Seq(
       "META-INF/MANIFEST.MF",
+      "META-INF/FastDoubleParser-LICENSE",
+      "META-INF/FastDoubleParser-NOTICE",
       "META-INF/LICENSE",
       "META-INF/NOTICE",
+      "META-INF/thirdparty-LICENSE",
       "io/delta/standalone/",
       "shadedelta/"
     )
