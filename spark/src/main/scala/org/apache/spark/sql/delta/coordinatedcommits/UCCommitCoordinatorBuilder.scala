@@ -229,6 +229,16 @@ object UCCommitCoordinatorBuilder
       .toList
   }
 
+  /**
+   * Returns catalog configurations as a Map for O(1) lookup by catalog name.
+   * Wraps [[getCatalogConfigs]] results in [[UCCatalogConfig]] for better readability.
+   */
+  private[delta] def getCatalogConfigMap(spark: SparkSession): Map[String, UCCatalogConfig] = {
+    getCatalogConfigs(spark).map {
+      case (name, uri, token) => name -> UCCatalogConfig(name, uri, token)
+    }.toMap
+  }
+
   private def safeClose(ucClient: UCClient, uri: String): Unit = {
     try {
       ucClient.close()
@@ -252,3 +262,9 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
   override def createUCClient(uri: String, token: String): UCClient =
     new UCTokenBasedRestClient(uri, token)
 }
+
+/**
+ * Holder for Unity Catalog configuration extracted from Spark configs.
+ * Used by [[UCCommitCoordinatorBuilder.getCatalogConfigMap]].
+ */
+case class UCCatalogConfig(catalogName: String, uri: String, token: String)
