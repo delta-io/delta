@@ -67,7 +67,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "inCommitTimestamp",
     "icebergWriterCompatV1",
     "icebergWriterCompatV3",
-    "clustering")
+    "clustering",
+    "materializePartitionColumns")
 
   val legacyFeatures = Seq(
     "appendOnly",
@@ -188,7 +189,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     (
       "icebergWriterCompatV3",
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "false")),
-      false)).foreach({ case (feature, metadata, expected) =>
+      false),
+    (
+      "materializePartitionColumns",
+      testMetadata(tblProps = Map("delta.enableMaterializePartitionColumnsFeature" -> "true")),
+      true)).foreach({ case (feature, metadata, expected) =>
     test(s"metadataRequiresFeatureToBeEnabled - $feature - $metadata") {
       val tableFeature = TableFeatures.getTableFeature(feature)
       assert(tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
@@ -283,7 +288,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       "clustering",
       "variantType-preview",
       "variantType",
-      "variantShredding-preview")
+      "variantShredding-preview",
+      "materializePartitionColumns")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
