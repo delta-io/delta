@@ -98,7 +98,8 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
-        new SparkMicroBatchStream(snapshotManager, new Configuration());
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), new Configuration());
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, Optional.empty(), "No options provided");
@@ -220,7 +221,11 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            snapshotManager, new Configuration(), spark, createDeltaOptions(startingVersion));
+            snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
+            new Configuration(),
+            spark,
+            createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(
@@ -259,7 +264,11 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
         new SparkMicroBatchStream(
-            snapshotManager, new Configuration(), spark, createDeltaOptions(startingVersion));
+            snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
+            new Configuration(),
+            spark,
+            createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);

@@ -333,4 +333,33 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
     val metadata = getMetadata(defaultEngine, tablePath)
     assert(keys.forall(!metadata.getConfiguration.containsKey(_)))
   }
+
+  val recognizedButUnimplementedProps = Seq(
+    ("delta.dataSkippingStatsColumns", "col1,col2,nested.field"))
+
+  recognizedButUnimplementedProps.foreach { case (propKey, value) =>
+    test(s"$propKey is allowed (but not implemented) - create table") {
+      withTempDir { tempFile =>
+        val tablePath = tempFile.getAbsolutePath
+        createUpdateTableWithProps(
+          tablePath,
+          createTable = true,
+          propsAdded = Map(propKey -> value))
+        assertHasProp(tablePath, Map(propKey -> value))
+      }
+    }
+
+    test(s"$propKey is allowed (but not implemented) - update table") {
+      withTempDir { tempFile =>
+        val tablePath = tempFile.getAbsolutePath
+        createUpdateTableWithProps(tablePath, createTable = true)
+
+        val updatedValue = s"${value}_updated"
+        createUpdateTableWithProps(
+          tablePath,
+          propsAdded = Map(propKey -> updatedValue))
+        assertHasProp(tablePath, Map(propKey -> updatedValue))
+      }
+    }
+  }
 }
