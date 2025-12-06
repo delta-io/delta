@@ -1582,18 +1582,15 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
   }
 
-  testQuietly("startingVersion") {
+  test("startingVersion") {
     withTempDir { tableDir =>
       val tablePath = tableDir.getCanonicalPath
       val start = 1594795800000L
       generateCommits(tablePath, start, start + 20.minutes)
 
       def testStartingVersion(startingVersion: Long): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", startingVersion)
-          .load(tablePath)
-          .writeStream
+        val df = loadStreamWithOptions(tablePath, Map("startingVersion" -> startingVersion.toString))
+        val q = df.writeStream
           .format("memory")
           .queryName("startingVersion_test")
           .start()
@@ -1898,10 +1895,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempView("startingVersionTest") {
         val path = dir.getAbsolutePath
         spark.range(0, 10).write.format("delta").save(path)
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val q = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1934,10 +1928,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Define the stream, but don't start it, before a second write. The startingVersion
         // latest should be resolved when the query *starts*, so there'll be no data even though
         // some was added after the stream was defined.
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val streamDef = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1962,10 +1953,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempView("startingVersionTest") {
         val path = dir.getAbsolutePath
         spark.range(0).write.format("delta").save(path)
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val streamDef = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")

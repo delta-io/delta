@@ -26,10 +26,33 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
+import org.scalactic.source.Position
+import org.scalatest.Tag
+
+/**
+ * Trait that provides abstraction for testing both DSv1 and DSv2 connectors.
+ */
+trait DeltaSourceConnectorTrait {
+  self: DeltaSQLTestUtils =>
+
+  protected def useDsv2: Boolean = false
+
+  protected def loadStreamWithOptions(path: String, options: Map[String, String]): DataFrame = {
+    val reader = spark.readStream
+    options.foreach { case (k, v) => reader.option(k, v) }
+    if (useDsv2) {
+      val tableName = s"dsv2.delta.`$path`"
+      reader.table(tableName)
+    } else {
+      reader.format("delta").load(path)
+    }
+  }
+}
 
 trait DeltaSourceSuiteBase extends StreamTest
   with DeltaSQLTestUtils
-  with CoordinatedCommitsBaseSuite {
+  with CoordinatedCommitsBaseSuite
+  with DeltaSourceConnectorTrait {
 
   /**
    * Creates 3 temporary directories for use within a function.
