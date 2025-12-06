@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
 
 /**
@@ -43,7 +43,7 @@ import org.apache.spark.sql.SparkSession
  * Accessed by the thread materializing files and by the thread releasing resources after execution.
  *
  */
-class FileMetadataMaterializationTracker extends LoggingShims {
+class FileMetadataMaterializationTracker extends Logging {
 
   /** The number of permits allocated from the global file materialization semaphore */
   @volatile private var numPermitsFromSemaphore: Int = 0

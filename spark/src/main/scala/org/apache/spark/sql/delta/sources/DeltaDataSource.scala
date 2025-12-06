@@ -45,8 +45,7 @@ import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.streaming.OutputMode
-import org.apache.spark.sql.types.{DataType, VariantShims}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{DataType, StructType, VariantType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 
@@ -55,7 +54,7 @@ class DeltaDataSource
   extends RelationProvider
   with StreamSourceProvider
   with StreamSinkProvider
-  with CreatableRelationProviderShim
+  with CreatableRelationProvider
   with DataSourceRegister
   with TableProvider
   with DeltaLogging {
@@ -304,10 +303,9 @@ class DeltaDataSource
 
   /**
    * Extend the default `supportsDataType` to allow VariantType.
-   * Implemented by `CreatableRelationProviderShim`.
    */
   override def supportsDataType(dt: DataType): Boolean = {
-    VariantShims.isVariantType(dt) || super.supportsDataType(dt)
+    dt.isInstanceOf[VariantType] || super.supportsDataType(dt)
   }
 
   override def shortName(): String = {

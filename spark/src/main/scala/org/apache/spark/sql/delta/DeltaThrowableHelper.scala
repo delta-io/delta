@@ -22,7 +22,9 @@ import java.net.URL
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaThrowableHelperShims._
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.errors.QueryCompilationErrors
+import org.apache.spark.SparkThrowable
 
 import org.apache.spark.ErrorClassesJsonReader
 import org.apache.spark.util.Utils
@@ -33,6 +35,19 @@ import org.apache.spark.util.Utils
  */
 object DeltaThrowableHelper
 {
+  /**
+   * Handles a breaking change (SPARK-46810) between Spark 3.5 and Spark Master (4.0) where
+   * `error-classes.json` was renamed to `error-conditions.json`.
+   */
+  val SPARK_ERROR_CLASS_SOURCE_FILE = "error/error-conditions.json"
+
+  def showColumnsWithConflictDatabasesError(
+      db: Seq[String], v1TableName: TableIdentifier): Throwable = {
+    QueryCompilationErrors.showColumnsWithConflictNamespacesError(
+      namespaceA = db,
+      namespaceB = v1TableName.database.get :: Nil)
+  }
+
   /**
    * Try to find the error class source file and throw exception if it is no found.
    */

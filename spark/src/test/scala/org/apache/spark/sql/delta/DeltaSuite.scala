@@ -20,7 +20,6 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
@@ -1530,7 +1529,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().collect()
         }
-        assert(thrown.getMessage.contains(THROWS_ON_CORRUPTED_FILE_ERROR_MSG))
+        assert(thrown.getMessage.contains("[FAILED_READ_FILE.NO_HINT]"))
       }
     }
   }
@@ -1582,7 +1581,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().collect()
       }
-      assert(thrown.getMessage.contains(THROWS_ON_DELETED_FILE_ERROR_MSG))
+      assert(thrown.getMessage.contains("[FAILED_READ_FILE.FILE_NOT_EXIST]"))
     }
   }
 

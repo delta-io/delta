@@ -26,7 +26,6 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.DeltaVacuumSuiteShims._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand
@@ -550,7 +549,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
         val e = intercept[AnalysisException] {
           vacuumSQLTest(table, viewName)
         }
-        assert(e.getMessage.contains(SQL_COMMAND_ON_TEMP_VIEW_NOT_SUPPORTED_ERROR_MSG))
+        assert(e.getMessage.contains("'VACUUM' expects a table but `v` is a view"))
       }
     }
   }

@@ -46,8 +46,7 @@ trait MergeIntoSuiteBaseMixin
     with DeltaSQLTestUtils
     with ScanReportHelper
     with MergeIntoTestUtils
-    with MergeIntoSchemaEvolutionMixin
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    with MergeIntoSchemaEvolutionMixin {
   import testImplicits._
 
   // Maps expected error classes to actual error classes. Used to handle error classes that are
@@ -2687,7 +2686,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
     }
   }
 
-  testSparkMasterOnly("Variant type") {
+  test("Variant type") {
     withTable("source") {
       // Insert ("0", 0), ("1", 1)
       val dstDf = sql(

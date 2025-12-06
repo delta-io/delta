@@ -39,7 +39,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkThrowable
-import org.apache.spark.internal.{LoggingShims, MDC, MessageWithContext}
+import org.apache.spark.internal.{Logging, MDC, MessageWithContext}
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -233,7 +233,7 @@ object DeltaLogging {
 class LogThrottler(
     val bucketSize: Int = 100,
     val tokenRecoveryInterval: FiniteDuration = 1.second,
-    val timeSource: NanoTimeTimeSource = SystemNanoTimeSource) extends LoggingShims {
+    val timeSource: NanoTimeTimeSource = SystemNanoTimeSource) extends Logging {
 
   private var remainingTokens = bucketSize
   private var nextRecovery: DeadlineWithTimeSource =

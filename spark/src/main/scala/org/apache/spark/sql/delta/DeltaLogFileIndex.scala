@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs._
 
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}
@@ -40,7 +40,7 @@ case class DeltaLogFileIndex private (
     format: FileFormat,
     files: Array[FileStatus])
   extends FileIndex
-  with LoggingShims {
+  with Logging {
 
   import DeltaLogFileIndex._
 

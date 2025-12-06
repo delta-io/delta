@@ -35,7 +35,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 class DeltaVariantSuite
-    extends QueryTest
+  extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils
@@ -44,9 +44,9 @@ class DeltaVariantSuite
   import testImplicits._
 
   private def assertVariantTypeTableFeatures(
-      tableName: String,
-      expectPreviewFeature: Boolean,
-      expectStableFeature: Boolean): Unit = {
+    tableName: String,
+    expectPreviewFeature: Boolean,
+    expectStableFeature: Boolean): Unit = {
     val features = getProtocolForTable("tbl").readerAndWriterFeatures
     if (expectPreviewFeature) {
       assert(features.contains(VariantTypePreviewTableFeature))
@@ -79,8 +79,8 @@ class DeltaVariantSuite
       assert(
         !deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(
           VariantTypePreviewTableFeature) &&
-        !deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(
-          VariantTypeTableFeature),
+          !deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(
+            VariantTypeTableFeature),
         s"Table tbl contains VariantTypeFeature descriptor when its not supposed to"
       )
     }
@@ -104,10 +104,10 @@ class DeltaVariantSuite
 
       assert(
         getProtocolForTable("tbl") ==
-        VariantTypeTableFeature.minProtocolVersion
-          .withFeature(VariantTypeTableFeature)
-          .withFeature(InvariantsTableFeature)
-          .withFeature(AppendOnlyTableFeature)
+          VariantTypeTableFeature.minProtocolVersion
+            .withFeature(VariantTypeTableFeature)
+            .withFeature(InvariantsTableFeature)
+            .withFeature(AppendOnlyTableFeature)
       )
     }
   }
@@ -121,7 +121,7 @@ class DeltaVariantSuite
         "tbl", expectPreviewFeature = false, expectStableFeature = true)
       sql(
         s"ALTER TABLE tbl " +
-        s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
+          s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
       )
       assertVariantTypeTableFeatures(
         "tbl", expectPreviewFeature = true, expectStableFeature = true)
@@ -144,7 +144,7 @@ class DeltaVariantSuite
       sql("CREATE TABLE tbl(s STRING) USING delta")
       sql(
         s"ALTER TABLE tbl " +
-        s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
+          s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
       )
 
       sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
@@ -214,7 +214,7 @@ class DeltaVariantSuite
   }
 
   test("enabling 'FORCE_USE_PREVIEW_VARIANT_FEATURE' on table with stable feature does not " +
-       "require adding preview feature") {
+    "require adding preview feature") {
     withTable("tbl") {
       sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
@@ -456,7 +456,7 @@ class DeltaVariantSuite
         sql("""select _change_type, v::int from table_changes('tbl', 0)
                where _change_type = 'update_preimage'"""),
         Seq(Row("update_preimage", 50))
-    )
+      )
       checkAnswer(
         sql("""select _change_type, v::int from table_changes('tbl', 0)
                where _change_type = 'update_postimage'"""),
