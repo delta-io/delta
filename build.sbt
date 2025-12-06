@@ -1202,6 +1202,27 @@ lazy val hudi = (project in file("hudi"))
     Compile / packageBin := assembly.value
   )
 
+lazy val flink = (project in file("connectors/flink"))
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .settings(
+    name := "delta-flink",
+    commonSettings,
+    releaseSettings,
+    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    autoScalaLibrary := false, // exclude scala-library from dependencies
+    Test / publishArtifact := false,
+    crossPaths := false,
+    libraryDependencies ++= Seq(
+      "org.apache.flink" % "flink-core" % "1.20.3" % "provided",
+      "org.apache.flink" % "flink-table-common" % "1.20.3" % "provided",
+      "org.apache.flink" % "flink-streaming-java" % "1.20.3" % "provided",
+
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.apache.flink" % "flink-clients" % "1.20.3" % "test",
+    )
+  )
+
 /**
  * We want to publish the `standalone` project's shaded JAR (created from the
  * build/sbt standalone/assembly command).
