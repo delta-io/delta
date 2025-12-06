@@ -661,6 +661,14 @@ class IcebergConverter(spark: SparkSession)
                 "hasDv" -> hasDv.toString
               )
             )
+            logError(
+              s"""Unsupported combination of actions for incremental conversion. Context:
+                 |version -> ${targetSnapshot.version},
+                 |commitInfo -> ${commitInfo.map(_.operation).getOrElse("")},
+                 |hasAdd -> ${addFiles.nonEmpty.toString},
+                 |hasRemove -> ${removeFiles.nonEmpty.toString},
+                 |dataChange -> ${dataChange.toString},
+                 |hasDv -> ${hasDv.toString}""".stripMargin)
             throw new UnsupportedOperationException(
               "Unsupported combination of actions for incremental conversion.")
         }
