@@ -457,6 +457,9 @@ object TableFeatureProtocolUtils {
   /** Min reader version that supports writer features. */
   val TABLE_FEATURES_MIN_WRITER_VERSION = 7
 
+  /** The table ID property key needed by feature catalogManaged. */
+  val UC_TABLE_ID_KEY = "io.unitycatalog.tableId"
+
   /** Get the table property config key for the `feature`. */
   def propertyKey(feature: TableFeature): String = propertyKey(feature.name)
 
