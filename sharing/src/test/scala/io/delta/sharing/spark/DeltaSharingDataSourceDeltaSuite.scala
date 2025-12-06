@@ -1572,6 +1572,43 @@ trait DeltaSharingDataSourceDeltaSuiteBase
       }
     }
   }
+
+  test("DeltaSharingDataSource able to read data with inline credentials") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_inline_creds"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
+
+        val sharedTableName = "shared_table_inline_creds"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        val map = Map(
+          "shareCredentialsVersion" -> "1",
+          "bearerToken" -> "xxx",
+          "endpoint" -> "https://xxx/delta-sharing/",
+          "expirationTime" -> "2099-01-01T00:00:00.000Z"
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val expectedSchema: StructType = new StructType()
+            .add("c1", IntegerType)
+            .add("c2", StringType)
+
+          val df = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .options(map)
+            .load(s"share1.default.$sharedTableName")
+
+          assert(expectedSchema == df.schema)
+          val expected = spark.read.format("delta").table(deltaTableName)
+          checkAnswer(df, expected)
+        }
+      }
+    }
+  }
 }
 
 class DeltaSharingDataSourceDeltaSuite extends DeltaSharingDataSourceDeltaSuiteBase {}
