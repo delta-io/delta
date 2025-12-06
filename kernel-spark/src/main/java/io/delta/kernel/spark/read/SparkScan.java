@@ -19,7 +19,6 @@ import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalys
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
@@ -27,6 +26,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
+import io.delta.kernel.spark.utils.PartitionUtils;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -34,7 +34,6 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
@@ -50,7 +49,6 @@ import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
-import scala.collection.JavaConverters;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
@@ -171,7 +169,17 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     // Validate streaming options immediately after constructing DeltaOptions
     validateStreamingOptions(deltaOptions);
     return new SparkMicroBatchStream(
-        snapshotManager, initialSnapshot, hadoopConf, SparkSession.active(), deltaOptions);
+        snapshotManager,
+        initialSnapshot,
+        hadoopConf,
+        SparkSession.active(),
+        deltaOptions,
+        getTablePath(),
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        dataFilters != null ? dataFilters : new Filter[0],
+        scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
   }
 
   @Override
@@ -215,45 +223,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   }
 
   /**
-   * Build the partition {@link InternalRow} from kernel partition values by casting them to the
-   * desired Spark types using the session time zone for temporal types.
-   */
-  private InternalRow getPartitionRow(MapValue partitionValues) {
-    final int numPartCols = partitionSchema.fields().length;
-    assert partitionValues.getSize() == numPartCols
-        : String.format(
-            Locale.ROOT,
-            "Partition values size from add file %d != partition columns size %d",
-            partitionValues.getSize(),
-            numPartCols);
-
-    final Object[] values = new Object[numPartCols];
-
-    // Build field name -> index map once
-    final Map<String, Integer> fieldIndex = new HashMap<>(numPartCols);
-    for (int i = 0; i < numPartCols; i++) {
-      fieldIndex.put(partitionSchema.fields()[i].name(), i);
-      values[i] = null;
-    }
-
-    // Fill values in a single pass over partitionValues
-    for (int idx = 0; idx < partitionValues.getSize(); idx++) {
-      final String key = partitionValues.getKeys().getString(idx);
-      final String strVal = partitionValues.getValues().getString(idx);
-      final Integer pos = fieldIndex.get(key);
-      if (pos != null) {
-        final StructField field = partitionSchema.fields()[pos];
-        values[pos] =
-            (strVal == null)
-                ? null
-                : PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
-      }
-    }
-    return InternalRow.fromSeq(
-        JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
-  }
-
-  /**
    * Plan the files to scan by materializing {@link PartitionedFile}s and aggregating size stats.
    * Ensures all iterators are closed to avoid resource leaks.
    */
@@ -275,15 +244,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
           final AddFile addFile = new AddFile(row.getStruct(0));
 
           final PartitionedFile partitionedFile =
-              new PartitionedFile(
-                  getPartitionRow(addFile.getPartitionValues()),
-                  SparkPath.fromUrlString(tablePath + addFile.getPath()),
-                  0L,
-                  addFile.getSize(),
-                  locations,
-                  addFile.getModificationTime(),
-                  addFile.getSize(),
-                  otherConstantMetadataColumnValues);
+              PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
 
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
