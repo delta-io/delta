@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.spark.utils
 
-import scala.collection.immutable.Seq
-
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.types.StructType
@@ -30,58 +28,52 @@ import org.apache.spark.sql.types.StructType
  */
 object CatalogTableTestUtils {
 
-  def catalogTableWithProperties(
-      properties: java.util.Map[String, String],
-      storageProperties: java.util.Map[String, String]): CatalogTable = {
-    val scalaProps = ScalaUtils.toScalaMap(properties)
-    val scalaStorageProps = ScalaUtils.toScalaMap(storageProperties)
+  /**
+   * Creates a [[CatalogTable]] with configurable options.
+   *
+   * @param tableName table name (default: "tbl")
+   * @param catalogName optional catalog name for the identifier
+   * @param properties table properties (default: empty)
+   * @param storageProperties storage properties (default: empty)
+   * @param locationUri optional storage location URI
+   * @param nullStorage if true, sets storage to null (for edge case testing)
+   * @param nullStorageProperties if true, sets storage properties to null
+   */
+  def createCatalogTable(
+      tableName: String = "tbl",
+      catalogName: Option[String] = None,
+      properties: java.util.Map[String, String] = new java.util.HashMap[String, String](),
+      storageProperties: java.util.Map[String, String] = new java.util.HashMap[String, String](),
+      locationUri: Option[java.net.URI] = None,
+      nullStorage: Boolean = false,
+      nullStorageProperties: Boolean = false): CatalogTable = {
 
-    CatalogTable(
-      identifier = TableIdentifier("tbl"),
-      tableType = CatalogTableType.MANAGED,
-      storage = CatalogStorageFormat(
-        locationUri = None,
+    val scalaProps = ScalaUtils.toScalaMap(properties)
+    val scalaStorageProps =
+      if (nullStorageProperties) null else ScalaUtils.toScalaMap(storageProperties)
+
+    val identifier = catalogName match {
+      case Some(catalog) =>
+        TableIdentifier(tableName, Some("default") /* database */, Some(catalog) /* catalog */ )
+      case None => TableIdentifier(tableName)
+    }
+
+    val storage = if (nullStorage) {
+      null
+    } else {
+      CatalogStorageFormat(
+        locationUri = locationUri,
         inputFormat = None,
         outputFormat = None,
         serde = None,
         compressed = false,
-        properties = scalaStorageProps),
-      schema = new StructType(),
-      provider = None,
-      partitionColumnNames = Seq.empty,
-      bucketSpec = None,
-      properties = scalaProps)
-  }
-
-  def catalogTableWithNullStorage(
-      properties: java.util.Map[String, String]): CatalogTable = {
-    val scalaProps = ScalaUtils.toScalaMap(properties)
+        properties = scalaStorageProps)
+    }
 
     CatalogTable(
-      identifier = TableIdentifier("tbl"),
+      identifier = identifier,
       tableType = CatalogTableType.MANAGED,
-      storage = null,
-      schema = new StructType(),
-      provider = None,
-      partitionColumnNames = Seq.empty,
-      bucketSpec = None,
-      properties = scalaProps)
-  }
-
-  def catalogTableWithNullStorageProperties(
-      properties: java.util.Map[String, String]): CatalogTable = {
-    val scalaProps = ScalaUtils.toScalaMap(properties)
-
-    CatalogTable(
-      identifier = TableIdentifier("tbl"),
-      tableType = CatalogTableType.MANAGED,
-      storage = CatalogStorageFormat(
-        locationUri = None,
-        inputFormat = None,
-        outputFormat = None,
-        serde = None,
-        compressed = false,
-        properties = null),
+      storage = storage,
       schema = new StructType(),
       provider = None,
       partitionColumnNames = Seq.empty,

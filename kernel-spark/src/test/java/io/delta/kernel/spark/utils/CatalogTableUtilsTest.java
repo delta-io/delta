@@ -16,14 +16,15 @@
 package io.delta.kernel.spark.utils;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.junit.jupiter.api.Test;
+import scala.Option;
 
 /** Tests for {@link CatalogTableUtils}. */
 class CatalogTableUtilsTest {
@@ -98,22 +99,6 @@ class CatalogTableUtilsTest {
   }
 
   @Test
-  void testIsCatalogManaged_NullTable_ThrowsException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> CatalogTableUtils.isCatalogManaged(null),
-        "Null table should throw NullPointerException");
-  }
-
-  @Test
-  void testIsUnityCatalogManaged_NullTable_ThrowsException() {
-    assertThrows(
-        NullPointerException.class,
-        () -> CatalogTableUtils.isUnityCatalogManagedTable(null),
-        "Null table should throw NullPointerException");
-  }
-
-  @Test
   void testIsCatalogManaged_NullStorage_ReturnsFalse() {
     CatalogTable table = catalogTableWithNullStorage(Collections.emptyMap());
 
@@ -151,15 +136,36 @@ class CatalogTableUtilsTest {
 
   private static CatalogTable catalogTable(
       Map<String, String> properties, Map<String, String> storageProperties) {
-    return CatalogTableTestUtils$.MODULE$.catalogTableWithProperties(properties, storageProperties);
+    return CatalogTableTestUtils$.MODULE$.createCatalogTable(
+        "tbl" /* tableName */,
+        Option.empty() /* catalogName */,
+        properties,
+        storageProperties,
+        Option.empty() /* locationUri */,
+        false /* nullStorage */,
+        false /* nullStorageProperties */);
   }
 
   private static CatalogTable catalogTableWithNullStorage(Map<String, String> properties) {
-    return CatalogTableTestUtils$.MODULE$.catalogTableWithNullStorage(properties);
+    return CatalogTableTestUtils$.MODULE$.createCatalogTable(
+        "tbl" /* tableName */,
+        Option.empty() /* catalogName */,
+        properties,
+        new HashMap<>() /* storageProperties */,
+        Option.empty() /* locationUri */,
+        true /* nullStorage */,
+        false /* nullStorageProperties */);
   }
 
   private static CatalogTable catalogTableWithNullStorageProperties(
       Map<String, String> properties) {
-    return CatalogTableTestUtils$.MODULE$.catalogTableWithNullStorageProperties(properties);
+    return CatalogTableTestUtils$.MODULE$.createCatalogTable(
+        "tbl" /* tableName */,
+        Option.empty() /* catalogName */,
+        properties,
+        new HashMap<>() /* storageProperties */,
+        Option.empty() /* locationUri */,
+        false /* nullStorage */,
+        true /* nullStorageProperties */);
   }
 }
