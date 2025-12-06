@@ -122,8 +122,7 @@ class AutoCompactExecutionSuite extends
     CompactionTestHelperForAutoCompaction
   with DeltaSQLCommandTest
   with SharedSparkSession
-  with AutoCompactTestUtils
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with AutoCompactTestUtils {
   private def testBothModesViaProperty(testName: String)(f: String => Unit): Unit = {
     def runTest(autoCompactConfValue: String): Unit = {
       withTempDir { dir =>

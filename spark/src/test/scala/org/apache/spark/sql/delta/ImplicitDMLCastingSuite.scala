@@ -148,8 +148,11 @@ abstract class ImplicitDMLCastingSuite extends QueryTest
         assert(failureCause.toString.contains(testConfig.exceptionAnsiCast))
 
         val sparkThrowable = failureCause.asInstanceOf[SparkThrowable]
-        assert(Seq("CAST_OVERFLOW", "NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION", "CAST_INVALID_INPUT")
-          .contains(sparkThrowable.getErrorClass))
+        assert(Seq(
+          "CAST_OVERFLOW",
+          "NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION",
+          "CAST_INVALID_INPUT"
+        ).contains(sparkThrowable.getErrorClass))
       case Some(failureCause) if !sqlConfig.followAnsiEnabled =>
         assert(sqlConfig.storeAssignmentPolicy === SQLConf.StoreAssignmentPolicy.ANSI)
 

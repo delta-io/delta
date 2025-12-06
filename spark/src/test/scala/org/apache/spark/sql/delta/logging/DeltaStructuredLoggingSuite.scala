@@ -94,7 +94,8 @@ class DeltaStructuredLoggingSuite extends SparkFunSuite with Logging {
 
   private def msgWithMDC: LogEntry = log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, "1")}."
 
-  private def msgWithMDCValueIsNull: LogEntry = log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, null)}."
+  private def msgWithMDCValueIsNull: LogEntry =
+    log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, null)}."
 
   private def msgWithMDCAndException: LogEntry =
     log"Error in executor ${MDC(DeltaLogKeys.EXECUTOR_ID, "1")}."
