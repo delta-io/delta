@@ -1,5 +1,13 @@
 name: "Delta Connectors"
-on: [push, pull_request]
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
 jobs:
   build:
     name: "DC: Scala ${{ matrix.scala }}"
