@@ -83,7 +83,7 @@ public class TableFeatures {
   }
 
   public static final TableFeature CATALOG_MANAGED_RW_FEATURE =
-      new CatalogManagedFeatureBase("catalogOwned-preview");
+      new CatalogManagedFeatureBase("catalogManaged");
 
   private static class CatalogManagedFeatureBase extends TableFeature.ReaderWriterFeature {
     CatalogManagedFeatureBase(String featureName) {
