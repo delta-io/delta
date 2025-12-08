@@ -27,12 +27,12 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
- * Unit tests for [[SparkUnityCatalogUtils]].
+ * Unit tests for [[UCUtils]].
  *
  * Tests use distinctive, high-entropy values that would fail if the implementation
  * had hardcoded defaults instead of actually extracting values from the inputs.
  */
-class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession {
+class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
 
   // Use the same constants as CatalogTableUtils to ensure consistency
   private val FEATURE_CATALOG_MANAGED =
@@ -45,8 +45,8 @@ class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession 
   // Distinctive values that would fail if hardcoded
   private val TABLE_ID_ALPHA = "uc_8f2b3c9a-d1e7-4a6f-b8c2"
   private val TABLE_PATH_ALPHA = "abfss://delta-store@prod.dfs.core.windows.net/warehouse/tbl_v3"
-  private val ENDPOINT_ALPHA = "https://uc-server-westus2.example.net/api/2.1/unity-catalog"
-  private val TOKEN_ALPHA = "dapi_Xk7mP$9qRs#2vWz_prod"
+  private val UC_URI_ALPHA = "https://uc-server-westus2.example.net/api/2.1/unity-catalog"
+  private val UC_TOKEN_ALPHA = "dapi_Xk7mP$9qRs#2vWz_prod"
   private val CATALOG_ALPHA = "uc_catalog_westus2_prod"
 
   // ==================== Helper Methods ====================
@@ -96,7 +96,7 @@ class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession 
 
   test("returns empty for non-UC table") {
     val table = makeNonUCTable()
-    val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+    val result = UCUtils.extractTableInfo(table, spark)
     assert(result.isEmpty, "Non-UC table should return empty Optional")
   }
 
@@ -108,7 +108,7 @@ class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession 
     val table = CatalogTableTestUtils.createCatalogTable(
       storageProperties = storageProps,
       locationUri = Some(new URI("gs://other-bucket/path")))
-    val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+    val result = UCUtils.extractTableInfo(table, spark)
     assert(result.isEmpty, "Missing feature flag should return empty")
   }
 
@@ -121,7 +121,7 @@ class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession 
       storageProperties = storageProps,
       locationUri = Some(new URI("s3://empty-id-bucket/path")))
     val exception = intercept[IllegalArgumentException] {
-      SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+      UCUtils.extractTableInfo(table, spark)
     }
     assert(exception.getMessage.contains("Cannot extract ucTableId"))
   }
@@ -134,7 +134,7 @@ class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession 
     val table = CatalogTableTestUtils.createCatalogTable(storageProperties = storageProps)
     // Spark throws AnalysisException when location is missing
     val exception = intercept[Exception] {
-      SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+      UCUtils.extractTableInfo(table, spark)
     }
     assert(exception.getMessage.contains("locationUri") ||
       exception.getMessage.contains("location"))
@@ -144,41 +144,41 @@ class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession 
     val table = makeUCTable(catalogName = Some("nonexistent_catalog_xyz"))
 
     val exception = intercept[IllegalArgumentException] {
-      SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+      UCUtils.extractTableInfo(table, spark)
     }
     assert(exception.getMessage.contains("Unity Catalog configuration not found") ||
       exception.getMessage.contains("Cannot create UC client"))
   }
 
-  test("extracts connection info when UC catalog is properly configured") {
+  test("extracts table info when UC catalog is properly configured") {
     val table = makeUCTable(catalogName = Some(CATALOG_ALPHA))
 
-    withUCCatalogConfig(CATALOG_ALPHA, ENDPOINT_ALPHA, TOKEN_ALPHA) {
-      val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
+    withUCCatalogConfig(CATALOG_ALPHA, UC_URI_ALPHA, UC_TOKEN_ALPHA) {
+      val result = UCUtils.extractTableInfo(table, spark)
 
-      assert(result.isPresent, "Should return connection info")
+      assert(result.isPresent, "Should return table info")
       val info = result.get()
       // Each assertion uses the specific expected value - would fail if hardcoded
       assert(info.getTableId == TABLE_ID_ALPHA, s"Table ID mismatch: got ${info.getTableId}")
       assert(
         info.getTablePath == TABLE_PATH_ALPHA,
         s"Table path mismatch: got ${info.getTablePath}")
-      assert(info.getEndpoint == ENDPOINT_ALPHA, s"Endpoint mismatch: got ${info.getEndpoint}")
-      assert(info.getToken == TOKEN_ALPHA, s"Token mismatch: got ${info.getToken}")
+      assert(info.getUcUri == UC_URI_ALPHA, s"UC URI mismatch: got ${info.getUcUri}")
+      assert(info.getUcToken == UC_TOKEN_ALPHA, s"UC token mismatch: got ${info.getUcToken}")
     }
   }
 
   test("selects correct catalog when multiple catalogs configured") {
     // Use completely different values for each catalog to prove selection works
     val catalogBeta = "uc_catalog_eastus_staging"
-    val endpointBeta = "https://uc-server-eastus.example.net/api/2.1/uc"
-    val tokenBeta = "dapi_Yz3nQ$8wRt#1vXa_staging"
+    val ucUriBeta = "https://uc-server-eastus.example.net/api/2.1/uc"
+    val ucTokenBeta = "dapi_Yz3nQ$8wRt#1vXa_staging"
     val tableIdBeta = "uc_tbl_staging_4d7e2f1a"
     val tablePathBeta = "s3://staging-bucket-us-east/delta/tables/v2"
 
     val catalogGamma = "uc_catalog_euwest_dev"
-    val endpointGamma = "https://uc-server-euwest.example.net/api/2.1/uc"
-    val tokenGamma = "dapi_Jk5pL$3mNq#9vBc_dev"
+    val ucUriGamma = "https://uc-server-euwest.example.net/api/2.1/uc"
+    val ucTokenGamma = "dapi_Jk5pL$3mNq#9vBc_dev"
 
     // Table is in catalogBeta
     val table = makeUCTable(
@@ -189,26 +189,26 @@ class SparkUnityCatalogUtilsSuite extends SparkFunSuite with SharedSparkSession 
     val configs = Seq(
       // catalogGamma config (should NOT be used)
       s"spark.sql.catalog.$catalogGamma" -> UC_CATALOG_CONNECTOR,
-      s"spark.sql.catalog.$catalogGamma.uri" -> endpointGamma,
-      s"spark.sql.catalog.$catalogGamma.token" -> tokenGamma,
+      s"spark.sql.catalog.$catalogGamma.uri" -> ucUriGamma,
+      s"spark.sql.catalog.$catalogGamma.token" -> ucTokenGamma,
       // catalogBeta config (should be used)
       s"spark.sql.catalog.$catalogBeta" -> UC_CATALOG_CONNECTOR,
-      s"spark.sql.catalog.$catalogBeta.uri" -> endpointBeta,
-      s"spark.sql.catalog.$catalogBeta.token" -> tokenBeta)
+      s"spark.sql.catalog.$catalogBeta.uri" -> ucUriBeta,
+      s"spark.sql.catalog.$catalogBeta.token" -> ucTokenBeta)
     val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
 
     try {
       configs.foreach { case (key, value) => spark.conf.set(key, value) }
 
-      val result = SparkUnityCatalogUtils.extractConnectionInfo(table, spark)
-      assert(result.isPresent, "Should return connection info")
+      val result = UCUtils.extractTableInfo(table, spark)
+      assert(result.isPresent, "Should return table info")
 
       val info = result.get()
       // Verify it selected catalogBeta's config, not catalogGamma's
       assert(
-        info.getEndpoint == endpointBeta,
-        s"Should use catalogBeta's endpoint, got: ${info.getEndpoint}")
-      assert(info.getToken == tokenBeta, s"Should use catalogBeta's token, got: ${info.getToken}")
+        info.getUcUri == ucUriBeta,
+        s"Should use catalogBeta's URI, got: ${info.getUcUri}")
+      assert(info.getUcToken == ucTokenBeta, s"Should use catalogBeta's token, got: ${info.getUcToken}")
       assert(info.getTableId == tableIdBeta, s"Should extract tableIdBeta, got: ${info.getTableId}")
       assert(
         info.getTablePath == tablePathBeta,

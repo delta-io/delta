@@ -19,23 +19,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
 
-/** Tests for {@link UnityCatalogConnectionInfo}. */
-class UnityCatalogConnectionInfoTest {
+/** Tests for {@link UCTableInfo}. */
+class UCTableInfoTest {
 
   @Test
   void testConstructor_ValidInputs_StoresAllFields() {
     // Use distinctive values that would fail if implementation had hardcoded defaults
     String tableId = "uc_tbl_7f3a9b2c-e8d1-4f6a";
     String tablePath = "abfss://container@acct.dfs.core.windows.net/delta/v2";
-    String endpoint = "https://uc-server.example.net/api/2.1/uc";
-    String token = "dapi_Kx9mN$2pQr#7vWz";
+    String ucUri = "https://uc-server.example.net/api/2.1/uc";
+    String ucToken = "dapi_Kx9mN$2pQr#7vWz";
 
-    UnityCatalogConnectionInfo info =
-        new UnityCatalogConnectionInfo(tableId, tablePath, endpoint, token);
+    UCTableInfo info = new UCTableInfo(tableId, tablePath, ucUri, ucToken);
 
     assertEquals(tableId, info.getTableId(), "Table ID should be stored correctly");
     assertEquals(tablePath, info.getTablePath(), "Table path should be stored correctly");
-    assertEquals(endpoint, info.getEndpoint(), "Endpoint should be stored correctly");
-    assertEquals(token, info.getToken(), "Token should be stored correctly");
+    assertEquals(ucUri, info.getUcUri(), "UC URI should be stored correctly");
+    assertEquals(ucToken, info.getUcToken(), "UC token should be stored correctly");
   }
 }

@@ -18,23 +18,22 @@ package io.delta.kernel.spark.snapshot.unitycatalog;
 import static java.util.Objects.requireNonNull;
 
 /**
- * Connection information for Unity Catalog managed tables.
+ * Table information for Unity Catalog managed tables.
  *
- * <p>This POJO encapsulates all the information needed to connect to a Unity Catalog table without
- * requiring Spark dependencies.
+ * <p>This POJO encapsulates all the information needed to interact with a Unity Catalog table
+ * without requiring Spark dependencies.
  */
-public final class UnityCatalogConnectionInfo {
+public final class UCTableInfo {
   private final String tableId;
   private final String tablePath;
-  private final String endpoint;
-  private final String token;
+  private final String ucUri;
+  private final String ucToken;
 
-  public UnityCatalogConnectionInfo(
-      String tableId, String tablePath, String endpoint, String token) {
+  public UCTableInfo(String tableId, String tablePath, String ucUri, String ucToken) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
-    this.endpoint = requireNonNull(endpoint, "endpoint is null");
-    this.token = requireNonNull(token, "token is null");
+    this.ucUri = requireNonNull(ucUri, "ucUri is null");
+    this.ucToken = requireNonNull(ucToken, "ucToken is null");
   }
 
   public String getTableId() {
@@ -45,11 +44,11 @@ public final class UnityCatalogConnectionInfo {
     return tablePath;
   }
 
-  public String getEndpoint() {
-    return endpoint;
+  public String getUcUri() {
+    return ucUri;
   }
 
-  public String getToken() {
-    return token;
+  public String getUcToken() {
+    return ucToken;
   }
 }

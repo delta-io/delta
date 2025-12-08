@@ -27,25 +27,25 @@ import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
 
 /**
- * Utility class for extracting Unity Catalog connection information from Spark catalog metadata.
+ * Utility class for extracting Unity Catalog table information from Spark catalog metadata.
  *
  * <p>This class isolates Spark dependencies, allowing {@link UnityCatalogAdapter} to be created
- * without Spark if connection info is provided directly via {@link UnityCatalogConnectionInfo}.
+ * without Spark if table info is provided directly via {@link UCTableInfo}.
  */
-public final class SparkUnityCatalogUtils {
+public final class UCUtils {
 
   // Utility class - no instances
-  private SparkUnityCatalogUtils() {}
+  private UCUtils() {}
 
   /**
-   * Extracts Unity Catalog connection information from Spark catalog table metadata.
+   * Extracts Unity Catalog table information from Spark catalog table metadata.
    *
    * @param catalogTable Spark catalog table metadata
    * @param spark SparkSession for resolving Unity Catalog configurations
-   * @return connection info if table is UC-managed, empty otherwise
+   * @return table info if table is UC-managed, empty otherwise
    * @throws IllegalArgumentException if table is UC-managed but configuration is invalid
    */
-  public static Optional<UnityCatalogConnectionInfo> extractConnectionInfo(
+  public static Optional<UCTableInfo> extractTableInfo(
       CatalogTable catalogTable, SparkSession spark) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
@@ -84,16 +84,17 @@ public final class SparkUnityCatalogUtils {
     }
 
     UCCatalogConfig config = configOpt.get();
-    String endpoint = config.uri();
-    String token = config.token();
+    String ucUri = config.uri();
+    String ucToken = config.token();
 
-    return Optional.of(new UnityCatalogConnectionInfo(tableId, tablePath, endpoint, token));
+    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, ucToken));
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {
     Map<String, String> storageProperties =
         scala.jdk.javaapi.CollectionConverters.asJava(catalogTable.storage().properties());
 
+    // TODO: UC constants should be consolidated in a shared location (future PR)
     String ucTableId = storageProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     if (ucTableId == null || ucTableId.isEmpty()) {
       throw new IllegalArgumentException(
