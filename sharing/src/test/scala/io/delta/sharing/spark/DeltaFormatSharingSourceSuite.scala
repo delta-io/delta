@@ -59,9 +59,10 @@ class DeltaFormatSharingSourceSuite
       "path",
       throw DeltaSharingErrors.pathNotSpecifiedException
     )
-    val parsedPath = DeltaSharingRestClient.parsePath(path)
+    val parsedPath = DeltaSharingRestClient.parsePath(path, Map.empty)
     val client = DeltaSharingRestClient(
       profileFile = parsedPath.profileFile,
+      shareCredentialsOptions = Map.empty,
       forStreaming = true,
       responseFormat = "delta",
       readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
