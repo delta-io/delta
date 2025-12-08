@@ -73,6 +73,7 @@ private[sharing] class DeltaSharingDataSource
       logInfo(s"sourceSchema with parquet format for table path:$path, parameters:$parameters")
       val deltaLog = RemoteDeltaLog(
         path,
+        shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
         responseFormat = options.responseFormat
       )
@@ -94,9 +95,11 @@ private[sharing] class DeltaSharingDataSource
         )
       }
       //  1. create delta sharing client
-      val parsedPath = DeltaSharingRestClient.parsePath(path)
+      val parsedPath =
+        DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
       val client = DeltaSharingRestClient(
         profileFile = parsedPath.profileFile,
+        shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
         responseFormat = options.responseFormat,
         // comma separated delta reader features, used to tell delta sharing server what delta
@@ -183,7 +186,12 @@ private[sharing] class DeltaSharingDataSource
 
     if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
       logInfo(s"createSource with parquet format for table path:$path, parameters:$parameters")
-      val deltaLog = RemoteDeltaLog(path, forStreaming = true, options.responseFormat)
+      val deltaLog = RemoteDeltaLog(
+        path,
+        shareCredentialsOptions = options.shareCredentialsOptions,
+        forStreaming = true,
+        responseFormat = options.responseFormat
+      )
       DeltaSharingSource(SparkSession.active, deltaLog, options)
     } else if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
       logInfo(s"createSource with delta format for table path:$path, parameters:$parameters")
@@ -193,9 +201,11 @@ private[sharing] class DeltaSharingDataSource
         )
       }
       //  1. create delta sharing client
-      val parsedPath = DeltaSharingRestClient.parsePath(path)
+      val parsedPath =
+        DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
       val client = DeltaSharingRestClient(
         profileFile = parsedPath.profileFile,
+        shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
         responseFormat = options.responseFormat,
         // comma separated delta reader features, used to tell delta sharing server what delta
@@ -243,6 +253,7 @@ private[sharing] class DeltaSharingDataSource
       logInfo(s"createRelation with parquet format for table path:$path, parameters:$parameters")
       val deltaLog = RemoteDeltaLog(
         path,
+        shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = false,
         responseFormat = options.responseFormat
       )
@@ -256,9 +267,11 @@ private[sharing] class DeltaSharingDataSource
       // delta features.
       logInfo(s"createRelation with delta format for table path:$path, parameters:$parameters")
       //  1. create delta sharing client
-      val parsedPath = DeltaSharingRestClient.parsePath(path)
+      val parsedPath =
+        DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
       val client = DeltaSharingRestClient(
         profileFile = parsedPath.profileFile,
+        shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = false,
         responseFormat = options.responseFormat,
         // comma separated delta reader features, used to tell delta sharing server what delta
@@ -314,8 +327,10 @@ private[sharing] class DeltaSharingDataSource
       options: DeltaSharingOptions,
       sqlContext: SQLContext): BaseRelation = {
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
-    logInfo(s"autoResolving BaseRelation for path:${path}, with options:${options.options}.")
-    val parsedPath = DeltaSharingRestClient.parsePath(path)
+    logInfo(s"autoResolving BaseRelation for path:${path}, " +
+      s"with options:${DeltaSharingDataSource.redactOptions(options.options)}.")
+    val parsedPath =
+      DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
 
     val responseFormat = {
       if (sqlContext.sparkSession.sessionState.conf.getConf(
@@ -334,6 +349,7 @@ private[sharing] class DeltaSharingDataSource
 
     val client = DeltaSharingRestClient(
       profileFile = parsedPath.profileFile,
+      shareCredentialsOptions = options.shareCredentialsOptions,
       forStreaming = false,
       // Indicating that the client is able to process response format in both parquet and delta.
       responseFormat = responseFormat,
@@ -355,22 +371,26 @@ private[sharing] class DeltaSharingDataSource
     )
 
     if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
-      logInfo(s"Resolved as parquet format for table path:$path, parameters:${options.options}")
+      logInfo(s"Resolved as parquet format for table path:$path, " +
+        s"parameters:${DeltaSharingDataSource.redactOptions(options.options)}")
       val deltaLog = RemoteDeltaLog(
         path = path,
+        options.shareCredentialsOptions,
         forStreaming = false,
         responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET,
         initDeltaTableMetadata = Some(deltaTableMetadata)
       )
       deltaLog.createRelation(options.versionAsOf, options.timestampAsOf, options.cdfOptions)
     } else if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
-      logInfo(s"Resolved as delta format for table path:$path, parameters:${options.options}")
+      logInfo(s"Resolved as delta format for table path:$path, " +
+        s"parameters:${DeltaSharingDataSource.redactOptions(options.options)}")
       val deltaSharingTableMetadata = DeltaSharingUtils.getDeltaSharingTableMetadata(
         table = dsTable,
         deltaTableMetadata = deltaTableMetadata
       )
       val deltaOnlyClient = DeltaSharingRestClient(
         profileFile = parsedPath.profileFile,
+        shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = false,
         // Indicating that the client request delta format in response.
         responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
@@ -464,5 +484,15 @@ private[sharing] object DeltaSharingDataSource {
         "io.delta.sharing.spark.DeltaSharingLogFileSystem"
       )
     PreSignedUrlCache.registerIfNeeded(SparkEnv.get)
+  }
+
+  def redactOptions(options: Map[String, String]): Map[String, String] = {
+    options.map {
+      case (k, _) if k.equalsIgnoreCase("bearerToken") => (k, "REDACTED")
+      case (k, _) if k.equalsIgnoreCase("clientId") => (k, "REDACTED")
+      case (k, _) if k.equalsIgnoreCase("clientSecret") => (k, "REDACTED")
+      case (k, _) if k.equalsIgnoreCase("scope") => (k, "REDACTED")
+      case (k, v) => (k, v)
+    }
   }
 }
