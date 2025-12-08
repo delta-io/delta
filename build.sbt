@@ -1278,6 +1278,36 @@ lazy val hudi = (project in file("hudi"))
     TestParallelization.settings
   )
 
+lazy val flink = (project in file("connectors/flink/v1.20"))
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .settings(
+    name := "delta-flink-v1.20",
+    commonSettings,
+    releaseSettings,
+    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    autoScalaLibrary := false, // exclude scala-library from dependencies
+    Test / publishArtifact := false,
+    Test / javaOptions ++= Seq(
+      "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
+    ),
+    crossPaths := false,
+    libraryDependencies ++= Seq(
+      "org.apache.flink" % "flink-core" % "1.20.3" % "provided",
+      "org.apache.flink" % "flink-table-common" % "1.20.3" % "provided",
+      "org.apache.flink" % "flink-streaming-java" % "1.20.3" % "provided",
+
+      "org.apache.flink" % "flink-test-utils" % "1.20.3" % "test",
+      "org.scalatest" %% "scalatest" % "3.2.19" % "test",
+      "org.apache.flink" % "flink-clients" % "1.20.3" % "test",
+      "org.apache.flink" % "flink-table-api-java-bridge" % "1.20.3" % Test,
+      "org.apache.flink" % "flink-table-planner-loader" % "1.20.3" % Test,
+      "org.apache.flink" % "flink-table-runtime" % "1.20.0" % Test,
+      "org.apache.flink" % "flink-test-utils-junit" % "1.20.3" % Test,
+      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test"
+    )
+  )
+
 lazy val goldenTables = (project in file("connectors/golden-tables"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
