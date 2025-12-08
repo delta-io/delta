@@ -15,49 +15,66 @@
  */
 package io.delta.kernel.spark.snapshot;
 
-import io.delta.kernel.CommitRange;
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.files.ParsedLogData;
-import java.util.List;
+import io.delta.storage.commit.GetCommitsResponse;
 import java.util.Optional;
 
 /**
- * Adapter for catalog-managed tables that knows how to load snapshots and commit ranges for a
- * specific table.
+ * Adapter interface for catalog-managed Delta tables.
+ *
+ * <p>This is a thin, protocol-aligned interface that adapters implement to fetch commit metadata
+ * from a catalog's commit coordinator API. Adapters are responsible only for communication with the
+ * catalog - they don't know about Delta snapshots or Kernel internals.
+ *
+ * <p>The {@link CatalogManagedSnapshotManager} uses this interface to retrieve commits and then
+ * builds Delta snapshots and commit ranges using Kernel's TableManager APIs.
+ *
+ * <p>Implementations should be catalog-specific (e.g., UnityCatalogAdapter, GlueCatalogAdapter) but
+ * share this common interface so the snapshot manager can work with any catalog.
  */
 public interface ManagedCatalogAdapter extends AutoCloseable {
 
-  Snapshot loadSnapshot(Engine engine, Optional<Long> versionOpt, Optional<Long> timestampOpt);
-
-  CommitRange loadCommitRange(
-      Engine engine,
-      Optional<Long> startVersionOpt,
-      Optional<Long> startTimestampOpt,
-      Optional<Long> endVersionOpt,
-      Optional<Long> endTimestampOpt);
+  /**
+   * Returns the unique identifier for this table in the catalog.
+   *
+   * @return the catalog-assigned table identifier
+   */
+  String getTableId();
 
   /**
-   * Gets the ratified commits from the catalog up to the specified version.
+   * Returns the storage path for this table.
    *
-   * <p>The returned list contains {@link ParsedLogData} representing each ratified commit, sorted
-   * by version in ascending order. These are typically {@code ParsedCatalogCommitData} instances
-   * for catalog-managed tables.
-   *
-   * @param endVersionOpt optional end version (inclusive); if empty, returns commits up to latest
-   * @return list of parsed log data representing ratified commits, sorted by version ascending
+   * @return the filesystem path to the Delta table root
    */
-  List<ParsedLogData> getRatifiedCommits(Optional<Long> endVersionOpt);
+  String getTablePath();
 
   /**
-   * Gets the latest ratified table version from the catalog.
+   * Retrieves commits from the catalog's commit coordinator.
    *
-   * <p>For catalog-managed tables, this is the highest version that has been ratified by the
-   * catalog coordinator.
+   * <p>This is the primary method that adapters must implement. It calls the catalog's API to get
+   * the list of ratified commits within the specified version range.
    *
-   * @return the latest version ratified by the catalog, or 0 if only the initial commit exists
+   * @param startVersion the starting version (inclusive), typically 0 for initial load
+   * @param endVersion optional ending version (inclusive); if empty, returns up to latest
+   * @return response containing the list of commits and the latest ratified table version
    */
-  long getLatestRatifiedVersion();
+  GetCommitsResponse getCommits(long startVersion, Optional<Long> endVersion);
+
+  /**
+   * Returns the latest ratified table version from the catalog.
+   *
+   * <p>For catalog-managed tables, this is the highest version that has been successfully ratified
+   * by the catalog coordinator. Returns -1 if the catalog hasn't registered any commits yet (which
+   * can happen when version 0 exists but hasn't been ratified).
+   *
+   * <p>Default implementation calls {@link #getCommits} with no end version and extracts the latest
+   * version from the response. Implementations may override for efficiency if the catalog provides
+   * a dedicated API.
+   *
+   * @return the latest version ratified by the catalog, or -1 if none registered
+   */
+  default long getLatestRatifiedVersion() {
+    return getCommits(0, Optional.empty()).getLatestTableVersion();
+  }
 
   @Override
   void close();

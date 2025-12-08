@@ -17,21 +17,21 @@ package io.delta.kernel.spark.snapshot.unitycatalog;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.CommitRange;
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.spark.snapshot.ManagedCatalogAdapter;
-import java.util.List;
+import io.delta.storage.commit.GetCommitsResponse;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 
 /**
- * UC-backed implementation shell of {@link ManagedCatalogAdapter}.
+ * Unity Catalog implementation of {@link ManagedCatalogAdapter}.
  *
- * <p>Methods are intentionally stubbed in this wireframe PR and will be implemented in a follow-up
- * once UC operations are enabled.
+ * <p>This adapter is responsible only for fetching commit metadata from Unity Catalog's commit
+ * coordinator API. It does not contain any Delta/Kernel snapshot building logic - that
+ * responsibility belongs to the snapshot manager layer.
+ *
+ * <p>Methods are stubbed in this wireframe PR and will be implemented in a follow-up once UC
+ * operations are enabled.
  */
 public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
 
@@ -48,16 +48,21 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
   }
 
   /**
-   * Creates adapter from Spark catalog table (convenience method).
+   * Creates adapter from Spark catalog table.
    *
-   * <p>Extracts UC connection info from Spark metadata and delegates to {@link
-   * #fromConnectionInfo}.
+   * <p>Extracts UC connection info from Spark metadata and creates the adapter.
+   *
+   * @param catalogTable the catalog table metadata
+   * @param spark the active SparkSession
+   * @return Optional containing the adapter if this is a UC-managed table, empty otherwise
    */
   public static Optional<ManagedCatalogAdapter> fromCatalog(
       CatalogTable catalogTable, SparkSession spark) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
-    throw new UnsupportedOperationException("UC wiring deferred to implementation PR");
+
+    return SparkUnityCatalogUtils.extractConnectionInfo(catalogTable, spark)
+        .map(UnityCatalogAdapter::fromConnectionInfo);
   }
 
   /** Creates adapter from connection info (no Spark dependency). */
@@ -67,50 +72,39 @@ public final class UnityCatalogAdapter implements ManagedCatalogAdapter {
         info.getTableId(), info.getTablePath(), info.getEndpoint(), info.getToken());
   }
 
+  @Override
   public String getTableId() {
     return tableId;
   }
 
+  @Override
   public String getTablePath() {
     return tablePath;
   }
 
+  /** Returns the UC endpoint URL. */
   public String getEndpoint() {
     return endpoint;
   }
 
+  /** Returns the UC authentication token. */
   public String getToken() {
     return token;
   }
 
   @Override
-  public Snapshot loadSnapshot(
-      Engine engine, Optional<Long> versionOpt, Optional<Long> timestampOpt) {
-    throw new UnsupportedOperationException("UC snapshot loading not implemented yet");
-  }
-
-  @Override
-  public CommitRange loadCommitRange(
-      Engine engine,
-      Optional<Long> startVersionOpt,
-      Optional<Long> startTimestampOpt,
-      Optional<Long> endVersionOpt,
-      Optional<Long> endTimestampOpt) {
-    throw new UnsupportedOperationException("UC commit range loading not implemented yet");
-  }
-
-  @Override
-  public List<ParsedLogData> getRatifiedCommits(Optional<Long> endVersionOpt) {
-    throw new UnsupportedOperationException("UC commit listing not implemented yet");
+  public GetCommitsResponse getCommits(long startVersion, Optional<Long> endVersion) {
+    requireNonNull(endVersion, "endVersion is null");
+    throw new UnsupportedOperationException("UC getCommits not implemented yet");
   }
 
   @Override
   public long getLatestRatifiedVersion() {
-    throw new UnsupportedOperationException("UC ratified version lookup not implemented yet");
+    throw new UnsupportedOperationException("UC getLatestRatifiedVersion not implemented yet");
   }
 
   @Override
   public void close() {
-    // no-op in wireframe
+    // no-op in wireframe; will close UCClient in implementation
   }
 }
