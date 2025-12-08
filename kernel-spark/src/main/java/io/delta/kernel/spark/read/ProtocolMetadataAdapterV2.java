@@ -102,6 +102,9 @@ public class ProtocolMetadataAdapterV2 implements ProtocolMetadataAdapter, Seria
   public boolean isIcebergCompatGeqEnabled(int version) {
     boolean v2Enabled = TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata);
     boolean v3Enabled = TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    // IcebergCompatV1 is not supported in Kernel, so V2 is the minimum version for v2 connector
+    // until kernel supports IcebergCompatV1.
+    // For version 1 or 2, we return true if V2 or V3 is enabled.
     switch (version) {
       case 1:
       case 2:
@@ -115,7 +118,7 @@ public class ProtocolMetadataAdapterV2 implements ProtocolMetadataAdapter, Seria
 
   @Override
   public void assertTableReadable(SparkSession sparkSession) {
-    // TODO: Add type widening validation.
+    // TODO(delta-io/delta#5649): Add type widening validation.
   }
 
   @Override
