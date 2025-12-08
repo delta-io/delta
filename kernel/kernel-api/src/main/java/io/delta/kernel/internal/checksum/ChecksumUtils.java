@@ -23,13 +23,15 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.ActionWrapper;
+import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
@@ -55,20 +57,8 @@ public class ChecksumUtils {
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
-
-  // DeltaLogActionUtils.readCommitFiles will add first two columns: version and commit timestamp.
-  private static final int INCR_READ_COLUMN_INDEX_OFFSET = 2;
-  private static final int INCR_READ_VERSION_INDEX = 0;
-  private static final int INCR_READ_ADD_INDEX = ADD_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
-  private static final int INCR_READ_REMOVE_INDEX = REMOVE_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
-  private static final int INCR_READ_METADATA_INDEX =
-      METADATA_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
-  private static final int INCR_READ_PROTOCOL_INDEX =
-      PROTOCOL_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
-  private static final int INCR_READ_DOMAIN_METADATA_INDEX =
-      DOMAIN_METADATA_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
-  private static final int INCR_READ_COMMIT_INFO_INDEX =
-      CHECKPOINT_SCHEMA.length() + INCR_READ_COLUMN_INDEX_OFFSET;
+  // commitInfo is appended after CHECKPOINT_SCHEMA in incremental read
+  private static final int COMMIT_INFO_INDEX = CHECKPOINT_SCHEMA.length();
 
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
@@ -262,28 +252,26 @@ public class ChecksumUtils {
     validateDeltaContinuity(deltaFiles, lastSeenCrcInfo.getVersion());
     Collections.reverse(deltaFiles);
     // Create iterator for delta files newer than last CRC
-    try (CloseableIterator<ColumnarBatch> iterator =
-        DeltaLogActionUtils.readCommitFiles(
-            engine, deltaFiles, CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA))) {
+    StructType readSchema = CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA);
+    try (CloseableIterator<ActionWrapper> iterator =
+        new ActionsIterator(engine, deltaFiles, readSchema, java.util.Optional.empty())) {
       Optional<Long> lastSeenVersion = Optional.empty();
-
       while (iterator.hasNext()) {
-        ColumnarBatch batch = iterator.next();
+        ActionWrapper currentAction = iterator.next();
+        ColumnarBatch batch = currentAction.getColumnarBatch();
         final int rowCount = batch.getSize();
         if (rowCount == 0) {
           continue;
         }
-
-        ColumnVector versionVector = batch.getColumnVector(INCR_READ_VERSION_INDEX);
-        ColumnVector addVector = batch.getColumnVector(INCR_READ_ADD_INDEX);
-        ColumnVector removeVector = batch.getColumnVector(INCR_READ_REMOVE_INDEX);
-        ColumnVector metadataVector = batch.getColumnVector(INCR_READ_METADATA_INDEX);
-        ColumnVector protocolVector = batch.getColumnVector(INCR_READ_PROTOCOL_INDEX);
-        ColumnVector domainMetadataVector = batch.getColumnVector(INCR_READ_DOMAIN_METADATA_INDEX);
-        ColumnVector commitInfoVector = batch.getColumnVector(INCR_READ_COMMIT_INFO_INDEX);
+        ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
+        ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
+        ColumnVector metadataVector = batch.getColumnVector(METADATA_INDEX);
+        ColumnVector protocolVector = batch.getColumnVector(PROTOCOL_INDEX);
+        ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
+        ColumnVector commitInfoVector = batch.getColumnVector(COMMIT_INFO_INDEX);
 
         for (int i = 0; i < rowCount; i++) {
-          long newVersion = versionVector.getLong(i);
+          long newVersion = currentAction.getVersion();
 
           // Detect version change
           if (!lastSeenVersion.isPresent() || newVersion != lastSeenVersion.get()) {

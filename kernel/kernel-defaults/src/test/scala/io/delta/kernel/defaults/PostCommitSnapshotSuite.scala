@@ -19,10 +19,12 @@ package io.delta.kernel.defaults
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Snapshot, TransactionCommitResult}
+import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.defaults.utils.{TestRow, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.test.MockEngineUtils
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
@@ -114,7 +116,7 @@ class PostCommitSnapshotSuite
   test("commit at readVersion + 1 (*with* CRC at readVersion) => yields a PCS with CRC") {
     withTempDirAndEngine { (tablePath, engine) =>
       val result0 = createEmptyTable(engine, tablePath, testSchema)
-      executeCrcSimple(result0, engine)
+      result0.getPostCommitSnapshot.get().writeChecksum(engine, ChecksumWriteMode.SIMPLE)
       assert(latestSnapshot(tablePath, engine).getCurrentCrcInfo.isPresent)
 
       val result1 = appendData(engine, tablePath, data = seqOfUnpartitionedDataBatch1)
@@ -286,6 +288,27 @@ class PostCommitSnapshotSuite
 
       // ===== THEN =====
       checkPostCommitSnapshot(engine, result1.getPostCommitSnapshot.get())
+    }
+  }
+
+  ////////////////
+  // Publishing //
+  ////////////////
+
+  test("publishing on a postCommitSnapshot for a filesystem-based table is a no-op") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val result = appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = testSchema,
+        data = seqOfUnpartitionedDataBatch1)
+
+      val postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+
+      assert(!TableFeatures.isCatalogManagedSupported(postCommitSnapshot.getProtocol))
+
+      postCommitSnapshot.publish(engine) // Should not throw -- there are no catalog commits!
     }
   }
 }

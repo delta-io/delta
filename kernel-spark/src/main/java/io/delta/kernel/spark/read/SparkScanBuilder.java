@@ -17,9 +17,10 @@ package io.delta.kernel.spark.read;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.utils.ExpressionUtils;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -39,7 +40,8 @@ public class SparkScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
-  private final String tablePath;
+  private final Snapshot initialSnapshot;
+  private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final CaseInsensitiveStringMap options;
@@ -53,15 +55,26 @@ public class SparkScanBuilder
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
 
+  /**
+   * Creates a SparkScanBuilder with the given snapshot and configuration.
+   *
+   * @param tableName the name of the table
+   * @param initialSnapshot Snapshot created during connector setup
+   * @param snapshotManager the snapshot manager for this table
+   * @param dataSchema the data schema (non-partition columns)
+   * @param partitionSchema the partition schema
+   * @param options scan options
+   */
   public SparkScanBuilder(
       String tableName,
-      String tablePath,
+      io.delta.kernel.Snapshot initialSnapshot,
+      DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
-      SnapshotImpl snapshot,
       CaseInsensitiveStringMap options) {
-    this.kernelScanBuilder = requireNonNull(snapshot, "snapshot is null").getScanBuilder();
-    this.tablePath = requireNonNull(tablePath, "tablePath is null");
+    this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.kernelScanBuilder = initialSnapshot.getScanBuilder();
+    this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.options = requireNonNull(options, "options is null");
@@ -146,7 +159,8 @@ public class SparkScanBuilder
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
     return new SparkScan(
-        tablePath,
+        snapshotManager,
+        initialSnapshot,
         dataSchema,
         partitionSchema,
         requiredDataSchema,

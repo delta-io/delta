@@ -73,6 +73,13 @@ class CommitMetadataSuite extends AnyFunSuite
         readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
         committerProperties = null)
     }
+
+    intercept[NullPointerException] {
+      createCommitMetadata(
+        version = updateVersionNonZero,
+        readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+        maxKnownPublishedDeltaVersion = null)
+    }
   }
 
   test("constructor validates readProtocol and readMetadata consistency") {

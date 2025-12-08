@@ -290,7 +290,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               schema.get(),
               tableProperties.orElse(emptyMap()),
               partitionColumns,
-              inputLogicalClusteringColumns);
+              inputLogicalClusteringColumns,
+              Optional.empty() /* committerOpt */);
     }
 
     return new TransactionImpl(

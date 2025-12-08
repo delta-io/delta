@@ -18,6 +18,7 @@ package io.delta.kernel.internal.util;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import static io.delta.kernel.internal.util.ExpressionUtils.createPredicate;
 import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -29,7 +30,6 @@ import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.InternalScanFileUtils;
-import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -40,7 +40,6 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class PartitionUtils {
@@ -270,11 +269,12 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnCheckpointFileSchema(
       Predicate predicate, Map<String, StructField> partitionColNameToField) {
-    return new Predicate(
+    return createPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewriteColRefOnPartitionValuesParsed(child, partitionColNameToField))
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList()),
+        predicate.getCollationIdentifier());
   }
 
   private static Expression rewriteColRefOnPartitionValuesParsed(
@@ -319,11 +319,12 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnScanFileSchema(
       Predicate predicate, Map<String, StructField> partitionColMetadata) {
-    return new Predicate(
+    return createPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewritePartitionColumnRef(child, partitionColMetadata))
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList()),
+        predicate.getCollationIdentifier());
   }
 
   private static Expression rewritePartitionColumnRef(
@@ -445,7 +446,7 @@ public class PartitionUtils {
   private static Optional<Long> tryParseIsoTimestamp(String value) {
     try {
       Instant instant = Instant.parse(value);
-      long micros = TimeUnit.MILLISECONDS.toMicros(instant.toEpochMilli());
+      long micros = instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1000L;
       return Optional.of(micros);
     } catch (DateTimeParseException e) {
       return Optional.empty();
@@ -456,16 +457,23 @@ public class PartitionUtils {
    * Try parsing the timestamp, could be in the standard format or ISO8601 format. Return the
    * Literal Object.
    */
-  @VisibleForTesting
-  static Literal tryParseTimestamp(String partitionValue) {
-    Optional<Long> micros = tryParseStandardTimestamp(partitionValue);
+  public static long tryParseTimestamp(String partitionValue) {
+    // ISO8601 format contains 'T' separator, standard format uses space
+    Optional<Long> micros =
+        partitionValue.contains("T")
+            ? tryParseIsoTimestamp(partitionValue)
+            : tryParseStandardTimestamp(partitionValue);
+
+    // If the first attempt failed, try the other format as fallback (this really shouldn't happen)
     if (!micros.isPresent()) {
-      micros = tryParseIsoTimestamp(partitionValue);
+      micros =
+          partitionValue.contains("T")
+              ? tryParseStandardTimestamp(partitionValue)
+              : tryParseIsoTimestamp(partitionValue);
     }
-    return micros
-        .map(Literal::ofTimestamp)
-        .orElseThrow(
-            () -> DeltaErrorsInternal.invalidTimestampFormatForPartitionValue(partitionValue));
+
+    return micros.orElseThrow(
+        () -> DeltaErrorsInternal.invalidTimestampFormatForPartitionValue(partitionValue));
   }
 
   protected static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
@@ -509,7 +517,7 @@ public class PartitionUtils {
           new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
     }
     if (dataType instanceof TimestampType) {
-      return tryParseTimestamp(partitionValue);
+      return Literal.ofTimestamp(tryParseTimestamp(partitionValue));
     }
     if (dataType instanceof TimestampNTZType) {
       // Both the timestamp and timestamp_ntz have no timezone info, so they are interpreted

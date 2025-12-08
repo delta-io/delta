@@ -25,8 +25,8 @@ import java.util.stream.Collectors
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
-import org.apache.iceberg.{DataFile, DeleteFile, FileContent, FileFormat, ManifestContent, ManifestFile, PartitionData, StructLike}
-import org.apache.iceberg.ManifestFile.PartitionFieldSummary
+import shadedForDelta.org.apache.iceberg.{DataFile, DeleteFile, FileContent, FileFormat, ManifestContent, ManifestFile, PartitionData, StructLike}
+import shadedForDelta.org.apache.iceberg.ManifestFile.PartitionFieldSummary
 
 /**
  * The classes in this file are wrappers of Iceberg classes

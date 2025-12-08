@@ -16,11 +16,13 @@
 
 package io.delta.kernel.test
 
+import java.lang.{Long => JLong}
 import java.util.{Collections, Map => JMap, Optional}
 import java.util.function.Supplier
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.SnapshotBuilder
 import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.internal.actions.{CommitInfo, DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.files.ParsedCatalogCommitData
@@ -66,7 +68,8 @@ trait TestFixtures extends ActionUtils {
       committerProperties: Supplier[JMap[String, String]] = () => Collections.emptyMap(),
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
-      newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = {
+      newMetadataOpt: Optional[Metadata] = Optional.empty(),
+      maxKnownPublishedDeltaVersion: Optional[JLong] = Optional.empty()): CommitMetadata = {
     new CommitMetadata(
       version,
       logPath,
@@ -75,7 +78,8 @@ trait TestFixtures extends ActionUtils {
       committerProperties,
       readPandMOpt,
       newProtocolOpt,
-      newMetadataOpt)
+      newMetadataOpt,
+      maxKnownPublishedDeltaVersion)
   }
 
   def createStagedCatalogCommit(
@@ -85,4 +89,17 @@ trait TestFixtures extends ActionUtils {
     ParsedCatalogCommitData.forFileStatus(fileStatus)
   }
 
+  implicit class SnapshotBuilderCatalogVersionOps[T <: SnapshotBuilder](snapshotBuilder: T) {
+    def withMaxCatalogVersionIfApplicable(
+        isCatalogManaged: Boolean,
+        maxCatalogVersion: Long): T = {
+      if (isCatalogManaged) {
+        snapshotBuilder
+          .withMaxCatalogVersion(maxCatalogVersion)
+          .asInstanceOf[T]
+      } else {
+        snapshotBuilder
+      }
+    }
+  }
 }

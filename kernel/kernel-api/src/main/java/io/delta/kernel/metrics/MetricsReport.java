@@ -16,5 +16,22 @@
 
 package io.delta.kernel.metrics;
 
-/** Interface containing the metrics for a given operation */
-public interface MetricsReport {}
+import com.fasterxml.jackson.core.JsonProcessingException;
+
+/**
+ * Interface containing the metrics for a given operation.
+ *
+ * <p>Implementations of this interface capture performance metrics and diagnostic information for
+ * various Delta table operations. These metrics can be used for monitoring, debugging, and
+ * performance analysis.
+ */
+public interface MetricsReport {
+
+  /**
+   * Converts this metrics report to a JSON string representation.
+   *
+   * @return a JSON string representation of this metrics report
+   * @throws JsonProcessingException if the report cannot be serialized to JSON
+   */
+  String toJson() throws JsonProcessingException;
+}

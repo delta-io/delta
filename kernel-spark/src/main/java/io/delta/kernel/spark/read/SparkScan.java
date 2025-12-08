@@ -17,12 +17,16 @@ package io.delta.kernel.spark.read;
 
 import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.data.ScanStateRow;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -39,6 +43,7 @@ import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
+import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -50,7 +55,43 @@ import scala.collection.JavaConverters;
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
-  private final String tablePath;
+  /** Supported streaming options for the V2 connector. */
+  private static final List<String> SUPPORTED_STREAMING_OPTIONS =
+      Collections.unmodifiableList(
+          Arrays.asList(
+              DeltaOptions.STARTING_VERSION_OPTION(),
+              DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
+              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
+
+  /**
+   * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
+   * startingVersion, maxFilesPerTrigger, and maxBytesPerTrigger are supported. User-defined custom
+   * options (not in DeltaOptions) are allowed to pass through.
+   */
+  private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  DeltaOptions.EXCLUDE_REGEX_OPTION().toLowerCase(),
+                  DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
+                  DeltaOptions.IGNORE_CHANGES_OPTION().toLowerCase(),
+                  DeltaOptions.IGNORE_DELETES_OPTION().toLowerCase(),
+                  DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase(),
+                  DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
+                  DeltaOptions.STARTING_TIMESTAMP_OPTION().toLowerCase(),
+                  DeltaOptions.CDC_READ_OPTION().toLowerCase(),
+                  DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
+                  DeltaOptions.CDC_END_VERSION().toLowerCase(),
+                  DeltaOptions.CDC_END_TIMESTAMP().toLowerCase(),
+                  DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase(),
+                  DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS().toLowerCase(),
+                  DeltaOptions.STREAMING_SOURCE_TRACKING_ID().toLowerCase(),
+                  DeltaOptions.ALLOW_SOURCE_COLUMN_DROP().toLowerCase(),
+                  DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME().toLowerCase(),
+                  DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE().toLowerCase())));
+
+  private final DeltaSnapshotManager snapshotManager;
+  private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -69,7 +110,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private volatile boolean planned = false;
 
   public SparkScan(
-      String tablePath,
+      DeltaSnapshotManager snapshotManager,
+      Snapshot initialSnapshot,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -78,9 +120,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       io.delta.kernel.Scan kernelScan,
       CaseInsensitiveStringMap options) {
 
-    final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
-    this.tablePath =
-        normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
+    this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
+    this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -112,7 +153,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public Batch toBatch() {
     ensurePlanned();
     return new SparkBatch(
-        tablePath,
+        getTablePath(),
         dataSchema,
         partitionSchema,
         readDataSchema,
@@ -126,7 +167,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    return new SparkMicroBatchStream();
+    DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
+    // Validate streaming options immediately after constructing DeltaOptions
+    validateStreamingOptions(deltaOptions);
+    return new SparkMicroBatchStream(
+        snapshotManager, initialSnapshot, hadoopConf, SparkSession.active(), deltaOptions);
   }
 
   @Override
@@ -155,6 +200,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         return OptionalLong.empty();
       }
     };
+  }
+
+  /**
+   * Get the table path from the scan state.
+   *
+   * @return the table path with trailing slash
+   */
+  private String getTablePath() {
+    final Engine tableEngine = DefaultEngine.create(hadoopConf);
+    final Row scanState = kernelScan.getScanState(tableEngine);
+    final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
+    return tableRoot.endsWith("/") ? tableRoot : tableRoot + "/";
   }
 
   /**
@@ -202,15 +259,15 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    */
   private void planScanFiles() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
-    final Iterator<io.delta.kernel.data.FilteredColumnarBatch> scanFileBatches =
-        kernelScan.getScanFiles(tableEngine);
+    final String tablePath = getTablePath();
+    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
 
     final String[] locations = new String[0];
     final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
         scala.collection.immutable.Map$.MODULE$.empty();
 
     while (scanFileBatches.hasNext()) {
-      final io.delta.kernel.data.FilteredColumnarBatch batch = scanFileBatches.next();
+      final FilteredColumnarBatch batch = scanFileBatches.next();
 
       try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
         while (addFileRowIter.hasNext()) {
@@ -307,6 +364,39 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
       this.partitionedFiles = runtimeFilteredPartitionedFiles;
       this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
+    }
+  }
+
+  /**
+   * Validates that unsupported streaming options are not used. Uses a block list approach - only
+   * blocks known DeltaOptions that are unsupported, allowing user-defined custom options to pass
+   * through.
+   *
+   * <p>Note: DeltaOptions internally uses CaseInsensitiveMap, which preserves the original key
+   * casing but performs case-insensitive lookups.
+   *
+   * @param deltaOptions the DeltaOptions to validate
+   * @throws UnsupportedOperationException if unsupported options are found
+   */
+  static void validateStreamingOptions(DeltaOptions deltaOptions) {
+    List<String> unsupportedOptions = new ArrayList<>();
+    scala.collection.Iterator<String> keysIterator = deltaOptions.options().keysIterator();
+
+    while (keysIterator.hasNext()) {
+      String key = keysIterator.next();
+      // DeltaOptions uses CaseInsensitiveMap with keys already lowercased.
+      if (UNSUPPORTED_STREAMING_OPTIONS.contains(key)) {
+        unsupportedOptions.add(key);
+      }
+    }
+
+    if (!unsupportedOptions.isEmpty()) {
+      throw new UnsupportedOperationException(
+          String.format(
+              "The following streaming options are not supported: [%s]. "
+                  + "Supported options are: [%s].",
+              String.join(", ", unsupportedOptions),
+              String.join(", ", SUPPORTED_STREAMING_OPTIONS)));
     }
   }
 }

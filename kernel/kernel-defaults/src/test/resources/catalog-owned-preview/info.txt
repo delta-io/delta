@@ -1,7 +1,7 @@
 # Below are the commands and instructions to create the `catalog-owned-preview` table.
 # Note that delta-spark:4.0.0 does not yet support *creating* catalogManaged tables.
 # So, for now, we create a normal table with ICT enabled and then
-# (a) manually add the `catalogOwned-preview`
+# (a) manually add the `catalogManaged`
 # (b) manually move and rename the published delta files into the _staged_commits directory.
 
 pyspark --packages io.delta:delta-spark_2.13:4.0.0 \

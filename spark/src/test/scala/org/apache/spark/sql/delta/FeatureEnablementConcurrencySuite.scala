@@ -71,7 +71,8 @@ class FeatureEnablementConcurrencySuite
          |USING delta
          |TBLPROPERTIES (
          |$propertiesString
-         |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'false'
+         |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'false',
+         |'${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false'
          |)""".stripMargin)
 
     spark.range(start = 0, end = 100, step = 1, numPartitions)
@@ -262,6 +263,27 @@ class FeatureEnablementConcurrencySuite
 
   }
 
+  def testFeatureDisablement(property: String, withUnset: Boolean): Unit = {
+    val (deltaLog, _) = createTestTable()
+    val ctx = new TestContext(deltaLog)
+    AlterTableProperty(property, value = "true")
+      .execute(ctx)
+
+    val businessTxn = Delete(rows = Seq(90L))
+    val disableTxn = if (withUnset) {
+      UnsetTableProperty(property)
+    } else {
+      AlterTableProperty(property, value = "false")
+    }
+
+    businessTxn.start(ctx)
+    disableTxn.execute(ctx)
+    val e = intercept[org.apache.spark.SparkException] {
+      businessTxn.commit(ctx)
+    }
+    assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
+  }
+
   /*
    * -------------------------------------------> TIME ------------------------------------------->
    *
@@ -279,9 +301,7 @@ class FeatureEnablementConcurrencySuite
     concurrentTxnName <- Seq("alterTableProperty", "delete")
   } test("Enable row tracking feature " +
       s"concurrent txn: $concurrentTxnName") {
-    val (deltaLog, catalogTable) = createTestTable(
-      properties = Seq(s"'${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false'")
-    )
+    val (deltaLog, catalogTable) = createTestTable()
     val ctx = new TestContext(deltaLog)
 
     val enableFeatureFn = () => {
@@ -331,24 +351,7 @@ class FeatureEnablementConcurrencySuite
 
   for (withUnset <- BOOLEAN_DOMAIN)
   test(s"Disable row tracking feature - withUnset: $withUnset") {
-    val (deltaLog, _) = createTestTable()
-    val ctx = new TestContext(deltaLog)
-    AlterTableProperty(property = DeltaConfigs.ROW_TRACKING_ENABLED.key, value = "true")
-      .execute(ctx)
-
-    val businessTxn = Delete(rows = Seq(90L))
-    val disableTxn = if (withUnset) {
-      UnsetTableProperty(property = DeltaConfigs.ROW_TRACKING_ENABLED.key)
-    } else {
-      AlterTableProperty(property = DeltaConfigs.ROW_TRACKING_ENABLED.key, value = "false")
-    }
-
-    businessTxn.start(ctx)
-    disableTxn.execute(ctx)
-    val e = intercept[org.apache.spark.SparkException] {
-      businessTxn.commit(ctx)
-    }
-    assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
+    testFeatureDisablement(DeltaConfigs.ROW_TRACKING_ENABLED.key, withUnset)
   }
 
   test("Validate column metadata schema") {
@@ -472,5 +475,25 @@ class FeatureEnablementConcurrencySuite
       e,
       "DELTA_UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE",
       parameters = Map("oldMode" -> NoMapping.name, "newMode" -> IdMapping.name))
+  }
+
+  test("Enable deletion vectors feature") {
+    val (deltaLog, _) = createTestTable()
+    val ctx = new TestContext(deltaLog)
+
+    val dvEnablementTxn = AlterTableProperty(
+      property = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, value = "true")
+    val businessTxn = Delete(rows = Seq(90L))
+
+    businessTxn.interleave(ctx) {
+      dvEnablementTxn.execute(ctx)
+    }
+
+    assert(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(deltaLog.update().metadata))
+  }
+
+  for (withUnset <- BOOLEAN_DOMAIN)
+  test(s"Disable Deletion Vectors feature - withUnset: $withUnset") {
+    testFeatureDisablement(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, withUnset)
   }
 }

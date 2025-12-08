@@ -371,6 +371,7 @@ object TableFeature {
       IdentityColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
+      MaterializePartitionColumnsTableFeature,
       TimestampNTZTableFeature,
       TypeWideningPreviewTableFeature,
       TypeWideningTableFeature,
@@ -981,6 +982,53 @@ object ClusteringTableFeature extends WriterFeature("clustering") {
  */
 object AllowColumnDefaultsTableFeature extends WriterFeature(name = "allowColumnDefaults")
 
+/**
+ * This table feature requires materialization of partition columns in data files.
+ *
+ * This is a writer-only feature because:
+ * - Writers need to understand when to materialize partition columns into data files
+ * - Readers can read the data regardless of whether partition columns are materialized or not, as
+ *   they read the partition values from the AddFile.
+ *
+ * The feature is automatically enabled when the table property
+ * `delta.enableMaterializePartitionColumnsFeature` is set to true.
+ *
+ * This makes data files more flexible with external readers that require the presence of
+ * partition columns in parquet, or for future data layout changes. This is a removable feature
+ * that can be dropped when partition column materialization is no longer needed.
+ */
+object MaterializePartitionColumnsTableFeature
+    extends WriterFeature(name = "materializePartitionColumns")
+    with FeatureAutomaticallyEnabledByMetadata
+    with RemovableFeature {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.ENABLE_MATERIALIZE_PARTITION_COLUMNS_FEATURE
+      .fromMetaData(metadata)
+      .getOrElse(false)
+  }
+
+  /** dropping this feature is always allowed without any action */
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
+    MaterializePartitionColumnsPreDowngradeCommand(table)
+  }
+
+  override def requiresHistoryProtection: Boolean = false
+
+  override def tablePropertiesToRemoveAtDowngradeCommit: Seq[String] = {
+    Seq(DeltaConfigs.ENABLE_MATERIALIZE_PARTITION_COLUMNS_FEATURE.key)
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
 
 /**
  * V2 Checkpoint table feature is for checkpoints with sidecars and the new format and
@@ -1059,7 +1107,7 @@ object CoordinatedCommitsTableFeature
 
 /** Table feature to represent tables that commits are managed by catalog */
 object CatalogOwnedTableFeature
-  extends ReaderWriterFeature(name = "catalogOwned-preview")
+  extends ReaderWriterFeature(name = "catalogManaged")
   with RemovableFeature {
 
   override def requiredFeatures: Set[TableFeature] =

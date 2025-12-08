@@ -109,6 +109,7 @@ object UniversalFormat extends DeltaLogging {
    */
   def enforceInvariantsAndDependencies(
       spark: SparkSession,
+      catalogTable: Option[CatalogTable],
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -116,7 +117,9 @@ object UniversalFormat extends DeltaLogging {
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
     enforceHudiDependencies(newestMetadata, snapshot)
     enforceIcebergInvariantsAndDependencies(
-      spark, snapshot, newestProtocol, newestMetadata, operation, actions)
+      spark, catalogTable,
+      snapshot,
+      newestProtocol, newestMetadata, operation, actions)
   }
 
   /**
@@ -152,6 +155,7 @@ object UniversalFormat extends DeltaLogging {
    */
   def enforceIcebergInvariantsAndDependencies(
       spark: SparkSession,
+      catalogTable: Option[CatalogTable],
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -203,14 +207,15 @@ object UniversalFormat extends DeltaLogging {
     var metadataUpdate: Option[Metadata] = None
 
     val compatChecks: Seq[
-      (SparkSession, Snapshot, Protocol, Metadata, Option[DeltaOperations.Operation],
+      (SparkSession, Option[CatalogTable], Snapshot, Protocol, Metadata,
+        Option[DeltaOperations.Operation],
         Seq[Action]) => (Option[Protocol], Option[Metadata])] = Seq(
       IcebergCompatV1.enforceInvariantsAndDependencies,
       IcebergCompatV2.enforceInvariantsAndDependencies
     )
     compatChecks.foreach { compatCheck =>
       val updates = compatCheck(
-        spark, snapshot, protocolToCheck, metadataToCheck, operation, actions
+        spark, catalogTable, snapshot, protocolToCheck, metadataToCheck, operation, actions
       )
       protocolUpdate = updates._1
       metadataUpdate = updates._2
@@ -239,6 +244,7 @@ object UniversalFormat extends DeltaLogging {
    */
   def enforceDependenciesInConfiguration(
       spark: SparkSession,
+      catalogTable: CatalogTable,
       configuration: Map[String, String],
       snapshot: Snapshot): Map[String, String] = {
     var metadata = snapshot.metadata.copy(configuration = configuration)
@@ -246,6 +252,7 @@ object UniversalFormat extends DeltaLogging {
     // Check UniversalFormat related property dependencies
     val (_, universalMetadata) = UniversalFormat.enforceInvariantsAndDependencies(
       spark,
+      catalogTable = Some(catalogTable),
       snapshot,
       newestProtocol = snapshot.protocol,
       newestMetadata = metadata,
@@ -262,10 +269,8 @@ object UniversalFormat extends DeltaLogging {
   val ICEBERG_TABLE_TYPE_KEY = "table_type"
 
   /**
-   * Update CatalogTable to mark it readable by other table readers (iceberg for now).
-   * This method ensures 'table_type' = 'ICEBERG' when uniform is enabled,
-   * and ensure table_type is not 'ICEBERG' when uniform is not enabled
-   * If the key has other values than 'ICEBERG', this method will not touch it for compatibility
+   * HiveTableOperations ensures table_type is 'ICEBERG' when uniform is enabled
+   * This enforceSupportInCatalog ensure table_type is not 'ICEBERG' when uniform is not enabled
    *
    * @param table    catalogTable before change
    * @param metadata snapshot metadata
@@ -278,9 +283,6 @@ object UniversalFormat extends DeltaLogging {
     }
 
     (icebergEnabled(metadata), icebergInCatalog) match {
-      case (true, false) =>
-        Some(table.copy(properties = table.properties
-          + (ICEBERG_TABLE_TYPE_KEY -> ICEBERG_FORMAT)))
       case (false, true) =>
         Some(table.copy(properties =
           table.properties - ICEBERG_TABLE_TYPE_KEY))

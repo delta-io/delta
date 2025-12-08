@@ -804,3 +804,19 @@ case class DomainMetadataPreDowngradeCommand(table: DeltaTableV2)
     PreDowngradeStatus.PERFORMED_CHANGES
   }
 }
+
+/**
+ * PreDowngrade command for MaterializePartitionColumns feature.
+ * This feature doesn't require any special cleanup actions when being dropped.
+ */
+case class MaterializePartitionColumnsPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * No cleanup actions are needed. The table property is automatically removed by the DROP FEATURE
+   * via tablePropertiesToRemoveAtDowngradeCommit.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+  }
+}

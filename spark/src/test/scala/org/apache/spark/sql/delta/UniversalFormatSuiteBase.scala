@@ -111,9 +111,9 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
 
   test("create new UniForm table while manually enabling IcebergCompat") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.universalFormat.enabledFormats' = 'iceberg',
                |  'delta.enableIcebergCompatV$compatVersion' = 'true',
                |  'delta.minReaderVersion' = $r,
@@ -126,9 +126,9 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
   }
 
   test("create new UniForm table while manually enabling IcebergCompat with no rw version") {
-    withTempTableAndDir { case (id, loc) =>
+    withTempTableAndDir { case (id, _) =>
       executeSql(s"""
-             |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+             |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
              |  'delta.universalFormat.enabledFormats' = 'iceberg',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true'
              |)""".stripMargin)
@@ -139,18 +139,18 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
   test("create new UniForm table via clone") {
     withTempTableAndDir { case (id, loc) =>
       executeSql(s"""
-              |CREATE TABLE $id (ID INT) USING DELTA  TBLPROPERTIES (
+              |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
               | 'delta.columnMapping.mode' = 'name')
-              | LOCATION $loc """.stripMargin)
+              | """.stripMargin)
       executeSql(s"""
               |INSERT INTO $id values (1) """.stripMargin)
-      withTempTableAndDir { case (cloneId, loc1) =>
+      withTempTableAndDir { case (cloneId, _) =>
         executeSql(s"""
               |CREATE TABLE $cloneId SHALLOW CLONE $id TBLPROPERTIES (
               |  'delta.universalFormat.enabledFormats' = 'iceberg',
               |  'delta.enableIcebergCompatV$compatVersion' = 'true',
               |  'delta.columnMapping.mode' = 'name'
-              |) LOCATION $loc1 """.stripMargin)
+              |) """.stripMargin)
         assertUniFormIcebergProtocolAndProperties(cloneId)
       }
     }
@@ -158,9 +158,9 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
 
   test("enable UniForm on existing table with IcebergCompat enabled") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.minReaderVersion' = $r,
                |  'delta.minWriterVersion' = $w,
                |  'delta.enableIcebergCompatV$compatVersion' = true
@@ -176,9 +176,9 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
 
   test("enable UniForm on existing table without IcebergCompat") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-          |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+          |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
           |  'delta.minReaderVersion' = $r,
           |  'delta.minWriterVersion' = $w
           |)""".stripMargin)
@@ -195,9 +195,9 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
 
   test("enable UniForm on existing table with ColumnMapping") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-          |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+          |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
           |  'delta.minReaderVersion' = $r,
           |  'delta.minWriterVersion' = $w,
           |  'delta.columnMapping.mode' = 'name'
@@ -213,9 +213,9 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
 
   test("enable UniForm on existing table but IcebergCompat isn't enabled - fail") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.minReaderVersion' = $r,
                |  'delta.minWriterVersion' = $w,
                |  'delta.enableIcebergCompatV$compatVersion' = false,
@@ -232,10 +232,10 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
   }
 
   test("disabling UniForm will not disable IcebergCompat") {
-    withTempTableAndDir { case (id, loc) =>
+    withTempTableAndDir { case (id, _) =>
       executeSql(
         s"""
-           |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+           |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
            |  'delta.universalFormat.enabledFormats' = 'iceberg',
            |  'delta.enableIcebergCompatV$compatVersion' = 'true'
            |)""".stripMargin)
@@ -250,9 +250,9 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
 
   test("disabling IcebergCompat will disable UniForm if enabled") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.minReaderVersion' = $r,
                |  'delta.minWriterVersion' = $w,
                |  'delta.universalFormat.enabledFormats' = 'iceberg',
@@ -297,9 +297,9 @@ trait UniFormWithIcebergCompatV1SuiteBase extends UniversalFormatSuiteBase {
 
   test("REORG TABLE for table from icebergCompatVx to icebergCompatV1, should skip rewrite") {
     getCompatVersionsOtherThan(1).foreach(originalVersion => {
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               | CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.universalFormat.enabledFormats' = 'iceberg',
                |  'delta.enableIcebergCompatV$originalVersion' = 'true'
                |)
@@ -414,14 +414,16 @@ trait UniFormWithIcebergCompatV2SuiteBase extends UniversalFormatSuiteBase {
 
 trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with UniversalFormatTestHelper {
   test("enforceInvariantsAndDependenciesForCTAS") {
-    withTempTableAndDir { case (id, loc) =>
-      executeSql(s"CREATE TABLE $id (id INT) USING DELTA LOCATION $loc")
-      val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, loc)
+    withTempTableAndDir { case (id, _) =>
+      executeSql(s"CREATE TABLE $id (id INT) USING DELTA")
+      val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(id))
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(id))
       var configurationUnderTest = Map("dummykey1" -> "dummyval1", "dummykey2" -> "dummyval2")
       // The enforce is not lossy. It will do nothing if there is no Universal related key.
 
       def getUpdatedConfiguration(conf: Map[String, String]): Map[String, String] =
-        UniversalFormat.enforceDependenciesInConfiguration(spark, conf, snapshot)
+        UniversalFormat.enforceDependenciesInConfiguration(spark,
+            catalogTable = catalogTable, conf, snapshot)
 
       var updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
       assert(configurationUnderTest == configurationUnderTest)
@@ -448,7 +450,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
         assert(updatedConfiguration("delta.universalFormat.enabledFormats") == "iceberg")
         assert(updatedConfiguration("delta.columnMapping.mode") == "name")
         assert(updatedConfiguration(s"delta.enableIcebergCompatV$icv") == "true")
-        assert(updatedConfiguration("delta.columnMapping.maxColumnId") == "0")
+        assert(updatedConfiguration("delta.columnMapping.maxColumnId") == "1")
 
         configurationUnderTest = Map(
           s"delta.enableIcebergCompatV$icv" -> "true",

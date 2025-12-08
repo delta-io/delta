@@ -112,7 +112,7 @@ if __name__ == "__main__":
        
        build/sbt '++2.11.12 publishM2'
        build/sbt '++2.12.18 publishM2'
-       build/sbt '++2.13.13 publishM2'
+       build/sbt '++2.13.16 publishM2'
     """
 
     # get the version of the package
@@ -150,4 +150,4 @@ if __name__ == "__main__":
 
         run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.11.12")
         run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.12.18")
-        run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.13.13")
+        run_sbt_proj(root_dir, proj, className, args.version, args.maven_repo, "2.13.16")

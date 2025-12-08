@@ -41,7 +41,7 @@ object ModularSuiteGenerator {
   /**
    * Controls when to start truncating and hashing the suite names to prevent extremely long names.
    */
-  private val SUITE_NAME_CHAR_LIMIT = 255 - 136
+  private val SUITE_NAME_CHAR_LIMIT = 255 - 148
 
   private lazy val OPT_REPO_PATH = new Option(
     /* option = */ "p",

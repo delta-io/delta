@@ -46,6 +46,8 @@ trait IcebergSchemaUtils extends DeltaLogging {
     new IcebergSchema(icebergStruct.fields())
   }
 
+  def maxFieldId(snapshot: SnapshotDescriptor): Int
+
 
   ////////////////////
   // Helper Methods //
@@ -149,6 +151,7 @@ object IcebergSchemaUtils {
     // ground of truth and no column Id is available.
     private var dummyId: Int = 1
 
+    def maxFieldId(snapshot: SnapshotDescriptor): Int = dummyId
 
     def getFieldId(field: Option[StructField]): Int = {
       val fieldId = dummyId
@@ -162,6 +165,8 @@ object IcebergSchemaUtils {
 
   private class IcebergSchemaUtilsIdMapping() extends IcebergSchemaUtils {
 
+    def maxFieldId(snapshot: SnapshotDescriptor): Int =
+      snapshot.metadata.columnMappingMaxId.toInt
 
     def getFieldId(field: Option[StructField]): Int = {
       if (!field.exists(f => DeltaColumnMapping.hasColumnId(f))) {

@@ -95,7 +95,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
   }
 
   for {
-    testCase <- supportedTestCases
+    testCase <- supportedTestCases ++ restrictedAutomaticWideningTestCases
   } {
     test(s"MERGE - automatic type widening ${testCase.fromType.sql} -> ${testCase.toType.sql}") {
       withTable("source") {
@@ -121,7 +121,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
   }
 
   for {
-    testCase <- unsupportedTestCases ++ alterTableOnlySupportedTestCases
+    testCase <- unsupportedTestCases
   } {
     test(s"MERGE - unsupported automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {

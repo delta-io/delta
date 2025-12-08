@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
-import io.delta.kernel.types.{IntegerType, StructType}
+import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -69,7 +69,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport))
+    assert(expectedJson == snapshotReport.toJson())
   }
 
   test("SnapshotReport serializer") {
@@ -106,7 +106,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport1))
+    assert(expectedJson == snapshotReport1.toJson())
 
     // Check with test function
     testSnapshotReport(snapshotReport1)
@@ -152,7 +152,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport))
+    assert(expectedJson == transactionReport.toJson())
   }
 
   test("TransactionReport serializer") {
@@ -204,7 +204,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport1))
+    assert(expectedJson == transactionReport1.toJson())
     // Check with test function
     testTransactionReport(transactionReport1)
 
@@ -257,14 +257,22 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport))
+    assert(expectedJson == scanReport.toJson())
   }
 
   test("ScanReport serializer") {
-    val snapshotReportUUID = UUID.randomUUID()
+    val snapshotReportUUID = java.util.UUID.randomUUID()
+
+    // tableSchema now includes FieldMetadata with a null value.
+    val fmNull = FieldMetadata.builder().putString("kNull", null).build()
+    val fmArray =
+      FieldMetadata.builder()
+        .putStringArray("arr", Array[String]("x", null, "z"))
+        .build()
     val tableSchema = new StructType()
-      .add("part", IntegerType.INTEGER)
-      .add("id", IntegerType.INTEGER)
+      .add("part", IntegerType.INTEGER, fmNull)
+      .add("id", IntegerType.INTEGER, fmArray)
+
     val partitionPredicate = new Predicate(">", new Column("part"), Literal.ofInt(1))
     val exception = new RuntimeException("something something failed")
 
@@ -289,11 +297,14 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       scanMetrics,
       Optional.of(exception))
 
-    // Manually check expected JSON
-    val tableSchemaStr = "struct(StructField(name=part,type=integer,nullable=true,metadata={}," +
-      "typeChanges=[]), StructField(name=id,type=integer,nullable=true,metadata={},typeChanges=[]))"
-    val readSchemaStr = "struct(StructField(name=id,type=integer,nullable=true,metadata={}," +
-      "typeChanges=[]))"
+    // Manually check expected JSON including field metadata
+    val tableSchemaStr =
+      "struct(StructField(name=part,type=integer,nullable=true,metadata={kNull=null}," +
+        "typeChanges=[]), " +
+        "StructField(name=id,type=integer,nullable=true,metadata={arr=[x, null, z]}," +
+        "typeChanges=[]))"
+    val readSchemaStr =
+      "struct(StructField(name=id,type=integer,nullable=true,metadata={},typeChanges=[]))"
 
     val expectedJson =
       s"""
@@ -319,7 +330,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
-    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport1))
+    assert(expectedJson == scanReport1.toJson())
 
     // Check with test function
     testScanReport(scanReport1)
