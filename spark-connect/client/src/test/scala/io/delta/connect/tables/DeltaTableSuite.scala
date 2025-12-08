@@ -528,7 +528,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
           .select("partitionColumns")
           .head()
           .getSeq[String](0) == Seq("age"))
-      // Verify row count - should have 3 rows (2 replaced + 2 preserved)
+      // Verify row count - should have 4 rows (2 replaced + 2 preserved)
       assert(DeltaTable.forName(spark, "foo").toDF.count() == 4)
     }
   }
