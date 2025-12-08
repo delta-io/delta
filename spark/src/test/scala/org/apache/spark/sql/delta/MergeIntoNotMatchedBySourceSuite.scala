@@ -432,7 +432,7 @@ trait MergeIntoNotMatchedBySourceCDCPart2Tests extends MergeIntoNotMatchedBySour
 trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
   with PhaseLockingTestMixin
   with TransactionExecutionTestMixin {
-  
+
   import testImplicits._
 
   // Test analysis errors with NOT MATCHED BY SOURCE clauses.
