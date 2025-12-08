@@ -72,6 +72,8 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
+val flink120Version = "1.20.3"
+val flink20Version = "2.0.0"
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
@@ -1379,6 +1381,134 @@ lazy val hudi = (project in file("hudi"))
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
     Compile / packageBin := assembly.value,
     TestParallelization.settings
+  )
+
+lazy val flinkV1 = (project in file("flink/v1.20"))
+//  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(kernelUnityCatalog)
+  .settings(
+    name := "delta-flink-v1.20",
+    commonSettings,
+    releaseSettings,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
+    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    autoScalaLibrary := false, // exclude scala-library from dependencies
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      cp.filter { entry =>
+        entry.data.getName.startsWith("bundle-") &&
+          entry.data.getName.endsWith(".jar")
+      }
+    },
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
+    Test / publishArtifact := false,
+    Test / javaOptions ++= Seq(
+      "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
+    ),
+    crossPaths := false,
+    libraryDependencies ++= Seq(
+      "org.apache.flink" % "flink-core" % flink120Version % "provided",
+      "org.apache.flink" % "flink-table-common" % flink120Version % "provided",
+      "org.apache.flink" % "flink-streaming-java" % flink120Version % "provided",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flink120Version % "provided",
+      "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
+      "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
+      "dev.failsafe" % "failsafe" % "3.2.0",
+      "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
+
+      "org.apache.flink" % "flink-test-utils" % flink120Version % "test",
+      "org.scalatest" %% "scalatest" % "3.2.19" % "test",
+      "org.apache.flink" % "flink-clients" % flink120Version % "test",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flink120Version % Test,
+      "org.apache.flink" % "flink-table-planner-loader" % flink120Version % Test,
+      "org.apache.flink" % "flink-table-runtime" % flink120Version % Test,
+      "org.apache.flink" % "flink-test-utils-junit" % flink120Version % Test,
+      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
+    )
+  )
+
+lazy val flinkV2 = (project in file("flink/v2.0"))
+  //  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(kernelUnityCatalog)
+  .settings(
+    name := "delta-flink-v2.0",
+    commonSettings,
+    releaseSettings,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
+    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    autoScalaLibrary := false, // exclude scala-library from dependencies
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      cp.filter { entry =>
+        entry.data.getName.startsWith("bundle-") &&
+          entry.data.getName.endsWith(".jar")
+      }
+    },
+    Compile / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "main" / "java",
+    Compile / unmanagedResourceDirectories += file("flink/v1.20") / "src" / "main" / "resources",
+    Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "java",
+    Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "scala",
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
+    Test / publishArtifact := false,
+    Test / javaOptions ++= Seq(
+      "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
+    ),
+    crossPaths := false,
+    libraryDependencies ++= Seq(
+      "org.apache.flink" % "flink-core" % flink20Version % "provided",
+      "org.apache.flink" % "flink-table-common" % flink20Version % "provided",
+      "org.apache.flink" % "flink-streaming-java" % flink20Version % "provided",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flink20Version % "provided",
+      "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
+      "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
+      "dev.failsafe" % "failsafe" % "3.2.0",
+      "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
+
+      "org.apache.flink" % "flink-test-utils" % flink20Version % "test",
+      "org.scalatest" %% "scalatest" % "3.2.19" % "test",
+      "org.apache.flink" % "flink-clients" % flink20Version % "test",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flink20Version % Test,
+      "org.apache.flink" % "flink-table-planner-loader" % flink20Version % Test,
+      "org.apache.flink" % "flink-table-runtime" % flink20Version % Test,
+      "org.apache.flink" % "flink-test-utils-junit" % flink20Version % Test,
+      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
+    )
   )
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
