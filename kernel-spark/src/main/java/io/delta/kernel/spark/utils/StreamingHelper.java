@@ -21,10 +21,16 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.TableChangesUtils;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
+import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
+import io.delta.kernel.utils.CloseableIterator;
 import java.util.Optional;
+import java.util.Set;
 import org.apache.spark.annotation.Experimental;
 
 /**
@@ -47,8 +53,8 @@ public class StreamingHelper {
   }
 
   /**
-   * Get the version from a batch. Assumes all rows in the batch have the same version, so it reads
-   * from the first row (rowId=0).
+   * Get the version from a {@link ColumnarBatch} of Delta log actions. Assumes all rows in the
+   * batch belong to the same commit version, so it reads the version from the first row (rowId=0).
    */
   public static long getVersion(ColumnarBatch batch) {
     int versionColIdx = getFieldIndex(batch, "version");
@@ -89,6 +95,32 @@ public class StreamingHelper {
 
     RemoveFile removeFile = new RemoveFile(removeFileRow);
     return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();
+  }
+
+  /**
+   * Gets actions from a commit range without requiring a snapshot at the exact start version.
+   *
+   * <p>This method is "unsafe" because it bypasses the standard {@code CommitRange.getActions()}
+   * API which requires a snapshot at the exact start version for protocol validation.
+   *
+   * <p>This is necessary for streaming scenarios where the start version might not have a
+   * recreatable snapshot (e.g., after log cleanup) or where {@code startingVersion} is used.
+   *
+   * @param engine the Delta engine
+   * @param commitRange the commit range to read actions from
+   * @param tablePath the path to the Delta table
+   * @param actionSet the set of actions to read (e.g., ADD, REMOVE)
+   * @return an iterator over columnar batches containing the requested actions
+   */
+  public static CloseableIterator<ColumnarBatch> getActionsFromRangeUnsafe(
+      Engine engine,
+      CommitRangeImpl commitRange,
+      String tablePath,
+      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    return TableChangesUtils.flattenCommitsAndAddMetadata(
+        engine,
+        DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+            engine, tablePath, commitRange.getDeltaFiles(), actionSet));
   }
 
   /** Private constructor to prevent instantiation of this utility class. */
