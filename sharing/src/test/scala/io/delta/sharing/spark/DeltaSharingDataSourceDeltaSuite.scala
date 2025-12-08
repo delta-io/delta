@@ -21,7 +21,7 @@ package io.delta.sharing.spark
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -43,8 +43,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     extends QueryTest
     with DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
-    with DeltaSharingDataSourceDeltaTestUtils
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    with DeltaSharingDataSourceDeltaTestUtils {
 
   override def beforeEach(): Unit = {
     spark.sessionState.conf.setConfString(
@@ -1519,7 +1518,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     VariantTypeTableFeature,
     VariantShreddingPreviewTableFeature
   ).foreach { feature =>
-    testSparkMasterOnly(s"basic variant test - table feature: $feature") {
+    test(s"basic variant test - table feature: $feature") {
       withTempDir { tempDir =>
         val extraConfs = feature match {
           case VariantShreddingPreviewTableFeature => Map(
