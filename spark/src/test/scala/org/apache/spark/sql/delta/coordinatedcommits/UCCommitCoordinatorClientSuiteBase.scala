@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
 import java.net.URI
-import java.util.{Optional, UUID}
+import java.util.{Collections, Optional, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -124,7 +124,8 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       Optional.of(version),
       false,
       Optional.empty(),
-      Optional.empty())
+      Optional.empty(),
+      () => Collections.emptyMap())
   }
 
   override protected def validateBackfillStrategy(
