@@ -65,13 +65,17 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   @Override
   public Snapshot loadLatestSnapshot() {
     return ucCatalogManagedClient.loadSnapshot(
-        engine, tableId, tablePath, Optional.empty(), Optional.empty());
+        engine,
+        tableId,
+        tablePath,
+        Optional.empty() /* versionOpt */,
+        Optional.empty() /* timestampOpt */);
   }
 
   @Override
   public Snapshot loadSnapshotAt(long version) {
     return ucCatalogManagedClient.loadSnapshot(
-        engine, tableId, tablePath, Optional.of(version), Optional.empty());
+        engine, tableId, tablePath, Optional.of(version), Optional.empty() /* timestampOpt */);
   }
 
   /**
@@ -95,7 +99,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
         mustBeRecreatable,
         canReturnLastCommit,
         canReturnEarliestCommit,
-        new ArrayList<>());
+        new ArrayList<>() /* catalogCommits */);
   }
 
   /**
@@ -125,9 +129,9 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
         engine,
         tableId,
         tablePath,
-        Optional.of(startVersion),
-        Optional.empty(), // no start timestamp
-        endVersion,
-        Optional.empty()); // no end timestamp
+        Optional.of(startVersion) /* startVersionOpt */,
+        Optional.empty() /* startTimestampOpt */,
+        endVersion /* endVersionOpt */,
+        Optional.empty() /* endTimestampOpt */);
   }
 }
