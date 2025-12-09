@@ -22,7 +22,13 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
+import io.delta.kernel.spark.snapshot.unitycatalog.UCManagedSnapshotManager;
+import io.delta.kernel.spark.snapshot.unitycatalog.UCTableInfo;
+import io.delta.kernel.spark.snapshot.unitycatalog.UCUtils;
 import io.delta.kernel.spark.utils.SchemaUtils;
+import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import java.util.*;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
@@ -137,7 +143,23 @@ public class SparkTable implements Table, SupportsRead {
 
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+
+    // Create snapshot manager: UC-managed for Unity Catalog tables, path-based otherwise
+    if (catalogTable.isPresent()) {
+      Optional<UCTableInfo> ucTableInfo =
+          UCUtils.extractTableInfo(catalogTable.get(), SparkSession.active());
+      if (ucTableInfo.isPresent()) {
+        UCTableInfo info = ucTableInfo.get();
+        UCClient ucClient = new UCTokenBasedRestClient(info.getUcUri(), info.getUcToken());
+        UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
+        this.snapshotManager = new UCManagedSnapshotManager(ucCatalogClient, info, hadoopConf);
+      } else {
+        this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+      }
+    } else {
+      this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    }
+
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 
