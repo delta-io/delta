@@ -2601,7 +2601,9 @@ class SchemaUtilsSuite extends QueryTest
       allowAutomaticWidening = AllowAutomaticWideningMode.default),
     AllTypeWideningToCommonWiderType,
     TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
-    TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true)
+    TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
+    AllTypeWideningWithDecimalCoercion,
+    TypeEvolutionWithDecimalCoercion
   )
 
   test("typeWideningMode - byte->short->int is always allowed") {
@@ -2650,7 +2652,9 @@ class SchemaUtilsSuite extends QueryTest
           allowAutomaticWidening = AllowAutomaticWideningMode.default),
         TypeEvolution(
           uniformIcebergCompatibleOnly = true,
-          allowAutomaticWidening = AllowAutomaticWideningMode.default))) {
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+        AllTypeWideningWithDecimalCoercion,
+        TypeEvolutionWithDecimalCoercion)) {
       // Narrowing is not allowed.
       expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType")) {
@@ -2696,7 +2700,8 @@ class SchemaUtilsSuite extends QueryTest
         TypeEvolution(
           uniformIcebergCompatibleOnly = true,
           allowAutomaticWidening = AllowAutomaticWideningMode.SAME_FAMILY_TYPE),
-        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionWithDecimalCoercion)) {
       expectAnalysisErrorClass(
         "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         Map("currentDataType" -> fromType.toString, "updateDataType" -> toType.toString),
@@ -2781,7 +2786,9 @@ class SchemaUtilsSuite extends QueryTest
       // Increasing decimal scale isn't supported by Iceberg, so only possible when we don't enforce
       // Iceberg compatibility.
       TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
-      AllTypeWideningToCommonWiderType
+      AllTypeWideningToCommonWiderType,
+      AllTypeWideningWithDecimalCoercion,
+      TypeEvolutionWithDecimalCoercion
     )
 
     for (typeWideningMode <- modesCanWidenToCommonWiderDecimal) {
@@ -2826,6 +2833,28 @@ class SchemaUtilsSuite extends QueryTest
         mergeSchemas(right, left, typeWideningMode = typeWideningMode)
       }
     }
+  }
+
+  testSparkMasterOnly(
+    s"typeWideningMode - widen integral type to common wider decimal") {
+    val left = new StructType()
+      .add("a", ByteType)
+      .add("b", ShortType)
+      .add("c", IntegerType)
+      .add("d", LongType)
+    val right = new StructType()
+      .add("a", DecimalType(2, 1))
+      .add("b", DecimalType(2, 1))
+      .add("c", DecimalType(2, 1))
+      .add("d", DecimalType(2, 1))
+    val wider = new StructType()
+      .add("a", DecimalType(4, 1))
+      .add("b", DecimalType(6, 1))
+      .add("c", DecimalType(11, 1))
+      .add("d", DecimalType(21, 1))
+
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningWithDecimalCoercion)
+      == wider)
   }
 
   test("schema merging override field metadata") {
