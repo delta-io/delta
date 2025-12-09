@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta.typewidening
 
 import java.io.File
 
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.scalatest.BeforeAndAfterAll
 
@@ -35,7 +37,9 @@ import org.apache.spark.sql.types._
  * Suite covering streaming reads from a Delta table that had a column type widened, **without**
  * schema tracking, i.e. widening type changes don't require users to set a SQL conf to proceed.
  */
-class TypeWideningStreamingSourceSuite extends TypeWideningStreamingSourceTests {
+class TypeWideningStreamingSourceSuite extends TypeWideningStreamingSourceTests
+  with TypeWideningStreamingSourceWithoutSchemaTrackingTests {
+
   override protected val schemaTrackingEnabled: Boolean = false
 
   // Changes are not blocked with schema tracking disabled, this is a no-op.
@@ -488,6 +492,82 @@ trait TypeWideningStreamingSourceTests
           Seq(Row(1, null), Row(2, 2), Row(Int.MaxValue, Int.MaxValue))
         )
       }
+    }
+  }
+}
+
+/** Tests that specifically cover type widening without schema tracking. */
+trait TypeWideningStreamingSourceWithoutSchemaTrackingTests
+  extends StreamTest
+  with SQLTestUtils
+  with TypeWideningStreamingSourceTestMixin {
+
+  import testImplicits._
+
+  test("schema changed event is logged for type widening") {
+    withTempDir { dir =>
+      sql(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
+      val checkpointDir = new File(dir, "sink_checkpoint")
+
+      val logs = Log4jUsageLogger.track {
+        testStream(readStream(dir, checkpointDir))(
+          StartStream(checkpointLocation = checkpointDir.toString),
+          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+          ProcessAllAvailable(),
+          Execute { _ => sql(s"ALTER TABLE delta.`$dir` ALTER COLUMN widened TYPE int") },
+          ExpectMetadataEvolutionException()
+        )
+
+        testStream(readStream(dir, checkpointDir))(
+          StartStream(checkpointLocation = checkpointDir.toString),
+          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
+          ProcessAllAvailable(),
+          CheckLastBatch(Row(123456789))
+        )
+      }
+
+      // Filter for the schema changed event
+      val schemaChangedEvents = logs
+        .filter(_.metric == MetricDefinitions.EVENT_TAHOE.name)
+        .filter(_.tags.get("opType").contains("delta.streaming.source.schemaChanged"))
+
+      assert(schemaChangedEvents.size === 1, "A single schema changed events should be logged")
+
+      val eventData = JsonUtils.fromJson[Map[String, Any]](schemaChangedEvents.head.blob)
+      assert(eventData("currentVersion") === 0)
+      assert(eventData("newVersion") === 2)
+      assert(eventData("retryable") === true)
+      assert(eventData("backfilling") === false)
+      assert(eventData("readChangeDataFeed") === false)
+      assert(eventData("typeWideningEnabled") === true)
+      assert(eventData("enableSchemaTrackingForTypeWidening") === false)
+      assert(eventData("containsWideningTypeChanges") === true)
+    }
+  }
+
+  test("schema changed event is not logged when there are no schema changes") {
+    withTempDir { dir =>
+      sql(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
+      val checkpointDir = new File(dir, "sink_checkpoint")
+
+      val logs = Log4jUsageLogger.track {
+        testStream(readStream(dir, checkpointDir))(
+          StartStream(checkpointLocation = checkpointDir.toString),
+          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+          // This doesn't do anything since the type is already `byte`.
+          Execute { _ => sql(s"ALTER TABLE delta.`$dir` ALTER COLUMN widened TYPE byte") },
+          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (100)") },
+          ProcessAllAvailable(),
+          CheckAnswer(1, 100)
+        )
+      }
+
+      // Filter for the schema changed event
+      val schemaChangedEvents = logs
+        .filter(_.metric == MetricDefinitions.EVENT_TAHOE.name)
+        .filter(_.tags.get("opType").contains("delta.streaming.source.schemaChanged"))
+
+      assert(schemaChangedEvents.isEmpty, "No schema changed events should be logged")
     }
   }
 }

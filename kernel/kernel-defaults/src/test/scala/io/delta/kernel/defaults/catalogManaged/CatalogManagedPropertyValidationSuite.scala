@@ -32,7 +32,8 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
 
-  val catalogManagedFeaturePropMap = Map("delta.feature.catalogManaged" -> "supported")
+  val catalogManagedFeaturePropMap = Map(
+    TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported")
   val validRequiredCatalogPropMap = Map(
     customCatalogCommitter.REQUIRED_PROPERTY_KEY -> customCatalogCommitter.REQUIRED_PROPERTY_VALUE)
   val invalidRequiredCatalogPropMap = Map(
@@ -65,7 +66,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
       testName = "ILLEGAL CREATE: set catalogManaged=supported and explicitly disable ICT => THROW",
       operationType = "CREATE",
       transactionProperties = Map(
-        "delta.feature.catalogManaged" -> "supported",
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported",
         "delta.enableInCommitTimestamps" -> "false"),
       expectedSuccess = false,
       expectedExceptionMessage =
@@ -92,7 +93,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
       operationType = "UPDATE",
       initialTableProperties = Map.empty,
       transactionProperties = Map(
-        "delta.feature.catalogManaged" -> "supported",
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported",
         "delta.enableInCommitTimestamps" -> "false"),
       expectedSuccess = false,
       expectedExceptionMessage =

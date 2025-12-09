@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_RW_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
@@ -281,7 +282,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     // ===== THEN =====
     val builderTableProperties = createTableTxnBuilder.getTablePropertiesOpt.get()
-    assert(builderTableProperties.get("delta.feature.catalogManaged") == "supported")
+    assert(builderTableProperties
+      .get(TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey) == "supported")
     assert(builderTableProperties.get("io.unitycatalog.tableId") == testUcTableId)
     assert(builderTableProperties.get("foo") == "bar")
 

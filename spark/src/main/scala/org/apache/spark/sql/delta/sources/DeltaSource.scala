@@ -712,6 +712,23 @@ trait DeltaSourceBase extends Source
               TypeWideningMode.NoTypeWidening
             }
         )
+
+        recordDeltaEvent(
+          deltaLog,
+          "delta.streaming.source.schemaChanged",
+          data = Map(
+            "currentVersion" -> snapshotAtSourceInit.version,
+            "newVersion" -> version,
+            "retryable" -> retryable,
+            "backfilling" -> backfilling,
+            "readChangeDataFeed" -> options.readChangeFeed,
+            "typeWideningEnabled" -> typeWideningEnabled,
+            "enableSchemaTrackingForTypeWidening" -> enableSchemaTrackingForTypeWidening,
+            "containsWideningTypeChanges" ->
+              TypeWidening.containsWideningTypeChanges(schema, schemaChange)
+          )
+        )
+
         throw DeltaErrors.schemaChangedException(
           schema,
           schemaChange,

@@ -195,7 +195,7 @@ class DeltaSharingCDFUtilsSuite
       def test(): Unit = {
         val profilePath = profileFile.getCanonicalPath
         val tablePath = new Path(s"$profilePath#$shareName.$schemaName.$sharedTableName")
-        val client = DeltaSharingRestClient(profilePath, false, "delta")
+        val client = DeltaSharingRestClient(profilePath, Map.empty, false, "delta")
         val dsTable = Table(share = shareName, schema = schemaName, name = sharedTableName)
 
         val options = new DeltaSharingOptions(Map("path" -> tablePath.toString))

@@ -42,7 +42,6 @@ SPARK_RELATED_JAR_TEMPLATES = [
 NON_SPARK_RELATED_JAR_TEMPLATES = [
     # Scala modules
     "delta-hudi_2.13-{version}.jar",
-    "delta-standalone_2.13-{version}.jar",
 
     # Java-only modules (no Scala version)
     "delta-storage-{version}.jar",

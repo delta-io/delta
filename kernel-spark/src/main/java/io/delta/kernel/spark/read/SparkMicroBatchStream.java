@@ -27,10 +27,12 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
+import io.delta.kernel.spark.utils.PartitionUtils;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.spark.utils.StreamingHelper;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.time.ZoneId;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
@@ -45,8 +47,16 @@ import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.FilePartition$;
+import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.collection.JavaConverters;
+import scala.collection.Seq;
 
 public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissionControl {
 
@@ -59,34 +69,61 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
+  private final Snapshot snapshotAtSourceInit;
   private final String tableId;
   private final boolean shouldValidateOffsets;
   private final SparkSession spark;
+  private final String tablePath;
+  private final StructType readDataSchema;
+  private final StructType dataSchema;
+  private final StructType partitionSchema;
+  private final Filter[] dataFilters;
+  private final Configuration hadoopConf;
+  private final SQLConf sqlConf;
+  private final scala.collection.immutable.Map<String, String> scalaOptions;
 
-  public SparkMicroBatchStream(DeltaSnapshotManager snapshotManager, Configuration hadoopConf) {
-    this(
-        snapshotManager,
-        hadoopConf,
-        SparkSession.active(),
-        new DeltaOptions(
-            scala.collection.immutable.Map$.MODULE$.empty(),
-            SparkSession.active().sessionState().conf()));
-  }
+  /**
+   * Tracks whether this is the first batch for this stream (no checkpointed offset).
+   *
+   * <p>- First batch: initialOffset() -> latestOffset(Offset, ReadLimit) - Set `isFirstBatch` to
+   * true in initialOffset() - in latestOffset(Offset, ReadLimit), use `isFirstBatch` to determine
+   * whether to return null vs previousOffset (when no data is available) - set `isFirstBatch` to
+   * false - Subsequent batches: latestOffset(Offset, ReadLimit)
+   */
+  private boolean isFirstBatch = false;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
+      Snapshot snapshotAtSourceInit,
       Configuration hadoopConf,
       SparkSession spark,
-      DeltaOptions options) {
-    this.spark = spark;
-    this.snapshotManager = snapshotManager;
+      DeltaOptions options,
+      String tablePath,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType readDataSchema,
+      Filter[] dataFilters,
+      scala.collection.immutable.Map<String, String> scalaOptions) {
+    this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
+    this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
+    this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
-    this.options = options;
+    this.options = Objects.requireNonNull(options, "options is null");
+    // Normalize tablePath to ensure it ends with "/" for consistent path construction
+    String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
+    this.tablePath =
+        normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
+    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
+    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
+    this.dataFilters =
+        Arrays.copyOf(
+            Objects.requireNonNull(dataFilters, "dataFilters is null"), dataFilters.length);
+    this.sqlConf = SQLConf.get();
+    this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
 
-    // Initialize snapshot at source init to get table ID, similar to DeltaSource.scala
-    Snapshot snapshotAtSourceInit = snapshotManager.loadLatestSnapshot();
+    this.snapshotAtSourceInit = snapshotAtSourceInit;
     this.tableId = ((SnapshotImpl) snapshotAtSourceInit).getMetadata().getId();
-
     this.shouldValidateOffsets =
         (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
   }
@@ -95,10 +132,28 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   // offset //
   ////////////
 
+  /**
+   * Returns the initial offset for a streaming query to start reading from (if there's no
+   * checkpointed offset).
+   */
   @Override
   public Offset initialOffset() {
-    // TODO(#5318): Implement initialOffset
-    throw new UnsupportedOperationException("initialOffset is not supported");
+    Optional<Long> startingVersionOpt = getStartingVersion();
+    long version;
+    boolean isInitialSnapshot;
+    isFirstBatch = true;
+
+    if (startingVersionOpt.isPresent()) {
+      version = startingVersionOpt.get();
+      isInitialSnapshot = false;
+    } else {
+      // TODO(#5318): Support initial snapshot case (isInitialSnapshot == true)
+      throw new UnsupportedOperationException(
+          "initialOffset with initial snapshot is not supported yet");
+    }
+
+    return DeltaSourceOffset.apply(
+        tableId, version, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
   }
 
   @Override
@@ -110,30 +165,29 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   /**
    * Get the latest offset with rate limiting (SupportsAdmissionControl).
    *
-   * @param startOffset The starting offset (can be null if initialOffset() returned null)
+   * @param startOffset The starting offset
    * @param limit The read limit for rate limiting
    * @return The latest offset, or null if no data is available to read.
    */
   @Override
   public Offset latestOffset(Offset startOffset, ReadLimit limit) {
-    // For the first batch, initialOffset() should be called before latestOffset().
-    // if startOffset is null: no data is available to read.
-    if (startOffset == null) {
-      return null;
-    }
+    Objects.requireNonNull(startOffset, "startOffset should not be null for MicroBatchStream");
+    Objects.requireNonNull(limit, "limit should not be null for MicroBatchStream");
+
     // TODO(#5318): init trigger available now support
 
     DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
     Optional<DeltaSource.AdmissionLimits> limits =
         ScalaUtils.toJavaOptional(DeltaSource.AdmissionLimits$.MODULE$.apply(options, limit));
     Optional<DeltaSourceOffset> endOffset =
-        getNextOffsetFromPreviousOffset(deltaStartOffset, limits);
+        getNextOffsetFromPreviousOffset(deltaStartOffset, limits, isFirstBatch);
+    isFirstBatch = false;
 
     if (shouldValidateOffsets && endOffset.isPresent()) {
       DeltaSourceOffset.validateOffsets(deltaStartOffset, endOffset.get());
     }
 
-    // endOffset is null: no data is available to read for this batch.
+    // Return null when no data is available for this batch.
     return endOffset.orElse(null);
   }
 
@@ -153,10 +207,15 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
    *
    * @param previousOffset The previous offset
    * @param limits Rate limits for this batch (Optional.empty() for no limits)
-   * @return The next offset, or the previous offset if no new data is available
+   * @param isFirstBatch Whether this is the first batch for this stream
+   * @return The next offset, or the previous offset if no new data is available (except on the
+   *     initial batch where we return empty to match DSv1's
+   *     getStartingOffsetFromSpecificDeltaVersion behavior)
    */
   private Optional<DeltaSourceOffset> getNextOffsetFromPreviousOffset(
-      DeltaSourceOffset previousOffset, Optional<DeltaSource.AdmissionLimits> limits) {
+      DeltaSourceOffset previousOffset,
+      Optional<DeltaSource.AdmissionLimits> limits,
+      boolean isFirstBatch) {
     // TODO(#5319): Special handling for schema tracking.
 
     CloseableIterator<IndexedFile> changes =
@@ -169,6 +228,11 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     Optional<IndexedFile> lastFileChange = Utils.iteratorLast(changes);
 
     if (!lastFileChange.isPresent()) {
+      // For the first batch, return empty to match DSv1's
+      // getStartingOffsetFromSpecificDeltaVersion
+      if (isFirstBatch) {
+        return Optional.empty();
+      }
       return Optional.of(previousOffset);
     }
     // TODO(#5318): Check read-incompatible schema changes during stream start
@@ -188,12 +252,58 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public InputPartition[] planInputPartitions(Offset start, Offset end) {
-    throw new UnsupportedOperationException("planInputPartitions is not supported");
+    DeltaSourceOffset startOffset = (DeltaSourceOffset) start;
+    DeltaSourceOffset endOffset = (DeltaSourceOffset) end;
+
+    long fromVersion = startOffset.reservoirVersion();
+    long fromIndex = startOffset.index();
+    boolean isInitialSnapshot = startOffset.isInitialSnapshot();
+
+    List<PartitionedFile> partitionedFiles = new ArrayList<>();
+    long totalBytesToRead = 0;
+    try (CloseableIterator<IndexedFile> fileChanges =
+        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
+      while (fileChanges.hasNext()) {
+        IndexedFile indexedFile = fileChanges.next();
+        if (!indexedFile.hasFileAction() || indexedFile.getAddFile() == null) {
+          continue;
+        }
+        AddFile addFile = indexedFile.getAddFile();
+        PartitionedFile partitionedFile =
+            PartitionUtils.buildPartitionedFile(
+                addFile, partitionSchema, tablePath, ZoneId.of(sqlConf.sessionLocalTimeZone()));
+
+        totalBytesToRead += addFile.getSize();
+        partitionedFiles.add(partitionedFile);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(
+          String.format(
+              "Failed to get file changes for table %s from version %d index %d to offset %s",
+              tablePath, fromVersion, fromIndex, endOffset),
+          e);
+    }
+
+    long maxSplitBytes =
+        PartitionUtils.calculateMaxSplitBytes(
+            spark, totalBytesToRead, partitionedFiles.size(), sqlConf);
+    // Partitions files into Spark FilePartitions.
+    Seq<FilePartition> filePartitions =
+        FilePartition$.MODULE$.getFilePartitions(
+            spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
+    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
   }
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    throw new UnsupportedOperationException("createReaderFactory is not supported");
+    return PartitionUtils.createParquetReaderFactory(
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        dataFilters,
+        scalaOptions,
+        hadoopConf,
+        sqlConf);
   }
 
   ///////////////
@@ -217,6 +327,8 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   /**
    * Extracts whether users provided the option to time travel a relation. If a query restarts from
    * a checkpoint and the checkpoint has recorded the offset, this method should never be called.
+   *
+   * <p>Returns Optional.empty() if no starting version is provided.
    *
    * <p>This is the DSv2 Kernel-based implementation of DeltaSource.getStartingVersion.
    */
@@ -385,11 +497,18 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
       return Utils.toCloseableIterator(allIndexedFiles.iterator());
     }
 
-    // Required by kernel: perform protocol validation by creating a snapshot at startVersion.
-    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
-    String tablePath = startSnapshot.getPath();
+    // Use getActionsFromRangeUnsafe instead of CommitRange.getActions() because:
+    // 1. CommitRange.getActions() requires a snapshot at exactly the startVersion, but when
+    //    startingVersion option is used, we may not be able to recreate that exact snapshot
+    //    (e.g., if log files have been cleaned up after checkpointing).
+    // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
+    //    AddFile actions and performs per-commit protocol validation.
     try (CloseableIterator<ColumnarBatch> actionsIter =
-        commitRange.getActions(engine, startSnapshot, ACTION_SET)) {
+        StreamingHelper.getActionsFromRangeUnsafe(
+            engine,
+            (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
+            snapshotAtSourceInit.getPath(),
+            ACTION_SET)) {
       // Each ColumnarBatch belongs to a single commit version,
       // but a single version may span multiple ColumnarBatches.
       long currentVersion = -1;
@@ -415,7 +534,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
         // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
         // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
         // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-        validateCommit(batch, version, tablePath, endOffset);
+        validateCommit(batch, version, snapshotAtSourceInit.getPath(), endOffset);
 
         currentVersion = version;
         currentIndex =
