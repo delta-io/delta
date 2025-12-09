@@ -209,6 +209,7 @@ object SparkVersionSpec {
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
     targetJvm = "17",
+    additionalSourceDir = Some("scala-spark-4.0"),
     antlr4Version = "4.13.1",
     additionalJavaOptions = Seq(
       // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
@@ -227,6 +228,30 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
+  private val spark41Snapshot = SparkVersionSpec(
+    fullVersion = "4.1.0-SNAPSHOT",
+    targetJvm = "17",
+    additionalSourceDir = Some("scala-spark-4.1"),
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = Seq(
+      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+    ),
+    jacksonVersion = "2.18.2"
+  )
+
+  // TODO: 4.2.0-SNAPSHOT (actual master)
+
   /** Default Spark version */
   val DEFAULT = spark40
 
@@ -234,7 +259,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40)
+  val ALL_SPECS = Seq(spark40, spark41Snapshot)
 }
 
 /** See docs on top of this file */
@@ -299,7 +324,7 @@ object CrossSparkVersions extends AutoPlugin {
   }
 
   // Scala version constant (Scala 2.12 support was dropped)
-  private val scala213 = "2.13.16"
+  private val scala213 = "2.13.17"
 
   /**
    * Common Spark version-specific settings used by all Spark-aware modules.
