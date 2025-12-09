@@ -29,8 +29,8 @@ import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$
 /**
  * Utility class for extracting Unity Catalog table information from Spark catalog metadata.
  *
- * <p>This class isolates Spark dependencies, allowing {@link UnityCatalogAdapter} to be created
- * without Spark if table info is provided directly via {@link UCTableInfo}.
+ * <p>This class isolates Spark dependencies, allowing {@link UCManagedSnapshotManager} to be
+ * created without Spark if table info is provided directly via {@link UCTableInfo}.
  */
 public final class UCUtils {
 
