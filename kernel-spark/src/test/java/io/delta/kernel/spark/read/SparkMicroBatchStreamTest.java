@@ -1226,7 +1226,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             /* startVersion= */ 0L,
             /* startIndex= */ BASE_INDEX,
             ReadLimitConfig.maxFiles(1),
-            /* numIterations= */ 3,
+            /* numIterations= */ 10,
             "MaxFiles1"),
         Arguments.of(
             /* startVersion= */ 0L,
@@ -1238,7 +1238,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             /* startVersion= */ 1L,
             /* startIndex= */ BASE_INDEX,
             ReadLimitConfig.maxFiles(2),
-            /* numIterations= */ 3,
+            /* numIterations= */ 10,
             "MaxFiles3"),
         Arguments.of(
             /* startVersion= */ 0L,
@@ -1252,7 +1252,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             /* startVersion= */ 0L,
             /* startIndex= */ BASE_INDEX,
             ReadLimitConfig.maxBytes(1),
-            /* numIterations= */ 3,
+            /* numIterations= */ 100,
             "MaxBytes1"),
         Arguments.of(
             /* startVersion= */ 0L,
@@ -1264,7 +1264,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             /* startVersion= */ 1L,
             /* startIndex= */ BASE_INDEX,
             ReadLimitConfig.maxBytes(1000),
-            /* numIterations= */ 3,
+            /* numIterations= */ 100,
             "MaxBytes3"),
         Arguments.of(
             /* startVersion= */ 0L,

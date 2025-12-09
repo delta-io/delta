@@ -215,7 +215,7 @@ public class SparkMicroBatchStream
 
     DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
     initForTriggerAvailableNowIfNeeded(deltaStartOffset);
-    // endOffset is null: no data is available to read for this batch.
+    // Return null when no data is available for this batch.
     DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
     isFirstBatch = false;
     return endOffset;
