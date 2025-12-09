@@ -1144,6 +1144,137 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   // ================================================================================================
+  // Tests for availableNow parity between DSv1 and DSv2
+  // ================================================================================================
+
+  @ParameterizedTest
+  @MethodSource("availableNowParameters")
+  public void testAvailableNow_SequentialBatchAdvancement(
+      Long startVersion,
+      Long startIndex,
+      ReadLimitConfig limitConfig,
+      int numIterations,
+      String testDescription,
+      @TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_availableNow_sequential"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ true);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    String tableId = deltaLog.tableId();
+
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
+    ReadLimit readLimit = limitConfig.toReadLimit();
+
+    // dsv1
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    deltaSource.prepareForTriggerAvailableNow();
+    List<Offset> dsv1Offsets =
+        advanceOffsetSequenceDsv1(deltaSource, startOffset, numIterations, readLimit);
+
+    // dsv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+    stream.prepareForTriggerAvailableNow();
+    List<Offset> dsv2Offsets =
+        advanceOffsetSequenceDsv2(stream, startOffset, numIterations, readLimit);
+
+    compareOffsetSequence(dsv1Offsets, dsv2Offsets, testDescription);
+  }
+
+  private static Stream<Arguments> availableNowParameters() {
+    long BASE_INDEX = DeltaSourceOffset.BASE_INDEX();
+    long END_INDEX = DeltaSourceOffset.END_INDEX();
+
+    return Stream.of(
+        // No limits
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits1"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits2"),
+        Arguments.of(
+            /* startVersion= */ 4L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits3"),
+
+        // Max files
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(1),
+            /* numIterations= */ 3,
+            "MaxFiles1"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(1000),
+            /* numIterations= */ 3,
+            "MaxFiles2"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(2),
+            /* numIterations= */ 3,
+            "MaxFiles3"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(0),
+            /* numIterations= */ 3,
+            "MaxFiles4"),
+
+        // Max bytes
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1),
+            /* numIterations= */ 3,
+            "MaxBytes1"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1000000), // ensure larger than total file size
+            /* numIterations= */ 3,
+            "MaxBytes2"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1000),
+            /* numIterations= */ 3,
+            "MaxBytes3"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(0),
+            /* numIterations= */ 3,
+            "MaxBytes4"));
+  }
+
+  // ================================================================================================
   // Tests for planInputPartitions
   // ================================================================================================
 
