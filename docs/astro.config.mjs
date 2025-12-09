@@ -207,6 +207,25 @@ export default defineConfig({
           attrs: { target: "_blank" },
         },
       ],
+      head: [
+        {
+          tag: "script",
+          attrs: {
+            async: true,
+            src: "https://www.googletagmanager.com/gtag/js?id=UA-138952006-1",
+          },
+        },
+        {
+          tag: "script",
+          content: `
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+
+          gtag('config', 'UA-138952006-1');
+          `,
+        },
+      ],
     }),
   ],
 });
