@@ -5,7 +5,7 @@ import netlify from "@astrojs/netlify";
 
 // https://astro.build/config
 export default defineConfig({
-  site: "https://delta-docs-incubator.netlify.app/",
+  site: "https://docs.delta.io/",
   image: {
     service: {
       entrypoint: "astro/assets/services/sharp",
