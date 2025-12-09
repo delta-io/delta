@@ -1,2 +1,0 @@
-{"time":"2025-12-09T20:13:56.797444313Z","level":"INFO","msg":"Bazel info created","cmd":"/usr/local/bin/bazel info workspace"}
-{"time":"2025-12-09T20:25:19.120227666Z","level":"INFO","msg":"Bazel query created","cmd":"/usr/local/bin/bazel query siblings(spark/src/test/scala-spark-master/org/apache/spark/sql/delta/DeltaVariantShreddingSuite.scala) --output streamed_proto"}
