@@ -145,6 +145,7 @@ public class SparkTable implements Table, SupportsRead {
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
 
     // Create snapshot manager: UC-managed for Unity Catalog tables, path-based otherwise
+    this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
     if (catalogTable.isPresent()) {
       Optional<UCTableInfo> ucTableInfo =
           UCUtils.extractTableInfo(catalogTable.get(), SparkSession.active());
@@ -153,11 +154,7 @@ public class SparkTable implements Table, SupportsRead {
         UCClient ucClient = new UCTokenBasedRestClient(info.getUcUri(), info.getUcToken());
         UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
         this.snapshotManager = new UCManagedSnapshotManager(ucCatalogClient, info, hadoopConf);
-      } else {
-        this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
       }
-    } else {
-      this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
     }
 
     // Load the initial snapshot through the manager
