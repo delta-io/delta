@@ -120,9 +120,6 @@ sealed abstract class TableFeature(
    * to be enabled if this table feature is enabled.
    */
   def requiredFeatures: Set[TableFeature] = Set.empty
-
-  /** The table property config key. */
-  val propertyKey: String = TableFeatureProtocolUtils.propertyKey(name)
 }
 
 /** A trait to indicate a feature applies to readers and writers. */
@@ -1127,12 +1124,6 @@ object CatalogOwnedTableFeature
 
   // Before downgrade, we require to backfill all unbackfilled commits, hence time-travel is safe.
   override def actionUsesFeature(action: Action): Boolean = false
-
-  // This table property was once renamed from an old name. In a transition period we need to
-  // support translation of the old name to the new name.
-  // TODO: clean up once callers are migrated.
-  private val oldFeatureName: String = "catalogOwned-preview"
-  val oldPropertyKey: String = TableFeatureProtocolUtils.propertyKey(oldFeatureName)
 }
 
 
