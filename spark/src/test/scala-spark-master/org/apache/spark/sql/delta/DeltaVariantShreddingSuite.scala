@@ -22,9 +22,10 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -213,6 +214,121 @@ class DeltaVariantShreddingSuite
       )
       assert(!getProtocolForTable("tbl")
         .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
+    }
+  }
+
+  test("creating table with preview feature does not add stable feature (and vice versa)") {
+    Seq("-preview", "").foreach { featureSuffix =>
+      withTable("tbl") {
+        sql(s"""CREATE TABLE tbl(i INT)
+                USING delta
+                TBLPROPERTIES(
+                  'delta.enableVariantShredding' = 'true',
+                  'delta.feature.variantShredding$featureSuffix' = 'supported'
+                )""")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark,
+          "tbl",
+          expectPreviewFeature = featureSuffix.nonEmpty,
+          expectStableFeature = featureSuffix.isEmpty)
+      }
+    }
+  }
+
+  test("enabling 'FORCE_USE_PREVIEW_SHREDDING_FEATURE' adds preview table feature for new table") {
+    Seq(false, true).foreach { forcePreview =>
+      withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> forcePreview.toString) {
+        withTable("tbl") {
+          sql("CREATE TABLE tbl(s STRING) USING DELTA TBLPROPERTIES " +
+            "('delta.enableVariantShredding' = 'true')")
+          DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+            spark,
+            "tbl",
+            expectPreviewFeature = forcePreview,
+            expectStableFeature = !forcePreview)
+        }
+      }
+    }
+  }
+
+  test("enabling 'FORCE_USE_PREVIEW_SHREDDING_FEATURE' and setting shredding table property " +
+    "adds the preview table feature") {
+    Seq(false, true).foreach { forcePreview =>
+      withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> forcePreview.toString) {
+        withTable("tbl") {
+          sql("CREATE TABLE tbl(s STRING) USING DELTA")
+          DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+            spark,
+            "tbl",
+            expectPreviewFeature = false,
+            expectStableFeature = false)
+
+          sql("ALTER TABLE tbl SET TBLPROPERTIES ('delta.enableVariantShredding' = 'true')")
+
+          DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+            spark,
+            "tbl",
+            expectPreviewFeature = forcePreview,
+            expectStableFeature = !forcePreview)
+        }
+      }
+    }
+  }
+
+  test("enabling 'FORCE_USE_PREVIEW_VARIANT_FEATURE' on table with stable feature does not " +
+    "require adding preview feature") {
+    Seq(false, true).foreach { forcePreview =>
+      withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> forcePreview.toString) {
+        withTable("tbl") {
+          sql("CREATE TABLE tbl(s STRING) USING DELTA TBLPROPERTIES " +
+            "('delta.enableVariantShredding' = 'true')")
+          DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+            spark,
+            "tbl",
+            expectPreviewFeature = forcePreview,
+            expectStableFeature = !forcePreview)
+
+          withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key ->
+            (!forcePreview).toString) {
+            // Reset the table property and set it again to see if it modifies to protocol
+            sql("ALTER TABLE tbl SET " +
+              "TBLPROPERTIES ('delta.enableVariantShredding' = 'false')")
+            DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+              spark,
+              "tbl",
+              expectPreviewFeature = forcePreview,
+              expectStableFeature = !forcePreview)
+            sql("ALTER TABLE tbl SET " +
+              "TBLPROPERTIES ('delta.enableVariantShredding' = 'true')")
+            DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+              spark,
+              "tbl",
+              expectPreviewFeature = forcePreview,
+              expectStableFeature = !forcePreview)
+          }
+        }
+      }
+    }
+  }
+}
+
+object DeltaVariantShreddingSuite {
+  def assertVariantShreddingTableFeatures(
+      spark: SparkSession,
+      tableName: String,
+      expectPreviewFeature: Boolean,
+      expectStableFeature: Boolean): Unit = {
+    val features = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().protocol
+      .readerAndWriterFeatures
+    if (expectPreviewFeature) {
+      assert(features.contains(VariantShreddingPreviewTableFeature))
+    } else {
+      assert(!features.contains(VariantShreddingPreviewTableFeature))
+    }
+    if (expectStableFeature) {
+      assert(features.contains(VariantShreddingTableFeature))
+    } else {
+      assert(!features.contains(VariantShreddingTableFeature))
     }
   }
 }
