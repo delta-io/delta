@@ -42,6 +42,8 @@ def getMajorMinor(version: String): (Int, Int) = {
   }
 }
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
+  // TODO: how to run integration tests for multiple Spark versions
+  case (major, minor) if major >= 4 && minor >= 1 => "4.0.1"
   // version 4.0.0
   case (major, minor) if major >= 4 => "4.0.0"
   // versions 3.3.x+

@@ -705,6 +705,8 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
+/*
+TODO: compilation broken for Spark 4.0
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -731,6 +733,7 @@ lazy val sharing = (project in file("sharing"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
     )
   ).configureUnidoc()
+*/
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
   .enablePlugins(ScalafmtPlugin)
@@ -1252,7 +1255,8 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  // TODO: add sharing back after fixing compilation
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

@@ -6,6 +6,15 @@ import sys
 from setuptools import setup
 from setuptools.command.install import install
 
+
+# delta.io version
+def get_version_from_sbt():
+    with open("version.sbt") as fp:
+        version = fp.read().strip()
+    return version.split('"')[1]
+
+VERSION = get_version_from_sbt()
+
 class VerifyVersionCommand(install):
     """Custom command to verify that the git tag matches our version"""
     description = 'verify that the git tag matches our version'
@@ -23,9 +32,8 @@ class VerifyVersionCommand(install):
 with open("python/README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-# For now, we assume we only support the LATEST released Spark version
-# Currently this is 4.0, soon it will be 4.1
-install_requires_arg = ['pyspark>=4.0.0', 'importlib_metadata>=1.0.0']
+# TODO: once we support multiple Spark versions update this to be compatible with both
+install_requires_arg = ['pyspark>=4.0.1', 'importlib_metadata>=1.0.0']
 python_requires_arg = '>=3.9'
 
 setup(
