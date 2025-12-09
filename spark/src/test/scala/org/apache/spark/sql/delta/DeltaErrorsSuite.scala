@@ -1533,6 +1533,16 @@ trait DeltaErrorsSuiteBase
         "timestampString" -> "2022-02-28 11:00:00"))
     }
     {
+      val filePath = "s3a://bucket/table/_delta_log/00000000000000000476.json"
+      val cause = new java.nio.file.AccessDeniedException(filePath)
+      val e = intercept[DeltaIOException] {
+        throw DeltaErrors.deltaLogJsonFileAccessDenied(filePath, cause)
+      }
+      checkError(e, "DELTA_LOG_JSON_FILE_ACCESS_DENIED", "58000", Map("filePath" -> filePath))
+      // Verify the cause is still attached for debugging
+      assert(e.getCause == cause)
+    }
+    {
       val expr = "1".expr
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.timestampInvalid(expr)

@@ -1655,6 +1655,12 @@
     ],
     "sqlState" : "42K03"
   },
+  "DELTA_LOG_JSON_FILE_ACCESS_DENIED" : {
+    "message" : [
+      "Access denied when reading Delta log JSON file: <filePath>. Check that you have read permissions for the Delta table location."
+    ],
+    "sqlState" : "58000"
+  },
   "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING" : {
     "message" : [
       "Materialized <rowTrackingColumn> column name missing for <tableName>."
