@@ -22,9 +22,11 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import java.util.ArrayList;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 
@@ -62,41 +64,70 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
 
   @Override
   public Snapshot loadLatestSnapshot() {
-    // TODO: Implement in snapshotmanager-impl stack
-    throw new UnsupportedOperationException(
-        "UCManagedTableSnapshotManager.loadLatestSnapshot not yet implemented");
+    return ucCatalogManagedClient.loadSnapshot(
+        engine, tableId, tablePath, Optional.empty(), Optional.empty());
   }
 
   @Override
   public Snapshot loadSnapshotAt(long version) {
-    // TODO: Implement in snapshotmanager-impl stack
-    throw new UnsupportedOperationException(
-        "UCManagedTableSnapshotManager.loadSnapshotAt not yet implemented");
+    return ucCatalogManagedClient.loadSnapshot(
+        engine, tableId, tablePath, Optional.of(version), Optional.empty());
   }
 
+  /**
+   * Finds the active commit at a specific timestamp.
+   *
+   * <p>For UC-managed tables, this loads the latest snapshot and uses {@link
+   * DeltaHistoryManager#getActiveCommitAtTimestamp} to resolve the timestamp to a commit.
+   */
   @Override
   public DeltaHistoryManager.Commit getActiveCommitAtTime(
       long timestampMillis,
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
-    // TODO: Implement in snapshotmanager-impl stack
-    throw new UnsupportedOperationException(
-        "UCManagedTableSnapshotManager.getActiveCommitAtTime not yet implemented");
+    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    return DeltaHistoryManager.getActiveCommitAtTimestamp(
+        engine,
+        snapshot,
+        snapshot.getLogPath(),
+        timestampMillis,
+        mustBeRecreatable,
+        canReturnLastCommit,
+        canReturnEarliestCommit,
+        new ArrayList<>());
   }
 
+  /**
+   * Checks if a specific version exists and is accessible.
+   *
+   * <p>For UC-managed tables, all ratified commits are available, so the earliest version is
+   * typically 0. This method validates that the requested version is within the valid range.
+   */
   @Override
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
-    // TODO: Implement in snapshotmanager-impl stack
-    throw new UnsupportedOperationException(
-        "UCManagedTableSnapshotManager.checkVersionExists not yet implemented");
+    // Load latest to get the current version bounds
+    Snapshot latestSnapshot = loadLatestSnapshot();
+    long latestVersion = latestSnapshot.getVersion();
+
+    // For UC tables, earliest recreatable version is 0 (all ratified commits are available)
+    long earliestVersion = 0;
+
+    if (version < earliestVersion || ((version > latestVersion) && !allowOutOfRange)) {
+      throw new VersionNotFoundException(version, earliestVersion, latestVersion);
+    }
   }
 
   @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
-    // TODO: Implement in snapshotmanager-impl stack
-    throw new UnsupportedOperationException(
-        "UCManagedTableSnapshotManager.getTableChanges not yet implemented");
+    return ucCatalogManagedClient.loadCommitRange(
+        engine,
+        tableId,
+        tablePath,
+        Optional.of(startVersion),
+        Optional.empty(), // no start timestamp
+        endVersion,
+        Optional.empty()); // no end timestamp
   }
 }
