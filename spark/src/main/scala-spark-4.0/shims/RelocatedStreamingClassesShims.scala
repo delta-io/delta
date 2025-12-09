@@ -19,7 +19,6 @@ import java.util.UUID
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.streaming.{OffsetSeqMetadata, WatermarkPropagator}
 import org.apache.spark.sql.streaming.OutputMode
@@ -29,8 +28,9 @@ import org.apache.spark.sql.execution.streaming.{
   CheckpointFileManager => CheckpointFileManagerShim,
   IncrementalExecution => IncrementalExecutionShim,
   MetadataLogFileIndex => MetadataLogFileIndexShim,
-  StreamingExecution => StreamingExecutionShim,
-  StreamingRelation => StreamingRelationShim
+  StreamExecution => StreamExecutionShim,
+  StreamingRelation => StreamingRelationShim,
+  MetadataVersionUtil => MetadataVersionUtilShim
 }
 import org.apache.spark.sql.execution.streaming.{FileStreamSink => FileStreamSinkShim}
 
@@ -41,7 +41,7 @@ object Relocated {
   type IncrementalExecution = IncrementalExecutionShim
   // scalastyle:off argcount
   def createIncrementalExecution(
-      sparkSession: SparkSession,
+      sparkSession: org.apache.spark.sql.classic.SparkSession,
       logicalPlan: LogicalPlan,
       outputMode: OutputMode,
       checkpointLocation: String,
@@ -68,10 +68,11 @@ object Relocated {
   }
 
   type StreamingRelation = StreamingRelationShim
+  val StreamingRelation: StreamingRelationShim.type = StreamingRelationShim
 
   type MetadataLogFileIndex = MetadataLogFileIndexShim
   def createMetadataLogFileIndex(
-      sparkSession: SparkSession,
+      sparkSession: org.apache.spark.sql.SparkSession,
       path: Path,
       options: Map[String, String],
       userSpecifiedSchema: Option[StructType]): MetadataLogFileIndex = {
@@ -81,7 +82,7 @@ object Relocated {
   type FileStreamSink = FileStreamSinkShim
   val FileStreamSink: FileStreamSinkShim.type = FileStreamSinkShim
 
-  type StreamingExecution = StreamingExecutionShim
+  type StreamExecution = StreamExecutionShim
   val StreamExecution: StreamExecutionShim.type = StreamExecutionShim
 
   val MetadataVersionUtil: MetadataVersionUtilShim.type = MetadataVersionUtilShim

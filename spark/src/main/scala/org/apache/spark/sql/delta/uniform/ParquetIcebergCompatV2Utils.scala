@@ -18,8 +18,7 @@ package org.apache.spark.sql.delta.uniform
 
 import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
-
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFooterReader
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFooterReaderShims
 
 /**
  * Contains utilities to check whether a specific parquet data file
@@ -122,7 +121,6 @@ object ParquetIcebergCompatV2Utils {
     val conf = new org.apache.hadoop.conf.Configuration
     val fs = path.getFileSystem(conf)
     val status = fs.getFileStatus(path)
-    val inputFile = org.apache.parquet.hadoop.util.HadoopInputFile.fromStatus(status, conf)
-    ParquetFooterReader.readFooter(inputFile, ParquetMetadataConverter.NO_FILTER)
+    ParquetFooterReaderShims.readParquetFooter(conf, status, ParquetMetadataConverter.NO_FILTER)
   }
 }
