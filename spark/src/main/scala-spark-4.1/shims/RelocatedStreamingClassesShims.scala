@@ -19,7 +19,6 @@ import java.util.UUID
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.classic.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.streaming.runtime.WatermarkPropagator
 import org.apache.spark.sql.streaming.OutputMode
@@ -45,7 +44,7 @@ object Relocated {
   type IncrementalExecution = IncrementalExecutionShim
   // scalastyle:off argcount
   def createIncrementalExecution(
-      sparkSession: SparkSession,
+      sparkSession: org.apache.spark.sql.classic.SparkSession,
       logicalPlan: LogicalPlan,
       outputMode: OutputMode,
       checkpointLocation: String,
@@ -76,7 +75,7 @@ object Relocated {
 
   type MetadataLogFileIndex = MetadataLogFileIndexShim
   def createMetadataLogFileIndex(
-      sparkSession: SparkSession,
+      sparkSession: org.apache.spark.sql.SparkSession,
       path: Path,
       options: Map[String, String],
       userSpecifiedSchema: Option[StructType]): MetadataLogFileIndex = {
