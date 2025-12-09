@@ -262,7 +262,7 @@ public class TableConfig<T> {
 
   /**
    * Table property that enables materialization of partition columns in written parquet files. When
-   * enabled, partition columns are included in the data files instead of being filtered out.
+   * enabled, partition columns must be included in the data files.
    */
   public static final TableConfig<Boolean> MATERIALIZE_PARTITION_COLUMNS_ENABLED =
       new TableConfig<>(
