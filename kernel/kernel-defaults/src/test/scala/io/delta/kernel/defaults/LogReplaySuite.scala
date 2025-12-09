@@ -29,9 +29,13 @@ import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.types.{LongType, StructType}
 
+import org.apache.spark.sql.delta.{DeltaLog, SerializableFileStatus}
+import org.apache.spark.sql.delta.actions.{AddFile, CheckpointMetadata, SidecarFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames.newV2CheckpointJsonFile
 
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{Path => HadoopPath}
 import org.scalatest.funsuite.AnyFunSuite
 
 class LogReplaySuite extends AbstractLogReplaySuite with TestUtilsWithTableManagerAPIs {
@@ -337,72 +341,60 @@ trait AbstractLogReplaySuite extends AnyFunSuite {
     }
   }
 
+  // Regression test for issue #4807
   test("read v2 checkpoint with sidecars lacking version prefix") {
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
 
-      withSQLConf(
-        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> "json",
-        "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-        spark.sql(
-          s"""CREATE TABLE delta.`$tablePath` (id INT, value STRING) USING delta
-             |CLUSTER BY (id)
-             |TBLPROPERTIES(
-             |  'delta.checkpointInterval' = '2',
-             |  'delta.checkpointPolicy' = 'v2'
-             |)
-             |""".stripMargin)
+      spark.sql(
+        s"""CREATE TABLE delta.`$tablePath` (id INT) USING delta
+           |TBLPROPERTIES('delta.checkpointPolicy' = 'v2')
+           |""".stripMargin)
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1), (2)")
 
-        spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'a'), (2, 'b')")
-        spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (3, 'c'), (4, 'd')")
+      val log = DeltaLog.forTable(spark, new HadoopPath(tablePath))
+      val hadoopConf = log.newDeltaHadoopConf()
+      val fs = log.logPath.getFileSystem(hadoopConf)
+
+      // Create sidecar file with Spark-style naming (no version prefix)
+      var sidecarFileName: String = ""
+      withTempDir { dir =>
+        import spark.implicits._
+        val addFile = AddFile(
+          path = "fake-data-file.parquet",
+          partitionValues = Map.empty,
+          size = 100L,
+          modificationTime = System.currentTimeMillis(),
+          dataChange = true)
+        Seq(addFile.wrap).toDF.repartition(1).write.mode("overwrite").parquet(dir.getAbsolutePath)
+        val srcPath = new HadoopPath(
+          dir.listFiles().filter(_.getName.endsWith("parquet")).head.getAbsolutePath)
+        val dstPath = new HadoopPath(log.sidecarDirPath, srcPath.getName)
+        fs.mkdirs(log.sidecarDirPath)
+        fs.rename(srcPath, dstPath)
+        sidecarFileName = fs.getFileStatus(dstPath).getPath.getName
       }
 
-      val deltaLogDir = new File(tablePath, "_delta_log")
-      val sidecarsDir = new File(deltaLogDir, "_sidecars")
-      assert(
-        sidecarsDir.exists() && sidecarsDir.listFiles().exists(_.getName.endsWith(".parquet")),
-        s"Expected sidecar parquet files in $sidecarsDir")
+      val version = log.update().version
+      val snapshot = log.getSnapshotAt(version)
+      val sidecarPath = new HadoopPath(log.sidecarDirPath.toString, sidecarFileName)
+      val sidecarFileStatus = SerializableFileStatus.fromStatus(fs.getFileStatus(sidecarPath))
+      val sidecarFile = SidecarFile(sidecarFileStatus)
+      val actionsForCheckpoint = Seq(
+        snapshot.protocol,
+        snapshot.metadata,
+        sidecarFile,
+        CheckpointMetadata(version))
+      log.store.write(
+        newV2CheckpointJsonFile(log.logPath, version),
+        actionsForCheckpoint.map(_.json).toIterator,
+        overwrite = true,
+        hadoopConf = hadoopConf)
 
-      // Get the sidecar files and create a mapping from old name to new name
-      val sidecarFiles = sidecarsDir.listFiles().filter(_.getName.endsWith(".parquet"))
-      val renameMap = sidecarFiles.map { f =>
-        val oldName = f.getName
-        // Create a new name without version prefix (like "part-00000-uuid.parquet")
-        val uuid = java.util.UUID.randomUUID().toString
-        val newName = s"part-00000-$uuid.parquet"
-        (oldName, newName)
-      }.toMap
-
-      // Rename the sidecar files
-      sidecarFiles.foreach { file =>
-        val newName = renameMap(file.getName)
-        file.renameTo(new File(sidecarsDir, newName))
-      }
-
-      // Find and update the JSON checkpoint manifest to reference new sidecar names
-      val checkpointFiles = deltaLogDir.listFiles()
-        .filter(f => f.getName.contains("checkpoint") && f.getName.endsWith(".json"))
-      checkpointFiles.foreach { checkpointFile =>
-        val content = scala.io.Source.fromFile(checkpointFile).mkString
-        var updatedContent = content
-        renameMap.foreach { case (oldName, newName) =>
-          // Replace old sidecar filename with new filename in the JSON
-          updatedContent = updatedContent.replace(oldName, newName)
-        }
-        val writer = new java.io.PrintWriter(checkpointFile)
-        writer.write(updatedContent)
-        writer.close()
-
-        // Delete the Hadoop checksum file (.crc) since we modified the JSON
-        val crcFile = new File(deltaLogDir, "." + checkpointFile.getName + ".crc")
-        if (crcFile.exists()) crcFile.delete()
-      }
-
-      val snapshot = latestSnapshot(tablePath)
-      val scan = snapshot.getScanBuilder().build()
+      val kernelSnapshot = latestSnapshot(tablePath)
+      val scan = kernelSnapshot.getScanBuilder().build()
       val rows = collectScanFileRows(scan)
-
-      assert(rows != null, "Should be able to read scan files without NumberFormatException")
+      assert(rows != null)
     }
   }
 }
