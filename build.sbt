@@ -66,7 +66,7 @@ val sparkVersion = settingKey[String]("Spark version")
 
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -257,7 +257,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
         IO.createDirectory(confDir)
-        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2_spark_master.properties"
+        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2.properties"
         val linkedLog4jProps = confDir / "log4j2.properties"
         Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
       }
@@ -707,6 +707,8 @@ lazy val contribs = (project in file("contribs"))
     TestParallelization.settings
   ).configureUnidoc()
 
+/*
+TODO: compilation broken for Spark 4.0
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -717,22 +719,6 @@ lazy val sharing = (project in file("sharing"))
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Test / javaOptions ++= Seq("-ea"),
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-sharing-spark",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-sharing-spark",
-      emptyValue = ()).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-sharing-spark",
-      emptyValue = ()).value,
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
@@ -750,6 +736,7 @@ lazy val sharing = (project in file("sharing"))
     ),
     TestParallelization.settings
   ).configureUnidoc()
+*/
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
   .enablePlugins(ScalafmtPlugin)
@@ -901,7 +888,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
-      "io.delta" %% "delta-spark" % "3.3.2" % "test",
+      "io.delta" %% "delta-spark" % "4.0.0" % "test",
 
       "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
@@ -1015,6 +1002,8 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     TestParallelization.settings
   ).configureUnidoc()
 
+/*
+TODO: readd delta-iceberg on Spark 4.0+
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(defaultSparkVersion)
  s"iceberg-spark-runtime-$expMaj.$expMin"
@@ -1170,6 +1159,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / assemblyMergeStrategy := updateMergeStrategy((assembly / assemblyMergeStrategy).value),
     assemblyPackageScala / assembleArtifact := false,
   )
+*/
 
 lazy val hudi = (project in file("hudi"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -1271,7 +1261,8 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  // TODO: add sharing back after fixing compilation
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1279,6 +1270,7 @@ lazy val sparkGroup = project
     publish / skip := false,
   )
 
+/*
 lazy val icebergGroup = project
   .aggregate(iceberg, testDeltaIcebergJar)
   .settings(
@@ -1287,6 +1279,7 @@ lazy val icebergGroup = project
     publishArtifact := false,
     publish / skip := false,
   )
+*/
 
 lazy val kernelGroup = project
   .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)

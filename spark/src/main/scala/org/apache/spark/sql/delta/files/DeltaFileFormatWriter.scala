@@ -29,7 +29,7 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
 
 import org.apache.spark._
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.internal.io.{FileCommitProtocol, SparkHadoopWriterUtils}
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.sql.SparkSession
@@ -55,7 +55,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  *  values to data files. Specifically L123-126, L132, and L140 where it adds option
  *  WRITE_PARTITION_COLUMNS
  */
-object DeltaFileFormatWriter extends LoggingShims {
+object DeltaFileFormatWriter extends Logging {
 
   /**
    * A variable used in tests to check whether the output ordering of the query matches the

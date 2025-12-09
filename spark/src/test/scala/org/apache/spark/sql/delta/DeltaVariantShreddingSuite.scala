@@ -161,36 +161,36 @@ class DeltaVariantShreddingSuite
     // Table property not present or false
     Seq("", s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'false') ")
       .foreach { tblProperties =>
-      withTable("tbl") {
-        withTempDir { dir =>
-          sql("CREATE TABLE tbl (i long, v variant) USING DELTA " + tblProperties +
-            s"LOCATION '${dir.getAbsolutePath}'")
-          withSQLConf(SQLConf.VARIANT_WRITE_SHREDDING_ENABLED.key -> true.toString,
-            SQLConf.VARIANT_ALLOW_READING_SHREDDED.key -> true.toString,
-            SQLConf.VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST.key -> schema) {
+        withTable("tbl") {
+          withTempDir { dir =>
+            sql("CREATE TABLE tbl (i long, v variant) USING DELTA " + tblProperties +
+              s"LOCATION '${dir.getAbsolutePath}'")
+            withSQLConf(SQLConf.VARIANT_WRITE_SHREDDING_ENABLED.key -> true.toString,
+              SQLConf.VARIANT_ALLOW_READING_SHREDDED.key -> true.toString,
+              SQLConf.VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST.key -> schema) {
 
-            val e = intercept[DeltaSparkException] {
-              df.write.format("delta").mode("append").saveAsTable("tbl")
+              val e = intercept[DeltaSparkException] {
+                df.write.format("delta").mode("append").saveAsTable("tbl")
+              }
+              checkError(e, "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED", parameters = Map())
+              assert(e.getMessage.contains(
+                "Attempted to write shredded Variants but the table does not support shredded " +
+                  "writes. Consider setting the table property enableVariantShredding to true."))
+              assert(numShreddedFiles(dir.getAbsolutePath, validation = { field: GroupType =>
+                field.getName == "v" && (field.getType("typed_value") match {
+                  case t: GroupType =>
+                    t.getFields.asScala.map(_.getName).toSet == Set("a", "b", "c")
+                  case _ => false
+                })
+              }) == 0)
+              checkAnswer(
+                spark.read.format("delta").load(dir.getAbsolutePath).selectExpr("i", "to_json(v)"),
+                Seq()
+              )
             }
-            checkError(e, "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED", parameters = Map())
-            assert(e.getMessage.contains(
-              "Attempted to write shredded Variants but the table does not support shredded " +
-                "writes. Consider setting the table property enableVariantShredding to true."))
-            assert(numShreddedFiles(dir.getAbsolutePath, validation = { field: GroupType =>
-              field.getName == "v" && (field.getType("typed_value") match {
-                case t: GroupType =>
-                  t.getFields.asScala.map(_.getName).toSet == Set("a", "b", "c")
-                case _ => false
-              })
-            }) == 0)
-            checkAnswer(
-              spark.read.format("delta").load(dir.getAbsolutePath).selectExpr("i", "to_json(v)"),
-              Seq()
-            )
           }
         }
       }
-    }
   }
 
   test("Set table property to invalid value") {
