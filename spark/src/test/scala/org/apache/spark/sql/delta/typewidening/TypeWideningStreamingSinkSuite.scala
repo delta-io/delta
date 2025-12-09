@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.execution.streaming.StreamExecution
+import org.apache.spark.sql.execution.streaming.runtime.StreamExecution
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types._

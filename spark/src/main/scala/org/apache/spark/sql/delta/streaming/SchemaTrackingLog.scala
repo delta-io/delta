@@ -28,7 +28,8 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 
 import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.execution.streaming.{HDFSMetadataLog, MetadataVersionUtil}
+import org.apache.spark.sql.execution.streaming.HDFSMetadataLog
+import org.apache.spark.sql.execution.streaming.checkpointing.MetadataVersionUtil
 import org.apache.spark.sql.types.{DataType, StructType}
 
 /**

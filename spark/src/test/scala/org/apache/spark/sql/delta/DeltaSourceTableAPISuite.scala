@@ -27,6 +27,7 @@ import org.apache.spark.sql.{AnalysisException, Dataset}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.SessionCatalog.DEFAULT_DATABASE
 import org.apache.spark.sql.execution.streaming._
+import org.apache.spark.sql.execution.streaming.runtime.MemoryStream
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamTest}
 import org.apache.spark.util.Utils
 

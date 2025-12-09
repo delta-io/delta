@@ -137,7 +137,6 @@ class DeltaSqlParser(val delegate: ParserInterface)
         throw new ParseException(
           command = Option(command),
           start = position,
-          stop = position,
           errorClass = "DELTA_PARSING_ANALYSIS_ERROR",
           messageParameters = Map("msg" -> e.message))
     }
