@@ -19,7 +19,6 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -28,7 +27,6 @@ import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import java.util.ArrayList;
 import java.util.Optional;
-import org.apache.hadoop.conf.Configuration;
 
 /**
  * Snapshot manager for Unity Catalog managed tables.
@@ -48,18 +46,18 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    *
    * @param ucCatalogManagedClient the UC client for catalog-managed operations
    * @param tableInfo the UC table information (tableId, tablePath, etc.)
-   * @param hadoopConf Hadoop configuration for filesystem operations
+   * @param engine the Kernel engine for table operations
    */
   public UCManagedTableSnapshotManager(
       UCCatalogManagedClient ucCatalogManagedClient,
       UCTableInfo tableInfo,
-      Configuration hadoopConf) {
+      Engine engine) {
     this.ucCatalogManagedClient =
         requireNonNull(ucCatalogManagedClient, "ucCatalogManagedClient is null");
     requireNonNull(tableInfo, "tableInfo is null");
     this.tableId = tableInfo.getTableId();
     this.tablePath = tableInfo.getTablePath();
-    this.engine = DefaultEngine.create(requireNonNull(hadoopConf, "hadoopConf is null"));
+    this.engine = requireNonNull(engine, "engine is null");
   }
 
   @Override
