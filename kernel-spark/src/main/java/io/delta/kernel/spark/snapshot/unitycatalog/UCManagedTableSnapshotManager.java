@@ -31,8 +31,8 @@ import org.apache.hadoop.conf.Configuration;
 /**
  * Snapshot manager for Unity Catalog managed tables.
  *
- * <p>This implementation delegates to {@link UCCatalogManagedClient} for all snapshot and commit
- * operations, leveraging UC's ratified commits as the source of truth.
+ * <p>Used for tables with the catalog-managed commit feature enabled. Unity Catalog serves as the
+ * source of truth for the table's commit history.
  */
 public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
 
