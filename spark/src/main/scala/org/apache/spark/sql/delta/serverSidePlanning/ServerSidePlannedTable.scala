@@ -31,6 +31,7 @@ import org.apache.spark.sql.connector.catalog.{SupportsRead, Table, TableCapabil
 import org.apache.spark.sql.connector.read._
 import org.apache.spark.sql.execution.datasources.{FileFormat, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.sources.{And, Filter}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -196,16 +197,32 @@ class ServerSidePlannedTable(
 
 /**
  * ScanBuilder that uses ServerSidePlanningClient to plan the scan.
+ * Implements SupportsPushDownFilters to enable WHERE clause pushdown to the server.
  */
 class ServerSidePlannedScanBuilder(
     spark: SparkSession,
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient) extends ScanBuilder {
+    planningClient: ServerSidePlanningClient)
+  extends ScanBuilder with SupportsPushDownFilters {
+
+  // Filters that have been pushed down and will be sent to the server
+  private var _pushedFilters: Array[Filter] = Array.empty
+
+  override def pushFilters(filters: Array[Filter]): Array[Filter] = {
+    // Store filters to send to catalog, but return all as residuals.
+    // Since we don't know what the catalog can handle yet, we conservatively claim we handle
+    // none. Even if the catalog applies some filters, Spark will redundantly re-apply them.
+    _pushedFilters = filters
+    filters  // Return all as residuals
+  }
+
+  override def pushedFilters(): Array[Filter] = _pushedFilters
 
   override def build(): Scan = {
-    new ServerSidePlannedScan(spark, databaseName, tableName, tableSchema, planningClient)
+    new ServerSidePlannedScan(
+      spark, databaseName, tableName, tableSchema, planningClient, _pushedFilters)
   }
 }
 
@@ -217,17 +234,30 @@ class ServerSidePlannedScan(
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient) extends Scan with Batch {
+    planningClient: ServerSidePlanningClient,
+    pushedFilters: Array[Filter]) extends Scan with Batch {
 
   override def readSchema(): StructType = tableSchema
 
   override def toBatch: Batch = this
 
-  // Call the server-side planning API once and store the result
-  // Filter parameter will be wired up in a subsequent PR
-  private val scanPlan = planningClient.planScan(databaseName, tableName, None)
+  // Convert pushed filters to a single Spark Filter for the API call.
+  // If no filters, pass None. If filters exist, combine them into a single filter.
+  private val combinedFilter: Option[Filter] = {
+    if (pushedFilters.isEmpty) {
+      None
+    } else if (pushedFilters.length == 1) {
+      Some(pushedFilters.head)
+    } else {
+      // Combine multiple filters with And
+      Some(pushedFilters.reduce((left, right) => And(left, right)))
+    }
+  }
 
   override def planInputPartitions(): Array[InputPartition] = {
+    // Call the server-side planning API to get the scan plan
+    val scanPlan = planningClient.planScan(databaseName, tableName, combinedFilter)
+
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>
       ServerSidePlannedFileInputPartition(file.filePath, file.fileSizeInBytes, file.fileFormat)
