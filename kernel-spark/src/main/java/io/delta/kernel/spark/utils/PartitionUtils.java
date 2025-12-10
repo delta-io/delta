@@ -27,6 +27,7 @@ import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.PartitioningUtils;
@@ -74,6 +75,10 @@ public class PartitionUtils {
   /**
    * Build the partition {@link InternalRow} from kernel partition values by casting them to the
    * desired Spark types using the session time zone for temporal types.
+   *
+   * <p>Note: Partition values in AddFile use physical column names as keys when column mapping is
+   * enabled. This method uses DeltaColumnMapping.getPhysicalName to map from logical schema fields
+   * to physical partition value keys.
    */
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
@@ -87,10 +92,13 @@ public class PartitionUtils {
 
     final Object[] values = new Object[numPartCols];
 
-    // Build field name -> index map once
-    final Map<String, Integer> fieldIndex = new HashMap<>(numPartCols);
+    // Build physical name -> index map once
+    // Partition values use physical names as keys when column mapping is enabled
+    final Map<String, Integer> physicalNameToIndex = new HashMap<>(numPartCols);
     for (int i = 0; i < numPartCols; i++) {
-      fieldIndex.put(partitionSchema.fields()[i].name(), i);
+      StructField field = partitionSchema.fields()[i];
+      String physicalName = DeltaColumnMapping.getPhysicalName(field);
+      physicalNameToIndex.put(physicalName, i);
       values[i] = null;
     }
 
@@ -98,7 +106,7 @@ public class PartitionUtils {
     for (int idx = 0; idx < partitionValues.getSize(); idx++) {
       final String key = partitionValues.getKeys().getString(idx);
       final String strVal = partitionValues.getValues().getString(idx);
-      final Integer pos = fieldIndex.get(key);
+      final Integer pos = physicalNameToIndex.get(key);
       if (pos != null) {
         final StructField field = partitionSchema.fields()[pos];
         values[pos] =
