@@ -39,7 +39,7 @@ import org.apache.spark.sql.SparkSession
  * It caches the UCCommitCoordinatorClient instance for a given metastore ID upon its first access.
  */
 object UCCommitCoordinatorBuilder
-    extends CatalogOwnedCommitCoordinatorBuilder with DeltaLogging {
+  extends CatalogOwnedCommitCoordinatorBuilder with DeltaLogging {
 
   /** Prefix for Spark SQL catalog configurations. */
   final private val SPARK_SQL_CATALOG_PREFIX = "spark.sql.catalog."
@@ -55,13 +55,13 @@ object UCCommitCoordinatorBuilder
   final private val TOKEN_SUFFIX = "token"
 
   /** Suffix for the OAuth URI configuration of a catalog */
-  final private val OAUTH_URI_SUFFIX = "oauth.uri"
+  final private val OAUTH_URI_SUFFIX = "auth.oauth.uri"
 
   /** Suffix for the OAuth client id configuration of a catalog */
-  final private val OAUTH_CLIENT_ID_SUFFIX = "oauth.clientId"
+  final private val OAUTH_CLIENT_ID_SUFFIX = "auth.oauth.clientId"
 
   /** Suffix for the OAuth client secret configuration of a catalog */
-  final private val OAUTH_CLIENT_SECRET_SUFFIX = "oauth.clientSecret"
+  final private val OAUTH_CLIENT_SECRET_SUFFIX = "auth.oauth.clientSecret"
 
   /** Cache for UCCommitCoordinatorClient instances. */
   private val commitCoordinatorClientCache =
@@ -88,8 +88,8 @@ object UCCommitCoordinatorBuilder
   }
 
   override def buildForCatalog(
-      spark: SparkSession,
-      catalogName: String): CommitCoordinatorClient = {
+                                spark: SparkSession,
+                                catalogName: String): CommitCoordinatorClient = {
     val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
       case Some((_, ucClientParams)) => ucClientParams.buildUCClient(ucClientFactory)
       case None =>
@@ -194,9 +194,9 @@ object UCCommitCoordinatorBuilder
    *
    * spark.sql.catalog.catalog6 = "io.unitycatalog.connectors.spark.UCSingleCatalog"
    * spark.sql.catalog.catalog6.uri = "https://local:8080/"
-   * spark.sql.catalog.catalog6.oauth.uri = "https://local:8081/"
-   * spark.sql.catalog.catalog6.oauth.clientId = "client-id"
-   * spark.sql.catalog.catalog6.oauth.clientSecret = "client-secret"
+   * spark.sql.catalog.catalog6.auth.oauth.uri = "https://local:8081/"
+   * spark.sql.catalog.catalog6.auth.oauth.clientId = "client-id"
+   * spark.sql.catalog.catalog6.auth.oauth.clientSecret = "client-secret"
    *
    * This method would return:
    * List(
