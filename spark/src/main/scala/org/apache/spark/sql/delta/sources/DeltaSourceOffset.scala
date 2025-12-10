@@ -141,6 +141,20 @@ object DeltaSourceOffset extends Logging {
   }
 
   /**
+   * Validate and parse a DeltaSourceOffset from its JSON serialized format
+   * @param reservoirId Table id
+   * @param json Raw JSON string
+   */
+  def apply(reservoirId: String, json: String): DeltaSourceOffset = {
+    val o = JsonUtils.mapper.readValue[DeltaSourceOffset](json)
+    if (o.reservoirId != reservoirId) {
+      throw DeltaErrors.differentDeltaTableReadByStreamingSource(
+        newTableId = reservoirId, oldTableId = o.reservoirId)
+    }
+    o
+  }
+
+  /**
    * Validate and parse a DeltaSourceOffset from its serialized format
    * @param reservoirId Table id
    * @param offset Raw streaming offset
@@ -148,13 +162,7 @@ object DeltaSourceOffset extends Logging {
   def apply(reservoirId: String, offset: OffsetV2): DeltaSourceOffset = {
     offset match {
       case o: DeltaSourceOffset => o
-      case s =>
-        val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
-        if (o.reservoirId != reservoirId) {
-          throw DeltaErrors.differentDeltaTableReadByStreamingSource(
-            newTableId = reservoirId, oldTableId = o.reservoirId)
-        }
-        o
+      case s => apply(reservoirId, s.json)
     }
   }
 
