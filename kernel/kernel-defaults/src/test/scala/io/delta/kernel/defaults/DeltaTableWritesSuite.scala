@@ -1262,8 +1262,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   ///////////////////////////////////////////////////////////////////////////
 
   private def createAddFileRow(
-                                path: String = s"part-${UUID.randomUUID()}.parquet",
-                                dataChange: Boolean = true): Row = {
+      path: String = s"part-${UUID.randomUUID()}.parquet",
+      dataChange: Boolean = true): Row = {
     import io.delta.kernel.internal.actions.{AddFile, SingleAction}
     import io.delta.kernel.internal.util.PartitionUtils
 
@@ -1289,8 +1289,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   // Helper to create a mock RemoveFile action row
   private def createRemoveFileRow(
-                                   path: String,
-                                   dataChange: Boolean = true): Row = {
+      path: String,
+      dataChange: Boolean = true): Row = {
     import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
 
     val removeFileRow = new GenericRow(
