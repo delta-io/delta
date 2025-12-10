@@ -40,6 +40,8 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
    * @param optimizationsEnabled whether to enable optimizations (splits, predicate pushdown)
    * @param tablePath table path for deletion vector support
    * @param isCDCRead whether this is a CDC read
+   * @param useMetadataRowIndex whether to use _metadata.row_index for DV filtering; V2 can
+   *     explicitly pass false for Phase 1 (no file splitting support)
    */
   public DeltaParquetFileFormatV2(
       Protocol protocol,
@@ -48,14 +50,16 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
       boolean nullableRowTrackingGeneratedFields,
       boolean optimizationsEnabled,
       Option<String> tablePath,
-      boolean isCDCRead) {
+      boolean isCDCRead,
+      Option<Boolean> useMetadataRowIndex) {
     super(
         new ProtocolMetadataAdapterV2(protocol, metadata),
         nullableRowTrackingConstantFields,
         nullableRowTrackingGeneratedFields,
         optimizationsEnabled,
         tablePath,
-        isCDCRead);
+        isCDCRead,
+        useMetadataRowIndex.map(x -> x));
   }
 
   @Override

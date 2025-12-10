@@ -62,17 +62,15 @@ abstract class DeltaParquetFileFormatBase(
     protected val nullableRowTrackingGeneratedFields: Boolean = false,
     protected val optimizationsEnabled: Boolean = true,
     protected val tablePath: Option[String] = None,
-    protected val isCDCRead: Boolean = false)
+    protected val isCDCRead: Boolean = false,
+    protected val useMetadataRowIndex: Option[Boolean] = None)
   extends ParquetFileFormat with Logging {
 
   // Validate either we have all arguments for DV enabled read or none of them.
   if (hasTablePath) {
-    SparkSession.getActiveSession.map { session =>
-      val useMetadataRowIndex =
-        session.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
-      require(useMetadataRowIndex == optimizationsEnabled,
-        "Wrong arguments for Delta table scan with deletion vectors")
-    }
+    useMetadataRowIndex.foreach(value =>
+      require(value == optimizationsEnabled,
+        "Wrong arguments for Delta table scan with deletion vectors"))
   }
 
   SparkSession.getActiveSession.ifDefined { session =>
@@ -149,8 +147,9 @@ abstract class DeltaParquetFileFormatBase(
       options: Map[String, String],
       hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
 
-    val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
-    val useMetadataRowIndex = sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
+    // Use explicitly provided value, or read from config
+    val useMetadataRowIndex = this.useMetadataRowIndex.getOrElse(
+      sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX))
 
     val parquetDataReader: PartitionedFile => Iterator[InternalRow] =
       super.buildReaderWithPartitionValues(
@@ -532,7 +531,9 @@ case class DeltaParquetFileFormat(
     nullableRowTrackingGeneratedFields = nullableRowTrackingGeneratedFields,
     optimizationsEnabled = optimizationsEnabled,
     tablePath = tablePath,
-    isCDCRead = isCDCRead) {
+    isCDCRead = isCDCRead,
+    useMetadataRowIndex = SparkSession.getActiveSession.map(
+      _.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX))) {
 
   /**
    * We sometimes need to replace FileFormat within LogicalPlans, so we have to override
