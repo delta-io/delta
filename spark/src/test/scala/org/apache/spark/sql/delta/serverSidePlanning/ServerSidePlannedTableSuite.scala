@@ -176,4 +176,25 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       )
     }
   }
+
+  test("fromTable returns metadata with empty defaults for non-UC catalogs") {
+    import org.apache.spark.sql.connector.catalog.Identifier
+
+    // Create a simple identifier for testing
+    val ident = Identifier.of(Array("my_catalog", "my_schema"), "my_table")
+
+    // Call fromTable with a null table (we only use the identifier for catalog name extraction)
+    val metadata = ServerSidePlanningMetadata.fromTable(
+      table = null,
+      spark = spark,
+      ident = ident,
+      isUnityCatalog = false
+    )
+
+    // Verify the metadata has expected defaults
+    assert(metadata.catalogName == "my_catalog")
+    assert(metadata.planningEndpointUri == "")
+    assert(metadata.authToken.isEmpty)
+    assert(metadata.tableProperties.isEmpty)
+  }
 }
