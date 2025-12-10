@@ -1213,50 +1213,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   // Change Data Feed (CDF) tests
   ///////////////////////////////////////////////////////////////////////////
 
-  private def createAddFileRow(
-      path: String = s"part-${UUID.randomUUID()}.parquet",
-      dataChange: Boolean = true): Row = {
-    import io.delta.kernel.internal.actions.{AddFile, SingleAction}
-    import io.delta.kernel.internal.util.PartitionUtils
-
-    val partitionValues = PartitionUtils.serializePartitionMap(
-      java.util.Collections.emptyMap[String, Literal]())
-
-    val addFileRow = AddFile.createAddFileRow(
-      testSchema, // physicalSchema
-      path,
-      partitionValues,
-      100L, // size
-      System.currentTimeMillis(), // modificationTime
-      dataChange,
-      Optional.empty(), // deletionVector
-      Optional.empty(), // tags
-      Optional.empty(), // baseRowId
-      Optional.empty(), // defaultRowCommitVersion
-      Optional.empty()
-    ) // stats
-
-    SingleAction.createAddFileSingleAction(addFileRow)
-  }
-
-  // Helper to create a mock RemoveFile action row
-  private def createRemoveFileRow(
-      path: String,
-      dataChange: Boolean = true): Row = {
-    import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
-
-    val removeFileRow = new GenericRow(
-      RemoveFile.FULL_SCHEMA,
-      Map[Integer, Object](
-        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> path,
-        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) -> Long.box(
-          System.currentTimeMillis()),
-        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> Boolean.box(dataChange),
-        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) -> Long.box(100L)).asJava)
-
-    SingleAction.createRemoveFileSingleAction(removeFileRow)
-  }
-
   val cdfTestCases: Seq[(String, Seq[Row], Boolean)] = Seq(
     ("add with dataChange=true", Seq(createAddFileRow(dataChange = true)), true),
     ("add with dataChange=false", Seq(createAddFileRow(dataChange = false)), true),
@@ -1299,6 +1255,54 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         }
       }
     }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Helper functions
+  ///////////////////////////////////////////////////////////////////////////
+
+  private def createAddFileRow(
+                                path: String = s"part-${UUID.randomUUID()}.parquet",
+                                dataChange: Boolean = true): Row = {
+    import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+    import io.delta.kernel.internal.util.PartitionUtils
+
+    val partitionValues = PartitionUtils.serializePartitionMap(
+      java.util.Collections.emptyMap[String, Literal]())
+
+    val addFileRow = AddFile.createAddFileRow(
+      testSchema, // physicalSchema
+      path,
+      partitionValues,
+      100L, // size
+      System.currentTimeMillis(), // modificationTime
+      dataChange,
+      Optional.empty(), // deletionVector
+      Optional.empty(), // tags
+      Optional.empty(), // baseRowId
+      Optional.empty(), // defaultRowCommitVersion
+      Optional.empty()
+    ) // stats
+
+    SingleAction.createAddFileSingleAction(addFileRow)
+  }
+
+  // Helper to create a mock RemoveFile action row
+  private def createRemoveFileRow(
+                                   path: String,
+                                   dataChange: Boolean = true): Row = {
+    import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
+
+    val removeFileRow = new GenericRow(
+      RemoveFile.FULL_SCHEMA,
+      Map[Integer, Object](
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> path,
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) -> Long.box(
+          System.currentTimeMillis()),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> Boolean.box(dataChange),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) -> Long.box(100L)).asJava)
+
+    SingleAction.createRemoveFileSingleAction(removeFileRow)
   }
 
   def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
