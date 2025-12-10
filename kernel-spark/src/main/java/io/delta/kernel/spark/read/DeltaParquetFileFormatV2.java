@@ -28,9 +28,19 @@ import scala.Option;
  */
 public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
 
-  private final Protocol protocol;
-  private final Metadata metadata;
+  private static final long serialVersionUID = 1L;
 
+  /**
+   * Creates a DeltaParquetFileFormatV2.
+   *
+   * @param protocol Kernel's Protocol
+   * @param metadata Kernel's Metadata
+   * @param nullableRowTrackingConstantFields whether row tracking constant fields are nullable
+   * @param nullableRowTrackingGeneratedFields whether row tracking generated fields are nullable
+   * @param optimizationsEnabled whether to enable optimizations (splits, predicate pushdown)
+   * @param tablePath table path for deletion vector support
+   * @param isCDCRead whether this is a CDC read
+   */
   public DeltaParquetFileFormatV2(
       Protocol protocol,
       Metadata metadata,
@@ -46,8 +56,6 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
         optimizationsEnabled,
         tablePath,
         isCDCRead);
-    this.protocol = protocol;
-    this.metadata = metadata;
   }
 
   @Override

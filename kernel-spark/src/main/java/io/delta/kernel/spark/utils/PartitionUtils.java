@@ -45,7 +45,7 @@ import scala.Function1;
 import scala.Option;
 import scala.Tuple2;
 import scala.collection.Iterator;
-import scala.collection.JavaConverters;
+import scala.jdk.javaapi.CollectionConverters;
 
 /** Utility class for partition-related operations shared across Delta Kernel Spark components. */
 public class PartitionUtils {
@@ -120,7 +120,7 @@ public class PartitionUtils {
       }
     }
     return InternalRow.fromSeq(
-        JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
+        CollectionConverters.asScala(Arrays.asList(values).iterator()).toSeq());
   }
 
   /**
@@ -175,6 +175,9 @@ public class PartitionUtils {
     Protocol protocol = snapshotImpl.getProtocol();
     Metadata metadata = snapshotImpl.getMetadata();
     String tablePath = snapshotImpl.getDataPath().toString();
+    if (!tablePath.endsWith("/")) {
+      tablePath = tablePath + "/";
+    }
 
     boolean enableVectorizedReader =
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
@@ -189,11 +192,11 @@ public class PartitionUtils {
         new DeltaParquetFileFormatV2(
             protocol,
             metadata,
-            false, // nullableRowTrackingConstantFields
-            false, // nullableRowTrackingGeneratedFields
-            true, // optimizationsEnabled
+            /* nullableRowTrackingConstantFields */ false,
+            /* nullableRowTrackingGeneratedFields */ false,
+            /* optimizationsEnabled */ true,
             Option.apply(tablePath),
-            false); // isCDCRead
+            /* isCDCRead */ false);
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(
@@ -201,7 +204,7 @@ public class PartitionUtils {
             dataSchema,
             partitionSchema,
             readDataSchema,
-            JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
+            CollectionConverters.asScala(Arrays.asList(dataFilters)).toSeq(),
             optionsWithVectorizedReading,
             hadoopConf);
 
