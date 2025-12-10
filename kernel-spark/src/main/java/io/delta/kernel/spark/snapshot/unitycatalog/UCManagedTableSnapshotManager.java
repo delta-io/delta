@@ -34,7 +34,7 @@ import org.apache.hadoop.conf.Configuration;
  * <p>This implementation delegates to {@link UCCatalogManagedClient} for all snapshot and commit
  * operations, leveraging UC's ratified commits as the source of truth.
  */
-public class UCManagedSnapshotManager implements DeltaSnapshotManager {
+public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
 
   private final UCCatalogManagedClient ucCatalogManagedClient;
   private final String tableId;
@@ -42,13 +42,13 @@ public class UCManagedSnapshotManager implements DeltaSnapshotManager {
   private final Engine engine;
 
   /**
-   * Creates a new UCManagedSnapshotManager.
+   * Creates a new UCManagedTableSnapshotManager.
    *
    * @param ucCatalogManagedClient the UC client for catalog-managed operations
    * @param tableInfo the UC table information (tableId, tablePath, etc.)
    * @param hadoopConf Hadoop configuration for filesystem operations
    */
-  public UCManagedSnapshotManager(
+  public UCManagedTableSnapshotManager(
       UCCatalogManagedClient ucCatalogManagedClient,
       UCTableInfo tableInfo,
       Configuration hadoopConf) {
@@ -64,14 +64,14 @@ public class UCManagedSnapshotManager implements DeltaSnapshotManager {
   public Snapshot loadLatestSnapshot() {
     // TODO: Implement in snapshotmanager-impl stack
     throw new UnsupportedOperationException(
-        "UCManagedSnapshotManager.loadLatestSnapshot not yet implemented");
+        "UCManagedTableSnapshotManager.loadLatestSnapshot not yet implemented");
   }
 
   @Override
   public Snapshot loadSnapshotAt(long version) {
     // TODO: Implement in snapshotmanager-impl stack
     throw new UnsupportedOperationException(
-        "UCManagedSnapshotManager.loadSnapshotAt not yet implemented");
+        "UCManagedTableSnapshotManager.loadSnapshotAt not yet implemented");
   }
 
   @Override
@@ -82,7 +82,7 @@ public class UCManagedSnapshotManager implements DeltaSnapshotManager {
       boolean canReturnEarliestCommit) {
     // TODO: Implement in snapshotmanager-impl stack
     throw new UnsupportedOperationException(
-        "UCManagedSnapshotManager.getActiveCommitAtTime not yet implemented");
+        "UCManagedTableSnapshotManager.getActiveCommitAtTime not yet implemented");
   }
 
   @Override
@@ -90,13 +90,13 @@ public class UCManagedSnapshotManager implements DeltaSnapshotManager {
       throws VersionNotFoundException {
     // TODO: Implement in snapshotmanager-impl stack
     throw new UnsupportedOperationException(
-        "UCManagedSnapshotManager.checkVersionExists not yet implemented");
+        "UCManagedTableSnapshotManager.checkVersionExists not yet implemented");
   }
 
   @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
     // TODO: Implement in snapshotmanager-impl stack
     throw new UnsupportedOperationException(
-        "UCManagedSnapshotManager.getTableChanges not yet implemented");
+        "UCManagedTableSnapshotManager.getTableChanges not yet implemented");
   }
 }
