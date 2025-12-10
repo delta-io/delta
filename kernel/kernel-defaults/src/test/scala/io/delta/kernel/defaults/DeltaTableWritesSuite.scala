@@ -1271,7 +1271,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       java.util.Collections.emptyMap[String, Literal]())
 
     val addFileRow = AddFile.createAddFileRow(
-      testSchema, // physicalSchema
+      testSchema,
       path,
       partitionValues,
       100L, // size
@@ -1287,7 +1287,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     SingleAction.createAddFileSingleAction(addFileRow)
   }
 
-  // Helper to create a mock RemoveFile action row
   private def createRemoveFileRow(
       path: String,
       dataChange: Boolean = true): Row = {

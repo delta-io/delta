@@ -128,7 +128,7 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
           commitReplaceTable(
             engine,
             tablePath,
-            tableProperties = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"))
+            tableProperties = Map("delta.constraints.id" -> "id > 0"))
         }.getMessage.contains("Unsupported Delta writer feature"))
     }
   }
@@ -138,7 +138,7 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
       spark.sql(
         s"""
           |CREATE TABLE delta.`$tablePath` (id INT) USING DELTA
-          |TBLPROPERTIES('delta.enableChangeDataFeed' = 'true')
+          |TBLPROPERTIES('delta.constraints.id' = 'id > 0')
           |""".stripMargin)
       assert(
         intercept[KernelException] {
