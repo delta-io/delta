@@ -1216,42 +1216,50 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   private def createAddFileRow(
       path: String = s"part-${UUID.randomUUID()}.parquet",
       dataChange: Boolean = true): Row = {
-    val schema = new StructType()
-      .add("path", STRING)
-      .add("partitionValues", new MapType(STRING, STRING, true))
-      .add("size", LONG)
-      .add("modificationTime", LONG)
-      .add("dataChange", BOOLEAN)
-      .add("stats", STRING)
+    import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+    import io.delta.kernel.internal.util.PartitionUtils
 
-    new GenericRow(
-      schema,
-      Map[Integer, Object](
-        Integer.valueOf(0) -> path,
-        Integer.valueOf(1) -> java.util.Collections.emptyMap[String, String](),
-        Integer.valueOf(2) -> Long.box(100L),
-        Integer.valueOf(3) -> Long.box(System.currentTimeMillis()),
-        Integer.valueOf(4) -> Boolean.box(dataChange),
-        Integer.valueOf(5) -> """{"numRecords":10}""").asJava)
+    // Create partition values as MapValue
+    val partitionValues = PartitionUtils.serializePartitionMap(
+      java.util.Collections.emptyMap[String, Literal]())
+
+    // Create an AddFile row with the proper schema
+    val addFileRow = AddFile.createAddFileRow(
+      testSchema, // physicalSchema
+      path,
+      partitionValues,
+      100L, // size
+      System.currentTimeMillis(), // modificationTime
+      dataChange,
+      Optional.empty(), // deletionVector
+      Optional.empty(), // tags
+      Optional.empty(), // baseRowId
+      Optional.empty(), // defaultRowCommitVersion
+      Optional.empty()
+    ) // stats
+
+    // Wrap in SingleAction
+    SingleAction.createAddFileSingleAction(addFileRow)
   }
 
   // Helper to create a mock RemoveFile action row
   private def createRemoveFileRow(
       path: String,
       dataChange: Boolean = true): Row = {
-    val schema = new StructType()
-      .add("path", STRING)
-      .add("partitionValues", new MapType(STRING, STRING, true))
-      .add("deletionTimestamp", LONG)
-      .add("dataChange", BOOLEAN)
+    import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
 
-    new GenericRow(
-      schema,
+    // Create a RemoveFile row with the proper schema manually
+    val removeFileRow = new GenericRow(
+      RemoveFile.FULL_SCHEMA,
       Map[Integer, Object](
-        Integer.valueOf(0) -> path,
-        Integer.valueOf(1) -> java.util.Collections.emptyMap[String, String](),
-        Integer.valueOf(2) -> Long.box(System.currentTimeMillis()),
-        Integer.valueOf(3) -> Boolean.box(dataChange)).asJava)
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> path,
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) -> Long.box(
+          System.currentTimeMillis()),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> Boolean.box(dataChange),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) -> Long.box(100L)).asJava)
+
+    // Wrap in SingleAction
+    SingleAction.createRemoveFileSingleAction(removeFileRow)
   }
 
   // Test cases: (description, actions, shouldSucceed)
