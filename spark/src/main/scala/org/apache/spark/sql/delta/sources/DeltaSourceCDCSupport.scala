@@ -109,7 +109,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     def filterFiles(
         fromVersion: Long,
         fromIndex: Long,
-        limits: Option[AdmissionLimits],
+        limits: Option[DeltaSource.AdmissionLimits],
         endOffset: Option[DeltaSourceOffset] = None): Iterator[IndexedFile] = {
 
       if (limits.isEmpty) {
@@ -239,7 +239,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       fromVersion: Long,
       fromIndex: Long,
       isInitialSnapshot: Boolean,
-      limits: Option[AdmissionLimits],
+      limits: Option[DeltaSource.AdmissionLimits],
       endOffset: Option[DeltaSourceOffset],
       verifyMetadataAction: Boolean = true
   ): Iterator[(Long, Iterator[IndexedFile], Option[CommitInfo])] = {

@@ -131,8 +131,8 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
   @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
     CommitRangeBuilder builder =
-        TableManager.loadCommitRange(tablePath)
-            .withStartBoundary(CommitRangeBuilder.CommitBoundary.atVersion(startVersion));
+        TableManager.loadCommitRange(
+            tablePath, CommitRangeBuilder.CommitBoundary.atVersion(startVersion));
 
     if (endVersion.isPresent()) {
       builder =

@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.MergeIntoMetricsShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
@@ -1041,8 +1040,7 @@ trait MergeIntoMetricsBase
         ((false, true), ("numTargetFilesAdded", 1)),
         ((false, false), (
           "numTargetFilesAdded",
-          // Depending on the Spark version, for non-partitioned tables we may add 1 or 2 files.
-          DELETE_WITH_DUPLICATE_NUM_TARGET_FILES_ADDED_NON_PARTITIONED_NO_CDF)
+          1)
         )
       )
     )

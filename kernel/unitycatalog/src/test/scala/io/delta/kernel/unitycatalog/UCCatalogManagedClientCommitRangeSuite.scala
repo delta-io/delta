@@ -52,9 +52,6 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       startTimestampOpt: Optional[java.lang.Long] = emptyLongOpt,
       endVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
       endTimestampOpt: Optional[java.lang.Long] = emptyLongOpt): Unit = {
-    require(!startVersionOpt.isPresent || !startTimestampOpt.isPresent)
-    require(!endVersionOpt.isPresent || !endTimestampOpt.isPresent)
-
     withUCClientAndTestTable { (ucClient, tablePath, _) =>
       val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
       val commitRange = loadCommitRange(
@@ -125,6 +122,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
     val ex = intercept[IllegalArgumentException] {
       loadCommitRange(
         ucCatalogManagedClient,
+        startVersionOpt = Optional.of(0L),
         endVersionOpt = Optional.of(2L),
         endTimestampOpt = Optional.of(200L))
     }
@@ -180,14 +178,28 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       testLoadCommitRange(
         expectedStartVersion = 0,
         expectedEndVersion = 2,
+        startVersionOpt = Optional.of(0L),
         endVersionOpt = Optional.of(9L))
     }
     assert(ex.getMessage.contains(
       "Cannot load commit range with end version 9 as the latest version ratified by UC is 2"))
   }
 
-  test("loadCommitRange loads with default boundaries (start=0, end=latest)") {
-    testLoadCommitRange(expectedStartVersion = 0, expectedEndVersion = 2)
+  test("loadCommitRange throws when no start boundary is provided") {
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+    val ex = intercept[IllegalArgumentException] {
+      loadCommitRange(ucCatalogManagedClient)
+    }
+    assert(ex.getMessage.contains("Must provide either a start timestamp or start version"))
+  }
+
+  test("loadCommitRange loads with default end boundary -> latest") {
+    testLoadCommitRange(
+      expectedStartVersion = 0,
+      expectedEndVersion = 2,
+      startVersionOpt = Optional.of(0L))
   }
 
   test("loadCommitRange loads with version boundaries") {
@@ -249,6 +261,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       testLoadCommitRange(
         expectedStartVersion = 1L,
         expectedEndVersion = 1L,
+        startVersionOpt = Optional.of(0),
         endTimestampOpt = Optional.of(v0Ts - 10))
     }
   }
@@ -260,18 +273,19 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
     val ex = intercept[RuntimeException] {
       loadCommitRange(
         ucCatalogManagedClient,
-        ucTableId = "nonExistentTableId")
+        ucTableId = "nonExistentTableId",
+        startVersionOpt = Optional.of(0L))
     }
     assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
   }
 
-  test("loadCommitRange for new table when UC maxRatifiedVersion is -1") {
+  test("loadCommitRange for new table when UC maxRatifiedVersion is 0") {
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucCatalogManagedClient =
-      createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
+    val ucCatalogManagedClient = createUCCatalogManagedClientForTableAfterCreate()
     val commitRange = loadCommitRange(
       ucCatalogManagedClient,
-      tablePath = tablePath)
+      tablePath = tablePath,
+      startVersionOpt = Optional.of(0L))
 
     assert(commitRange.getStartVersion == 0)
     assert(commitRange.getEndVersion == 0)

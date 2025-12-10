@@ -1,15 +1,18 @@
 package io.delta.kernel.spark.read;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
-import io.delta.kernel.spark.table.SparkTable;
+import io.delta.kernel.spark.catalog.SparkTable;
+import io.delta.kernel.spark.utils.ScalaUtils;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Expression;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -17,6 +20,7 @@ import org.apache.spark.sql.connector.expressions.LiteralValue;
 import org.apache.spark.sql.connector.expressions.filter.Predicate;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -261,5 +265,54 @@ public class SparkScanTest extends SparkDsv2TestBase {
     Field field = SparkScan.class.getDeclaredField("totalBytes");
     field.setAccessible(true);
     return (long) field.get(scan);
+  }
+
+  // ================================================================================================
+  // Tests for streaming options validation
+  // ================================================================================================
+
+  @Test
+  public void testValidateStreamingOptions_SupportedOptions() {
+    // Test with supported options (case insensitive) and custom user options
+    Map<String, String> javaOptions = new HashMap<>();
+    javaOptions.put("startingVersion", "0");
+    javaOptions.put("MaxFilesPerTrigger", "100");
+    javaOptions.put("MAXBYTESPERTRIGGER", "1g");
+    javaOptions.put("myCustomOption", "value");
+    scala.collection.immutable.Map<String, String> supportedOptions =
+        ScalaUtils.toScalaMap(javaOptions);
+    DeltaOptions deltaOptions = new DeltaOptions(supportedOptions, spark.sessionState().conf());
+
+    // Verify DeltaOptions can recognize the options (case insensitive)
+    assertEquals(true, deltaOptions.maxFilesPerTrigger().isDefined());
+    assertEquals(100, deltaOptions.maxFilesPerTrigger().get());
+    assertEquals(true, deltaOptions.maxBytesPerTrigger().isDefined());
+
+    // Should not throw - supported and custom options are allowed
+    SparkScan.validateStreamingOptions(deltaOptions);
+  }
+
+  @Test
+  public void testValidateStreamingOptions_UnsupportedOptions() {
+    // Test with blocked DeltaOptions, supported options, and custom user options
+    Map<String, String> javaOptions = new HashMap<>();
+    javaOptions.put("startingVersion", "0");
+    javaOptions.put("readChangeFeed", "true");
+    javaOptions.put("myCustomOption", "value");
+    scala.collection.immutable.Map<String, String> mixedOptions =
+        ScalaUtils.toScalaMap(javaOptions);
+    DeltaOptions deltaOptions = new DeltaOptions(mixedOptions, spark.sessionState().conf());
+
+    UnsupportedOperationException exception =
+        assertThrows(
+            UnsupportedOperationException.class,
+            () -> SparkScan.validateStreamingOptions(deltaOptions));
+
+    // Verify exact error message - only the blocked option should appear
+    // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
+    assertEquals(
+        "The following streaming options are not supported: [readchangefeed]. "
+            + "Supported options are: [startingVersion, maxFilesPerTrigger, maxBytesPerTrigger].",
+        exception.getMessage());
   }
 }

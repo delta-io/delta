@@ -229,7 +229,7 @@ class DeltaSharingFileIndexSuite
       profilePath: String,
       metaData: String): (Path, DeltaSharingFileIndex, DeltaSharingClient) = {
     val tablePath = new Path(s"$profilePath#$shareName.$schemaName.$sharedTableName")
-    val client = DeltaSharingRestClient(profilePath, false, "delta")
+    val client = DeltaSharingRestClient(profilePath, Map.empty, false, "delta")
 
     val spark = SparkSession.active
     val params = new DeltaSharingFileIndexParams(

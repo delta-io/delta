@@ -21,7 +21,6 @@ import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.DeltaExcludedBySparkVersionTestMixinShims
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.hooks.{AutoCompact, AutoCompactType}
@@ -56,14 +55,18 @@ trait AutoCompactTestUtils {
  * This class extends the [[CompactionSuiteBase]] and runs all the [[CompactionSuiteBase]] tests
  * with AutoCompaction.
  *
- * It also tests any AutoCompaction specific behavior.
+ * It also tests AutoCompaction specific behavior around configuration settings.
  */
-class AutoCompactSuite extends
+class AutoCompactConfigurationSuite extends
     CompactionTestHelperForAutoCompaction
   with DeltaSQLCommandTest
   with SharedSparkSession
-  with AutoCompactTestUtils
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with AutoCompactTestUtils {
+
+  private def setTableProperty(log: DeltaLog, key: String, value: String): Unit = {
+    spark.sql(s"ALTER TABLE delta.`${log.dataPath}` SET TBLPROPERTIES " +
+      s"($key = $value)")
+  }
 
   test("auto-compact-type: test table properties") {
     withTempDir { tempDir =>
@@ -107,6 +110,19 @@ class AutoCompactSuite extends
     }
   }
 
+}
+
+/**
+ * This class extends the [[CompactionSuiteBase]] and runs all the [[CompactionSuiteBase]] tests
+ * with AutoCompaction.
+ *
+ * It also tests AutoCompaction specific behavior around compaction execution.
+ */
+class AutoCompactExecutionSuite extends
+    CompactionTestHelperForAutoCompaction
+  with DeltaSQLCommandTest
+  with SharedSparkSession
+  with AutoCompactTestUtils {
   private def testBothModesViaProperty(testName: String)(f: String => Unit): Unit = {
     def runTest(autoCompactConfValue: String): Unit = {
       withTempDir { dir =>
@@ -223,7 +239,7 @@ class AutoCompactSuite extends
     checkAutoCompactionWorks(dir, spark.range(10).toDF("id"))
   }
 
-  testSparkMasterOnly("variant auto compact kicks in when enabled - table config") {
+  test("variant auto compact kicks in when enabled - table config") {
     withTempDir { dir =>
       withSQLConf(
           "spark.databricks.delta.properties.defaults.autoOptimize.autoCompact" -> "true",
@@ -235,7 +251,7 @@ class AutoCompactSuite extends
     }
   }
 
-  testSparkMasterOnly("variant auto compact kicks in when enabled - session config") {
+  test("variant auto compact kicks in when enabled - session config") {
     withTempDir { dir =>
       withSQLConf(
           DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
@@ -351,12 +367,22 @@ class AutoCompactSuite extends
   }
 }
 
-class AutoCompactIdColumnMappingSuite extends AutoCompactSuite
+class AutoCompactConfigurationIdColumnMappingSuite extends AutoCompactConfigurationSuite
   with DeltaColumnMappingEnableIdMode {
   override def runAllTests: Boolean = true
 }
 
-class AutoCompactNameColumnMappingSuite extends AutoCompactSuite
+class AutoCompactExecutionIdColumnMappingSuite extends AutoCompactExecutionSuite
+  with DeltaColumnMappingEnableIdMode {
+  override def runAllTests: Boolean = true
+}
+
+class AutoCompactConfigurationNameColumnMappingSuite extends AutoCompactConfigurationSuite
+  with DeltaColumnMappingEnableNameMode {
+  override def runAllTests: Boolean = true
+}
+
+class AutoCompactExecutionNameColumnMappingSuite extends AutoCompactExecutionSuite
   with DeltaColumnMappingEnableNameMode {
   override def runAllTests: Boolean = true
 }

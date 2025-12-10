@@ -58,8 +58,10 @@ import org.slf4j.LoggerFactory;
 public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
+  public static final String UC_PROPERTY_NAMESPACE_PREFIX = "io.unitycatalog.";
+
   /** Key for identifying Unity Catalog table ID. */
-  public static final String UC_TABLE_ID_KEY = "catalogManaged.unityCatalog.tableId";
+  public static final String UC_TABLE_ID_KEY = UC_PROPERTY_NAMESPACE_PREFIX + "tableId";
 
   protected final UCClient ucClient;
 
@@ -124,10 +126,12 @@ public class UCCatalogManagedClient {
 
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
-                final long ucTableVersion =
-                    getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
+                final long maxUcTableVersion = response.getLatestTableVersion();
+
                 versionOpt.ifPresent(
-                    version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));
+                    version ->
+                        validateTimeTravelVersionNotPastMax(ucTableId, version, maxUcTableVersion));
+
                 final List<ParsedLogData> logData =
                     getSortedKernelParsedDeltaDataFromRatifiedCommits(
                         ucTableId, response.getCommits());
@@ -149,7 +153,11 @@ public class UCCatalogManagedClient {
                                 .timeChecked(
                                     () ->
                                         loadLatestSnapshotForTimestampResolution(
-                                            engine, ucTableId, tablePath, logData, ucTableVersion));
+                                            engine,
+                                            ucTableId,
+                                            tablePath,
+                                            logData,
+                                            maxUcTableVersion));
                         snapshotBuilder =
                             snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
                       }
@@ -158,7 +166,7 @@ public class UCCatalogManagedClient {
                           snapshotBuilder
                               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
                               .withLogData(logData)
-                              .withMaxCatalogVersion(ucTableVersion)
+                              .withMaxCatalogVersion(maxUcTableVersion)
                               .build(engine);
                       metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
                       return snapshot;
@@ -204,21 +212,25 @@ public class UCCatalogManagedClient {
   }
 
   /**
-   * Loads a Kernel {@link CommitRange} for the provided boundaries. If no start boundary is
-   * provided, defaults to version 0. If no end boundary is provided, defaults to the latest
-   * version.
+   * Loads a Kernel {@link CommitRange} for the provided boundaries. If no end boundary is provided,
+   * defaults to the latest version.
+   *
+   * <p>A start boundary is required and must be specified using either {@code startVersionOpt} or
+   * {@code startTimestampOpt}. These parameters are mutually exclusive and at least one must be
+   * provided.
    *
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
    * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
    * @param tablePath The path to the Delta table in the underlying storage system.
    * @param startVersionOpt The optional start version boundary. This must be mutually exclusive
-   *     with startTimestampOpt.
+   *     with startTimestampOpt. Either this or startTimestampOpt must be provided.
    * @param startTimestampOpt The optional start timestamp boundary. This must be mutually exclusive
-   *     with startVersionOpt.
+   *     with startVersionOpt. Either this or startVersionOpt must be provided.
    * @param endVersionOpt The optional end version boundary. This must be mutually exclusive with
    *     endTimestampOpt.
    * @param endTimestampOpt The optional end timestamp boundary. This must be mutually exclusive
    *     with endVersionOpt.
+   * @throws IllegalArgumentException if neither startVersionOpt nor startTimestampOpt is provided
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
    * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and is
@@ -245,6 +257,9 @@ public class UCCatalogManagedClient {
     checkArgument(
         !endVersionOpt.isPresent() || !endTimestampOpt.isPresent(),
         "Cannot provide both an end timestamp and start version");
+    checkArgument(
+        startVersionOpt.isPresent() || startTimestampOpt.isPresent(),
+        "Must provide either a start timestamp or start version");
     if (startVersionOpt.isPresent() && endVersionOpt.isPresent()) {
       checkArgument(
           startVersionOpt.get() <= endVersionOpt.get(),
@@ -267,7 +282,7 @@ public class UCCatalogManagedClient {
         endVersionOpt.filter(v -> !startTimestampOpt.isPresent());
     final GetCommitsResponse response =
         getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
-    final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
+    final long ucTableVersion = response.getLatestTableVersion();
     validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
     final List<ParsedLogData> logData =
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
@@ -282,19 +297,20 @@ public class UCCatalogManagedClient {
         "TableManager.loadCommitRange",
         ucTableId,
         () -> {
-          CommitRangeBuilder commitRangeBuilder = TableManager.loadCommitRange(tablePath);
-
+          // Determine the start boundary (required - validated above)
+          CommitRangeBuilder.CommitBoundary startBoundary;
           if (startVersionOpt.isPresent()) {
-            commitRangeBuilder =
-                commitRangeBuilder.withStartBoundary(
-                    CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get()));
+            startBoundary = CommitRangeBuilder.CommitBoundary.atVersion(startVersionOpt.get());
+          } else {
+            // startTimestampOpt must be present due to validation above
+            startBoundary =
+                CommitRangeBuilder.CommitBoundary.atTimestamp(
+                    startTimestampOpt.get(), latestSnapshot.get());
           }
-          if (startTimestampOpt.isPresent()) {
-            commitRangeBuilder =
-                commitRangeBuilder.withStartBoundary(
-                    CommitRangeBuilder.CommitBoundary.atTimestamp(
-                        startTimestampOpt.get(), latestSnapshot.get()));
-          }
+
+          CommitRangeBuilder commitRangeBuilder =
+              TableManager.loadCommitRange(tablePath, startBoundary);
+
           if (endVersionOpt.isPresent()) {
             commitRangeBuilder =
                 commitRangeBuilder.withEndBoundary(
@@ -404,22 +420,7 @@ public class UCCatalogManagedClient {
     return response;
   }
 
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-  /**
-   * As of this writing, UC catalog service is not informed when 0.json is successfully written
-   * during table creation. Thus, when 0.json exists, the max ratified version returned by UC is -1.
-   */
-  private long getTrueUCTableVersion(String ucTableId, long maxRatifiedVersion) {
-    if (maxRatifiedVersion == -1) {
-      logger.info(
-          "[{}] UC max ratified version is -1. This means 0.json exists. Version is 0.", ucTableId);
-      return 0;
-    }
-
-    return maxRatifiedVersion;
-  }
-
-  private void validateLoadTableVersionExists(
+  private void validateTimeTravelVersionNotPastMax(
       String ucTableId, long tableVersionToLoad, long maxRatifiedVersion) {
     if (tableVersionToLoad > maxRatifiedVersion) {
       throw new IllegalArgumentException(

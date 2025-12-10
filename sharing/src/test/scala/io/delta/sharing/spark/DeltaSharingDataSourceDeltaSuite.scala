@@ -21,7 +21,7 @@ package io.delta.sharing.spark
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -43,8 +43,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     extends QueryTest
     with DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
-    with DeltaSharingDataSourceDeltaTestUtils
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    with DeltaSharingDataSourceDeltaTestUtils {
 
   override def beforeEach(): Unit = {
     spark.sessionState.conf.setConfString(
@@ -1519,7 +1518,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     VariantTypeTableFeature,
     VariantShreddingPreviewTableFeature
   ).foreach { feature =>
-    testSparkMasterOnly(s"basic variant test - table feature: $feature") {
+    test(s"basic variant test - table feature: $feature") {
       withTempDir { tempDir =>
         val extraConfs = feature match {
           case VariantShreddingPreviewTableFeature => Map(
@@ -1568,6 +1567,43 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
             }
           }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read data with inline credentials") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_inline_creds"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
+
+        val sharedTableName = "shared_table_inline_creds"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        val map = Map(
+          "shareCredentialsVersion" -> "1",
+          "bearerToken" -> "xxx",
+          "endpoint" -> "https://xxx/delta-sharing/",
+          "expirationTime" -> "2099-01-01T00:00:00.000Z"
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val expectedSchema: StructType = new StructType()
+            .add("c1", IntegerType)
+            .add("c2", StringType)
+
+          val df = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .options(map)
+            .load(s"share1.default.$sharedTableName")
+
+          assert(expectedSchema == df.schema)
+          val expected = spark.read.format("delta").table(deltaTableName)
+          checkAnswer(df, expected)
         }
       }
     }

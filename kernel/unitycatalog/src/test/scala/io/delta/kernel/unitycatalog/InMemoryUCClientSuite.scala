@@ -21,8 +21,9 @@ import java.net.URI
 import java.util.Optional
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
-import io.delta.storage.commit.CommitFailedException
+import io.delta.storage.commit.{Commit, CommitFailedException}
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -42,21 +43,9 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
     assert(actualVersions == expectedVersions)
   }
 
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-  test("TableData::appendCommit throws on commit v0 (since CREATE does not go through UC)") {
-    val tableData = new InMemoryUCClient.TableData
-
-    val exMsg = intercept[CommitFailedException] {
-      tableData.appendCommit(createCommit(0L))
-    }.getMessage
-
-    assert(exMsg.contains("Expected commit version 1 but got 0"))
-  }
-
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
   test("TableData::appendCommit handles commit version 1 (since CREATE does not go through UC)") {
-    val tableData = new InMemoryUCClient.TableData
-    assert(tableData.getMaxRatifiedVersion == -1L)
+    val tableData = InMemoryUCClient.TableData.afterCreate()
+    assert(tableData.getMaxRatifiedVersion == 0L)
 
     tableData.appendCommit(createCommit(1L))
 
@@ -65,9 +54,8 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
     assert(tableData.getCommits.head.getVersion == 1L)
   }
 
-  test("TableData::appendCommit throws if commit version is not maxRatifiedVersion + 1 " +
-    "(excluding v1 edge case)") {
-    val tableData = new InMemoryUCClient.TableData
+  test("TableData::appendCommit throws if commit version is not maxRatifiedVersion + 1") {
+    val tableData = InMemoryUCClient.TableData.afterCreate()
     tableData.appendCommit(createCommit(1L))
 
     val exMsg = intercept[CommitFailedException] {
@@ -78,7 +66,7 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
   }
 
   test("TableData::appendCommit appends the commit and updates the maxRatifiedVersion") {
-    val tableData = new InMemoryUCClient.TableData
+    val tableData = InMemoryUCClient.TableData.afterCreate()
     tableData.appendCommit(createCommit(1L))
 
     assert(tableData.getMaxRatifiedVersion == 1L)

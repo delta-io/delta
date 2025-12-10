@@ -90,7 +90,7 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
 
     // dsv1
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    DeltaOptions emptyOptions = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    DeltaOptions emptyOptions = emptyDeltaOptions();
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, emptyOptions);
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
@@ -98,7 +98,7 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
-        new SparkMicroBatchStream(snapshotManager, new Configuration());
+        createTestStreamWithDefaults(snapshotManager, new Configuration(), emptyDeltaOptions());
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, Optional.empty(), "No options provided");
@@ -219,8 +219,8 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
-        new SparkMicroBatchStream(
-            snapshotManager, new Configuration(), spark, createDeltaOptions(startingVersion));
+        createTestStreamWithDefaults(
+            snapshotManager, new Configuration(), createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(
@@ -233,6 +233,23 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
   // ================================================================================================
   // Helper methods
   // ================================================================================================
+
+  /** Helper method to create a SparkMicroBatchStream with default empty values for testing. */
+  private SparkMicroBatchStream createTestStreamWithDefaults(
+      PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
+    return new SparkMicroBatchStream(
+        snapshotManager,
+        snapshotManager.loadLatestSnapshot(),
+        hadoopConf,
+        spark,
+        options,
+        /* tablePath= */ "",
+        /* dataSchema= */ new org.apache.spark.sql.types.StructType(),
+        /* partitionSchema= */ new org.apache.spark.sql.types.StructType(),
+        /* readDataSchema= */ new org.apache.spark.sql.types.StructType(),
+        /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
+        /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
+  }
 
   /** Helper method to create multiple versions by inserting rows. */
   private void createVersions(String testTableName, int numVersions) {
@@ -258,8 +275,8 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
-        new SparkMicroBatchStream(
-            snapshotManager, new Configuration(), spark, createDeltaOptions(startingVersion));
+        createTestStreamWithDefaults(
+            snapshotManager, new Configuration(), createDeltaOptions(startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);
@@ -288,11 +305,15 @@ public class SparkMicroBatchStreamGetStartingVersionTest extends SparkDsv2TestBa
         /* filters= */ emptySeq);
   }
 
+  private DeltaOptions emptyDeltaOptions() {
+    return new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+  }
+
   /** Helper method to create DeltaOptions with startingVersion for testing. */
   private DeltaOptions createDeltaOptions(String startingVersionValue) {
     if (startingVersionValue == null) {
       // Empty options
-      return new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+      return emptyDeltaOptions();
     } else {
       // Create Scala Map with startingVersion
       scala.collection.immutable.Map<String, String> scalaMap =

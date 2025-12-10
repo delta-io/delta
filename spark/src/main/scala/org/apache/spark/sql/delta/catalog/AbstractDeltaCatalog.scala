@@ -25,6 +25,8 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
@@ -42,7 +44,6 @@ import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
-import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -237,18 +238,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     try {
       super.loadTable(ident) match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          DeltaTableV2(
-            spark,
-            new Path(v1.catalogTable.location),
-            catalogTable = Some(v1.catalogTable),
-            tableIdentifier = Some(ident.toString))
+          loadCatalogTable(ident, v1.catalogTable)
         case o => o
       }
     } catch {
       case e @ (
         _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException) =>
           if (isPathIdentifier(ident)) {
-            newDeltaPathTable(ident)
+            loadPathTable(ident)
           } else if (isIcebergPathIdentifier(ident)) {
             newIcebergPathTable(ident)
           } else {
@@ -257,7 +254,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
         logWarning(log"Received an access denied error from Glue. Assuming this " +
           log"identifier (${MDC(DeltaLogKeys.TABLE_NAME, ident)}) is path based.", e)
-        newDeltaPathTable(ident)
+        loadPathTable(ident)
     }
   }
 
@@ -319,7 +316,30 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
-  protected def newDeltaPathTable(ident: Identifier): DeltaTableV2 = {
+
+  /**
+   * Loads a Delta table that is registered in the catalog.
+   *
+   * @param ident The identifier of the table in the catalog.
+   * @param catalogTable The catalog table metadata containing table properties and location.
+   * @return A DeltaTableV2 instance with catalog metadata attached.
+   */
+  protected def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
+    DeltaTableV2(
+      spark,
+      new Path(catalogTable.location),
+      catalogTable = Some(catalogTable),
+      tableIdentifier = Some(ident.toString))
+  }
+
+  /**
+   * Loads a Delta table directly from a path.
+   * This is used for path-based table access where the identifier name is the table path.
+   *
+   * @param ident The identifier whose name contains the path to the Delta table.
+   * @return A DeltaTableV2 instance loaded from the specified path.
+   */
+  protected def loadPathTable(ident: Identifier): Table = {
     DeltaTableV2(spark, new Path(ident.name()))
   }
 
@@ -359,11 +379,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         // TODO: we should extract write options from table properties for all the cases. We
         //       can remove the UC check when we have confidence.
-        val respectOptions = isUnityCatalog || properties.containsKey("test.simulateUC")
-        val (props, writeOptions) = if (respectOptions) {
+        val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
+        val (props, writeOptions) = if (isUC) {
           val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
           expandTableProps(props, writeOptions, spark.sessionState.conf)
           props.remove("test.simulateUC")
+          translateUCTableIdProperty(props)
           (props, writeOptions)
         } else {
           (properties, Map.empty[String, String])
@@ -581,6 +602,18 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         }
       }
     }
+  }
+
+  /**
+   * The UC table ID property was renamed from an old name. In a transition period we need to
+   * translate the old UC table ID property name set by caller to new one. And in case both the new
+   * and old properties are set, remove the old one. Later in UC server it might throw error if it
+   * sees both.
+   * TODO: clean up once callers are migrated.
+   */
+  private def translateUCTableIdProperty(props: util.Map[String, String]): Unit = {
+    val oldTableIdProperty = Option(props.remove(UC_TABLE_ID_KEY_OLD))
+    oldTableIdProperty.foreach(props.putIfAbsent(UC_TABLE_ID_KEY, _))
   }
 
   /**
