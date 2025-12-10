@@ -564,7 +564,7 @@ public class TransactionImpl implements Transaction {
                       if (isAppendOnlyTable && removeFile.getDataChange()) {
                         throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
                       }
-                      // Track removes with dataChange=true for table creation validation
+                      // Track removes with dataChange=true
                       if (isCdfEnabled && removeFile.getDataChange()) {
                         hasRemoveWithDataChange.set(true);
                         // Check if we've already seen adds with dataChange=true
@@ -575,7 +575,7 @@ public class TransactionImpl implements Transaction {
                     }
                     if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                       AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
-                      // Track adds with dataChange=true for table creation validation
+                      // Track adds with dataChange=true
                       if (isCdfEnabled && addFile.getDataChange()) {
                         hasAddWithDataChange.set(true);
                         // Check if we've already seen removes with dataChange=true
