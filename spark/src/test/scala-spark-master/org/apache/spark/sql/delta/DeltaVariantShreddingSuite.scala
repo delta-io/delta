@@ -320,15 +320,7 @@ object DeltaVariantShreddingSuite {
       expectStableFeature: Boolean): Unit = {
     val features = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().protocol
       .readerAndWriterFeatures
-    if (expectPreviewFeature) {
-      assert(features.contains(VariantShreddingPreviewTableFeature))
-    } else {
-      assert(!features.contains(VariantShreddingPreviewTableFeature))
-    }
-    if (expectStableFeature) {
-      assert(features.contains(VariantShreddingTableFeature))
-    } else {
-      assert(!features.contains(VariantShreddingTableFeature))
-    }
+    assert(expectPreviewFeature == features.contains(VariantShreddingPreviewTableFeature))
+    assert(expectStableFeature == features.contains(VariantShreddingTableFeature))
   }
 }
