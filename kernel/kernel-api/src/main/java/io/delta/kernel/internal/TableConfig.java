@@ -460,8 +460,10 @@ public class TableConfig<T> {
       boolean isTableFeatureOverrideKey =
           key.startsWith(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX);
       boolean isTableConfigKey = key.startsWith("delta.");
+      boolean isTableConstraintKey = key.startsWith("delta.constraints.");
       // TableFeature override properties validation is handled separately in TransactionBuilder.
-      boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;
+      boolean shouldValidateProperties =
+          isTableConfigKey && !isTableFeatureOverrideKey && !isTableConstraintKey;
       if (shouldValidateProperties) {
         // If it is a delta table property, make sure it is a supported property and editable
         if (!VALID_PROPERTIES.containsKey(key)) {
