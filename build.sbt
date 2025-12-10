@@ -707,8 +707,6 @@ lazy val contribs = (project in file("contribs"))
     TestParallelization.settings
   ).configureUnidoc()
 
-/*
-TODO: compilation broken for Spark 4.0
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -736,7 +734,6 @@ lazy val sharing = (project in file("sharing"))
     ),
     TestParallelization.settings
   ).configureUnidoc()
-*/
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
   .enablePlugins(ScalafmtPlugin)
