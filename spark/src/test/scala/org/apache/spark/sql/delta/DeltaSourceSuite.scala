@@ -51,8 +51,7 @@ import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
