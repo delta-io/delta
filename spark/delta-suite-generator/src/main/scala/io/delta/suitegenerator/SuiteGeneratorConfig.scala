@@ -265,7 +265,8 @@ object SuiteGeneratorConfig {
             "MergeIntoTopLevelArrayStructEvolutionNullnessTests" ::
             "MergeIntoNestedArrayStructEvolutionNullnessTests" ::
             "MergeIntoTopLevelMapStructEvolutionNullnessTests" ::
-            "MergeIntoNestedMapStructEvolutionNullnessTests" :: Nil,
+            "MergeIntoNestedMapStructEvolutionNullnessTests" ::
+            "MergeIntoStructEvolutionNullnessMultiClauseTests" :: Nil,
           List(
             List(
               Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional,

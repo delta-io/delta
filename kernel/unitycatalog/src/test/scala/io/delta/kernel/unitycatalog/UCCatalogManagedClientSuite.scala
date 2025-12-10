@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_RW_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
@@ -134,10 +135,9 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     (javaLongOpt(0L), emptyLongOpt, "v0 (explicitly by version)"),
     (emptyLongOpt, javaLongOpt(1749830855993L), "v0 (explicitly by timestamp")).foreach {
     case (versionToLoad, timestampToLoad, description) =>
-      test(s"table version 0 is loaded when UC maxRatifiedVersion is -1 -- $description") {
+      test(s"table version 0 is loaded when UC maxRatifiedVersion is 0 -- $description") {
         val tablePath = getTestResourceFilePath("catalog-owned-preview")
-        val ucCatalogManagedClient =
-          createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
+        val ucCatalogManagedClient = createUCCatalogManagedClientForTableAfterCreate()
         val snapshot = loadSnapshot(
           ucCatalogManagedClient,
           tablePath = tablePath,
@@ -263,8 +263,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
   test("creates snapshot with UCCatalogManagedCommitter") {
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucCatalogManagedClient =
-      createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
+    val ucCatalogManagedClient = createUCCatalogManagedClientForTableAfterCreate()
     val snapshot =
       loadSnapshot(ucCatalogManagedClient, tablePath = tablePath, versionToLoad = Optional.of(0L))
     assert(snapshot.getCommitter.isInstanceOf[UCCatalogManagedCommitter])
@@ -283,7 +282,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     // ===== THEN =====
     val builderTableProperties = createTableTxnBuilder.getTablePropertiesOpt.get()
-    assert(builderTableProperties.get("delta.feature.catalogManaged") == "supported")
+    assert(builderTableProperties
+      .get(TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey) == "supported")
     assert(builderTableProperties.get("io.unitycatalog.tableId") == testUcTableId)
     assert(builderTableProperties.get("foo") == "bar")
 

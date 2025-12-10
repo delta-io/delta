@@ -23,8 +23,9 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.DataFrameUtils
 
 import org.apache.spark.sql.{Column, DataFrame}
+import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}
+import org.apache.spark.sql.execution.streaming.{IncrementalExecution, StreamExecution}
 
 object DeltaStreamUtils {
 
@@ -39,10 +40,18 @@ object DeltaStreamUtils {
       df: DataFrame,
       cols: Column*): DataFrame = {
     val newMicroBatch = df.select(cols: _*)
-    val newIncrementalExecution = IncrementalExecutionShims.newInstance(
+    val newIncrementalExecution = new IncrementalExecution(
       newMicroBatch.sparkSession,
       newMicroBatch.queryExecution.logical,
-      incrementalExecution)
+      incrementalExecution.outputMode,
+      incrementalExecution.checkpointLocation,
+      incrementalExecution.queryId,
+      incrementalExecution.runId,
+      incrementalExecution.currentBatchId,
+      incrementalExecution.prevOffsetSeqMetadata,
+      incrementalExecution.offsetSeqMetadata,
+      incrementalExecution.watermarkPropagator,
+      incrementalExecution.isFirstBatch)
     newIncrementalExecution.executedPlan // Force the lazy generation of execution plan
     DataFrameUtils.ofRows(newIncrementalExecution)
   }

@@ -66,7 +66,7 @@ import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTrans
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationShims, LogicalRelationWithTable}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
@@ -622,7 +622,7 @@ class DeltaAnalysis(session: SparkSession)
       val v1TableName = child.identifier.asTableIdentifier
       namespace.foreach { ns =>
         if (v1TableName.database.exists(!resolver(_, ns.head))) {
-          throw DeltaThrowableHelperShims.showColumnsWithConflictDatabasesError(ns, v1TableName)
+          throw DeltaThrowableHelper.showColumnsWithConflictDatabasesError(ns, v1TableName)
         }
       }
       ShowDeltaTableColumnsCommand(child)
@@ -1397,7 +1397,7 @@ object DeltaRelation extends DeltaLogging {
       } else {
         v2Relation.output
       }
-      LogicalRelationShims.newInstance(relation, output, d.ttSafeCatalogTable, isStreaming = false)
+      LogicalRelation(relation, output, d.ttSafeCatalogTable, isStreaming = false, stream = None)
     }
   }
 }

@@ -41,7 +41,7 @@ import java.util.stream.Collectors;
 public class CommitRangeImpl implements CommitRange {
 
   private final Path dataPath;
-  private final Optional<CommitRangeBuilder.CommitBoundary> startBoundaryOpt;
+  private final CommitRangeBuilder.CommitBoundary startBoundary;
   private final Optional<CommitRangeBuilder.CommitBoundary> endBoundaryOpt;
 
   private final long startVersion;
@@ -50,7 +50,7 @@ public class CommitRangeImpl implements CommitRange {
 
   public CommitRangeImpl(
       Path dataPath,
-      Optional<CommitRangeBuilder.CommitBoundary> startBoundaryOpt,
+      CommitRangeBuilder.CommitBoundary startBoundary,
       Optional<CommitRangeBuilder.CommitBoundary> endBoundaryOpt,
       long startVersion,
       long endVersion,
@@ -59,7 +59,7 @@ public class CommitRangeImpl implements CommitRange {
     checkArgument(
         deltas.size() == endVersion - startVersion + 1, "deltaFiles size must match size of range");
     this.dataPath = requireNonNull(dataPath, "dataPath cannot be null");
-    this.startBoundaryOpt = requireNonNull(startBoundaryOpt, "startSpecOpt cannot be null");
+    this.startBoundary = requireNonNull(startBoundary, "startBoundary cannot be null");
     this.endBoundaryOpt = requireNonNull(endBoundaryOpt, "endSpecOpt cannot be null");
     this.startVersion = startVersion;
     this.endVersion = endVersion;
@@ -81,8 +81,8 @@ public class CommitRangeImpl implements CommitRange {
   }
 
   @Override
-  public Optional<CommitRangeBuilder.CommitBoundary> getQueryStartBoundary() {
-    return startBoundaryOpt;
+  public CommitRangeBuilder.CommitBoundary getQueryStartBoundary() {
+    return startBoundary;
   }
 
   @Override
