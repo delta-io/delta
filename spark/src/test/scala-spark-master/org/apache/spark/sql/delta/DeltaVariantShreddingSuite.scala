@@ -235,6 +235,32 @@ class DeltaVariantShreddingSuite
     }
   }
 
+  test("manually enabling preview and stable table feature") {
+    Seq(false, true).foreach { forcePreview =>
+      withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> forcePreview.toString) {
+        withTable("tbl") {
+          sql("""CREATE TABLE tbl(i INT)
+              USING delta
+              TBLPROPERTIES(
+                'delta.feature.variantShredding' = 'supported',
+                'delta.feature.variantShredding-preview' = 'supported'
+              )""")
+          DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+            spark,
+            "tbl",
+            expectPreviewFeature = true,
+            expectStableFeature = true)
+          sql("""ALTER TABLE tbl SET TBLPROPERTIES ('delta.enableVariantShredding' = 'true')""")
+          DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+            spark,
+            "tbl",
+            expectPreviewFeature = true,
+            expectStableFeature = true)
+        }
+      }
+    }
+  }
+
   test("enabling 'FORCE_USE_PREVIEW_SHREDDING_FEATURE' adds preview table feature for new table") {
     Seq(false, true).foreach { forcePreview =>
       withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> forcePreview.toString) {
