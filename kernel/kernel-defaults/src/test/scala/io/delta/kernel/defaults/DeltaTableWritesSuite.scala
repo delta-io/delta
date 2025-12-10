@@ -1219,11 +1219,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     import io.delta.kernel.internal.actions.{AddFile, SingleAction}
     import io.delta.kernel.internal.util.PartitionUtils
 
-    // Create partition values as MapValue
     val partitionValues = PartitionUtils.serializePartitionMap(
       java.util.Collections.emptyMap[String, Literal]())
 
-    // Create an AddFile row with the proper schema
     val addFileRow = AddFile.createAddFileRow(
       testSchema, // physicalSchema
       path,
@@ -1238,7 +1236,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       Optional.empty()
     ) // stats
 
-    // Wrap in SingleAction
     SingleAction.createAddFileSingleAction(addFileRow)
   }
 
@@ -1248,7 +1245,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       dataChange: Boolean = true): Row = {
     import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
 
-    // Create a RemoveFile row with the proper schema manually
     val removeFileRow = new GenericRow(
       RemoveFile.FULL_SCHEMA,
       Map[Integer, Object](
@@ -1258,11 +1254,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> Boolean.box(dataChange),
         Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) -> Long.box(100L)).asJava)
 
-    // Wrap in SingleAction
     SingleAction.createRemoveFileSingleAction(removeFileRow)
   }
 
-  // Test cases: (description, actions, shouldSucceed)
   val cdfTestCases: Seq[(String, Seq[Row], Boolean)] = Seq(
     ("add with dataChange=true", Seq(createAddFileRow(dataChange = true)), true),
     ("add with dataChange=false", Seq(createAddFileRow(dataChange = false)), true),
@@ -1285,6 +1279,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       },
       false))
 
+  // Test cases for CDF-enabled tables (combination of add/remove with dataChange true/false)
   cdfTestCases.foreach { case (desc, actions, shouldSucceed) =>
     test(s"CDF-enabled table: $desc - ${if (shouldSucceed) "succeeds" else "fails"}") {
       withTempDirAndEngine { (tablePath, engine) =>
