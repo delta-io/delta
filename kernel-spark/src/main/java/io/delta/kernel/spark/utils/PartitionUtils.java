@@ -15,8 +15,13 @@
  */
 package io.delta.kernel.spark.utils;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.spark.read.DeltaParquetFileFormatV2;
 import io.delta.kernel.spark.read.SparkReaderFactory;
 import java.time.ZoneId;
 import java.util.Arrays;
@@ -31,7 +36,6 @@ import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.PartitioningUtils;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -150,8 +154,16 @@ public class PartitionUtils {
         otherConstantMetadataColumnValues);
   }
 
-  /** Create a PartitionReaderFactory for reading Parquet files with partition support. */
-  public static PartitionReaderFactory createParquetReaderFactory(
+  /**
+   * Create a PartitionReaderFactory for reading Parquet files with Delta-specific features.
+   *
+   * <p>Uses DeltaParquetFileFormatV2 which supports column mapping, deletion vectors, and other
+   * Delta features through the ProtocolMetadataAdapterV2.
+   *
+   * @param snapshot The Delta table snapshot containing protocol, metadata, and table path
+   */
+  public static PartitionReaderFactory createDeltaParquetReaderFactory(
+      Snapshot snapshot,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -159,25 +171,39 @@ public class PartitionUtils {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
       SQLConf sqlConf) {
+    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
+    Protocol protocol = snapshotImpl.getProtocol();
+    Metadata metadata = snapshotImpl.getMetadata();
+    String tablePath = snapshotImpl.getDataPath().toString();
+
     boolean enableVectorizedReader =
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
             new Tuple2<>(
-                FileFormat$.MODULE$
-                    .OPTION_RETURNING_BATCH(), // Option name for enabling vectorized reading
+                FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
                 String.valueOf(enableVectorizedReader)));
-    // TODO(#5318): deletion vector support.
+
+    // Use DeltaParquetFileFormatV2 to support column mapping and other Delta features
+    DeltaParquetFileFormatV2 deltaFormat =
+        new DeltaParquetFileFormatV2(
+            protocol,
+            metadata,
+            false, // nullableRowTrackingConstantFields
+            false, // nullableRowTrackingGeneratedFields
+            true, // optimizationsEnabled
+            Option.apply(tablePath),
+            false); // isCDCRead
+
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
-        new ParquetFileFormat()
-            .buildReaderWithPartitionValues(
-                SparkSession.active(),
-                dataSchema,
-                partitionSchema,
-                readDataSchema,
-                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-                optionsWithVectorizedReading,
-                hadoopConf);
+        deltaFormat.buildReaderWithPartitionValues(
+            SparkSession.active(),
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
+            optionsWithVectorizedReading,
+            hadoopConf);
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
   }
