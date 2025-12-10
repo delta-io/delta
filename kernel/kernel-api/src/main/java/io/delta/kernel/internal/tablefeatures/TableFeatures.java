@@ -146,8 +146,8 @@ public class TableFeatures {
       // Kernel now supports writes to CDF-enabled tables with restrictions.
       // Validation is performed at commit time to check for unsupported mixed operations
       // (add+remove with dataChange=true) which would require CDC file generation.
-      return !TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata) &&
-          !TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
+      return !TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata)
+          && !TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
     }
 
     @Override
