@@ -27,10 +27,12 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
+import io.delta.kernel.spark.utils.PartitionUtils;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.spark.utils.StreamingHelper;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.time.ZoneId;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
@@ -45,8 +47,16 @@ import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.FilePartition$;
+import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.collection.JavaConverters;
+import scala.collection.Seq;
 
 public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissionControl {
 
@@ -63,6 +73,14 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   private final String tableId;
   private final boolean shouldValidateOffsets;
   private final SparkSession spark;
+  private final String tablePath;
+  private final StructType readDataSchema;
+  private final StructType dataSchema;
+  private final StructType partitionSchema;
+  private final Filter[] dataFilters;
+  private final Configuration hadoopConf;
+  private final SQLConf sqlConf;
+  private final scala.collection.immutable.Map<String, String> scalaOptions;
 
   /**
    * Tracks whether this is the first batch for this stream (no checkpointed offset).
@@ -77,28 +95,34 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Snapshot snapshotAtSourceInit,
-      Configuration hadoopConf) {
-    this(
-        snapshotManager,
-        snapshotAtSourceInit,
-        hadoopConf,
-        SparkSession.active(),
-        new DeltaOptions(
-            scala.collection.immutable.Map$.MODULE$.empty(),
-            SparkSession.active().sessionState().conf()));
-  }
-
-  public SparkMicroBatchStream(
-      DeltaSnapshotManager snapshotManager,
-      Snapshot snapshotAtSourceInit,
       Configuration hadoopConf,
       SparkSession spark,
-      DeltaOptions options) {
-    this.spark = spark;
-    this.snapshotManager = snapshotManager;
-    this.snapshotAtSourceInit = snapshotAtSourceInit;
+      DeltaOptions options,
+      String tablePath,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType readDataSchema,
+      Filter[] dataFilters,
+      scala.collection.immutable.Map<String, String> scalaOptions) {
+    this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
+    this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
+    this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
-    this.options = options;
+    this.options = Objects.requireNonNull(options, "options is null");
+    // Normalize tablePath to ensure it ends with "/" for consistent path construction
+    String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
+    this.tablePath =
+        normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
+    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
+    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
+    this.dataFilters =
+        Arrays.copyOf(
+            Objects.requireNonNull(dataFilters, "dataFilters is null"), dataFilters.length);
+    this.sqlConf = SQLConf.get();
+    this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
+
+    this.snapshotAtSourceInit = snapshotAtSourceInit;
     this.tableId = ((SnapshotImpl) snapshotAtSourceInit).getMetadata().getId();
     this.shouldValidateOffsets =
         (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
@@ -228,12 +252,58 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public InputPartition[] planInputPartitions(Offset start, Offset end) {
-    throw new UnsupportedOperationException("planInputPartitions is not supported");
+    DeltaSourceOffset startOffset = (DeltaSourceOffset) start;
+    DeltaSourceOffset endOffset = (DeltaSourceOffset) end;
+
+    long fromVersion = startOffset.reservoirVersion();
+    long fromIndex = startOffset.index();
+    boolean isInitialSnapshot = startOffset.isInitialSnapshot();
+
+    List<PartitionedFile> partitionedFiles = new ArrayList<>();
+    long totalBytesToRead = 0;
+    try (CloseableIterator<IndexedFile> fileChanges =
+        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
+      while (fileChanges.hasNext()) {
+        IndexedFile indexedFile = fileChanges.next();
+        if (!indexedFile.hasFileAction() || indexedFile.getAddFile() == null) {
+          continue;
+        }
+        AddFile addFile = indexedFile.getAddFile();
+        PartitionedFile partitionedFile =
+            PartitionUtils.buildPartitionedFile(
+                addFile, partitionSchema, tablePath, ZoneId.of(sqlConf.sessionLocalTimeZone()));
+
+        totalBytesToRead += addFile.getSize();
+        partitionedFiles.add(partitionedFile);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(
+          String.format(
+              "Failed to get file changes for table %s from version %d index %d to offset %s",
+              tablePath, fromVersion, fromIndex, endOffset),
+          e);
+    }
+
+    long maxSplitBytes =
+        PartitionUtils.calculateMaxSplitBytes(
+            spark, totalBytesToRead, partitionedFiles.size(), sqlConf);
+    // Partitions files into Spark FilePartitions.
+    Seq<FilePartition> filePartitions =
+        FilePartition$.MODULE$.getFilePartitions(
+            spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
+    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
   }
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    throw new UnsupportedOperationException("createReaderFactory is not supported");
+    return PartitionUtils.createParquetReaderFactory(
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        dataFilters,
+        scalaOptions,
+        hadoopConf,
+        sqlConf);
   }
 
   ///////////////
