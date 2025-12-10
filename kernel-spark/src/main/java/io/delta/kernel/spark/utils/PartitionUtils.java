@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -128,7 +129,7 @@ public class PartitionUtils {
    *
    * @param addFile The AddFile to convert
    * @param partitionSchema The partition schema for parsing partition values
-   * @param tablePath The table path (must end with '/')
+   * @param tablePath The table path
    * @param zoneId The timezone for temporal partition values
    * @return A PartitionedFile ready for Spark execution
    */
@@ -145,7 +146,7 @@ public class PartitionUtils {
 
     return new PartitionedFile(
         partitionRow,
-        SparkPath.fromUrlString(tablePath + addFile.getPath()),
+        SparkPath.fromUrlString(new Path(tablePath, addFile.getPath()).toString()),
         /* start= */ 0L,
         /* length= */ addFile.getSize(),
         preferredLocations,
@@ -174,10 +175,7 @@ public class PartitionUtils {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     Protocol protocol = snapshotImpl.getProtocol();
     Metadata metadata = snapshotImpl.getMetadata();
-    String tablePath = snapshotImpl.getDataPath().toString();
-    if (!tablePath.endsWith("/")) {
-      tablePath = tablePath + "/";
-    }
+    String tablePath = snapshotImpl.getDataPath().toUri().toString();
 
     boolean enableVectorizedReader =
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
