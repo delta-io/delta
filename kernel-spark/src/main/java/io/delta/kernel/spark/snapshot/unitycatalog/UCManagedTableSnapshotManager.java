@@ -85,7 +85,6 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    *
    * <p>For UC-managed tables, this loads the latest snapshot and uses {@link
    * DeltaHistoryManager#getActiveCommitAtTimestamp} to resolve the timestamp to a commit.
-<<<<<<< HEAD
    *
    * @param timestampMillis the timestamp to find the version for in milliseconds since the unix
    *     epoch
@@ -95,8 +94,6 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
    *     provided timestamp is before the earliest commit
    * @return the commit that was active at the specified timestamp
-=======
->>>>>>> 8dcb742d8 (implementation)
    */
   @Override
   public DeltaHistoryManager.Commit getActiveCommitAtTime(
