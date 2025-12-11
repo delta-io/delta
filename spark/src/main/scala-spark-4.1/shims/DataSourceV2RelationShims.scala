@@ -18,7 +18,7 @@ package org.apache.spark.sql.execution.datasources.v2
 
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, Table}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -34,14 +34,12 @@ object DataSourceV2RelationShim {
    */
   def unapply(plan: LogicalPlan): Option[(
     Table, Seq[AttributeReference],
-      Option[TableCatalog],
+      Option[CatalogPlugin],
       Option[Identifier],
       CaseInsensitiveStringMap)] = {
     plan match {
       case r: DataSourceV2Relation =>
-        // In Spark 4.1, catalog is Option[CatalogPlugin], we need to cast to Option[TableCatalog]
-        val catalog = r.catalog.collect { case tc: TableCatalog => tc }
-        Some((r.table, r.output, catalog, r.identifier, r.options))
+        Some((r.table, r.output, r.catalog, r.identifier, r.options))
       case _ => None
     }
   }

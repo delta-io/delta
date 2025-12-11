@@ -18,7 +18,7 @@ package org.apache.spark.sql.execution.datasources.v2
 
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, Table}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -34,7 +34,7 @@ object DataSourceV2RelationShim {
    */
   def unapply(plan: LogicalPlan): Option[
     (Table, Seq[AttributeReference],
-      Option[TableCatalog],
+      Option[CatalogPlugin],
       Option[Identifier],
       CaseInsensitiveStringMap)] = {
     plan match {
