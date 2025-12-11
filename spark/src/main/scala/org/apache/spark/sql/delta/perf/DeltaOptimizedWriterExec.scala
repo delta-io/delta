@@ -130,7 +130,7 @@ case class DeltaOptimizedWriterExec(
 
       // Large reducers: each gets its own bin (may exceed maxBinSize, but that's acceptable)
       val largeBins = largeReducers.map { case (_, blocks, _) =>
-        blocks.map(_._1).toSeq
+        blocks.map(_._1)
       }
 
       // Small reducers: bin-pack together, keeping each reducer's blocks atomic
@@ -155,7 +155,7 @@ case class DeltaOptimizedWriterExec(
       val duplicates = reducerToBinCount.filter(_._2 > 1)
       assert(duplicates.isEmpty,
         s"Reducer(s) split across multiple bins in remote shuffle mode, " +
-        s"which would cause data duplication: ${duplicates.keys.mkString(", ")}")
+          s"which would cause data duplication: ${duplicates.keys.mkString(", ")}")
 
       result
     } else {
