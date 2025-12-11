@@ -418,11 +418,16 @@ trait IcebergWriterCompatV1SuiteBase
             testSchema,
             tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
           verifyIcebergWriterCompatV1Enabled(tablePath, engine)
-          updateTableMetadata(
-            engine,
-            tablePath,
-            schema = schemaToEnable,
-            tableProperties = tablePropertiesToEnable)
+          val e = intercept[KernelException] {
+            // Update the table such that we enable the incompatible feature
+            updateTableMetadata(
+              engine,
+              tablePath,
+              schema = schemaToEnable,
+              tableProperties = tablePropertiesToEnable)
+          }
+          assert(e.getMessage.contains(expectedErrorMessage))
+          e.printStackTrace()
         }
       }
     }
