@@ -27,6 +27,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
+import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSource, DeltaSourceOffset}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -186,7 +187,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         userSpecifiedSchema = Some(StructType.fromDDL("value STRING")),
         className = "delta",
         options = Map("path" -> inputDir.getCanonicalPath))
-      DataFrameUtils.ofRows(spark, StreamingRelation(v1DataSource))
+      DataFrameUtils.ofRows(spark, Relocated.StreamingRelation(v1DataSource))
     }
   }
 
