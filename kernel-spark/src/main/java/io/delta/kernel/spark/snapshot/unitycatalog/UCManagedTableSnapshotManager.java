@@ -15,11 +15,14 @@
  */
 package io.delta.kernel.spark.snapshot.unitycatalog;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
+import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import java.util.Optional;
 
 /**
@@ -30,8 +33,27 @@ import java.util.Optional;
  */
 public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
 
-  /** Creates a new UCManagedTableSnapshotManager. */
-  public UCManagedTableSnapshotManager() {}
+  private final UCCatalogManagedClient ucCatalogManagedClient;
+  private final String tableId;
+  private final String tablePath;
+  private final Engine engine;
+
+  /**
+   * Creates a new UCManagedTableSnapshotManager.
+   *
+   * @param ucCatalogManagedClient the UC client for catalog-managed operations
+   * @param tableInfo the UC table information (tableId, tablePath, etc.)
+   * @param engine the Kernel engine for table operations
+   */
+  public UCManagedTableSnapshotManager(
+      UCCatalogManagedClient ucCatalogManagedClient, UCTableInfo tableInfo, Engine engine) {
+    this.ucCatalogManagedClient =
+        requireNonNull(ucCatalogManagedClient, "ucCatalogManagedClient is null");
+    requireNonNull(tableInfo, "tableInfo is null");
+    this.tableId = tableInfo.getTableId();
+    this.tablePath = tableInfo.getTablePath();
+    this.engine = requireNonNull(engine, "engine is null");
+  }
 
   @Override
   public Snapshot loadLatestSnapshot() {
