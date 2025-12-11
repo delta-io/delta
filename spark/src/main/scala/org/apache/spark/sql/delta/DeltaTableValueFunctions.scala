@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.shims.DataSourceV2RelationShim
 import org.apache.spark.sql.delta.sources.DeltaDataSource
 
 import org.apache.spark.sql.SparkSession
@@ -192,7 +193,7 @@ case class TableChanges(
 
   /** Converts the table changes plan to a query over a Delta table */
   def toReadQuery: LogicalPlan = child.transformUp {
-    case DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+    case DataSourceV2RelationShim(d: DeltaTableV2, _, _, _, options) =>
       // withOptions empties the catalog table stats
       d.withOptions(options.asScala.toMap).toLogicalRelation
     case r: NamedRelation =>

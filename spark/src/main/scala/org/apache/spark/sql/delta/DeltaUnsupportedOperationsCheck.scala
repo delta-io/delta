@@ -21,6 +21,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.shims.DataSourceV2RelationShim
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql._
@@ -103,7 +104,7 @@ case class DeltaUnsupportedOperationsCheck(spark: SparkSession)
       // OK
       return
 
-    case DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _) if !tbl.tableExists =>
+    case DataSourceV2RelationShim(tbl: DeltaTableV2, _, _, _, _) if !tbl.tableExists =>
       throw DeltaErrors.pathNotExistsException(tbl.deltaLog.dataPath.toString)
 
     case r: ResolvedTable if r.table.isInstanceOf[DeltaTableV2] &&
