@@ -418,11 +418,11 @@ trait IcebergWriterCompatV1SuiteBase
             testSchema,
             tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
           verifyIcebergWriterCompatV1Enabled(tablePath, engine)
-            updateTableMetadata(
-              engine,
-              tablePath,
-              schema = schemaToEnable,
-              tableProperties = tablePropertiesToEnable)
+          updateTableMetadata(
+            engine,
+            tablePath,
+            schema = schemaToEnable,
+            tableProperties = tablePropertiesToEnable)
         }
       }
     }
