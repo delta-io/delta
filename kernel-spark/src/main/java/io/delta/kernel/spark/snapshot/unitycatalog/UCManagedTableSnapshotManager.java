@@ -103,18 +103,28 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   /**
    * Checks if a specific version exists and is accessible.
    *
-   * <p>For UC-managed tables, all ratified commits are available, so the earliest version is
-   * typically 0. This method validates that the requested version is within the valid range.
+   * <p>For UC-managed tables with CCv2, log files may be cleaned up, so we need to use
+   * DeltaHistoryManager to find the earliest available version based on filesystem state.
    */
   @Override
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
     // Load latest to get the current version bounds
-    Snapshot latestSnapshot = loadLatestSnapshot();
-    long latestVersion = latestSnapshot.getVersion();
+    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    long latestVersion = snapshot.getVersion();
 
-    // For UC tables, earliest recreatable version is 0 (all ratified commits are available)
-    long earliestVersion = 0;
+    // Compute earliestRatifiedCommitVersion from catalog commits
+    List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
+    Optional<Long> earliestRatifiedCommitVersion =
+        catalogCommits.stream().map(ParsedCatalogCommitData::getVersion).min(Long::compare);
+
+    // Use DeltaHistoryManager to find earliest version based on filesystem state
+    long earliestVersion =
+        mustBeRecreatable
+            ? DeltaHistoryManager.getEarliestRecreatableCommit(
+                engine, snapshot.getLogPath(), earliestRatifiedCommitVersion)
+            : DeltaHistoryManager.getEarliestDeltaFile(
+                engine, snapshot.getLogPath(), earliestRatifiedCommitVersion);
 
     if (version < earliestVersion || ((version > latestVersion) && !allowOutOfRange)) {
       throw new VersionNotFoundException(version, earliestVersion, latestVersion);
