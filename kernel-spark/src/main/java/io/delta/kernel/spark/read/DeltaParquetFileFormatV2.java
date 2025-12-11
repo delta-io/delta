@@ -35,8 +35,10 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
    *
    * @param protocol Kernel's Protocol
    * @param metadata Kernel's Metadata
-   * @param nullableRowTrackingConstantFields whether row tracking constant fields are nullable
-   * @param nullableRowTrackingGeneratedFields whether row tracking generated fields are nullable
+   * @param nullableRowTrackingConstantFields if true, row tracking constant fields (e.g., base row
+   *     ID, default row commit version) will be created as nullable in the schema
+   * @param nullableRowTrackingGeneratedFields if true, row tracking generated fields will be
+   *     created as nullable in the schema
    * @param optimizationsEnabled whether to enable optimizations (splits, predicate pushdown)
    * @param tablePath table path for deletion vector support
    * @param isCDCRead whether this is a CDC read
