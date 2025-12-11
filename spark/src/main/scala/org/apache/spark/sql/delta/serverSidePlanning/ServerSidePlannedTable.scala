@@ -105,35 +105,46 @@ object ServerSidePlannedTable extends DeltaLogging {
       val namespace = ident.namespace().mkString(".")
       val tableName = ident.name()
 
-      // Extract catalog name from identifier namespace, or default to spark_catalog
-      //
-      // Spark Identifier structure:
-      // - For "catalog.database.table": namespace() = ["catalog", "database"], name() = "table"
-      // - For "database.table":          namespace() = ["database"], name() = "table"
-      // - For "table":                   namespace() = [], name() = "table"
-      //
-      // Note: We check namespace().length > 1 (not >= 1) because a single-element namespace
-      // represents just the database name without an explicit catalog, so we use the default.
-      // See Spark's LookupCatalog, CatalogAndIdentifier and ResolveSessionCatalog.
-      val catalogName = if (ident.namespace().length > 1) {
-        ident.namespace().head
-      } else {
-        "spark_catalog"
-      }
+      // Create metadata from table
+      val metadata = ServerSidePlanningMetadata.fromTable(table, spark, ident, isUnityCatalog)
 
       // Try to create ServerSidePlannedTable with server-side planning
-      try {
-        val client = ServerSidePlanningClientFactory.getClient(spark, catalogName)
-        Some(new ServerSidePlannedTable(spark, namespace, tableName, table.schema(), client))
-      } catch {
-        case _: IllegalStateException =>
-          // Factory not registered - fall through to normal path
-          logWarning(s"Server-side planning not available for catalog $catalogName. " +
+      val plannedTable = tryCreate(spark, namespace, tableName, table.schema(), metadata)
+      if (plannedTable.isEmpty) {
+        logWarning(
+          s"Server-side planning not available for catalog ${metadata.catalogName}. " +
             "Falling back to normal table loading.")
-          None
       }
+      plannedTable
     } else {
       None
+    }
+  }
+
+  /**
+   * Try to create a ServerSidePlannedTable with server-side planning.
+   * Returns None if the planning client factory is not available.
+   *
+   * @param spark The SparkSession
+   * @param databaseName The database name (may include catalog prefix)
+   * @param tableName The table name
+   * @param tableSchema The table schema
+   * @param metadata Metadata extracted from loadTable response
+   * @return Some(ServerSidePlannedTable) if successful, None if factory not registered
+   */
+  private def tryCreate(
+      spark: SparkSession,
+      databaseName: String,
+      tableName: String,
+      tableSchema: StructType,
+      metadata: ServerSidePlanningMetadata): Option[ServerSidePlannedTable] = {
+    try {
+      val client = ServerSidePlanningClientFactory.buildClient(spark, metadata)
+      Some(new ServerSidePlannedTable(spark, databaseName, tableName, tableSchema, client))
+    } catch {
+      case _: IllegalStateException =>
+        // Factory not registered - this shouldn't happen in production but could during testing
+        None
     }
   }
 
@@ -212,10 +223,10 @@ class ServerSidePlannedScan(
 
   override def toBatch: Batch = this
 
-  override def planInputPartitions(): Array[InputPartition] = {
-    // Call the server-side planning API to get the scan plan
-    val scanPlan = planningClient.planScan(databaseName, tableName)
+  // Call the server-side planning API once and store the result
+  private val scanPlan = planningClient.planScan(databaseName, tableName)
 
+  override def planInputPartitions(): Array[InputPartition] = {
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>
       ServerSidePlannedFileInputPartition(file.filePath, file.fileSizeInBytes, file.fileFormat)
