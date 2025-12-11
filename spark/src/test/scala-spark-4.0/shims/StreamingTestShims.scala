@@ -17,13 +17,25 @@
 package org.apache.spark.sql.delta.test.shims
 
 /**
- * Test shim for MemoryStream to handle package relocation between Spark versions.
- * In Spark 4.0, MemoryStream is in org.apache.spark.sql.execution.streaming.MemoryStream
+ * Test shims for streaming classes that were relocated in Spark 4.1.
+ * In Spark 4.0, these classes are in their original locations.
  */
-object MemoryStreamShims {
-  // Re-export MemoryStream from its original location in Spark 4.0
+object StreamingTestShims {
+  // MemoryStream
   type MemoryStream[T] = org.apache.spark.sql.execution.streaming.MemoryStream[T]
   val MemoryStream: org.apache.spark.sql.execution.streaming.MemoryStream.type =
     org.apache.spark.sql.execution.streaming.MemoryStream
+
+  // MicroBatchExecution (class only, no companion object)
+  type MicroBatchExecution = org.apache.spark.sql.execution.streaming.MicroBatchExecution
+
+  // StreamingQueryWrapper (class only, no companion object)
+  type StreamingQueryWrapper = org.apache.spark.sql.execution.streaming.StreamingQueryWrapper
+
+  // StreamingExecutionRelation (class only, no companion object)
+  type StreamingExecutionRelation = org.apache.spark.sql.execution.streaming.StreamingExecutionRelation
+
+  // OffsetSeqLog (class only, no companion object)
+  type OffsetSeqLog = org.apache.spark.sql.execution.streaming.OffsetSeqLog
 }
 

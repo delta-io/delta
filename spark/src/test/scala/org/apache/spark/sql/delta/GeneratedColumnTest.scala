@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.test.shims.MemoryStreamShims.MemoryStream
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import io.delta.tables.DeltaTableBuilder
 
 import org.apache.spark.SparkConf

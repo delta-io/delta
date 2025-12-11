@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.test.shims.MemoryStreamShims.MemoryStream
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._

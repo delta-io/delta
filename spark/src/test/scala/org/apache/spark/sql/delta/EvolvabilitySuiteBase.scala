@@ -21,7 +21,7 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, SingleAction}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.test.shims.MemoryStreamShims.MemoryStream
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.io.FileUtils

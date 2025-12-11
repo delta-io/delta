@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaHiveTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.test.shims.MemoryStreamShims.MemoryStream
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import com.fasterxml.jackson.core.JsonParseException
 
 import org.apache.spark.{SparkConf, SparkContext}

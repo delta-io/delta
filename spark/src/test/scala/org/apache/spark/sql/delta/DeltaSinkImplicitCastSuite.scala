@@ -24,7 +24,7 @@ import scala.concurrent.duration._
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
-import org.apache.spark.sql.delta.test.shims.MemoryStreamShims.MemoryStream
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 import org.apache.spark.{SparkArithmeticException, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, Encoder, Row}
