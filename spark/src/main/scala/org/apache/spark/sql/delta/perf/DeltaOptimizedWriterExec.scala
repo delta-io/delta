@@ -145,7 +145,19 @@ case class DeltaOptimizedWriterExec(
         Seq.empty
       }
 
-      largeBins ++ smallBins
+      val result = largeBins ++ smallBins
+
+      // Verify no reducer is split across multiple bins (would cause duplicate data)
+      val reducerToBinCount = result.zipWithIndex.flatMap { case (bin, binIdx) =>
+        bin.map(_.asInstanceOf[ShuffleBlockId].reduceId).distinct.map(_ -> binIdx)
+      }.groupBy(_._1).mapValues(_.map(_._2).distinct.size)
+
+      val duplicates = reducerToBinCount.filter(_._2 > 1)
+      assert(duplicates.isEmpty,
+        s"Reducer(s) split across multiple bins in remote shuffle mode, " +
+        s"which would cause data duplication: ${duplicates.keys.mkString(", ")}")
+
+      result
     } else {
       // Local shuffle mode: Bin-pack individual blocks for optimal bin sizes.
       // ShuffleBlockFetcherIterator can fetch specific blocks, so splitting
