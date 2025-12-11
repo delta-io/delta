@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta.serverSidePlanning
 
-import java.util.Locale
-
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -85,9 +83,9 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
  * Factory for creating TestServerSidePlanningClient instances.
  */
 class TestServerSidePlanningClientFactory extends ServerSidePlanningClientFactory {
-  override def buildForCatalog(
+  override def buildClient(
       spark: SparkSession,
-      catalogName: String): ServerSidePlanningClient = {
+      metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
     new TestServerSidePlanningClient(spark)
   }
 }
