@@ -125,6 +125,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   /**
    * Checks if a specific version exists and is accessible.
    *
+<<<<<<< HEAD
    * <p>For UC-managed tables with catalogManaged, log files may be cleaned up, so we need to use
    * DeltaHistoryManager to find the earliest available version based on filesystem state.
    *
@@ -134,12 +135,17 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    *     throwing an exception
    * @throws VersionNotFoundException if the version is not available or does not meet the specified
    *     criteria
+=======
+   * <p>For UC-managed tables with CCv2, log files may be cleaned up, so we need to use
+   * DeltaHistoryManager to find the earliest available version based on filesystem state.
+>>>>>>> 1e6f3515b (fix earliest version from delta)
    */
   @Override
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
     // Load latest to get the current version bounds
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+<<<<<<< HEAD
     // Latest version visible in this UC-managed snapshot.
     long latestSnapshotVersion = snapshot.getVersion();
 
@@ -147,6 +153,22 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
     if ((version > latestSnapshotVersion) && !allowOutOfRange) {
       throw new VersionNotFoundException(version, 0 /* earliest */, latestSnapshotVersion);
     }
+=======
+    long latestVersion = snapshot.getVersion();
+
+    // Compute earliestRatifiedCommitVersion from catalog commits
+    List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
+    Optional<Long> earliestRatifiedCommitVersion =
+        catalogCommits.stream().map(ParsedCatalogCommitData::getVersion).min(Long::compare);
+
+    // Use DeltaHistoryManager to find earliest version based on filesystem state
+    long earliestVersion =
+        mustBeRecreatable
+            ? DeltaHistoryManager.getEarliestRecreatableCommit(
+                engine, snapshot.getLogPath(), earliestRatifiedCommitVersion)
+            : DeltaHistoryManager.getEarliestDeltaFile(
+                engine, snapshot.getLogPath(), earliestRatifiedCommitVersion);
+>>>>>>> 1e6f3515b (fix earliest version from delta)
 
     // Get the earliest version among catalog commits. This bounds the Kernel's filesystem search
     // for the earliest available version (e.g., if catalog has v0, no filesystem search is needed).
