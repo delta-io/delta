@@ -6,6 +6,8 @@ import org.apache.flink.api.common.JobInfo;
 import org.apache.flink.api.common.TaskInfo;
 import org.apache.flink.api.connector.sink2.CommitterInitContext;
 import org.apache.flink.metrics.groups.SinkCommitterMetricGroup;
+import org.apache.flink.runtime.metrics.groups.InternalSinkCommitterMetricGroup;
+import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 
 public class TestCommitterInitContext implements CommitterInitContext {
   private final int subtaskId;
@@ -13,6 +15,9 @@ public class TestCommitterInitContext implements CommitterInitContext {
   private final int attempt;
   private final JobInfo jobInfo;
   private final TaskInfo taskInfo;
+  private final SinkCommitterMetricGroup metricGroup =
+          InternalSinkCommitterMetricGroup
+                  .wrap(UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup());
 
   public TestCommitterInitContext(int subtaskId, int parallelism, int attempt) {
     this.subtaskId = subtaskId;
@@ -73,7 +78,7 @@ public class TestCommitterInitContext implements CommitterInitContext {
 
   @Override
   public SinkCommitterMetricGroup metricGroup() {
-    return null;
+    return metricGroup;
   }
 
   @Override

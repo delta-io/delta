@@ -1,11 +1,10 @@
 package io.delta.flink.sink
 
 import scala.jdk.CollectionConverters.CollectionHasAsScala
-
 import io.delta.flink.TestHelper
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
-
+import org.apache.flink.metrics.groups.UnregisteredMetricsGroup
 import org.apache.flink.table.data.{GenericRowData, StringData}
 import org.apache.flink.table.types.logical.{IntType, RowType, VarCharType}
 import org.apache.hadoop.conf.Configuration
@@ -31,6 +30,7 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         .withSubtaskId(0)
         .withAttemptNumber(1)
         .withWriterContext(wc)
+        .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
         .build()
 
       for (i <- 0 until 20) {
@@ -67,6 +67,7 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         .withSubtaskId(0)
         .withAttemptNumber(1)
         .withWriterContext(wc)
+        .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
         .build()
 
       for (i <- 0 until 20) {
