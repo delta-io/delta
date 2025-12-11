@@ -15,17 +15,11 @@
  */
 package io.delta.kernel.spark.snapshot.unitycatalog;
 
-import static java.util.Objects.requireNonNull;
-
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.spark.exception.VersionNotFoundException;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
-import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
-import java.util.ArrayList;
 import java.util.Optional;
 
 /**
@@ -36,100 +30,40 @@ import java.util.Optional;
  */
 public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
 
-  private final UCCatalogManagedClient ucCatalogManagedClient;
-  private final String tableId;
-  private final String tablePath;
-  private final Engine engine;
-
-  /**
-   * Creates a new UCManagedTableSnapshotManager.
-   *
-   * @param ucCatalogManagedClient the UC client for catalog-managed operations
-   * @param tableInfo the UC table information (tableId, tablePath, etc.)
-   * @param engine the Kernel engine for table operations
-   */
-  public UCManagedTableSnapshotManager(
-      UCCatalogManagedClient ucCatalogManagedClient,
-      UCTableInfo tableInfo,
-      Engine engine) {
-    this.ucCatalogManagedClient =
-        requireNonNull(ucCatalogManagedClient, "ucCatalogManagedClient is null");
-    requireNonNull(tableInfo, "tableInfo is null");
-    this.tableId = tableInfo.getTableId();
-    this.tablePath = tableInfo.getTablePath();
-    this.engine = requireNonNull(engine, "engine is null");
-  }
+  /** Creates a new UCManagedTableSnapshotManager. */
+  public UCManagedTableSnapshotManager() {}
 
   @Override
   public Snapshot loadLatestSnapshot() {
-    return ucCatalogManagedClient.loadSnapshot(
-        engine,
-        tableId,
-        tablePath,
-        Optional.empty() /* versionOpt */,
-        Optional.empty() /* timestampOpt */);
+    throw new UnsupportedOperationException(
+        "UCManagedTableSnapshotManager.loadLatestSnapshot is not yet implemented");
   }
 
   @Override
   public Snapshot loadSnapshotAt(long version) {
-    return ucCatalogManagedClient.loadSnapshot(
-        engine, tableId, tablePath, Optional.of(version), Optional.empty() /* timestampOpt */);
+    throw new UnsupportedOperationException(
+        "UCManagedTableSnapshotManager.loadSnapshotAt is not yet implemented");
   }
 
-  /**
-   * Finds the active commit at a specific timestamp.
-   *
-   * <p>For UC-managed tables, this loads the latest snapshot and uses {@link
-   * DeltaHistoryManager#getActiveCommitAtTimestamp} to resolve the timestamp to a commit.
-   */
   @Override
   public DeltaHistoryManager.Commit getActiveCommitAtTime(
       long timestampMillis,
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
-    return DeltaHistoryManager.getActiveCommitAtTimestamp(
-        engine,
-        snapshot,
-        snapshot.getLogPath(),
-        timestampMillis,
-        mustBeRecreatable,
-        canReturnLastCommit,
-        canReturnEarliestCommit,
-        new ArrayList<>() /* catalogCommits */);
+    throw new UnsupportedOperationException(
+        "UCManagedTableSnapshotManager.getActiveCommitAtTime is not yet implemented");
   }
 
-  /**
-   * Checks if a specific version exists and is accessible.
-   *
-   * <p>For UC-managed tables, all ratified commits are available, so the earliest version is
-   * typically 0. This method validates that the requested version is within the valid range.
-   */
   @Override
-  public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
-      throws VersionNotFoundException {
-    // Load latest to get the current version bounds
-    Snapshot latestSnapshot = loadLatestSnapshot();
-    long latestVersion = latestSnapshot.getVersion();
-
-    // For UC tables, earliest recreatable version is 0 (all ratified commits are available)
-    long earliestVersion = 0;
-
-    if (version < earliestVersion || ((version > latestVersion) && !allowOutOfRange)) {
-      throw new VersionNotFoundException(version, earliestVersion, latestVersion);
-    }
+  public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange) {
+    throw new UnsupportedOperationException(
+        "UCManagedTableSnapshotManager.checkVersionExists is not yet implemented");
   }
 
   @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
-    return ucCatalogManagedClient.loadCommitRange(
-        engine,
-        tableId,
-        tablePath,
-        Optional.of(startVersion) /* startVersionOpt */,
-        Optional.empty() /* startTimestampOpt */,
-        endVersion /* endVersionOpt */,
-        Optional.empty() /* endTimestampOpt */);
+    throw new UnsupportedOperationException(
+        "UCManagedTableSnapshotManager.getTableChanges is not yet implemented");
   }
 }
