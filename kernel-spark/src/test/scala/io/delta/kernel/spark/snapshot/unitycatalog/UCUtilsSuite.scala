@@ -208,7 +208,9 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       assert(
         info.getUcUri == ucUriBeta,
         s"Should use catalogBeta's URI, got: ${info.getUcUri}")
-      assert(info.getUcToken == ucTokenBeta, s"Should use catalogBeta's token, got: ${info.getUcToken}")
+      assert(
+        info.getUcToken == ucTokenBeta,
+        s"Should use catalogBeta's token, got: ${info.getUcToken}")
       assert(info.getTableId == tableIdBeta, s"Should extract tableIdBeta, got: ${info.getTableId}")
       assert(
         info.getTablePath == tablePathBeta,
