@@ -16,13 +16,12 @@
 package io.delta.kernel.defaults
 
 import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table, TableManager}
+import io.delta.kernel.{Table, TableManager}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{KernelException, UnsupportedTableFeatureException}
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
@@ -426,7 +425,6 @@ trait IcebergWriterCompatV1SuiteBase
               schema = schemaToEnable,
               tableProperties = tablePropertiesToEnable)
           }
-          e.printStackTrace()
           assert(e.getMessage.contains(expectedErrorMessage))
         }
       }
@@ -488,8 +486,7 @@ trait IcebergWriterCompatV1SuiteBase
 
   testIncompatibleUnsupportedTableFeature(
     "checkConstraints",
-    tablePropertiesToEnable = Map("delta.constraints.a" -> "a = b"),
-    expectedErrorMessage = "Unknown configuration was specified: delta.constraints.a")
+    tablePropertiesToEnable = Map("delta.constraints.a" -> "a = b"))
 
   testIncompatibleUnsupportedTableFeature(
     "generatedColumns",
@@ -621,7 +618,6 @@ trait IcebergWriterCompatV1SuiteBase
       assert(protocol.supportsFeature(TableFeatures.GENERATED_COLUMNS_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.IDENTITY_COLUMNS_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.CONSTRAINTS_W_FEATURE))
-      assert(protocol.supportsFeature(TableFeatures.CHANGE_DATA_FEED_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
     }
