@@ -426,8 +426,8 @@ trait IcebergWriterCompatV1SuiteBase
               schema = schemaToEnable,
               tableProperties = tablePropertiesToEnable)
           }
-          assert(e.getMessage.contains(expectedErrorMessage))
           e.printStackTrace()
+          assert(e.getMessage.contains(expectedErrorMessage))
         }
       }
     }
