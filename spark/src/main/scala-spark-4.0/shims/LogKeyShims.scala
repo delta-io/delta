@@ -21,7 +21,7 @@ import org.apache.spark.internal.LogKey
 /**
  * Shim for LogKey to handle API changes between Spark versions.
  * In Spark 4.0, LogKey is a Scala trait with a default implementation of `name`.
- * 
+ *
  * DeltaLogKey is just a trait that extends LogKey, allowing case objects to extend it.
  */
 trait DeltaLogKey extends LogKey

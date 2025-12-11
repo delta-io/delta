@@ -21,7 +21,7 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, SingleAction}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.io.FileUtils
@@ -177,7 +177,7 @@ object EvolvabilitySuiteBase {
     Seq(1, 2, 3).toDF(spark).write.format("delta").mode("overwrite").save(path)
 
     val checkpoint = Utils.createTempDir().toString
-    val data = MemoryStream[Int]
+    val data = StreamingTestShims.MemoryStream[Int]
     data.addData(1, 2, 3)
     val stream = data.toDF()
       .writeStream
