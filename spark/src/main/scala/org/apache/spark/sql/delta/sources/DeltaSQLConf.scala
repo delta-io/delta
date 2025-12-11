@@ -2720,9 +2720,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     buildConf("optimizeWrite.useShuffleManager")
       .doc("When true, uses ShuffleManager.getReader() API for reading shuffle data, " +
         "which is compatible with remote shuffle services like Apache Celeborn and Uniffle. " +
+        "In this mode, shuffle partitions are never split across bins to avoid reading " +
+        "duplicate data - small partitions are bin-packed together, while large partitions " +
+        "(exceeding binSize) each get their own bin and may produce larger output files. " +
         "When false (default), uses ShuffleBlockFetcherIterator for optimal performance with " +
-        "local shuffle. Note: Setting this to true may read more data than necessary if " +
-        "bin-packing splits a shuffle partition across multiple output files.")
+        "local shuffle, allowing individual blocks to be bin-packed for precise file sizes.")
       .booleanConf
       .createWithDefault(false)
 

@@ -115,14 +115,49 @@ case class DeltaOptimizedWriterExec(
     val maxBinSize =
       ByteUnit.BYTE.convertFrom(getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_BIN_SIZE), ByteUnit.MiB)
 
-    val bins = shuffleStats.toSeq.flatMap(_._2).groupBy(_._1.asInstanceOf[ShuffleBlockId].reduceId)
-      .flatMap { case (_, blocks) =>
+    // Group blocks by reducer and calculate total size per reducer
+    val reducerGroups = shuffleStats.toSeq.flatMap(_._2)
+      .groupBy(_._1.asInstanceOf[ShuffleBlockId].reduceId)
+      .map { case (reducerId, blocks) =>
+        (reducerId, blocks, blocks.map(_._2).sum)
+      }.toSeq
+
+    val bins = if (useShuffleManager) {
+      // Remote shuffle mode: Never split reducers across bins to avoid duplicate reads.
+      // ShuffleManager.getReader() reads entire partitions, so if a reducer is split
+      // across bins, each bin would read the full partition causing data duplication.
+      val (largeReducers, smallReducers) = reducerGroups.partition(_._3 >= maxBinSize)
+
+      // Large reducers: each gets its own bin (may exceed maxBinSize, but that's acceptable)
+      val largeBins = largeReducers.map { case (_, blocks, _) =>
+        blocks.map(_._1).toSeq
+      }
+
+      // Small reducers: bin-pack together, keeping each reducer's blocks atomic
+      val smallBins = if (smallReducers.nonEmpty) {
+        BinPackingUtils.binPackBySize[(Int, Seq[(BlockId, Long, Int)], Long), Seq[BlockId]](
+          smallReducers,
+          _._3, // total size of reducer
+          _._2.map(_._1).toSeq, // all block IDs for this reducer
+          maxBinSize
+        ).map(_.flatten)
+      } else {
+        Seq.empty
+      }
+
+      largeBins ++ smallBins
+    } else {
+      // Local shuffle mode: Bin-pack individual blocks for optimal bin sizes.
+      // ShuffleBlockFetcherIterator can fetch specific blocks, so splitting
+      // a reducer across bins is safe and allows for better bin packing.
+      reducerGroups.flatMap { case (_, blocks, _) =>
         BinPackingUtils.binPackBySize[(BlockId, Long, Int), BlockId](
           blocks,
           _._2, // size
           _._1, // blockId
           maxBinSize)
       }
+    }
 
     bins
       .map { bin =>
