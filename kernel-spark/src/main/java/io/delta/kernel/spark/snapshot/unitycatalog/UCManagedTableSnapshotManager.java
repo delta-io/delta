@@ -106,9 +106,13 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
       boolean canReturnEarliestCommit) {
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
 <<<<<<< HEAD
+<<<<<<< HEAD
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
 =======
 >>>>>>> 8dcb742d8 (implementation)
+=======
+    List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
+>>>>>>> 1fdadc789 (Add catalogCommits to getActiveCommitAtTime)
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         engine,
         snapshot,
@@ -118,10 +122,14 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
         canReturnLastCommit,
         canReturnEarliestCommit,
 <<<<<<< HEAD
+<<<<<<< HEAD
         catalogCommits);
 =======
         new ArrayList<>() /* catalogCommits */);
 >>>>>>> 8dcb742d8 (implementation)
+=======
+        catalogCommits);
+>>>>>>> 1fdadc789 (Add catalogCommits to getActiveCommitAtTime)
   }
 
   /**
