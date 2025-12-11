@@ -23,10 +23,14 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 <<<<<<< HEAD
+<<<<<<< HEAD
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 =======
 import io.delta.kernel.internal.data.ParsedCatalogCommitData;
 >>>>>>> 1fdadc789 (Add catalogCommits to getActiveCommitAtTime)
+=======
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+>>>>>>> e1ba8962a (fix import)
 import io.delta.kernel.spark.exception.VersionNotFoundException;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
