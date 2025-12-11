@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
-import org.apache.spark.sql.delta.shims.DataSourceV2RelationShim
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
@@ -45,7 +44,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
 /**
