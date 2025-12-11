@@ -577,7 +577,6 @@ trait IcebergWriterCompatV1SuiteBase
     val tblProperties =
       Seq(
         "invariants",
-        "changeDataFeed",
         "checkConstraints",
         "identityColumns",
         "generatedColumns",
@@ -600,7 +599,6 @@ trait IcebergWriterCompatV1SuiteBase
       assert(protocol.supportsFeature(TableFeatures.GENERATED_COLUMNS_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.IDENTITY_COLUMNS_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.CONSTRAINTS_W_FEATURE))
-      assert(protocol.supportsFeature(TableFeatures.CHANGE_DATA_FEED_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
     }
 
