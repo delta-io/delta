@@ -77,6 +77,9 @@ case class DeltaOptimizedWriterExec(
       getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS))
   }
 
+  private lazy val useShuffleManager: Boolean =
+    getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_USE_SHUFFLE_MANAGER)
+
   @transient private var cachedShuffleRDD: ShuffledRowRDD = _
 
   @transient private lazy val mapTracker = SparkEnv.get.mapOutputTracker
@@ -191,7 +194,8 @@ case class DeltaOptimizedWriterExec(
       sparkContext,
       shuffledRDD.dependency,
       readMetrics,
-      new OptimizedWriterBlocks(partitions))
+      new OptimizedWriterBlocks(partitions),
+      useShuffleManager)
   }
 
   private def getConf[T](entry: ConfigEntry[T]): T = {
@@ -219,7 +223,8 @@ private class DeltaOptimizedWriterRDD(
     @transient sparkContext: SparkContext,
     var dep: ShuffleDependency[Int, _, InternalRow],
     metrics: Map[String, SQLMetric],
-    @transient blocks: OptimizedWriterBlocks)
+    @transient blocks: OptimizedWriterBlocks,
+    useShuffleManager: Boolean)
   extends RDD[InternalRow](sparkContext, Seq(dep)) with DeltaLogging {
 
   override def getPartitions: Array[Partition] = Array.tabulate(blocks.bins.length) { i =>
@@ -264,7 +269,8 @@ private class DeltaOptimizedWriterRDD(
       dep,
       context,
       blocks,
-      sqlMetricsReporter)
+      sqlMetricsReporter,
+      useShuffleManager)
     reader.read().map(_._2)
   }
 
@@ -284,40 +290,75 @@ private class OptimizedWriterShuffleReader(
     dep: ShuffleDependency[Int, _, InternalRow],
     context: TaskContext,
     blocks: Iterator[(BlockManagerId, ArrayBuffer[(BlockId, Long, Int)])],
-    readMetrics: ShuffleReadMetricsReporter) extends ShuffleReader[Int, InternalRow] {
+    readMetrics: ShuffleReadMetricsReporter,
+    useShuffleManager: Boolean) extends ShuffleReader[Int, InternalRow] {
 
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[Int, InternalRow]] = {
-    val wrappedStreams = new ShuffleBlockFetcherIterator(
-      context,
-      SparkEnv.get.blockManager.blockStoreClient,
-      SparkEnv.get.blockManager,
-      SparkEnv.get.mapOutputTracker,
-      blocks,
-      SparkEnv.get.serializerManager.wrapStream,
-      // Note: we use getSizeAsMb when no suffix is provided for backwards compatibility
-      SparkEnv.get.conf.getSizeAsMb("spark.reducer.maxSizeInFlight", "48m") * 1024 * 1024,
-      SparkEnv.get.conf.getInt("spark.reducer.maxReqsInFlight", Int.MaxValue),
-      SparkEnv.get.conf.get(config.REDUCER_MAX_BLOCKS_IN_FLIGHT_PER_ADDRESS),
-      SparkEnv.get.conf.get(config.MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM),
-      SparkEnv.get.conf.get(config.SHUFFLE_MAX_ATTEMPTS_ON_NETTY_OOM),
-      SparkEnv.get.conf.getBoolean("spark.shuffle.detectCorrupt", true),
-      SparkEnv.get.conf.getBoolean("spark.shuffle.detectCorrupt.useExtraMemory", false),
-      SparkEnv.get.conf.getBoolean("spark.shuffle.checksum.enabled", true),
-      SparkEnv.get.conf.get("spark.shuffle.checksum.algorithm", "ADLER32"),
-      readMetrics,
-      false)
 
-    val serializerInstance = dep.serializer.newInstance()
+    if (useShuffleManager) {
+      // Remote shuffle service mode: Use ShuffleManager.getReader() API
+      // This is compatible with remote shuffle services like Apache Celeborn and Uniffle.
+      // Trade-off: May read entire partitions instead of specific blocks if bin-packing
+      // splits a partition across multiple bins.
 
-    // Create a key/value iterator for each stream
-    val recordIter = wrappedStreams.flatMap { case (_, wrappedStream) =>
-      // Note: the asKeyValueIterator below wraps a key/value iterator inside of a
-      // NextIterator. The NextIterator makes sure that close() is called on the
-      // underlying InputStream when all records have been read.
-      serializerInstance.deserializeStream(wrappedStream).asKeyValueIterator
-    }.asInstanceOf[Iterator[Product2[Int, InternalRow]]]
+      // Collect all reducer IDs (partition IDs) from our blocks
+      val reducerIds = blocks.flatMap { case (_, blockList) =>
+        blockList.map(_._1.asInstanceOf[ShuffleBlockId].reduceId)
+      }.toSet
 
-    new InterruptibleIterator[Product2[Int, InternalRow]](context, recordIter)
+      // Read from all the partitions we need using ShuffleManager API
+      val iterators = reducerIds.toSeq.sorted.map { reducerId =>
+        val reader = SparkEnv.get.shuffleManager.getReader(
+          dep.shuffleHandle,
+          reducerId,
+          reducerId + 1,
+          context,
+          readMetrics)
+        reader.read().asInstanceOf[Iterator[Product2[Int, InternalRow]]]
+      }
+
+      // Combine all iterators into one
+      val combinedIterator = iterators.foldLeft(
+        Iterator.empty: Iterator[Product2[Int, InternalRow]])(_ ++ _)
+
+      new InterruptibleIterator[Product2[Int, InternalRow]](context, combinedIterator)
+    } else {
+      // Default mode: Use ShuffleBlockFetcherIterator for optimal performance
+      // This reads only the specific blocks assigned to this bin.
+      // Only works with local shuffle (BlockManager-based).
+
+      val wrappedStreams = new ShuffleBlockFetcherIterator(
+        context,
+        SparkEnv.get.blockManager.blockStoreClient,
+        SparkEnv.get.blockManager,
+        SparkEnv.get.mapOutputTracker,
+        blocks,
+        SparkEnv.get.serializerManager.wrapStream,
+        // Note: we use getSizeAsMb when no suffix is provided for backwards compatibility
+        SparkEnv.get.conf.getSizeAsMb("spark.reducer.maxSizeInFlight", "48m") * 1024 * 1024,
+        SparkEnv.get.conf.getInt("spark.reducer.maxReqsInFlight", Int.MaxValue),
+        SparkEnv.get.conf.get(config.REDUCER_MAX_BLOCKS_IN_FLIGHT_PER_ADDRESS),
+        SparkEnv.get.conf.get(config.MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM),
+        SparkEnv.get.conf.get(config.SHUFFLE_MAX_ATTEMPTS_ON_NETTY_OOM),
+        SparkEnv.get.conf.getBoolean("spark.shuffle.detectCorrupt", true),
+        SparkEnv.get.conf.getBoolean("spark.shuffle.detectCorrupt.useExtraMemory", false),
+        SparkEnv.get.conf.getBoolean("spark.shuffle.checksum.enabled", true),
+        SparkEnv.get.conf.get("spark.shuffle.checksum.algorithm", "ADLER32"),
+        readMetrics,
+        false)
+
+      val serializerInstance = dep.serializer.newInstance()
+
+      // Create a key/value iterator for each stream
+      val recordIter = wrappedStreams.flatMap { case (_, wrappedStream) =>
+        // Note: the asKeyValueIterator below wraps a key/value iterator inside of a
+        // NextIterator. The NextIterator makes sure that close() is called on the
+        // underlying InputStream when all records have been read.
+        serializerInstance.deserializeStream(wrappedStream).asKeyValueIterator
+      }.asInstanceOf[Iterator[Product2[Int, InternalRow]]]
+
+      new InterruptibleIterator[Product2[Int, InternalRow]](context, recordIter)
+    }
   }
 }
