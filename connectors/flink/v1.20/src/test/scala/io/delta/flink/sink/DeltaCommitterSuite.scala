@@ -2,7 +2,9 @@ package io.delta.flink.sink
 
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
 import io.delta.flink.TestHelper
-import io.delta.kernel.Table
+import io.delta.flink.table.LocalKernelTable
+import io.delta.kernel.CommitRangeBuilder.CommitBoundary
+import io.delta.kernel.{Table, TableManager}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.ScanImpl
@@ -15,6 +17,9 @@ import org.apache.flink.runtime.metrics.groups.{InternalSinkCommitterMetricGroup
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.net.URI
+import java.nio.file.Paths
+
 class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
 
   val metricGroup = InternalSinkCommitterMetricGroup.wrap(
@@ -22,19 +27,15 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
 
   test("commit with single checkpoint to an empty table") {
     withTempDir { dir =>
-      val tablePath = dir.getPath
-      val engine = DefaultEngine.create(new Configuration())
       val schema = new StructType()
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = Table.forPath(engine, tablePath)
+      val table = new LocalKernelTable(dir.toURI, schema, List("part").asJava)
 
       val committer = new DeltaCommitter.Builder()
-        .withEngine(engine)
-        .withTable(table)
+        .withDeltaTable(table)
         .withJobId("test-job")
-        .withCommitterContext(dummyWriterContext(engine, tablePath, schema, Seq("part")))
         .withMetricGroup(metricGroup)
         .build()
 
@@ -50,7 +51,8 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
       committer.commit(commitMessages.asJava)
 
       // The target table should have one version
-      val snapshot = table.getLatestSnapshot(engine)
+      val engine = DefaultEngine.create(new Configuration())
+      val snapshot = TableManager.loadSnapshot(dir.toString).build(engine)
       assert(0L == snapshot.getVersion)
       val filesList = snapshot.getScanBuilder.build().asInstanceOf[ScanImpl]
         .getScanFiles(engine, true).toInMemoryList
@@ -67,19 +69,15 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
 
   test("commit with multiple checkpoints") {
     withTempDir { dir =>
-      val tablePath = dir.getPath
-      val engine = DefaultEngine.create(new Configuration())
       val schema = new StructType()
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = Table.forPath(engine, tablePath)
+      val table = new LocalKernelTable(dir.toPath.toUri, schema, List("part").asJava)
 
       val committer = new DeltaCommitter.Builder()
-        .withEngine(engine)
-        .withTable(table)
+        .withDeltaTable(table)
         .withJobId("test-job")
-        .withCommitterContext(dummyWriterContext(engine, tablePath, schema, Seq("part")))
         .withMetricGroup(metricGroup)
         .build()
 
@@ -96,12 +94,16 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
       committer.commit(commitMessages.asJava)
 
       // The target table should have 3 version
-      val snapshot = table.getLatestSnapshot(engine)
+      val engine = DefaultEngine.create(new Configuration())
+      val snapshot = TableManager.loadSnapshot(dir.toString).build(engine)
       assert(2L == snapshot.getVersion)
 
       for (version <- 0 to 2) {
-        val filesList = table.getSnapshotAsOfVersion(engine, version)
-          .getScanBuilder.build().asInstanceOf[ScanImpl]
+        val filesList = TableManager.loadSnapshot(dir.toString).atVersion(version)
+          .build(engine)
+          .getScanBuilder
+          .build()
+          .asInstanceOf[ScanImpl]
           .getScanFiles(engine, true).toInMemoryList
         val actions = filesList.get(0).getRows
           .toInMemoryList.asScala.map(row => new AddFile(row.getStruct(0)))
@@ -117,8 +119,6 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
 
   test("commit to an existing table with different schema will fail") {
     withTempDir { dir =>
-      withTempDir { anotherDir =>
-        val tablePath = dir.getPath
         val engine = DefaultEngine.create(new Configuration())
         val schema = new StructType()
           .add("id", IntegerType.INTEGER)
@@ -127,13 +127,13 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
           .add("v1", StringType.STRING)
           .add("v2", StringType.STRING)
 
-        val table = createNonEmptyTable(engine, anotherDir.getPath, anotherSchema, Seq("v1"))
+        val table = new LocalKernelTable(dir.toURI, schema, List("part").asJava)
+
+        createNonEmptyTable(engine, dir.getAbsolutePath, anotherSchema, Seq("v1"))
 
         val committer = new DeltaCommitter.Builder()
-          .withEngine(engine)
-          .withTable(table)
+          .withDeltaTable(table)
           .withJobId("test-job")
-          .withCommitterContext(dummyWriterContext(engine, tablePath, schema, Seq("part")))
           .withMetricGroup(metricGroup)
           .build()
 
@@ -148,8 +148,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         val e = intercept[IllegalArgumentException] {
           committer.commit(commitMessages.asJava)
         }
-        assert(e.getMessage.contains("Committer path does not match the latest table path"))
+        assert(e.getMessage.contains("DeltaSink does not support schema evolution."))
       }
     }
-  }
 }

@@ -4,11 +4,12 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.util.Preconditions;
+import org.apache.flink.core.io.SimpleVersionedSerializer;
+
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
-import org.apache.flink.core.io.SimpleVersionedSerializer;
 
 public class DeltaCommittable {
   private final String jobId;

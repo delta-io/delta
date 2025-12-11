@@ -1,23 +1,22 @@
 package io.delta.flink.sink;
 
-import io.delta.kernel.*;
+import io.delta.flink.DeltaTable;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.TableNotFoundException;
-import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
-import java.io.IOException;
-import java.util.*;
-import java.util.stream.Collectors;
 import org.apache.flink.api.connector.sink2.Committer;
 import org.apache.flink.metrics.groups.SinkCommitterMetricGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 /**
  * The Committer is responsible for committing the data staged by the CommittingSinkWriter in the
@@ -51,25 +50,16 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   // All committables should have the same job id as the committer.
   // For simplicity, we get the job id from constructor.
   private String jobId;
-  private Engine engine;
-  private Table table;
-  private final Row committerContext;
+  private DeltaTable deltaTable;
 
   private SinkCommitterMetricGroup metricGroup;
 
-  private boolean creatingNewTable;
-
   private DeltaCommitter(
-      String jobId,
-      Engine engine,
-      Table table,
-      Row committerContext,
-      SinkCommitterMetricGroup metricGroup) {
+          String jobId,
+          DeltaTable deltaTable,
+          SinkCommitterMetricGroup metricGroup) {
     this.jobId = jobId;
-    this.engine = engine;
-    this.table = table;
-    this.committerContext = committerContext;
-
+    this.deltaTable = deltaTable;
     this.metricGroup = metricGroup;
   }
 
@@ -77,12 +67,6 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   public void commit(Collection<CommitRequest<DeltaCommittable>> committables)
       throws IOException, InterruptedException {
     LOG.debug("Starting commit");
-    try {
-      table.getLatestSnapshot(engine);
-      creatingNewTable = false;
-    } catch (TableNotFoundException e) {
-      creatingNewTable = true;
-    }
     sortCommittablesByCheckpointId(committables).forEach(this::commitForSingleCheckpointId);
   }
 
@@ -92,44 +76,6 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   private void commitForSingleCheckpointId(
       long checkpointId, List<CommitRequest<DeltaCommittable>> committables) {
     LOG.debug("Committing {} committables on checkpoint {}", committables.size(), checkpointId);
-
-    TransactionBuilder txnBuilder =
-        table
-            .createTransactionBuilder(
-                engine,
-                "DeltaSink/Kernel",
-                creatingNewTable ? Operation.CREATE_TABLE : Operation.WRITE)
-            .withTransactionId(engine, jobId, checkpointId);
-
-    if (creatingNewTable) {
-      // For a new table set the table schema in the transaction builder
-      txnBuilder =
-          txnBuilder
-              .withSchema(engine, TransactionStateRow.getLogicalSchema(committerContext))
-              .withPartitionColumns(
-                  engine, TransactionStateRow.getPartitionColumnsList(committerContext));
-    }
-    final Transaction txn = txnBuilder.build(engine);
-
-    // We check the table's latest schema is still the same as committer schema.
-    // The check is delayed here to detect external modification to the table schema.
-    if (!creatingNewTable) {
-      final Snapshot readSnapshot = table.getSnapshotAsOfVersion(engine, txn.getReadTableVersion());
-      final StructType tableSchema = txn.getSchema(engine);
-      final StructType committerSchema = TransactionStateRow.getLogicalSchema(committerContext);
-      Preconditions.checkArgument(
-          readSnapshot.getPath().equals(TransactionStateRow.getTablePath(this.committerContext)),
-          String.format(
-              "Committer path does not match the latest table path."
-                  + "Table path: %s, Committer path: %s",
-              readSnapshot.getPath(), TransactionStateRow.getTablePath(this.committerContext)));
-      Preconditions.checkArgument(
-          committerSchema.equivalent(tableSchema),
-          String.format(
-              "DeltaSink does not support schema evolution. "
-                  + "Table schema: %s, Committer schema: %s",
-              tableSchema, committerSchema));
-    }
 
     final CloseableIterable<Row> dataActions =
         new CloseableIterable<Row>() {
@@ -147,8 +93,7 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
           }
         };
 
-    txn.commit(engine, dataActions);
-    creatingNewTable = false;
+    deltaTable.commit(dataActions);
   }
 
   private TreeMap<Long, List<CommitRequest<DeltaCommittable>>> sortCommittablesByCheckpointId(
@@ -163,9 +108,7 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
 
   public static final class Builder {
     private String jobId;
-    private Engine engine;
-    private Table table;
-    private Row committerContext;
+    private DeltaTable deltaTable;
     private SinkCommitterMetricGroup metricGroup;
 
     public Builder() {}
@@ -175,24 +118,8 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
       return this;
     }
 
-    public Builder withEngine(Engine engine) {
-      this.engine = engine;
-      return this;
-    }
-
-    public Builder withTable(Table table) {
-      this.table = table;
-      return this;
-    }
-
-    public Builder withCommitterContext(Row committerContext) {
-      this.committerContext = committerContext;
-      return this;
-    }
-
-    public Builder withCommitterContext(String committerContextJson) {
-      this.committerContext =
-          JsonUtils.rowFromJson(committerContextJson, TransactionStateRow.SCHEMA);
+    public Builder withDeltaTable(DeltaTable deltaTable) {
+      this.deltaTable = deltaTable;
       return this;
     }
 
@@ -203,12 +130,10 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
 
     public DeltaCommitter build() {
       Objects.requireNonNull(jobId, "jobId must not be null");
-      Objects.requireNonNull(engine, "engine must not be null");
-      Objects.requireNonNull(table, "table must not be null");
-      Objects.requireNonNull(committerContext, "committerContext must not be null");
+      Objects.requireNonNull(deltaTable, "tableLoader must not be null");
       Objects.requireNonNull(metricGroup, "metricGroup must not be null");
 
-      return new DeltaCommitter(jobId, engine, table, committerContext, metricGroup);
+      return new DeltaCommitter(jobId, deltaTable, metricGroup);
     }
   }
 }

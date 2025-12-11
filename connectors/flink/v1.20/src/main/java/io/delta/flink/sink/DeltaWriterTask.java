@@ -1,23 +1,17 @@
 package io.delta.flink.sink;
 
-import io.delta.kernel.DataWriteContext;
-import io.delta.kernel.Transaction;
+import io.delta.flink.DeltaTable;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.DataFileStatus;
+
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.net.URI;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 import org.apache.flink.api.connector.sink2.SinkWriter;
 import org.apache.flink.table.data.RowData;
@@ -35,30 +29,26 @@ public class DeltaWriterTask {
   private final String jobId;
   private final int subtaskId;
   private final int attemptNumber;
-
-  private final List<RowData> buffer;
-
-  private final Engine engine;
-  private final Row writerContext;
   private final Map<String, Literal> partitionValues;
+  private final DeltaTable deltaTable;
+
   private final StructType writeSchema;
+  private final List<RowData> buffer;
 
   public DeltaWriterTask(
       String jobId,
       int subtaskId,
       int attemptNumber,
-      Engine engine,
-      Map<String, Literal> partitionValues,
-      Row writerContext) {
+      DeltaTable deltaTable,
+      Map<String, Literal> partitionValues) {
     this.jobId = jobId;
     this.subtaskId = subtaskId;
     this.attemptNumber = attemptNumber;
 
-    this.engine = engine;
     this.buffer = new ArrayList<>();
     this.partitionValues = partitionValues;
-    this.writerContext = writerContext;
-    this.writeSchema = TransactionStateRow.getLogicalSchema(this.writerContext);
+    this.deltaTable = deltaTable;
+    this.writeSchema = deltaTable.getSchema();
   }
 
   public void write(RowData element, SinkWriter.Context context)
@@ -74,36 +64,21 @@ public class DeltaWriterTask {
         jobId,
         subtaskId,
         attemptNumber);
-    if (buffer.isEmpty()) return Collections.emptyList();
-
+    if (buffer.isEmpty()) {
+      return Collections.emptyList();
+    }
     final CloseableIterator<FilteredColumnarBatch> logicalData = flinkRowDataAsKernelData();
-    final CloseableIterator<FilteredColumnarBatch> physicalData =
-        Transaction.transformLogicalData(engine, writerContext, logicalData, partitionValues);
-
-    final DataWriteContext writeContext =
-        Transaction.getWriteContext(engine, writerContext, partitionValues);
-
     // Append job and task information to target directory
-    final Path dir =
-        Paths.get(URI.create(writeContext.getTargetDirectory()))
-            .resolve(String.format("%s-%d-%d", jobId, subtaskId, attemptNumber));
-
-    final CloseableIterator<DataFileStatus> dataFiles =
-        engine
-            .getParquetHandler()
-            .writeParquetFiles(
-                dir.toAbsolutePath().toString(), physicalData, writeContext.getStatisticsColumns());
-    final CloseableIterator<Row> partitionDataActions =
-        Transaction.generateAppendActions(engine, writerContext, dataFiles, writeContext);
+    final String pathSuffix = String.format("%s-%d-%d", jobId, subtaskId, attemptNumber);
+    final CloseableIterator<Row> actions = deltaTable.writeParquet(pathSuffix, logicalData, partitionValues);
     final Collection<DeltaWriterResult> output =
-        partitionDataActions.map(row -> new DeltaWriterResult(List.of(row))).toInMemoryList();
+        actions.map(row -> new DeltaWriterResult(List.of(row))).toInMemoryList();
     buffer.clear();
     return output;
   }
 
   private CloseableIterator<FilteredColumnarBatch> flinkRowDataAsKernelData() {
     final int numColumns = writeSchema.length();
-
     final ColumnVector[] columnVectors = new ColumnVector[numColumns];
 
     for (int colIdx = 0; colIdx < numColumns; colIdx++) {

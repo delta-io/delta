@@ -61,11 +61,11 @@ public class Conversions {
     }
 
     public static Map<String, Literal> partitionValues(
-        RowType rowType, RowData rowData, Collection<String> partitionColNames) {
+        StructType rowType, Collection<String> partitionColNames, RowData rowData) {
       return partitionColNames.stream()
           .map(
               name -> {
-                final int partitionValueColIdx = rowType.getFieldIndex(name);
+                final int partitionValueColIdx = rowType.indexOf(name);
                 return new Object[] {
                   name, Conversions.FlinkToDelta.data(rowType, rowData, partitionValueColIdx)
                 };
@@ -73,36 +73,37 @@ public class Conversions {
           .collect(Collectors.toMap(o -> (String) o[0], o -> (Literal) o[1]));
     }
 
-    public static Literal data(RowType rowType, RowData rowData, int colIdx) {
-      final LogicalType flinkType = rowType.getTypeAt(colIdx);
-      final LogicalTypeRoot typeRoot = flinkType.getTypeRoot();
-      switch (typeRoot) {
-        case INTEGER:
-          return Literal.ofInt(rowData.getInt(colIdx));
-        case BIGINT:
-          return Literal.ofLong(rowData.getLong(colIdx));
-        case VARCHAR:
-        case CHAR:
-          return Literal.ofString(rowData.getString(colIdx).toString());
-        case DOUBLE:
-          return Literal.ofDouble(rowData.getDouble(colIdx));
-        case FLOAT:
-          return Literal.ofFloat(rowData.getFloat(colIdx));
-        case DECIMAL:
-          DecimalType decimalType = (DecimalType) flinkType;
-          int precision = decimalType.getPrecision();
-          int scale = decimalType.getScale();
-          return Literal.ofDecimal(
-              rowData.getDecimal(colIdx, precision, scale).toBigDecimal(), precision, scale);
-        case DATE:
-          return Literal.ofDate(rowData.getInt(colIdx));
-        case TIMESTAMP_WITH_TIME_ZONE:
-          return Literal.ofTimestamp(rowData.getLong(colIdx));
-        case TIMESTAMP_WITHOUT_TIME_ZONE:
-          return Literal.ofTimestampNtz(rowData.getLong(colIdx));
-        default:
-          throw new UnsupportedOperationException(
-              String.format("Type not supported: %s", flinkType));
+    public static Literal data(StructType rowType, RowData rowData, int colIdx) {
+      final StructField field = rowType.at(colIdx);
+      final DataType dataType = field.getDataType();
+      if (dataType.equivalent(IntegerType.INTEGER)) {
+        return Literal.ofInt(rowData.getInt(colIdx));
+      } else if (dataType.equivalent(LongType.LONG)) {
+        return Literal.ofLong(rowData.getLong(colIdx));
+      } else if (dataType.equivalent(StringType.STRING)) {
+        return Literal.ofString(rowData.getString(colIdx).toString());
+      } else if (dataType.equivalent(DoubleType.DOUBLE)) {
+        return Literal.ofDouble(rowData.getDouble(colIdx));
+      } else if (dataType.equivalent(FloatType.FLOAT)) {
+        return Literal.ofFloat(rowData.getFloat(colIdx));
+      } else if (dataType instanceof io.delta.kernel.types.DecimalType) {
+        io.delta.kernel.types.DecimalType decimalType =
+                (io.delta.kernel.types.DecimalType) dataType;
+        int precision = decimalType.getPrecision();
+        int scale = decimalType.getScale();
+        return Literal.ofDecimal(
+                rowData.getDecimal(colIdx, precision, scale).toBigDecimal(),
+                precision,
+                scale
+        );
+      } else if (dataType.equivalent(DateType.DATE)) {
+        return Literal.ofDate(rowData.getInt(colIdx));
+      } else if (dataType.equivalent(TimestampType.TIMESTAMP)) {
+        return Literal.ofTimestamp(rowData.getLong(colIdx));
+      } else if (dataType.equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
+        return Literal.ofTimestampNtz(rowData.getLong(colIdx));
+      } else {
+        throw new UnsupportedOperationException("Unsupported data type: " + dataType);
       }
     }
   }

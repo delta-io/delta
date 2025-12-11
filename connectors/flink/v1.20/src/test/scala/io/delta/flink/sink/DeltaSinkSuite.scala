@@ -118,8 +118,6 @@ class DeltaSinkSuite extends AnyFunSuite with TestHelper {
       val copy = InstantiationUtil.deserializeObject(serialized, getClass.getClassLoader)
         .asInstanceOf[DeltaSink]
       assert(copy != null)
-      assert(copy.getTable != null)
-      assert(copy.getEngine != null)
     }
   }
 }

@@ -1,21 +1,18 @@
 package io.delta.flink.sink;
 
-import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
-import io.delta.kernel.engine.Engine;
+import io.delta.flink.DeltaTable;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.data.TransactionStateRow;
-import java.io.IOException;
-import java.util.*;
-import java.util.stream.Collectors;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
 import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.types.logical.RowType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Delta Writer implementation of the Flink V2 Connector API. Writes out the data to the final
@@ -29,31 +26,25 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
   private final int subtaskId;
   private final int attemptNumber;
 
-  private final Engine engine;
-  private final Row writerContext;
-  private final RowType flinkSchema;
+  private final DeltaTable deltaTable;
 
   private final Map<Map<String, String>, DeltaWriterTask> writerTasksByPartition;
 
-  private SinkWriterMetricGroup metricGroup;
-  private Counter elementCounter;
+  private final SinkWriterMetricGroup metricGroup;
+  private final Counter elementCounter;
 
   private DeltaSinkWriter(
       String jobId,
       int subtaskId,
       int attemptNumber,
-      Engine engine,
-      Row writerContext,
-      RowType flinkSchema,
+      DeltaTable deltaTable,
       SinkWriterMetricGroup metricGroup) {
     this.jobId = jobId;
     this.subtaskId = subtaskId;
     this.attemptNumber = attemptNumber;
 
-    this.engine = engine;
-    this.flinkSchema = flinkSchema;
+    this.deltaTable = deltaTable;
     this.writerTasksByPartition = new HashMap<>();
-    this.writerContext = writerContext;
 
     this.metricGroup = metricGroup;
     this.elementCounter = metricGroup.counter("elementCounter");
@@ -71,7 +62,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
   public void write(RowData element, Context context) throws IOException, InterruptedException {
     final Map<String, Literal> partitionValues =
         Conversions.FlinkToDelta.partitionValues(
-            flinkSchema, element, TransactionStateRow.getPartitionColumnsList(writerContext));
+            deltaTable.getSchema(), deltaTable.getPartitionColumns(), element);
 
     Map<String, String> writerKey =
         partitionValues.entrySet().stream()
@@ -82,7 +73,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
       writerTasksByPartition.put(
           writerKey,
           new DeltaWriterTask(
-              jobId, subtaskId, attemptNumber, engine, partitionValues, writerContext));
+              jobId, subtaskId, attemptNumber, deltaTable, partitionValues));
     }
     writerTasksByPartition.get(writerKey).write(element, context);
     elementCounter.inc();
@@ -112,9 +103,9 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
     private String jobId;
     private int subtaskId;
     private int attemptNumber;
-    private Engine engine;
-    private Row writerContext;
-    private RowType flinkSchema;
+
+    private DeltaTable deltaTable;
+
     private SinkWriterMetricGroup metricGroup;
 
     public Builder() {}
@@ -134,24 +125,8 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
       return this;
     }
 
-    public Builder withEngine(Engine engine) {
-      this.engine = engine;
-      return this;
-    }
-
-    public Builder withWriterContext(Row writerContext) {
-      this.writerContext = writerContext;
-      return this;
-    }
-
-    public Builder withWriterContext(String writerContextJson) {
-      this.writerContext = JsonUtils.rowFromJson(writerContextJson, TransactionStateRow.SCHEMA);
-      ;
-      return this;
-    }
-
-    public Builder withFlinkSchema(RowType flinkSchema) {
-      this.flinkSchema = flinkSchema;
+    public Builder withDeltaTable(DeltaTable deltaTable) {
+      this.deltaTable = deltaTable;
       return this;
     }
 
@@ -163,13 +138,11 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
     public DeltaSinkWriter build() {
       // Optional safety checks
       Objects.requireNonNull(jobId, "jobId must not be null");
-      Objects.requireNonNull(writerContext, "writerContext must not be null");
-      Objects.requireNonNull(flinkSchema, "flinkSchema must not be null");
-      Objects.requireNonNull(engine, "engine must not be null");
+      Objects.requireNonNull(deltaTable, "deltaTable must not be null");
       Objects.requireNonNull(metricGroup, "metricGroup must not be null");
 
       return new DeltaSinkWriter(
-          jobId, subtaskId, attemptNumber, engine, writerContext, flinkSchema, metricGroup);
+          jobId, subtaskId, attemptNumber, deltaTable, metricGroup);
     }
   }
 }

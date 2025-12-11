@@ -1,45 +1,38 @@
 package io.delta.flink.sink
 
 import java.nio.file.Files
-
 import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
-
 import io.delta.flink.TestHelper
+import io.delta.flink.table.LocalKernelTable
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
-
 import org.apache.flink.table.data.{GenericRowData, StringData}
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
+
+import java.net.URI
 
 class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
 
   test("write to empty table") {
     withTempDir { dir =>
-      val engine = DefaultEngine.create(new Configuration())
+      val tablePath = dir.getAbsolutePath
       val schema = new StructType()
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = Table.forPath(engine, dir.toString)
-      val txn = table.createTransactionBuilder(engine, "dummyEngine", Operation.CREATE_TABLE)
-        .withSchema(engine, schema)
-        .withPartitionColumns(engine, Seq("part").toList.asJava)
-        .build(engine)
-      val writerContext = txn.getTransactionState(engine)
-
+      val table = new LocalKernelTable(URI.create(tablePath), schema, List("part").asJava)
       val partitionValues = Map("part" -> Literal.ofString("p0")).asJava
 
       val writerTask = new DeltaWriterTask(
         /* jobId= */ "test-job-id",
         /* subtaskId= */ 2,
         /* attemptNumber= */ 0,
-        /* engine= */ engine,
-        /* partitionValues= */ partitionValues,
-        /* writeContext= */ writerContext)
+        /* table = */table,
+        /* partitionValues= */ partitionValues)
 
       for (i <- 0 until 10) {
         writerTask.write(GenericRowData.of(i, StringData.fromString("p0")), null)
@@ -74,23 +67,20 @@ class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
 
   test("write to existing table") {
     withTempDir { dir =>
-      val engine = DefaultEngine.create(new Configuration())
+      val tablePath = dir.getAbsolutePath
       val schema = new StructType()
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = createNonEmptyTable(engine, dir.toString, schema, Seq("part"))
-      val txn = table.createTransactionBuilder(engine, "xxx", Operation.MANUAL_UPDATE).build(engine)
-      val writerContext = txn.getTransactionState(engine)
+      val table = new LocalKernelTable(URI.create(tablePath), schema, List("part").asJava)
       val partitionValues = Map("part" -> Literal.ofString("p0")).asJava
 
       val writerTask = new DeltaWriterTask(
         /* jobId= */ "test-job-id",
         /* subtaskId= */ 2,
         /* attemptNumber= */ 0,
-        /* engine= */ engine,
-        /* partitionValues= */ partitionValues,
-        /* writeContext= */ writerContext)
+        /* table = */table,
+        /* partitionValues= */ partitionValues)
 
       for (i <- 0 until 10) {
         writerTask.write(GenericRowData.of(i, StringData.fromString("p0")), null)
