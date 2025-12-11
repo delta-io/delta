@@ -22,10 +22,11 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.data.ParsedCatalogCommitData;
 import io.delta.kernel.spark.exception.VersionNotFoundException;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
-import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -87,6 +88,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         engine,
         snapshot,
@@ -95,7 +97,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
         mustBeRecreatable,
         canReturnLastCommit,
         canReturnEarliestCommit,
-        new ArrayList<>() /* catalogCommits */);
+        catalogCommits);
   }
 
   /**
