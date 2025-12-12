@@ -43,8 +43,24 @@ class DeltaSparkSessionExtensionV1 extends AbstractDeltaSparkSessionExtension
 * Abstract base class that contains the base Delta Spark Session extension logic.
 * As part of evolution for Delta connector(e.g. Dsv2), new Spark session extension
 * will be built based on that.
+*
+* Subclasses can override [[injectPreDeltaAnalysisRules]] to inject custom resolution rules
+* between PreprocessTimeTravel and DeltaAnalysis rules.
 */
 class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
+
+  /**
+   * Hook for subclasses to inject custom rules before DeltaAnalysis.
+   * This is called after PreprocessTimeTravel but before DeltaAnalysis.
+   *
+   * @param extensions The SparkSessionExtensions to inject into
+   * @return true if a rule was injected, false otherwise
+   */
+  protected def injectPreDeltaAnalysisRules(extensions: SparkSessionExtensions): Boolean = {
+    // Default implementation does not inject any rules
+    false
+  }
+
   override def apply(extensions: SparkSessionExtensions): Unit = {
     extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
@@ -55,6 +71,10 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     extensions.injectResolutionRule { session =>
       PreprocessTimeTravel(session)
     }
+
+    // Hook for subclasses to inject custom resolution rules (e.g., SparkTable conversion)
+    injectPreDeltaAnalysisRules(extensions)
+
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support
       // id column mapping mode for Delta.

@@ -20,6 +20,7 @@ import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.ConvertSparkTableToDeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
@@ -72,20 +73,30 @@ import org.apache.spark.sql.delta.ConvertSparkTableToDeltaTableV2
 class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
 
   /**
-   * Extends the parent apply method to inject the SparkTable to DeltaTableV2 conversion rule.
-   * This rule must run before DeltaAnalysis to ensure SparkTable instances are converted
-   * to DeltaTableV2 before the Delta-specific analysis rules process them.
+   * Injects the SparkTable to DeltaTableV2 conversion rule if V2 connector is enabled
+   * (STRICT mode). This rule must run after PreprocessTimeTravel but before DeltaAnalysis
+   * to ensure SparkTable instances are converted to DeltaTableV2 after TimeTravel nodes
+   * are resolved but before Delta-specific analysis rules process them.
+   *
+   * The conversion is only active when spark.databricks.delta.v2.enableMode is set to
+   * "STRICT".
    */
-  override def apply(extensions: SparkSessionExtensions): Unit = {
-    // First, inject the SparkTable to DeltaTableV2 conversion rule.
-    // This must be injected before calling super.apply() to ensure it runs
-    // before DeltaAnalysis, which is injected by the parent class.
+  override protected def injectPreDeltaAnalysisRules(
+      extensions: SparkSessionExtensions): Boolean = {
     extensions.injectResolutionRule { session =>
-      new ConvertSparkTableToDeltaTableV2(session)
-    }
+      val mode = session.conf.get(
+        DeltaSQLConfV2.V2_ENABLE_MODE.key,
+        DeltaSQLConfV2.V2_ENABLE_MODE.defaultValueString)
 
-    // Then apply all the parent extension rules (including DeltaAnalysis)
-    super.apply(extensions)
+      if ("STRICT".equals(mode)) {
+        // V2 mode: inject conversion rule to convert SparkTable to DeltaTableV2
+        new ConvertSparkTableToDeltaTableV2(session)
+      } else {
+        // NONE mode (default): no conversion needed, catalog returns DeltaTableV2 directly
+        new NoOpRule()
+      }
+    }
+    true
   }
 
   /**
