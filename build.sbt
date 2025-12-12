@@ -708,8 +708,73 @@ lazy val contribs = (project in file("contribs"))
     TestParallelization.settings
   ).configureUnidoc()
 
-/*
-TODO: compilation broken for Spark 4.0
+
+val unityCatalogVersion = "0.3.0"
+val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
+
+lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .disablePlugins(ScalafmtPlugin)
+  .settings(
+    name := "delta-spark-unitycatalog",
+    commonSettings,
+    skipReleaseSettings,
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+
+    // This is a test-only module - no production sources
+    Compile / sources := Seq.empty,
+
+    // Ensure Java sources are picked up
+    Test / unmanagedSourceDirectories += baseDirectory.value / "src" / "test" / "java",
+
+    Test / javaOptions ++= Seq("-ea"),
+
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    Test / parallelExecution := false,
+
+    // Force ALL Jackson dependencies to match Spark's Jackson version
+    // This overrides Jackson from Unity Catalog's transitive dependencies (e.g., Armeria)
+    dependencyOverrides ++= Seq(
+      "com.fasterxml.jackson.core" % "jackson-core" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-annotations" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
+    ),
+
+    libraryDependencies ++= Seq(
+      // JUnit 5 test dependencies
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+
+      // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
+      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+      "io.unitycatalog" % "unitycatalog-server" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+
+      // Spark test dependencies
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
+    ),
+
+    Test / testOptions += Tests.Argument("-oDF"),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+  )
+
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -737,7 +802,6 @@ lazy val sharing = (project in file("sharing"))
     ),
     TestParallelization.settings
   ).configureUnidoc()
-*/
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
   .enablePlugins(ScalafmtPlugin)
@@ -1262,8 +1326,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  // TODO: add sharing back after fixing compilation
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, hudi)
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, hudi, sharing)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

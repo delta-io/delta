@@ -32,7 +32,7 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-connect-common{suffix}_2.13-{version}.jar",
     "delta-connect-client{suffix}_2.13-{version}.jar",
     "delta-connect-server{suffix}_2.13-{version}.jar",
-    # "delta-sharing-spark{suffix}_2.13-{version}.jar", TODO add back after fixing build
+    "delta-sharing-spark{suffix}_2.13-{version}.jar",
     "delta-contribs{suffix}_2.13-{version}.jar",
     # "delta-iceberg{suffix}_2.13-{version}.jar" TODO add back after fixing build
 ]

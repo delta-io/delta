@@ -50,6 +50,7 @@ import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.util.JsonUtils;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -97,29 +98,90 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testDeserializeOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class, () -> microBatchStream.deserializeOffset("{}"));
-    assertEquals("deserializeOffset is not supported", exception.getMessage());
+  public void testDeserializeOffset_ValidJson(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    String tableId = deltaLog.tableId();
+    DeltaSourceOffset expected = new DeltaSourceOffset(tableId, 5L, 10L, false);
+    String json = org.apache.spark.sql.delta.util.JsonUtils.mapper().writeValueAsString(expected);
+
+    Offset result = stream.deserializeOffset(json);
+    DeltaSourceOffset actual = (DeltaSourceOffset) result;
+
+    assertEquals(expected.reservoirId(), actual.reservoirId());
+    assertEquals(expected.reservoirVersion(), actual.reservoirVersion());
+    assertEquals(expected.index(), actual.index());
+    assertEquals(expected.isInitialSnapshot(), actual.isInitialSnapshot());
   }
 
   @Test
-  public void testCommit_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    Offset end = null;
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.commit(end));
-    assertEquals("commit is not supported", exception.getMessage());
+  public void testDeserializeOffset_MismatchedTableId(@TempDir File tempDir) throws Exception {
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+
+    // Create offset with wrong tableId
+    String wrongTableId = "wrong-table-id";
+    DeltaSourceOffset offset =
+        new DeltaSourceOffset(
+            wrongTableId,
+            /* reservoirVersion= */ 1L,
+            /* index= */ 0L,
+            /* isInitialSnapshot= */ false);
+    String json = JsonUtils.mapper().writeValueAsString(offset);
+    RuntimeException exception =
+        assertThrows(RuntimeException.class, () -> stream.deserializeOffset(json));
+
+    assertTrue(
+        exception
+            .getMessage()
+            .contains("streaming query was reading from an unexpected Delta table"));
   }
 
   @Test
-  public void testStop_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.stop());
-    assertEquals("stop is not supported", exception.getMessage());
+  public void testDeserializeOffset_InvalidJson(@TempDir File tempDir) {
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+    String invalidJson = "{this is not valid json}";
+    assertThrows(RuntimeException.class, () -> stream.deserializeOffset(invalidJson));
+  }
+
+  @Test
+  public void testDeserializeOffset_WithInitialSnapshot(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    String tableId = deltaLog.tableId();
+    long baseIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaSourceOffset expected =
+        new DeltaSourceOffset(
+            tableId, /* reservoirVersion= */ 0L, baseIndex, /* isInitialSnapshot= */ true);
+    String json = org.apache.spark.sql.delta.util.JsonUtils.mapper().writeValueAsString(expected);
+
+    Offset result = stream.deserializeOffset(json);
+    DeltaSourceOffset actual = (DeltaSourceOffset) result;
+
+    assertTrue(actual.isInitialSnapshot());
+    assertEquals(0L, actual.reservoirVersion());
+    assertEquals(baseIndex, actual.index());
+  }
+
+  @Test
+  public void testCommit_NoOp(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    String tableId = deltaLog.tableId();
+    DeltaSourceOffset offset = new DeltaSourceOffset(tableId, 1L, 0L, false);
+
+    assertDoesNotThrow(() -> stream.commit(offset));
+  }
+
+  @Test
+  public void testStop_NoOp(@TempDir File tempDir) {
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+    assertDoesNotThrow(() -> stream.stop());
   }
 
   // ================================================================================================

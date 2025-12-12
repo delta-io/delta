@@ -57,15 +57,15 @@ trait ServerSidePlanningClient {
  */
 private[serverSidePlanning] trait ServerSidePlanningClientFactory {
   /**
-   * Create a client for a specific catalog by reading catalog-specific configuration.
-   * This method reads configuration from spark.sql.catalog.<catalogName>.uri and
-   * spark.sql.catalog.<catalogName>.token.
+   * Create a client using metadata necessary for server-side planning.
    *
    * @param spark The SparkSession
-   * @param catalogName The name of the catalog (e.g., "spark_catalog", "unity")
-   * @return A ServerSidePlanningClient configured for the specified catalog
+   * @param metadata Metadata necessary for server-side planning
+   * @return A ServerSidePlanningClient configured with the metadata
    */
-  def buildForCatalog(spark: SparkSession, catalogName: String): ServerSidePlanningClient
+  def buildClient(
+      spark: SparkSession,
+      metadata: ServerSidePlanningMetadata): ServerSidePlanningClient
 }
 
 /**
@@ -93,19 +93,23 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
   }
 
   /**
-   * Get a client for a specific catalog using the registered factory.
-   * This is the single public entry point for obtaining a ServerSidePlanningClient.
-   *
-   * @param spark The SparkSession
-   * @param catalogName The name of the catalog (e.g., "spark_catalog", "unity")
-   * @return A ServerSidePlanningClient configured for the specified catalog
-   * @throws IllegalStateException if no factory has been registered
+   * Get the currently registered factory.
+   * Throws IllegalStateException if no factory has been registered.
    */
-  def getClient(spark: SparkSession, catalogName: String): ServerSidePlanningClient = {
+  def getFactory(): ServerSidePlanningClientFactory = {
     registeredFactory.getOrElse {
       throw new IllegalStateException(
         "No ServerSidePlanningClientFactory has been registered. " +
         "Call ServerSidePlanningClientFactory.setFactory() to register an implementation.")
-    }.buildForCatalog(spark, catalogName)
+    }
+  }
+
+  /**
+   * Convenience method to create a client from metadata using the registered factory.
+   */
+  def buildClient(
+      spark: SparkSession,
+      metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
+    getFactory().buildClient(spark, metadata)
   }
 }
