@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.deletionvectors
 import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
@@ -51,8 +51,7 @@ class DeletionVectorsSuite extends QueryTest
   with DeltaSQLCommandTest
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews
-  with DeltaExceptionTestUtils
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaExceptionTestUtils {
   import testImplicits._
 
   override def beforeAll(): Unit = {
@@ -300,7 +299,7 @@ class DeletionVectorsSuite extends QueryTest
       }
     }
 
-    testSparkMasterOnly(s"variant types DELETE with DVs with column mapping mode=$mode") {
+    test(s"variant types DELETE with DVs with column mapping mode=$mode") {
       withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> mode) {
         withTempDir { dirName =>
           val path = dirName.getAbsolutePath

@@ -42,8 +42,7 @@ import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.{ArrayType, DataType, DateType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampType}
 
 trait GeneratedColumnSuiteBase
-    extends GeneratedColumnTest
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    extends GeneratedColumnTest {
 
   import GeneratedColumn._
   import testImplicits._

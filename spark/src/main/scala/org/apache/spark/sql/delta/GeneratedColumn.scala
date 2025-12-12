@@ -211,7 +211,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       // Generated columns cannot be variant types because the writer must be able to enforce that
       // the <variant value> <=> <generated expression>. Variants are currently not comprable so
       // this condition is impossible to enforce.
-      if (VariantShims.isVariantType(c.dataType)) {
+      if (c.dataType.isInstanceOf[VariantType]) {
         throw DeltaErrors.generatedColumnsUnsupportedType(c.dataType)
       }
     }

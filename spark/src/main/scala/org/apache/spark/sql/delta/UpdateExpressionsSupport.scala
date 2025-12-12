@@ -375,12 +375,19 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       originalTargetExprOpt: Option[Expression]): Expression = {
     if (UpdateExpressionsSupport.isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf)) {
       val sourceNullCondition = IsNull(sourceExpr)
+      val targetHasExtraFieldsToPreserveValue =
+        UpdateExpressionsSupport.hasExtraStructFieldsToPreserveValue(sourceType, targetType)
       val fullNullCondition = originalTargetExprOpt match {
-        case Some(originalTargetExpr) =>
-          // Combine: source is null AND target is null
+        case Some(originalTargetExpr) if targetHasExtraFieldsToPreserveValue =>
+          // When there are target-only fields to preserve, we need to check whether both the source
+          // and the original target are null.
           And(sourceNullCondition, IsNull(originalTargetExpr))
-
+        case Some(_) if !targetHasExtraFieldsToPreserveValue =>
+          // No target-only fields to preserve values for.
+          sourceNullCondition
         case None =>
+          // No original target expression provided, which means we overwrite the target with the
+          // source.
           sourceNullCondition
       }
       If(
@@ -811,5 +818,54 @@ object UpdateExpressionsSupport {
   def isUpdateStarPreserveNullSourceStructsEnabled(conf: SQLConf): Boolean = {
     isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf) &&
       conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS_UPDATE_STAR)
+  }
+
+  /**
+   * Returns true if `targetType` contains extra struct fields compared to `sourceType` that we
+   * want to preserve values for.
+   *
+   * We recursively check target-only fields of structs nested within structs, but we do not
+   * check structs nested within arrays or maps because we don't preserve original target values
+   * for arrays or maps.
+   *
+   * Field name comparison is case-insensitive, aligning with
+   * `DataTypeUtils.equalsIgnoreCaseAndNullability`, which is used in
+   * `UpdateExpressionSupport.castIfNeeded` to decide whether struct type cast is needed.
+   *
+   * @param sourceStruct the source struct to compare against
+   * @param targetStruct the target struct to check for extra fields to preserve values for
+   * @return true if `targetStruct` has more struct fields than `sourceStruct` at any nesting level
+   *         that we want to preserve values for.
+   */
+  private def hasExtraStructFieldsToPreserveValue(
+      sourceStruct: StructType,
+      targetStruct: StructType): Boolean = {
+    // Fast check: if target has more fields, it definitely has extra fields than source.
+    if (targetStruct.length > sourceStruct.length) {
+      return true
+    }
+
+    // Partition target fields into target-only and common fields.
+    val (commonFields, targetOnlyFields) = targetStruct.partition { targetField =>
+      sourceStruct.exists(_.name.equalsIgnoreCase(targetField.name))
+    }
+
+    // If there are any target-only fields, we have extra fields to preserve.
+    if (targetOnlyFields.nonEmpty) {
+      return true
+    }
+
+    // No extra fields at this level - recursively check common fields that are `StructType`.
+    commonFields.exists { targetField =>
+      sourceStruct.find(_.name.equalsIgnoreCase(targetField.name)).exists { sourceField =>
+        (sourceField.dataType, targetField.dataType) match {
+          case (sourceStruct: StructType, targetStruct: StructType) =>
+            hasExtraStructFieldsToPreserveValue(sourceStruct, targetStruct)
+          case _ =>
+            // Don't recurse into arrays or maps, as we don't preserve values for arrays or maps.
+            false
+        }
+      }
+    }
   }
 }

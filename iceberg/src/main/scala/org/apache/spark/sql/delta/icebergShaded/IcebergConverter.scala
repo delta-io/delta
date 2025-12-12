@@ -618,7 +618,10 @@ class IcebergConverter(spark: SparkSession)
           case file: FileAction =>
             addBuffer ++= Option(file.wrap.add)
             removeBuffer ++= Option(file.wrap.remove)
-            dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
+            if (file.wrap.add != null || file.wrap.remove != null) {
+              // We only care about data changes in add and remove actions
+              dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
+            }
             hasDv |= file.deletionVector != null
           case c: CommitInfo =>
             commitInfo = Some(c)

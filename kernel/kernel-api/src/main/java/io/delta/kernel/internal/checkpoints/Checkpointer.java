@@ -91,6 +91,11 @@ public class Checkpointer {
       numberOfAddFiles = checkpointDataIter.getNumberOfAddActions();
     } catch (FileAlreadyExistsException faee) {
       throw new CheckpointAlreadyExistsException(version);
+    } catch (IOException io) {
+      if (io.getCause() instanceof FileAlreadyExistsException) {
+        throw new CheckpointAlreadyExistsException(version);
+      }
+      throw io;
     }
 
     final CheckpointMetaData checkpointMetaData =

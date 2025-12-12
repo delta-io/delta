@@ -25,11 +25,13 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, IdentityColumn}
+import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
@@ -37,16 +39,16 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.serverSidePlanning.ServerSidePlannedTable
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
-import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.internal.{Logging, MDC}
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
@@ -235,7 +237,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   override def loadTable(ident: Identifier): Table = recordFrameProfile(
       "DeltaCatalog", "loadTable") {
     try {
-      super.loadTable(ident) match {
+      val table = super.loadTable(ident)
+
+      ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
+        return sspt
+      }
+
+      table match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
           loadCatalogTable(ident, v1.catalogTable)
         case o => o
@@ -378,11 +386,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         // TODO: we should extract write options from table properties for all the cases. We
         //       can remove the UC check when we have confidence.
-        val respectOptions = isUnityCatalog || properties.containsKey("test.simulateUC")
-        val (props, writeOptions) = if (respectOptions) {
+        val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
+        val (props, writeOptions) = if (isUC) {
           val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
           expandTableProps(props, writeOptions, spark.sessionState.conf)
           props.remove("test.simulateUC")
+          translateUCTableIdProperty(props)
           (props, writeOptions)
         } else {
           (properties, Map.empty[String, String])
@@ -600,6 +609,18 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         }
       }
     }
+  }
+
+  /**
+   * The UC table ID property was renamed from an old name. In a transition period we need to
+   * translate the old UC table ID property name set by caller to new one. And in case both the new
+   * and old properties are set, remove the old one. Later in UC server it might throw error if it
+   * sees both.
+   * TODO: clean up once callers are migrated.
+   */
+  private def translateUCTableIdProperty(props: util.Map[String, String]): Unit = {
+    val oldTableIdProperty = Option(props.remove(UC_TABLE_ID_KEY_OLD))
+    oldTableIdProperty.foreach(props.putIfAbsent(UC_TABLE_ID_KEY, _))
   }
 
   /**

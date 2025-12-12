@@ -24,7 +24,6 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSourceError, MergeIntoMaterializeSourceErrorType, MergeIntoMaterializeSourceReason, MergeStats}
-import org.apache.spark.sql.delta.commands.merge.MergeIntoMaterializeSourceShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -49,8 +48,7 @@ trait MergeIntoMaterializeSourceMixin
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils
-    with DeltaTestUtilsBase
-  {
+    with DeltaTestUtilsBase {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -175,10 +173,10 @@ trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMix
       checkpointedDf.collect()
     }
     assert(ex.isInstanceOf[SparkException], ex)
+    val sparkEx = ex.asInstanceOf[SparkException]
     assert(
-      MergeIntoMaterializeSourceShims.mergeMaterializedSourceRddBlockLostError(
-        ex.asInstanceOf[SparkException],
-        rdd.id))
+      sparkEx.getErrorClass == "CHECKPOINT_RDD_BLOCK_ID_NOT_FOUND" &&
+        sparkEx.getMessageParameters.get("rddBlockId").contains(s"rdd_${rdd.id}"))
   }
 
   for {

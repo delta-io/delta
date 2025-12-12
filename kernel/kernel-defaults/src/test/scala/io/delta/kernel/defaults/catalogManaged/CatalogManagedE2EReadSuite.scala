@@ -20,6 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.{SnapshotBuilder, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.DeltaHistoryManager
@@ -31,6 +32,7 @@ import io.delta.kernel.internal.tablefeatures.TableFeatures.{isCatalogManagedSup
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.FileStatus
 
+import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
@@ -404,6 +406,22 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           .build(defaultEngine)
       }
       assert(e.getMessage.contains("Cannot load table version 2"))
+    }
+  }
+
+  test("for latest queries we read the _last_checkpoint file") {
+    withCatalogOwnedPreviewTestTable { (resourceTablePath, resourceLogData) =>
+      // It doesn't matter if the checkpoint actually exists; we just want to check that during
+      // log segment building we try to read _last_checkpoint
+      import io.delta.kernel.defaults.MetricsEngine
+      val engine = new MetricsEngine(new HadoopFileIO(new Configuration()))
+      val snapshot = TableManager
+        .loadSnapshot(resourceTablePath)
+        .withMaxCatalogVersion(2)
+        .withLogData(resourceLogData.asJava)
+        .build(engine)
+      assert(snapshot.getVersion == 2)
+      assert(engine.getJsonHandler.getLastCheckpointMetadataReadCalls == 1)
     }
   }
 }

@@ -30,7 +30,6 @@ import shadedForDelta.org.apache.iceberg.transforms.IcebergPartitionUtil
 import shadedForDelta.org.apache.iceberg.types.Type.TypeID
 
 import org.apache.spark.SparkThrowable
-import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.StructType
 
@@ -39,7 +38,7 @@ class IcebergFileManifest(
     spark: SparkSession,
     table: IcebergTableLike,
     partitionSchema: StructType,
-    convertStats: Boolean = true) extends ConvertTargetFileManifest with LoggingShims {
+    convertStats: Boolean = true) extends ConvertTargetFileManifest {
 
   // scalastyle:off sparkimplicits
   import spark.implicits._

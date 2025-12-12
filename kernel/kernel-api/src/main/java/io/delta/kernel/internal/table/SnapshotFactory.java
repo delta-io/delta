@@ -183,8 +183,9 @@ public class SnapshotFactory {
   }
 
   private SnapshotImpl createSnapshot(Engine engine, SnapshotQueryContext snapshotCtx) {
-    final Optional<Long> versionToLoad = getTargetVersionToLoad(engine, snapshotCtx);
-    final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx, versionToLoad);
+    final Optional<Long> timeTravelVersion = getTargetTimeTravelVersion(engine, snapshotCtx);
+    final Lazy<LogSegment> lazyLogSegment =
+        getLazyLogSegment(engine, snapshotCtx, timeTravelVersion);
     final Lazy<Optional<CRCInfo>> lazyCrcInfo =
         createLazyChecksumFileLoaderWithMetrics(
             engine, lazyLogSegment, snapshotCtx.getSnapshotMetrics());
@@ -216,7 +217,7 @@ public class SnapshotFactory {
 
     return new SnapshotImpl(
         tablePath,
-        versionToLoad.orElseGet(() -> lazyLogSegment.get().getVersion()),
+        timeTravelVersion.orElseGet(() -> lazyLogSegment.get().getVersion()),
         lazyLogSegment,
         logReplay,
         protocol,
@@ -238,7 +239,7 @@ public class SnapshotFactory {
   }
 
   private Lazy<LogSegment> getLazyLogSegment(
-      Engine engine, SnapshotQueryContext snapshotCtx, Optional<Long> versionToLoad) {
+      Engine engine, SnapshotQueryContext snapshotCtx, Optional<Long> timeTravelVersion) {
     return new Lazy<>(
         () -> {
           final LogSegment logSegment =
@@ -249,7 +250,7 @@ public class SnapshotFactory {
                       () ->
                           new SnapshotManager(tablePath)
                               .getLogSegmentForVersion(
-                                  engine, versionToLoad, ctx.logDatas, ctx.maxCatalogVersion));
+                                  engine, timeTravelVersion, ctx.logDatas, ctx.maxCatalogVersion));
 
           snapshotCtx.setResolvedVersion(logSegment.getVersion());
           snapshotCtx.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
@@ -258,7 +259,8 @@ public class SnapshotFactory {
         });
   }
 
-  private Optional<Long> getTargetVersionToLoad(Engine engine, SnapshotQueryContext snapshotCtx) {
+  private Optional<Long> getTargetTimeTravelVersion(
+      Engine engine, SnapshotQueryContext snapshotCtx) {
     if (ctx.timestampQueryContextOpt.isPresent()) {
       return Optional.of(
           resolveTimestampToSnapshotVersion(
@@ -269,9 +271,6 @@ public class SnapshotFactory {
               ctx.logDatas));
     } else if (ctx.versionOpt.isPresent()) {
       return ctx.versionOpt;
-    } else if (ctx.maxCatalogVersion.isPresent()) {
-      // For latest queries for catalogManaged tables we want to load the maxCatalogVersion
-      return ctx.maxCatalogVersion;
     }
     return Optional.empty();
   }

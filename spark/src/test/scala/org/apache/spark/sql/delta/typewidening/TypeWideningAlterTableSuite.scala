@@ -32,13 +32,11 @@ import org.apache.spark.sql.types._
  * Suite providing core coverage for type widening using ALTER TABLE CHANGE COLUMN TYPE.
  */
 class TypeWideningAlterTableSuite
-  extends QueryTest
+  extends TypeWideningAlterTableTests
     with ParquetTest
     with TypeWideningTestMixin
-    with TypeWideningAlterTableTests
 
-trait TypeWideningAlterTableTests
-  extends DeltaExcludedBySparkVersionTestMixinShims
+trait TypeWideningAlterTableTests extends QueryTest
     with QueryErrorsBase
     with TypeWideningTestCases {
   self: QueryTest with ParquetTest with TypeWideningTestMixin =>
@@ -155,7 +153,7 @@ trait TypeWideningAlterTableTests
     }
   }
 
-  testSparkMasterOnly(
+  test(
     "widening Date -> TimestampNTZ rejected when TimestampNTZ feature isn't supported") {
     withTimestampNTZDisabled {
       sql(s"CREATE TABLE delta.`$tempPath` (a date) USING DELTA")

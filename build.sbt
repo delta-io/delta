@@ -66,7 +66,7 @@ val sparkVersion = settingKey[String]("Spark version")
 
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -257,7 +257,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
         IO.createDirectory(confDir)
-        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2_spark_master.properties"
+        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2.properties"
         val linkedLog4jProps = confDir / "log4j2.properties"
         Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
       }
@@ -498,7 +498,8 @@ lazy val sparkV2 = (project in file("kernel-spark"))
       // ScalaTest for test utilities (needed by Spark test classes)
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+    TestParallelization.settings
   )
 
 
@@ -702,8 +703,76 @@ lazy val contribs = (project in file("contribs"))
       val dir = baseDirectory.value.getParentFile / "target" / "scala-2.13" / "classes"
       Files.createDirectories(dir.toPath)
     },
-    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
+    TestParallelization.settings
   ).configureUnidoc()
+
+
+val unityCatalogVersion = "0.3.0"
+val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
+
+lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .disablePlugins(ScalafmtPlugin)
+  .settings(
+    name := "delta-spark-unitycatalog",
+    commonSettings,
+    skipReleaseSettings,
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+
+    // This is a test-only module - no production sources
+    Compile / sources := Seq.empty,
+
+    // Ensure Java sources are picked up
+    Test / unmanagedSourceDirectories += baseDirectory.value / "src" / "test" / "java",
+
+    Test / javaOptions ++= Seq("-ea"),
+
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    Test / parallelExecution := false,
+
+    // Force ALL Jackson dependencies to match Spark's Jackson version
+    // This overrides Jackson from Unity Catalog's transitive dependencies (e.g., Armeria)
+    dependencyOverrides ++= Seq(
+      "com.fasterxml.jackson.core" % "jackson-core" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-annotations" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
+    ),
+
+    libraryDependencies ++= Seq(
+      // JUnit 5 test dependencies
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+
+      // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
+      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+      "io.unitycatalog" % "unitycatalog-server" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+
+      // Spark test dependencies
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
+    ),
+
+    Test / testOptions += Tests.Argument("-oDF"),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+  )
 
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -715,22 +784,6 @@ lazy val sharing = (project in file("sharing"))
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Test / javaOptions ++= Seq("-ea"),
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-sharing-spark",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-sharing-spark",
-      emptyValue = ()).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-sharing-spark",
-      emptyValue = ()).value,
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
@@ -745,7 +798,8 @@ lazy val sharing = (project in file("sharing"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
-    )
+    ),
+    TestParallelization.settings
   ).configureUnidoc()
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
@@ -898,7 +952,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
-      "io.delta" %% "delta-spark" % "3.3.2" % "test",
+      "io.delta" %% "delta-spark" % "4.0.0" % "test",
 
       "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
@@ -987,6 +1041,7 @@ lazy val storage = (project in file("storage"))
 
     // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
+    TestParallelization.settings
   ).configureUnidoc()
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
@@ -1007,9 +1062,12 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
-    )
+    ),
+    TestParallelization.settings
   ).configureUnidoc()
 
+/*
+TODO: readd delta-iceberg on Spark 4.0+
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(defaultSparkVersion)
  s"iceberg-spark-runtime-$expMaj.$expMin"
@@ -1165,6 +1223,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / assemblyMergeStrategy := updateMergeStrategy((assembly / assemblyMergeStrategy).value),
     assemblyPackageScala / assembleArtifact := false,
   )
+*/
 
 lazy val hudi = (project in file("hudi"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -1215,7 +1274,8 @@ lazy val hudi = (project in file("hudi"))
         MergeStrategy.first
     },
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
-    Compile / packageBin := assembly.value
+    Compile / packageBin := assembly.value,
+    TestParallelization.settings
   )
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
@@ -1265,7 +1325,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, hudi, sharing)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
@@ -1273,6 +1333,7 @@ lazy val sparkGroup = project
     publish / skip := false,
   )
 
+/*
 lazy val icebergGroup = project
   .aggregate(iceberg, testDeltaIcebergJar)
   .settings(
@@ -1281,6 +1342,7 @@ lazy val icebergGroup = project
     publishArtifact := false,
     publish / skip := false,
   )
+*/
 
 lazy val kernelGroup = project
   .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)

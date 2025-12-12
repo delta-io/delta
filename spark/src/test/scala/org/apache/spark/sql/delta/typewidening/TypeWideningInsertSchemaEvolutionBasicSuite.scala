@@ -53,8 +53,7 @@ class TypeWideningInsertSchemaEvolutionBasicSuite
  */
 trait TypeWideningInsertSchemaEvolutionBasicTests
   extends DeltaInsertIntoTest
-  with TypeWideningTestCases
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with TypeWideningTestCases {
   self: QueryTest with TypeWideningTestMixin with DeltaDMLTestUtils =>
 
   import testImplicits._
@@ -106,7 +105,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
     }
   }
 
-  testSparkMasterOnly(s"INSERT - logs for missed opportunity for conversion") {
+  test(s"INSERT - logs for missed opportunity for conversion") {
     val testCase = restrictedAutomaticWideningTestCases.head
 
     append(testCase.initialValuesDF)
