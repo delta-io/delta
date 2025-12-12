@@ -27,17 +27,18 @@ import java.util.Map;
  * without requiring Spark dependencies.
  */
 public final class UCTableInfo {
+
   private final String tableId;
   private final String tablePath;
   private final String ucUri;
-  private final Map<String, String> configMap;
+  private final Map<String, String> authConfig;
 
   public UCTableInfo(
-      String tableId, String tablePath, String ucUri, Map<String, String> configMap) {
+      String tableId, String tablePath, String ucUri, Map<String, String> authConfig) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.ucUri = requireNonNull(ucUri, "ucUri is null");
-    this.configMap = Collections.unmodifiableMap(requireNonNull(configMap, "configMap is null"));
+    this.authConfig = Collections.unmodifiableMap(requireNonNull(authConfig, "authConfig is null"));
   }
 
   public String getTableId() {
@@ -52,7 +53,7 @@ public final class UCTableInfo {
     return ucUri;
   }
 
-  public Map<String, String> getConfigMap() {
-    return configMap;
+  public Map<String, String> getAuthConfig() {
+    return authConfig;
   }
 }
