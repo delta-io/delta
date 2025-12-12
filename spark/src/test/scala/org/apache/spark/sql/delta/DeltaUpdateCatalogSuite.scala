@@ -69,6 +69,7 @@ class DeltaUpdateCatalogSuite
 
   test("streaming") {
     withTable(tbl) {
+      implicit val sparkSession: SparkSession = spark
       implicit val _sqlContext = spark.sqlContext
       val stream = MemoryStream[Long]
       val df1 = stream.toDF().toDF("id")
@@ -107,6 +108,7 @@ class DeltaUpdateCatalogSuite
   test("streaming - external location") {
     withTempDir { dir =>
       withTable(tbl) {
+        implicit val sparkSession: SparkSession = spark
         implicit val _sqlContext = spark.sqlContext
         val stream = MemoryStream[Long]
         val df1 = stream.toDF().toDF("id")
@@ -146,6 +148,7 @@ class DeltaUpdateCatalogSuite
 
   test("streaming - external table that already exists") {
     withTable(tbl) {
+      implicit val sparkSession: SparkSession = spark
       implicit val _sqlContext = spark.sqlContext
       val stream = MemoryStream[Long]
       val df1 = stream.toDF().toDF("id")
