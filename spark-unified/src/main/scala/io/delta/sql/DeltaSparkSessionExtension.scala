@@ -16,8 +16,10 @@
 
 package io.delta.sql
 
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.delta.ConvertSparkTableToDeltaTableV2
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
@@ -68,6 +70,23 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * @since 0.4.0
  */
 class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
+
+  /**
+   * Extends the parent apply method to inject the SparkTable to DeltaTableV2 conversion rule.
+   * This rule must run before DeltaAnalysis to ensure SparkTable instances are converted
+   * to DeltaTableV2 before the Delta-specific analysis rules process them.
+   */
+  override def apply(extensions: SparkSessionExtensions): Unit = {
+    // First, inject the SparkTable to DeltaTableV2 conversion rule.
+    // This must be injected before calling super.apply() to ensure it runs
+    // before DeltaAnalysis, which is injected by the parent class.
+    extensions.injectResolutionRule { session =>
+      new ConvertSparkTableToDeltaTableV2(session)
+    }
+
+    // Then apply all the parent extension rules (including DeltaAnalysis)
+    super.apply(extensions)
+  }
 
   /**
    * NoOpRule for binary compatibility with Delta 3.3.0
