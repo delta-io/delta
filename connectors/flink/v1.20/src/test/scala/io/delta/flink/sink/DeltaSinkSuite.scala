@@ -1,10 +1,15 @@
 package io.delta.flink.sink
 
+import java.util
+
+import scala.jdk.CollectionConverters.{CollectionHasAsScala, IteratorHasAsScala, SeqHasAsJava}
+
 import io.delta.flink.TestHelper
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.internal.ScanImpl
 import io.delta.kernel.internal.actions.AddFile
+
 import org.apache.flink.api.common.functions.MapFunction
 import org.apache.flink.api.common.typeinfo.{TypeInformation, Types}
 import org.apache.flink.streaming.api.datastream.DataStream
@@ -15,9 +20,6 @@ import org.apache.flink.table.types.logical.{IntType, RowType, VarCharType}
 import org.apache.flink.util.InstantiationUtil
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.util
-import scala.jdk.CollectionConverters.{CollectionHasAsScala, IteratorHasAsScala, SeqHasAsJava}
 
 class DeltaSinkSuite extends AnyFunSuite with TestHelper {
 
@@ -51,15 +53,13 @@ class DeltaSinkSuite extends AnyFunSuite with TestHelper {
           // This DataSource will prevent env from turning off before checkpoints containing data
           // is processed
           new DelayFinishTestSource[String](dataList, 2),
-          Types.STRING
-        ).map[RowData](
+          Types.STRING).map[RowData](
           new MapFunction[String, RowData]() {
             override def map(value: String): RowData = {
               val parts = value.split(",")
               GenericRowData.of(Integer.valueOf(parts(0)), StringData.fromString(parts(1)))
             }
-          }
-        ).returns(typeInfo)
+          }).returns(typeInfo)
 
       input.sinkTo(deltaSink).uid("deltaSink")
 

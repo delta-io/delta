@@ -88,14 +88,11 @@ public class Conversions {
         return Literal.ofFloat(rowData.getFloat(colIdx));
       } else if (dataType instanceof io.delta.kernel.types.DecimalType) {
         io.delta.kernel.types.DecimalType decimalType =
-                (io.delta.kernel.types.DecimalType) dataType;
+            (io.delta.kernel.types.DecimalType) dataType;
         int precision = decimalType.getPrecision();
         int scale = decimalType.getScale();
         return Literal.ofDecimal(
-                rowData.getDecimal(colIdx, precision, scale).toBigDecimal(),
-                precision,
-                scale
-        );
+            rowData.getDecimal(colIdx, precision, scale).toBigDecimal(), precision, scale);
       } else if (dataType.equivalent(DateType.DATE)) {
         return Literal.ofDate(rowData.getInt(colIdx));
       } else if (dataType.equivalent(TimestampType.TIMESTAMP)) {

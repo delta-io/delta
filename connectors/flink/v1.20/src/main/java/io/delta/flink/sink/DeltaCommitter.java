@@ -2,21 +2,19 @@ package io.delta.flink.sink;
 
 import io.delta.flink.DeltaTable;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
-import org.apache.flink.api.connector.sink2.Committer;
-import org.apache.flink.metrics.groups.SinkCommitterMetricGroup;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
+import org.apache.flink.api.connector.sink2.Committer;
+import org.apache.flink.metrics.groups.SinkCommitterMetricGroup;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The Committer is responsible for committing the data staged by the CommittingSinkWriter in the
@@ -55,9 +53,7 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   private SinkCommitterMetricGroup metricGroup;
 
   private DeltaCommitter(
-          String jobId,
-          DeltaTable deltaTable,
-          SinkCommitterMetricGroup metricGroup) {
+      String jobId, DeltaTable deltaTable, SinkCommitterMetricGroup metricGroup) {
     this.jobId = jobId;
     this.deltaTable = deltaTable;
     this.metricGroup = metricGroup;

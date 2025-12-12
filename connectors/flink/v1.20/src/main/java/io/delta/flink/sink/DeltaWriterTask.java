@@ -9,7 +9,6 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
-
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.*;
@@ -70,7 +69,8 @@ public class DeltaWriterTask {
     final CloseableIterator<FilteredColumnarBatch> logicalData = flinkRowDataAsKernelData();
     // Append job and task information to target directory
     final String pathSuffix = String.format("%s-%d-%d", jobId, subtaskId, attemptNumber);
-    final CloseableIterator<Row> actions = deltaTable.writeParquet(pathSuffix, logicalData, partitionValues);
+    final CloseableIterator<Row> actions =
+        deltaTable.writeParquet(pathSuffix, logicalData, partitionValues);
     final Collection<DeltaWriterResult> output =
         actions.map(row -> new DeltaWriterResult(List.of(row))).toInMemoryList();
     buffer.clear();

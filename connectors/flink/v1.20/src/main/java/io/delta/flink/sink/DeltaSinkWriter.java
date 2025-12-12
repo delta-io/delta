@@ -2,6 +2,9 @@ package io.delta.flink.sink;
 
 import io.delta.flink.DeltaTable;
 import io.delta.kernel.expressions.Literal;
+import java.io.IOException;
+import java.util.*;
+import java.util.stream.Collectors;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
@@ -9,10 +12,6 @@ import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
 import org.apache.flink.table.data.RowData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Delta Writer implementation of the Flink V2 Connector API. Writes out the data to the final
@@ -72,8 +71,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
     if (!writerTasksByPartition.containsKey(writerKey)) {
       writerTasksByPartition.put(
           writerKey,
-          new DeltaWriterTask(
-              jobId, subtaskId, attemptNumber, deltaTable, partitionValues));
+          new DeltaWriterTask(jobId, subtaskId, attemptNumber, deltaTable, partitionValues));
     }
     writerTasksByPartition.get(writerKey).write(element, context);
     elementCounter.inc();
@@ -92,8 +90,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
   }
 
   @Override
-  public void flush(boolean endOfInput) throws IOException, InterruptedException {
-  }
+  public void flush(boolean endOfInput) throws IOException, InterruptedException {}
 
   @Override
   public void close() throws Exception {}
@@ -141,8 +138,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
       Objects.requireNonNull(deltaTable, "deltaTable must not be null");
       Objects.requireNonNull(metricGroup, "metricGroup must not be null");
 
-      return new DeltaSinkWriter(
-          jobId, subtaskId, attemptNumber, deltaTable, metricGroup);
+      return new DeltaSinkWriter(jobId, subtaskId, attemptNumber, deltaTable, metricGroup);
     }
   }
 }

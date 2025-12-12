@@ -72,6 +72,7 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
+val flink120Version = "1.20.3"
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
@@ -1279,32 +1280,47 @@ lazy val hudi = (project in file("hudi"))
   )
 
 lazy val flink = (project in file("connectors/flink/v1.20"))
-  .dependsOn(kernelApi)
+//  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
+  .dependsOn(kernelUnityCatalog)
   .settings(
     name := "delta-flink-v1.20",
     commonSettings,
     releaseSettings,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
     Test / publishArtifact := false,
     Test / javaOptions ++= Seq(
       "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
     ),
     crossPaths := false,
     libraryDependencies ++= Seq(
-      "org.apache.flink" % "flink-core" % "1.20.3" % "provided",
-      "org.apache.flink" % "flink-table-common" % "1.20.3" % "provided",
-      "org.apache.flink" % "flink-streaming-java" % "1.20.3" % "provided",
+      "org.apache.flink" % "flink-core" % flink120Version % "provided",
+      "org.apache.flink" % "flink-table-common" % flink120Version % "provided",
+      "org.apache.flink" % "flink-streaming-java" % flink120Version % "provided",
+      "io.unitycatalog" % "unitycatalog-client" % "0.3.0",
 
-      "org.apache.flink" % "flink-test-utils" % "1.20.3" % "test",
+      "org.apache.flink" % "flink-test-utils" % flink120Version % "test",
       "org.scalatest" %% "scalatest" % "3.2.19" % "test",
-      "org.apache.flink" % "flink-clients" % "1.20.3" % "test",
-      "org.apache.flink" % "flink-table-api-java-bridge" % "1.20.3" % Test,
-      "org.apache.flink" % "flink-table-planner-loader" % "1.20.3" % Test,
-      "org.apache.flink" % "flink-table-runtime" % "1.20.0" % Test,
-      "org.apache.flink" % "flink-test-utils-junit" % "1.20.3" % Test,
-      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test"
+      "org.apache.flink" % "flink-clients" % flink120Version % "test",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flink120Version % Test,
+      "org.apache.flink" % "flink-table-planner-loader" % flink120Version % Test,
+      "org.apache.flink" % "flink-table-runtime" % flink120Version % Test,
+      "org.apache.flink" % "flink-test-utils-junit" % flink120Version % Test,
+      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
+      // The below test dependencies are only needed for real E2E integration tests against a real
+      // UC endpoint.
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
     )
   )
 

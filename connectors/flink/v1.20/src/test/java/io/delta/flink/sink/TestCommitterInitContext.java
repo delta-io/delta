@@ -16,8 +16,8 @@ public class TestCommitterInitContext implements CommitterInitContext {
   private final JobInfo jobInfo;
   private final TaskInfo taskInfo;
   private final SinkCommitterMetricGroup metricGroup =
-          InternalSinkCommitterMetricGroup
-                  .wrap(UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup());
+      InternalSinkCommitterMetricGroup.wrap(
+          UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup());
 
   public TestCommitterInitContext(int subtaskId, int parallelism, int attempt) {
     this.subtaskId = subtaskId;
