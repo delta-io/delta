@@ -198,6 +198,7 @@ class ServerSidePlannedTable(
 /**
  * ScanBuilder that uses ServerSidePlanningClient to plan the scan.
  * Implements SupportsPushDownFilters to enable WHERE clause pushdown to the server.
+ * Implements SupportsPushDownRequiredColumns to enable column pruning pushdown to the server.
  */
 class ServerSidePlannedScanBuilder(
     spark: SparkSession,
@@ -205,10 +206,13 @@ class ServerSidePlannedScanBuilder(
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient)
-  extends ScanBuilder with SupportsPushDownFilters {
+  extends ScanBuilder with SupportsPushDownFilters with SupportsPushDownRequiredColumns {
 
   // Filters that have been pushed down and will be sent to the server
   private var _pushedFilters: Array[Filter] = Array.empty
+
+  // Required schema (columns) that have been pushed down
+  private var _requiredSchema: StructType = tableSchema
 
   override def pushFilters(filters: Array[Filter]): Array[Filter] = {
     // Store filters to send to catalog, but return all as residuals.
@@ -220,9 +224,13 @@ class ServerSidePlannedScanBuilder(
 
   override def pushedFilters(): Array[Filter] = _pushedFilters
 
+  override def pruneColumns(requiredSchema: StructType): Unit = {
+    _requiredSchema = requiredSchema
+  }
+
   override def build(): Scan = {
     new ServerSidePlannedScan(
-      spark, databaseName, tableName, tableSchema, planningClient, _pushedFilters)
+      spark, databaseName, tableName, tableSchema, planningClient, _pushedFilters, _requiredSchema)
   }
 }
 
@@ -235,7 +243,8 @@ class ServerSidePlannedScan(
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient,
-    pushedFilters: Array[Filter]) extends Scan with Batch {
+    pushedFilters: Array[Filter],
+    requiredSchema: StructType) extends Scan with Batch {
 
   override def readSchema(): StructType = tableSchema
 
@@ -254,9 +263,18 @@ class ServerSidePlannedScan(
     }
   }
 
+  // Only pass projection if columns are actually pruned (not SELECT *)
+  private val projection: Option[StructType] = {
+    if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
+      None
+    } else {
+      Some(requiredSchema)
+    }
+  }
+
   override def planInputPartitions(): Array[InputPartition] = {
     // Call the server-side planning API to get the scan plan
-    val scanPlan = planningClient.planScan(databaseName, tableName, combinedFilter)
+    val scanPlan = planningClient.planScan(databaseName, tableName, combinedFilter, projection)
 
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>

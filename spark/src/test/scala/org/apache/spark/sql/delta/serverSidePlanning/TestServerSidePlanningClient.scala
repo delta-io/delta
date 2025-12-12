@@ -21,6 +21,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.input_file_name
 import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.types.StructType
 
 /**
  * Implementation of ServerSidePlanningClient that uses Spark SQL with input_file_name()
@@ -34,9 +35,11 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
   override def planScan(
       databaseName: String,
       table: String,
-      filter: Option[Filter] = None): ScanPlan = {
-    // Capture filter for test verification
+      filter: Option[Filter] = None,
+      projection: Option[StructType] = None): ScanPlan = {
+    // Capture filter and projection for test verification
     TestServerSidePlanningClient.capturedFilter = filter
+    TestServerSidePlanningClient.capturedProjection = projection
 
     val fullTableName = s"$databaseName.$table"
 
@@ -94,9 +97,14 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
  */
 object TestServerSidePlanningClient {
   private var capturedFilter: Option[Filter] = None
+  private var capturedProjection: Option[StructType] = None
 
   def getCapturedFilter: Option[Filter] = capturedFilter
-  def clearCaptured(): Unit = { capturedFilter = None }
+  def getCapturedProjection: Option[StructType] = capturedProjection
+  def clearCaptured(): Unit = {
+    capturedFilter = None
+    capturedProjection = None
+  }
 }
 
 /**
