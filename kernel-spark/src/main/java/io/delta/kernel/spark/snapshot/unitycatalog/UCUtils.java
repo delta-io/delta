@@ -85,7 +85,7 @@ public final class UCUtils {
 
     UCCatalogConfig config = configOpt.get();
     String ucUri = config.uri();
-    scala.collection.immutable.Map<String, String> scalaConfigMap = config.configMap();
+    scala.collection.immutable.Map<String, String> scalaConfigMap = config.authConfigs();
     Map<String, String> configMap = scala.jdk.javaapi.CollectionConverters.asJava(scalaConfigMap);
 
     return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, configMap));

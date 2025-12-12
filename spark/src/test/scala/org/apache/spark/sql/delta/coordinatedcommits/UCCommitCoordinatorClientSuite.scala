@@ -247,3 +247,60 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
   }
 
 }
+
+/**
+ * Test suite for UCCommitCoordinatorClient using the new auth.* configuration format.
+ * This complements the UCCommitCoordinatorClientSuite which tests the legacy token format.
+ */
+class UCCommitCoordinatorClientWithNewAuthFormatSuite extends UCCommitCoordinatorClientSuiteBase {
+  protected override def sparkConf = super.sparkConf
+    .set("spark.sql.catalog.main", "io.unitycatalog.spark.UCSingleCatalog")
+    .set("spark.sql.catalog.main.uri", "https://test-uri.com")
+    .set("spark.sql.catalog.main.auth.type", "static")
+    .set("spark.sql.catalog.main.auth.token", "test-token")
+    .set("spark.hadoop.fs.file.impl", classOf[LocalFileSystem].getCanonicalName)
+
+  override protected def commit(
+      version: Long,
+      timestamp: Long,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
+      tableIdentifier: Option[TableIdentifier] = None): JCommit = {
+    val commitResult = super.commit(
+      version, timestamp, tableCommitCoordinatorClient, tableIdentifier)
+    // As backfilling for UC happens after every commit asynchronously, we block here until
+    // the current in-progress backfill has completed in order to make tests deterministic.
+    waitForBackfill(version, tableCommitCoordinatorClient)
+    commitResult
+  }
+
+  test("new auth format - basic commit and backfill") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
+      tableCommitCoordinatorClient.commitCoordinatorClient.registerTable(
+        logPath, Optional.empty(), -1L, initMetadata, Protocol(1, 1))
+
+      writeCommitZero(logPath)
+      (1 to 5).foreach(i => commit(i, i, tableCommitCoordinatorClient))
+
+      validateBackfillStrategy(tableCommitCoordinatorClient, logPath, 5)
+    }
+  }
+
+  test("new auth format - verify catalog config is parsed correctly") {
+    val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+    assert(configs.nonEmpty, "Should find at least one catalog")
+
+    val mainCatalog = configs.find(_._1 == "main")
+    assert(mainCatalog.isDefined, "Should find 'main' catalog")
+
+    val (name, uri, authConfigMap) = mainCatalog.get
+    assert(name == "main")
+    assert(uri == "https://test-uri.com")
+    assert(authConfigMap.contains("type"))
+    assert(authConfigMap("type") == "static")
+    assert(authConfigMap.contains("token"))
+    assert(authConfigMap("token") == "test-token")
+  }
+}
