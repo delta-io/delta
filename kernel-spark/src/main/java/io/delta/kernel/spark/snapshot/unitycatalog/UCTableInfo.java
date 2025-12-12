@@ -17,6 +17,9 @@ package io.delta.kernel.spark.snapshot.unitycatalog;
 
 import static java.util.Objects.requireNonNull;
 
+import java.util.Collections;
+import java.util.Map;
+
 /**
  * Table information for Unity Catalog managed tables.
  *
@@ -27,13 +30,14 @@ public final class UCTableInfo {
   private final String tableId;
   private final String tablePath;
   private final String ucUri;
-  private final String ucToken;
+  private final Map<String, String> configMap;
 
-  public UCTableInfo(String tableId, String tablePath, String ucUri, String ucToken) {
+  public UCTableInfo(
+      String tableId, String tablePath, String ucUri, Map<String, String> configMap) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.ucUri = requireNonNull(ucUri, "ucUri is null");
-    this.ucToken = requireNonNull(ucToken, "ucToken is null");
+    this.configMap = Collections.unmodifiableMap(requireNonNull(configMap, "configMap is null"));
   }
 
   public String getTableId() {
@@ -48,7 +52,7 @@ public final class UCTableInfo {
     return ucUri;
   }
 
-  public String getUcToken() {
-    return ucToken;
+  public Map<String, String> getConfigMap() {
+    return configMap;
   }
 }

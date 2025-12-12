@@ -85,9 +85,10 @@ public final class UCUtils {
 
     UCCatalogConfig config = configOpt.get();
     String ucUri = config.uri();
-    String ucToken = config.token();
+    scala.collection.immutable.Map<String, String> scalaConfigMap = config.configMap();
+    Map<String, String> configMap = scala.jdk.javaapi.CollectionConverters.asJava(scalaConfigMap);
 
-    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, ucToken));
+    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, configMap));
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {

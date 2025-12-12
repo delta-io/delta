@@ -16,7 +16,10 @@
 package io.delta.kernel.spark.snapshot.unitycatalog;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** Tests for {@link UCTableInfo}. */
@@ -30,11 +33,23 @@ class UCTableInfoTest {
     String ucUri = "https://uc-server.example.net/api/2.1/uc";
     String ucToken = "dapi_Kx9mN$2pQr#7vWz";
 
-    UCTableInfo info = new UCTableInfo(tableId, tablePath, ucUri, ucToken);
+    Map<String, String> configMap = new HashMap<>();
+    configMap.put("type", "static");
+    configMap.put("token", ucToken);
+
+    UCTableInfo info = new UCTableInfo(tableId, tablePath, ucUri, configMap);
 
     assertEquals(tableId, info.getTableId(), "Table ID should be stored correctly");
     assertEquals(tablePath, info.getTablePath(), "Table path should be stored correctly");
     assertEquals(ucUri, info.getUcUri(), "UC URI should be stored correctly");
-    assertEquals(ucToken, info.getUcToken(), "UC token should be stored correctly");
+
+    Map<String, String> returnedConfigMap = info.getConfigMap();
+    assertTrue(returnedConfigMap.containsKey("type"), "Config map should contain type key");
+    assertEquals("static", returnedConfigMap.get("type"), "Type should be static");
+    assertTrue(returnedConfigMap.containsKey("token"), "Config map should contain token key");
+    assertEquals(
+        ucToken,
+        returnedConfigMap.get("token"),
+        "UC token should be stored correctly in configMap");
   }
 }

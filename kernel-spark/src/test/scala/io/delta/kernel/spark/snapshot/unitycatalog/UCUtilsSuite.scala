@@ -76,7 +76,8 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
     val configs = Seq(
       s"spark.sql.catalog.$catalogName" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogName.uri" -> uri,
-      s"spark.sql.catalog.$catalogName.token" -> token)
+      s"spark.sql.catalog.$catalogName.auth.type" -> "static",
+      s"spark.sql.catalog.$catalogName.auth.token" -> token)
     val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
 
     try {
@@ -164,7 +165,13 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
         info.getTablePath == TABLE_PATH_ALPHA,
         s"Table path mismatch: got ${info.getTablePath}")
       assert(info.getUcUri == UC_URI_ALPHA, s"UC URI mismatch: got ${info.getUcUri}")
-      assert(info.getUcToken == UC_TOKEN_ALPHA, s"UC token mismatch: got ${info.getUcToken}")
+      val configMap = info.getConfigMap
+      assert(configMap.containsKey("type"), "Config map should contain type key")
+      assert(configMap.get("type") == "static", s"Type should be static: got ${configMap.get("type")}")
+      assert(configMap.containsKey("token"), "Config map should contain token key")
+      assert(
+        configMap.get("token") == UC_TOKEN_ALPHA,
+        s"UC token mismatch: got ${configMap.get("token")}")
     }
   }
 
@@ -190,11 +197,13 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       // catalogGamma config (should NOT be used)
       s"spark.sql.catalog.$catalogGamma" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogGamma.uri" -> ucUriGamma,
-      s"spark.sql.catalog.$catalogGamma.token" -> ucTokenGamma,
+      s"spark.sql.catalog.$catalogGamma.auth.type" -> "static",
+      s"spark.sql.catalog.$catalogGamma.auth.token" -> ucTokenGamma,
       // catalogBeta config (should be used)
       s"spark.sql.catalog.$catalogBeta" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogBeta.uri" -> ucUriBeta,
-      s"spark.sql.catalog.$catalogBeta.token" -> ucTokenBeta)
+      s"spark.sql.catalog.$catalogBeta.auth.type" -> "static",
+      s"spark.sql.catalog.$catalogBeta.auth.token" -> ucTokenBeta)
     val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
 
     try {
@@ -208,7 +217,13 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       assert(
         info.getUcUri == ucUriBeta,
         s"Should use catalogBeta's URI, got: ${info.getUcUri}")
-      assert(info.getUcToken == ucTokenBeta, s"Should use catalogBeta's token, got: ${info.getUcToken}")
+      val configMap = info.getConfigMap
+      assert(configMap.containsKey("type"), "Config map should contain type key")
+      assert(configMap.get("type") == "static", s"Type should be static")
+      assert(configMap.containsKey("token"), "Config map should contain token key")
+      assert(
+        configMap.get("token") == ucTokenBeta,
+        s"Should use catalogBeta's token, got: ${configMap.get("token")}")
       assert(info.getTableId == tableIdBeta, s"Should extract tableIdBeta, got: ${info.getTableId}")
       assert(
         info.getTablePath == tablePathBeta,
