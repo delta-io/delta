@@ -137,6 +137,33 @@ public class Dsv2BasicTest {
   }
 
   @Test
+  public void testColumnMappingRead(@TempDir File deltaTablePath) {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Create a Delta table with column mapping enabled using name mode
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id INT, user_name STRING, amount DOUBLE) "
+                + "USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+
+    // Insert test data
+    spark.sql(
+        String.format(
+            "INSERT INTO delta.`%s` VALUES (1, 'Alice', 100.0), (2, 'Bob', 200.0)", tablePath));
+
+    // Read through DSV2 and verify
+    Dataset<Row> result =
+        spark.sql(String.format("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath));
+
+    List<Row> expectedRows =
+        Arrays.asList(RowFactory.create(1, "Alice", 100.0), RowFactory.create(2, "Bob", 200.0));
+
+    assertDatasetEquals(result, expectedRows);
+  }
+
+  @Test
   public void testStreamingRead(@TempDir File deltaTablePath) {
     String tablePath = deltaTablePath.getAbsolutePath();
     // Create test data using standard Delta Lake
