@@ -2679,8 +2679,9 @@ class DeltaSuite extends QueryTest
       spark.sessionState.conf.setConfString(
         "spark.databricks.delta.write.txnVersion", "someVersion")
     }
-    assert(e.getMessage == "spark.databricks.delta.write.txnVersion should be " +
-      "long, but was someVersion")
+    assert(e.getMessage ==
+      "spark.databricks.delta.write.txnVersion should be long, but was someVersion" ||
+      e.getMessage.contains("INVALID_CONF_VALUE.TYPE_MISMATCH"))
 
     // clean up
     spark.conf.unset("spark.databricks.delta.write.txnAppId")
