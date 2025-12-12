@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 
 /**
  * Various utility methods to help the connectors work with data objects returned by Kernel
@@ -235,6 +236,31 @@ public class Utils {
         closeCloseables(currentInnerIterator, nestedIterator);
       }
     };
+  }
+
+  /**
+   * Returns the last element from the given {@link CloseableIterator}, if present.
+   *
+   * <p>This method iterates through all elements of the iterator to find the last one. Once
+   * iteration is complete, the iterator is automatically closed to release any underlying
+   * resources.
+   *
+   * @param iterator The iterator to get the last element from
+   * @param <T> The type of elements in the iterator
+   * @return An {@link Optional} containing the last element, or {@link Optional#empty()} if the
+   *     iterator is empty.
+   * @throws UncheckedIOException If an {@link IOException} occurs while closing the iterator.
+   */
+  public static <T> Optional<T> iteratorLast(CloseableIterator<T> iterator) {
+    try (CloseableIterator<T> iter = iterator) {
+      T last = null;
+      while (iter.hasNext()) {
+        last = iter.next();
+      }
+      return Optional.ofNullable(last);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to close the CloseableIterator", e);
+    }
   }
 
   public static String resolvePath(Engine engine, String path) {

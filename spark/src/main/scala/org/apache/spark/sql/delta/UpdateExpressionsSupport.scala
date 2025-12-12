@@ -291,8 +291,8 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
             // Additional behavior when originalTargetExpr is provided (MERGE ... UPDATE * with
             // schema evolution):
             // For target-only fields (fields in target but not in source), we need to preserve
-            // their original values from the target. The null check becomes more sophisticated:
-            //   IF(source_struct IS NULL AND all_target_only_fields_are_null,
+            // their original values from the target. The expression becomes:
+            //   IF(source_struct IS NULL AND target_struct IS NULL,
             //      NULL,
             //      named_struct(
             //        source_fields...,
@@ -307,7 +307,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                 sourceType = from,
                 targetType = to.asNullable,
                 targetNamedStructExpr = nameMappedStruct,
-                originalTargetChildExprsOpt = originalTargetChildExprsOpt)
+                originalTargetExprOpt = originalTargetExprOpt)
             cast(wrappedWithNullPreservation, to.asNullable, castingBehavior, columnName)
 
           case (from, to) if from != to =>
@@ -353,10 +353,9 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    * `DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS` is enabled:
    *   IF(sourceExpr IS NULL, NULL, targetNamedStructExpr)
    *
-   * When originalTargetChildExprsOpt is defined (MERGE ... UPDATE * with schema evolution), the
-   * null condition is extended to check both the source expression and target-only struct
-   * fields:
-   *   IF(sourceExpr IS NULL AND all_target_only_fields_are_null, NULL, targetNamedStructExpr)
+   * When originalTargetExprOpt is defined (MERGE ... UPDATE * with schema evolution), the
+   * null condition is extended to check whether both the source and target struct are null:
+   *   IF(sourceExpr IS NULL AND targetExpr IS NULL, NULL, targetNamedStructExpr)
    * This prevents data loss when the source is null but the target has non-null values in
    * target-only fields.
    * This is to match the behavior of UPDATE * that target-only fields retain their values.
@@ -365,37 +364,30 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    * @param sourceType The source struct type
    * @param targetType The target struct type
    * @param targetNamedStructExpr The generated target named struct expression
-   * @param originalTargetChildExprsOpt Pre-computed map of field name to extracted expression
-   *                                    from the original target column. None when the fix is
-   *                                    disabled or no original target expression is provided.
+   * @param originalTargetExprOpt The expression of the original target column. None when the
+   *                              fix is disabled or no original target expression is provided.
    */
   private def maybeWrapWithNullPreservation(
       sourceExpr: Expression,
       sourceType: StructType,
       targetType: StructType,
       targetNamedStructExpr: Expression,
-      originalTargetChildExprsOpt: Option[Map[String, Expression]]): Expression = {
-    if (conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)) {
+      originalTargetExprOpt: Option[Expression]): Expression = {
+    if (UpdateExpressionsSupport.isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf)) {
       val sourceNullCondition = IsNull(sourceExpr)
-      val fullNullCondition = originalTargetChildExprsOpt match {
-        case Some(fieldExtractions) =>
-          // Find fields that are in target but not in source (target-only fields)
-          val targetOnlyFieldNames = targetType.fields.filterNot { targetField =>
-            sourceType.fields.exists(sourceField =>
-              SchemaUtils.DELTA_COL_RESOLVER(sourceField.name, targetField.name))
-          }.map(_.name).toSet
-
-          // For each target-only field, check if it's null using pre-computed extractions
-          val targetOnlyNullChecks = fieldExtractions.collect {
-            case (fieldName, extractedExpr) if targetOnlyFieldNames.contains(fieldName) =>
-              IsNull(extractedExpr)
-          }
-
-          // Combine: source is null AND all target-only fields are null
-          targetOnlyNullChecks.foldLeft[Expression](sourceNullCondition)(
-            (acc, check) => And(acc, check))
-
+      val targetHasExtraFieldsToPreserveValue =
+        UpdateExpressionsSupport.hasExtraStructFieldsToPreserveValue(sourceType, targetType)
+      val fullNullCondition = originalTargetExprOpt match {
+        case Some(originalTargetExpr) if targetHasExtraFieldsToPreserveValue =>
+          // When there are target-only fields to preserve, we need to check whether both the source
+          // and the original target are null.
+          And(sourceNullCondition, IsNull(originalTargetExpr))
+        case Some(_) if !targetHasExtraFieldsToPreserveValue =>
+          // No target-only fields to preserve values for.
+          sourceNullCondition
         case None =>
+          // No original target expression provided, which means we overwrite the target with the
+          // source.
           sourceNullCondition
       }
       If(
@@ -807,13 +799,73 @@ case class CheckOverflowInTableWrite(child: Expression, columnName: String)
 }
 
 object UpdateExpressionsSupport {
+
+  /**
+   * Returns true if preserving null source structs for whole-struct assignments is enabled.
+   * This fix addresses the issue where a null source struct is incorrectly expanded into
+   * a non-null struct with all fields set to null in whole-struct assignments, e.g.
+   * UPDATE SET col = s.col.
+   */
+  def isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf: SQLConf): Boolean = {
+    conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)
+  }
+
   /**
    * Returns true if preserving null source structs for UPDATE * is enabled.
    * This fix addresses the issue where a null source struct is incorrectly expanded into
    * a non-null struct with all fields set to null in UPDATE * operations.
    */
   def isUpdateStarPreserveNullSourceStructsEnabled(conf: SQLConf): Boolean = {
-    conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS) &&
+    isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf) &&
       conf.getConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS_UPDATE_STAR)
+  }
+
+  /**
+   * Returns true if `targetType` contains extra struct fields compared to `sourceType` that we
+   * want to preserve values for.
+   *
+   * We recursively check target-only fields of structs nested within structs, but we do not
+   * check structs nested within arrays or maps because we don't preserve original target values
+   * for arrays or maps.
+   *
+   * Field name comparison is case-insensitive, aligning with
+   * `DataTypeUtils.equalsIgnoreCaseAndNullability`, which is used in
+   * `UpdateExpressionSupport.castIfNeeded` to decide whether struct type cast is needed.
+   *
+   * @param sourceStruct the source struct to compare against
+   * @param targetStruct the target struct to check for extra fields to preserve values for
+   * @return true if `targetStruct` has more struct fields than `sourceStruct` at any nesting level
+   *         that we want to preserve values for.
+   */
+  private def hasExtraStructFieldsToPreserveValue(
+      sourceStruct: StructType,
+      targetStruct: StructType): Boolean = {
+    // Fast check: if target has more fields, it definitely has extra fields than source.
+    if (targetStruct.length > sourceStruct.length) {
+      return true
+    }
+
+    // Partition target fields into target-only and common fields.
+    val (commonFields, targetOnlyFields) = targetStruct.partition { targetField =>
+      sourceStruct.exists(_.name.equalsIgnoreCase(targetField.name))
+    }
+
+    // If there are any target-only fields, we have extra fields to preserve.
+    if (targetOnlyFields.nonEmpty) {
+      return true
+    }
+
+    // No extra fields at this level - recursively check common fields that are `StructType`.
+    commonFields.exists { targetField =>
+      sourceStruct.find(_.name.equalsIgnoreCase(targetField.name)).exists { sourceField =>
+        (sourceField.dataType, targetField.dataType) match {
+          case (sourceStruct: StructType, targetStruct: StructType) =>
+            hasExtraStructFieldsToPreserveValue(sourceStruct, targetStruct)
+          case _ =>
+            // Don't recurse into arrays or maps, as we don't preserve values for arrays or maps.
+            false
+        }
+      }
+    }
   }
 }
