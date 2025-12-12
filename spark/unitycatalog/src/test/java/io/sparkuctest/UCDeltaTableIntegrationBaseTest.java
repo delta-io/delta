@@ -49,6 +49,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   @BeforeAll
   public static void setUpSpark() throws Exception {
     // UC server is started by UnityCatalogSupport.setup()
+    // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
     
     SparkConf conf = new SparkConf()
         .setAppName("UnityCatalog Integration Tests")
@@ -88,9 +89,11 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /**
    * The SQL executor used to run queries and verify results.
-   * Must be implemented by subclasses to provide the execution engine.
+   * Defaults to SparkSQLExecutor. Subclasses can override to provide alternative execution engines.
    */
-  protected abstract SQLExecutor getSqlExecutor();
+  protected SQLExecutor getSqlExecutor() {
+    return new SparkSQLExecutor(spark());
+  }
 
   /**
    * Convenience method for getSqlExecutor().runSQL - executes SQL and returns results.

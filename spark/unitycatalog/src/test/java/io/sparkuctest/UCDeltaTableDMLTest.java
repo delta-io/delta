@@ -27,11 +27,6 @@ import java.util.Arrays;
  */
 public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
-  @Override
-  protected SQLExecutor getSqlExecutor() {
-    return new SparkSQLExecutor(spark());
-  }
-
   @Test
   public void testUpdateWithSimpleCondition() throws Exception {
     withNewTable("update_simple_test", "id INT, status STRING", tableName -> {
