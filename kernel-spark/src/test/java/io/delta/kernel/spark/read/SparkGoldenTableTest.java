@@ -587,10 +587,6 @@ public class SparkGoldenTableTest {
             "corrupted-last-checkpoint",
             "data-reader-absolute-paths-escaped-chars",
             "data-reader-escaped-chars",
-            "data-reader-timestamp_ntz-id-mode",
-            "data-reader-timestamp_ntz-name-mode",
-            "data-skipping-basic-stats-all-types-columnmapping-id",
-            "data-skipping-basic-stats-all-types-columnmapping-name",
             // File delete-re-add-same-file-different-transactions/bar does not exist
             "delete-re-add-same-file-different-transactions",
             // Root node at key schemaString is null but field isn't nullable
@@ -602,10 +598,7 @@ public class SparkGoldenTableTest {
             "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
             // [DELTA_STATE_RECOVER_ERROR] The protocol of your Delta table could not be recovered
             // while Reconstructing
-            "deltalog-state-reconstruction-from-checkpoint-missing-protocol",
-            // Answer mismatch
-            "dv-partitioned-with-checkpoint",
-            "dv-with-columnmapping");
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol");
 
     for (String tableName : tableNames) {
       if (unsupportedTables.contains(tableName)) {

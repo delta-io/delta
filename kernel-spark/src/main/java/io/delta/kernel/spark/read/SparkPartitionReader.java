@@ -20,21 +20,23 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.sql.execution.datasources.RecordReaderIterator;
 import scala.Function1;
 import scala.collection.Iterator;
 
 public class SparkPartitionReader<T> implements PartitionReader<T> {
-  // Function that produces a Spark RecordReaderIterator for a given file.
+  // Function that produces an Iterator for a given file.
   private final Function1<PartitionedFile, Iterator<InternalRow>> readFunc;
   private final FilePartition partition;
 
   // Index of the next file to read within the partition.
   private int currentFileIndex = 0;
 
-  // Spark's readers return RecordReaderIterator for both row and columnar modes.
-  // Keep a reference so it can be closed when advancing to the next file.
-  private RecordReaderIterator<T> currentIterator = null;
+  // Current iterator and cached next value.
+  // Note: The iterator may be wrapped (e.g., by
+  // DeltaParquetFileFormatBase.iteratorWithAdditionalMetadataColumns)
+  // so it may not always be a RecordReaderIterator. We handle both cases.
+  private Iterator<T> currentIterator = null;
+  private T currentValue = null;
 
   public SparkPartitionReader(
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, FilePartition partition) {
@@ -47,13 +49,12 @@ public class SparkPartitionReader<T> implements PartitionReader<T> {
     // Advance to the next available record, opening readers as needed and closing exhausted ones.
     while (true) {
       if (currentIterator != null && currentIterator.hasNext()) {
+        currentValue = currentIterator.next();
         return true;
       }
 
-      if (currentIterator != null) {
-        currentIterator.close();
-        currentIterator = null;
-      }
+      // Close current iterator if it's closeable
+      closeCurrentIterator();
 
       if (currentFileIndex >= partition.files().length) {
         return false;
@@ -61,24 +62,38 @@ public class SparkPartitionReader<T> implements PartitionReader<T> {
 
       final PartitionedFile file = partition.files()[currentFileIndex++];
       @SuppressWarnings("unchecked")
-      RecordReaderIterator<T> it = (RecordReaderIterator<T>) readFunc.apply(file);
+      Iterator<T> it = (Iterator<T>) readFunc.apply(file);
       currentIterator = it;
     }
   }
 
   @Override
   public T get() {
-    if (currentIterator == null) {
+    if (currentValue == null) {
       throw new IllegalStateException("No current record. Call next() before get().");
     }
-    // RecordReaderIterator.next() returns the current record and advances the iterator.
-    return currentIterator.next();
+    return currentValue;
   }
 
   @Override
   public void close() throws IOException {
+    closeCurrentIterator();
+    currentValue = null;
+  }
+
+  private void closeCurrentIterator() throws IOException {
     if (currentIterator != null) {
-      currentIterator.close();
+      // Try to close if it's AutoCloseable (e.g., RecordReaderIterator)
+      if (currentIterator instanceof AutoCloseable) {
+        try {
+          ((AutoCloseable) currentIterator).close();
+        } catch (Exception e) {
+          if (e instanceof IOException) {
+            throw (IOException) e;
+          }
+          throw new IOException("Error closing iterator", e);
+        }
+      }
       currentIterator = null;
     }
   }
