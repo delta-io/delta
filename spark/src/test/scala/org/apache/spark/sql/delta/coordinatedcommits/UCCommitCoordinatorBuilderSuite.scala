@@ -281,7 +281,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       metastoreId: String): Unit = {
     val mockClient = org.mockito.Mockito.mock(classOf[UCClient])
     when(mockClient.getMetastoreId).thenReturn(metastoreId)
-    when(mockFactory.createUCClient(meq(uri), any[Map[String, String]]())).thenReturn(mockClient)
+    when(mockFactory.createUCClient(meq(uri), meq(configMap))).thenReturn(mockClient)
   }
 
   private def registerMetastoreIdException(
@@ -290,7 +290,195 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       exception: Throwable): Unit = {
     val mockClient = org.mockito.Mockito.mock(classOf[UCClient])
     when(mockClient.getMetastoreId).thenThrow(exception)
-    when(mockFactory.createUCClient(meq(uri), any[Map[String, String]]())).thenReturn(mockClient)
+    when(mockFactory.createUCClient(meq(uri), meq(configMap))).thenReturn(mockClient)
+  }
+
+  test("getCatalogConfigs with legacy token format") {
+    val catalogName = "legacy_catalog"
+    val uri = "https://test-uri.com"
+    val token = "test-token"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> uri,
+      s"spark.sql.catalog.$catalogName.token" -> token
+    ) {
+      val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      assert(configs.length == 1)
+
+      val (name, catalogUri, authConfigMap) = configs.head
+      assert(name == catalogName)
+      assert(catalogUri == uri)
+
+      // Legacy token should be converted to new format
+      assert(authConfigMap.contains("type"))
+      assert(authConfigMap("type") == "static")
+      assert(authConfigMap.contains("token"))
+      assert(authConfigMap("token") == token)
+    }
+  }
+
+  test("getCatalogConfigs with new auth.* format") {
+    val catalogName = "new_catalog"
+    val uri = "https://test-uri.com"
+    val token = "test-token"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> uri,
+      s"spark.sql.catalog.$catalogName.auth.type" -> "static",
+      s"spark.sql.catalog.$catalogName.auth.token" -> token
+    ) {
+      val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      assert(configs.length == 1)
+
+      val (name, catalogUri, authConfigMap) = configs.head
+      assert(name == catalogName)
+      assert(catalogUri == uri)
+      assert(authConfigMap("type") == "static")
+      assert(authConfigMap("token") == token)
+    }
+  }
+
+  test("getCatalogConfigs with nested auth.* configurations") {
+    val catalogName = "oauth_catalog"
+    val uri = "https://test-uri.com"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> uri,
+      s"spark.sql.catalog.$catalogName.auth.type" -> "oauth",
+      s"spark.sql.catalog.$catalogName.auth.oauth.uri" -> "https://oauth.example.com",
+      s"spark.sql.catalog.$catalogName.auth.oauth.client_id" -> "client123",
+      s"spark.sql.catalog.$catalogName.auth.oauth.client_secret" -> "secret456"
+    ) {
+      val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      assert(configs.length == 1)
+
+      val (name, catalogUri, authConfigMap) = configs.head
+      assert(name == catalogName)
+      assert(catalogUri == uri)
+      assert(authConfigMap("type") == "oauth")
+      assert(authConfigMap("oauth.uri") == "https://oauth.example.com")
+      assert(authConfigMap("oauth.client_id") == "client123")
+      assert(authConfigMap("oauth.client_secret") == "secret456")
+    }
+  }
+
+  test("getCatalogConfigs skips catalog with no auth configurations") {
+    val catalogName = "no_auth_catalog"
+    val uri = "https://test-uri.com"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> uri
+    ) {
+      val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      assert(configs.isEmpty, "Catalog without auth config should be skipped")
+    }
+  }
+
+  test("getCatalogConfigs prefers new auth.* format over legacy token") {
+    val catalogName = "mixed_catalog"
+    val uri = "https://test-uri.com"
+    val legacyToken = "legacy-token"
+    val newToken = "new-token"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> uri,
+      s"spark.sql.catalog.$catalogName.token" -> legacyToken,
+      s"spark.sql.catalog.$catalogName.auth.type" -> "static",
+      s"spark.sql.catalog.$catalogName.auth.token" -> newToken
+    ) {
+      val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      assert(configs.length == 1)
+
+      val (name, catalogUri, authConfigMap) = configs.head
+      assert(name == catalogName)
+      assert(catalogUri == uri)
+      // New format should take precedence
+      assert(authConfigMap("type") == "static")
+      assert(authConfigMap("token") == newToken)
+      assert(!authConfigMap.contains(legacyToken))
+    }
+  }
+
+  test("getCatalogConfigs handles multiple catalogs with mixed formats") {
+    withSQLConf(
+      "spark.sql.catalog.catalog1" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.catalog1.uri" -> "https://uri1.com",
+      "spark.sql.catalog.catalog1.token" -> "token1",
+      "spark.sql.catalog.catalog2" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.catalog2.uri" -> "https://uri2.com",
+      "spark.sql.catalog.catalog2.auth.type" -> "static",
+      "spark.sql.catalog.catalog2.auth.token" -> "token2",
+      "spark.sql.catalog.catalog3" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.catalog3.uri" -> "https://uri3.com"
+    ) {
+      val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      // Only catalog1 and catalog2 should be included (catalog3 has no auth)
+      assert(configs.length == 2)
+
+      val catalog1 = configs.find(_._1 == "catalog1")
+      assert(catalog1.isDefined)
+      assert(catalog1.get._3("type") == "static")
+      assert(catalog1.get._3("token") == "token1")
+
+      val catalog2 = configs.find(_._1 == "catalog2")
+      assert(catalog2.isDefined)
+      assert(catalog2.get._3("type") == "static")
+      assert(catalog2.get._3("token") == "token2")
+    }
+  }
+
+  test("buildForCatalog with legacy token format") {
+    val catalogName = "test_catalog"
+    val uri = "https://test-uri.com"
+    val token = "test-token"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> uri,
+      s"spark.sql.catalog.$catalogName.token" -> token
+    ) {
+      val result = UCCommitCoordinatorBuilder.buildForCatalog(spark, catalogName)
+      assert(result.isInstanceOf[UCCommitCoordinatorClient])
+
+      // Verify that createUCClient was called with the converted auth config
+      verify(mockFactory).createUCClient(
+        meq(uri),
+        any[Map[String, String]]()
+      )
+    }
+  }
+
+  test("buildForCatalog with new auth.* format") {
+    val catalogName = "test_catalog"
+    val uri = "https://test-uri.com"
+    val token = "test-token"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> uri,
+      s"spark.sql.catalog.$catalogName.auth.type" -> "static",
+      s"spark.sql.catalog.$catalogName.auth.token" -> token
+    ) {
+      val result = UCCommitCoordinatorBuilder.buildForCatalog(spark, catalogName)
+      assert(result.isInstanceOf[UCCommitCoordinatorClient])
+
+      verify(mockFactory).createUCClient(
+        meq(uri),
+        any[Map[String, String]]()
+      )
+    }
+  }
+
+  test("buildForCatalog with non-existent catalog") {
+    val exception = intercept[IllegalArgumentException] {
+      UCCommitCoordinatorBuilder.buildForCatalog(spark, "non_existent_catalog")
+    }
+    assert(exception.getMessage.contains("not found"))
   }
 
   private def getCommitCoordinatorClient(metastoreId: String) = {
