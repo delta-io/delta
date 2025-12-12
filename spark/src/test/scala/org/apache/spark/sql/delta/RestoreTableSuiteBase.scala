@@ -18,8 +18,6 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.sql.Date
-import java.sql.Timestamp
-import java.text.SimpleDateFormat
 
 import scala.concurrent.duration._
 
