@@ -697,7 +697,7 @@ abstract class DeltaInsertIntoTestsWithTempViews(
               e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
               e.getMessage.contains("The table or view `default`.`v` cannot be found") ||
               e.getMessage.contains(
-                "[UNSUPPORTED_INSERT.RDD_BASED] Can't insert into the target.")) ||
+                "[UNSUPPORTED_INSERT.RDD_BASED] Can't insert into the target.") ||
               e.getMessage.contains(
                 "The table or view `spark_catalog`.`default`.`v` cannot be found"))
         }
