@@ -20,8 +20,8 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
-import org.junit.After;
-import org.junit.Before;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 
 import java.io.File;
 import java.io.IOException;
@@ -41,14 +41,14 @@ import java.util.stream.Collectors;
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
 
-  private SparkSession sparkSession;
+  private static SparkSession sparkSession;
 
   /**
-   * Create the SparkSession before each test class.
+   * Create the SparkSession before all tests.
    */
-  @Before
-  public void setUpSpark() throws Exception {
-    super.setup(); // Start UC server first
+  @BeforeAll
+  public static void setUpSpark() throws Exception {
+    // UC server is started by UnityCatalogSupport.setup()
     
     SparkConf conf = new SparkConf()
         .setAppName("UnityCatalog Integration Tests")
@@ -68,21 +68,21 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   }
 
   /**
-   * Stop the SparkSession after each test class.
+   * Stop the SparkSession after all tests.
    */
-  @After
-  public void tearDownSpark() throws Exception {
+  @AfterAll
+  public static void tearDownSpark() throws Exception {
     if (sparkSession != null) {
       sparkSession.stop();
       sparkSession = null;
     }
-    super.tearDown(); // Stop UC server last
+    // UC server is stopped by UnityCatalogSupport.tearDown()
   }
 
   /**
    * Get the SparkSession for tests.
    */
-  protected SparkSession spark() {
+  protected static SparkSession spark() {
     return sparkSession;
   }
 

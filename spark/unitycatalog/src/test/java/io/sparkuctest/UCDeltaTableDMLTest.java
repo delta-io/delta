@@ -16,11 +16,9 @@
 
 package io.sparkuctest;
 
-import org.apache.spark.SparkConf;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
-import java.util.List;
 
 /**
  * DML test suite for Delta Table operations through Unity Catalog.
