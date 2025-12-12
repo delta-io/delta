@@ -590,6 +590,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createOptional
 
+  val DELTA_VACUUM_MAX_FILES_TO_LOG =
+    buildConf("vacuum.maxFilesToLog")
+      .doc("The maximum number of files to log during vacuum operations. " +
+      "When set to 0, no file paths will be logged. When set to a positive value, " +
+      "VACUUM will log up to this number of file paths that have been deleted.")
+      .intConf
+      .checkValue(_ >= 0, "maxFilesToLog must be non-negative")
+      .createWithDefault(100)
+
   val LITE_VACUUM_ENABLED =
     buildConf("vacuum.lite.enabled")
       .doc("Allows Vacuum to be run in Lite mode")
@@ -2420,6 +2429,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ >= 0, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
       .checkValue(_ <= 1, "maxDeletedRowsRatio must be in range [0.0, 1.0]")
       .createWithDefault(0.05d)
+
+
 
   val DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED =
     buildConf("tablePropertyConstraintsCheck.enabled")
