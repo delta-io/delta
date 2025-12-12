@@ -20,18 +20,24 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.input_file_name
+import org.apache.spark.sql.sources.Filter
 
 /**
  * Implementation of ServerSidePlanningClient that uses Spark SQL with input_file_name()
  * to discover the list of files in a table. This allows end-to-end testing without
  * a real server that can do server-side planning.
+ *
+ * Also captures filter/projection parameters for test verification via companion object.
  */
 class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanningClient {
 
   override def planScan(
       databaseName: String,
       table: String,
-      filter: Option[org.apache.spark.sql.sources.Filter] = None): ScanPlan = {
+      filter: Option[Filter] = None): ScanPlan = {
+    // Capture filter for test verification
+    TestServerSidePlanningClient.capturedFilter = filter
+
     val fullTableName = s"$databaseName.$table"
 
     // Temporarily disable server-side planning to avoid infinite recursion
@@ -83,6 +89,17 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
 }
 
 /**
+ * Companion object for TestServerSidePlanningClient.
+ * Stores captured pushdown parameters (filter, projection) for test verification.
+ */
+object TestServerSidePlanningClient {
+  private var capturedFilter: Option[Filter] = None
+
+  def getCapturedFilter: Option[Filter] = capturedFilter
+  def clearCaptured(): Unit = { capturedFilter = None }
+}
+
+/**
  * Factory for creating TestServerSidePlanningClient instances.
  */
 class TestServerSidePlanningClientFactory extends ServerSidePlanningClientFactory {
@@ -90,40 +107,5 @@ class TestServerSidePlanningClientFactory extends ServerSidePlanningClientFactor
       spark: SparkSession,
       metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
     new TestServerSidePlanningClient(spark)
-  }
-}
-
-/**
- * Test client that captures pushdown parameters (filter, projection) for verification in tests.
- * Delegates actual file discovery to TestServerSidePlanningClient.
- */
-class PushdownCapturingTestClient(spark: SparkSession) extends ServerSidePlanningClient {
-  override def planScan(
-      databaseName: String,
-      table: String,
-      filter: Option[org.apache.spark.sql.sources.Filter] = None): ScanPlan = {
-    // Capture the filter for test verification
-    PushdownCapturingTestClient.capturedFilter = filter
-
-    // Delegate to TestServerSidePlanningClient for actual file discovery
-    new TestServerSidePlanningClient(spark).planScan(databaseName, table, filter)
-  }
-}
-
-object PushdownCapturingTestClient {
-  private var capturedFilter: Option[org.apache.spark.sql.sources.Filter] = None
-
-  def getCapturedFilter: Option[org.apache.spark.sql.sources.Filter] = capturedFilter
-  def clearCaptured(): Unit = { capturedFilter = None }
-}
-
-/**
- * Factory for creating PushdownCapturingTestClient instances.
- */
-class PushdownCapturingTestClientFactory extends ServerSidePlanningClientFactory {
-  override def buildClient(
-      spark: SparkSession,
-      metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
-    new PushdownCapturingTestClient(spark)
   }
 }
