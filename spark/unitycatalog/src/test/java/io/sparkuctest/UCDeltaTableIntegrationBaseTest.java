@@ -24,7 +24,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
@@ -97,9 +96,24 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /**
    * Convenience method for getSqlExecutor().runSQL - executes SQL and returns results.
+   * 
+   * When called with arguments, formats the SQL query using String.format:
+   * <pre>
+   * sql("INSERT INTO %s VALUES (%d, '%s')", tableName, 1, "value")
+   * </pre>
+   * 
+   * When called without arguments, executes the SQL as-is:
+   * <pre>
+   * sql("CREATE TABLE test (id INT)")
+   * </pre>
+   * 
+   * @param sqlQuery SQL query with optional format specifiers (e.g., "SELECT * FROM %s WHERE id = %d")
+   * @param args Arguments to be formatted into the SQL query
+   * @return List of result rows, each row is a list of string values
    */
-  protected List<List<String>> sql(String sqlQuery) {
-    return getSqlExecutor().runSQL(sqlQuery);
+  protected List<List<String>> sql(String sqlQuery, Object... args) {
+    String formattedQuery = args.length > 0 ? String.format(sqlQuery, args) : sqlQuery;
+    return getSqlExecutor().runSQL(formattedQuery);
   }
 
   /**
