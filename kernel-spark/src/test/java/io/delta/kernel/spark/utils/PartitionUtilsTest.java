@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.Scan;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.Table;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
@@ -115,16 +116,20 @@ public class PartitionUtilsTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testCreateParquetReaderFactory_Basic() {
+  public void testCreateDeltaParquetReaderFactory_Basic() {
+    String tablePath = createTestTable("test_delta_reader_factory_" + System.nanoTime(), true);
+
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Snapshot snapshot = table.getLatestSnapshot(defaultEngine);
+
     StructType dataSchema =
         new StructType(
             new StructField[] {
-              DataTypes.createStructField("id", DataTypes.IntegerType, false),
-              DataTypes.createStructField("name", DataTypes.StringType, true)
+              DataTypes.createStructField("id", DataTypes.LongType, true),
             });
     StructType partitionSchema =
         new StructType(
-            new StructField[] {DataTypes.createStructField("year", DataTypes.IntegerType, true)});
+            new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
     StructType readDataSchema = dataSchema;
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
@@ -132,8 +137,15 @@ public class PartitionUtilsTest extends SparkDsv2TestBase {
     SQLConf sqlConf = SQLConf.get();
 
     PartitionReaderFactory factory =
-        PartitionUtils.createParquetReaderFactory(
-            dataSchema, partitionSchema, readDataSchema, filters, options, hadoopConf, sqlConf);
+        PartitionUtils.createDeltaParquetReaderFactory(
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            filters,
+            options,
+            hadoopConf,
+            sqlConf);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
   }
