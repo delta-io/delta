@@ -27,7 +27,7 @@ import java.util.List;
  *
  * Covers INSERT, UPDATE, DELETE, and MERGE operations with various conditions and scenarios.
  */
-public class UCDeltaTableDMLSuite extends UCDeltaTableIntegrationSuiteBase {
+public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
   @Override
   protected SQLExecutor getSqlExecutor() {

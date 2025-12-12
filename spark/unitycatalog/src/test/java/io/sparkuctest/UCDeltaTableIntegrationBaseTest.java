@@ -39,7 +39,7 @@ import java.util.stream.Collectors;
  *
  * Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
-public abstract class UCDeltaTableIntegrationSuiteBase extends UnityCatalogSupport {
+public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
 
   private SparkSession sparkSession;
 
