@@ -16,7 +16,6 @@
 package io.delta.kernel.spark.snapshot.unitycatalog;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -26,30 +25,26 @@ import org.junit.jupiter.api.Test;
 class UCTableInfoTest {
 
   @Test
-  void testConstructor_ValidInputs_StoresAllFields() {
+  void testConstructor() {
     // Use distinctive values that would fail if implementation had hardcoded defaults
     String tableId = "uc_tbl_7f3a9b2c-e8d1-4f6a";
     String tablePath = "abfss://container@acct.dfs.core.windows.net/delta/v2";
     String ucUri = "https://uc-server.example.net/api/2.1/uc";
     String ucToken = "dapi_Kx9mN$2pQr#7vWz";
 
-    Map<String, String> configMap = new HashMap<>();
-    configMap.put("type", "static");
-    configMap.put("token", ucToken);
+    Map<String, String> authConfig = new HashMap<>();
+    authConfig.put("type", "static");
+    authConfig.put("token", ucToken);
 
-    UCTableInfo info = new UCTableInfo(tableId, tablePath, ucUri, configMap);
+    UCTableInfo info = new UCTableInfo(tableId, tablePath, ucUri, authConfig);
 
     assertEquals(tableId, info.getTableId(), "Table ID should be stored correctly");
     assertEquals(tablePath, info.getTablePath(), "Table path should be stored correctly");
     assertEquals(ucUri, info.getUcUri(), "UC URI should be stored correctly");
 
-    Map<String, String> returnedConfigMap = info.getConfigMap();
-    assertTrue(returnedConfigMap.containsKey("type"), "Config map should contain type key");
-    assertEquals("static", returnedConfigMap.get("type"), "Type should be static");
-    assertTrue(returnedConfigMap.containsKey("token"), "Config map should contain token key");
+    Map<String, String> returnedConfig = info.getAuthConfig();
+    assertEquals("static", returnedConfig.get("type"), "Type should be static");
     assertEquals(
-        ucToken,
-        returnedConfigMap.get("token"),
-        "UC token should be stored correctly in configMap");
+        ucToken, returnedConfig.get("token"), "UC token should be stored correctly in configMap");
   }
 }

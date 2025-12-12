@@ -165,10 +165,10 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
         info.getTablePath == TABLE_PATH_ALPHA,
         s"Table path mismatch: got ${info.getTablePath}")
       assert(info.getUcUri == UC_URI_ALPHA, s"UC URI mismatch: got ${info.getUcUri}")
-      val configMap = info.getConfigMap
-      assert(configMap.containsKey("type"), "Config map should contain type key")
-      assert(configMap.get("type") == "static", s"Type should be static: got ${configMap.get("type")}")
-      assert(configMap.containsKey("token"), "Config map should contain token key")
+      val configMap = info.getAuthConfig
+      assert(
+        configMap.get("type") == "static",
+        s"Type should be static: got ${configMap.get("type")}")
       assert(
         configMap.get("token") == UC_TOKEN_ALPHA,
         s"UC token mismatch: got ${configMap.get("token")}")
@@ -217,10 +217,8 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       assert(
         info.getUcUri == ucUriBeta,
         s"Should use catalogBeta's URI, got: ${info.getUcUri}")
-      val configMap = info.getConfigMap
-      assert(configMap.containsKey("type"), "Config map should contain type key")
+      val configMap = info.getAuthConfig
       assert(configMap.get("type") == "static", s"Type should be static")
-      assert(configMap.containsKey("token"), "Config map should contain token key")
       assert(
         configMap.get("token") == ucTokenBeta,
         s"Should use catalogBeta's token, got: ${configMap.get("token")}")

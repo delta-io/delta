@@ -22,12 +22,13 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.DeltaLogging
 import io.delta.storage.commit.CommitCoordinatorClient
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
-import io.unitycatalog.client.auth.TokenProvider
 
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.metering.DeltaLogging
+
+import io.unitycatalog.client.auth.TokenProvider
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 
@@ -56,8 +57,8 @@ object UCCommitCoordinatorBuilder
   private val commitCoordinatorClientCache =
     new ConcurrentHashMap[String, UCCommitCoordinatorClient]()
 
-  // Helper cache for (uri, authConfigs) to metastoreId to avoid redundant calls to getMetastoreId
-  private val uriAuthConfigsToMetastoreIdCache =
+  // Helper cache for (uri, authConfig) to metastoreId to avoid redundant calls to getMetastoreId
+  private val uriAuthConfigToMetastoreIdCache =
     new ConcurrentHashMap[(String, Map[String, String]), String]()
 
   // Use a var instead of val for ease of testing by injecting different UCClientFactory.
@@ -73,14 +74,14 @@ object UCCommitCoordinatorBuilder
 
     commitCoordinatorClientCache.computeIfAbsent(
       metastoreId,
-      _ => new UCCommitCoordinatorClient(conf.asJava, getMatchingUCClient(spark, metastoreId))
-    )
+      _ => new UCCommitCoordinatorClient(conf.asJava, getMatchingUCClient(spark, metastoreId)))
   }
 
   override def buildForCatalog(
-      spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
+      spark: SparkSession,
+      catalogName: String): CommitCoordinatorClient = {
     val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, authConfigs)) => ucClientFactory.createUCClient(uri, authConfigs)
+      case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
@@ -99,13 +100,13 @@ object UCCommitCoordinatorBuilder
    */
   private def getMatchingUCClient(spark: SparkSession, metastoreId: String): UCClient = {
     val matchingClients: List[(String, Map[String, String])] = getCatalogConfigs(spark)
-      .map { case (name, uri, authConfigs) => (uri, authConfigs) }
+      .map { case (name, uri, authConfig) => (uri, authConfig) }
       .distinct // Remove duplicates since multiple catalogs can have the same uri and config
-      .filter { case (uri, authConfigs) => getMetastoreId(uri, authConfigs).contains(metastoreId) }
+      .filter { case (uri, authConfig) => getMetastoreId(uri, authConfig).contains(metastoreId) }
 
     matchingClients match {
       case Nil => throw noMatchingCatalogException(metastoreId)
-      case (uri, authConfigs) :: Nil => ucClientFactory.createUCClient(uri, authConfigs)
+      case (uri, authConfig) :: Nil => ucClientFactory.createUCClient(uri, authConfig)
       case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_._1))
     }
   }
@@ -117,12 +118,12 @@ object UCCommitCoordinatorBuilder
    * retrieves its metastore ID. The result is cached to avoid unnecessary getMetastoreId requests
    * in future calls. If there's an error, it returns None and logs a warning.
    */
-  private def getMetastoreId(uri: String, authConfigs: Map[String, String]): Option[String] = {
+  private def getMetastoreId(uri: String, authConfig: Map[String, String]): Option[String] = {
     try {
-      val metastoreId = uriAuthConfigsToMetastoreIdCache.computeIfAbsent(
-        (uri, authConfigs),
+      val metastoreId = uriAuthConfigToMetastoreIdCache.computeIfAbsent(
+        (uri, authConfig),
         _ => {
-          val ucClient = ucClientFactory.createUCClient(uri, authConfigs)
+          val ucClient = ucClientFactory.createUCClient(uri, authConfig)
           try {
             ucClient.getMetastoreId
           } finally {
@@ -228,14 +229,14 @@ object UCCommitCoordinatorBuilder
                   case Some(token) =>
                     authConfigMap = Map("type" -> "static", "token" -> token)
                   case None =>
-                    // No auth configs found
+                  // No auth configs found
                 }
               }
 
               if (authConfigMap.isEmpty) {
                 logWarning(
                   log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
-                  "does not have any authentication configurations in Spark Session.")
+                    "does not have any authentication configurations in Spark Session.")
                 None
               } else {
                 Some((catalogName, uri, authConfigMap))
@@ -244,13 +245,13 @@ object UCCommitCoordinatorBuilder
               case _: URISyntaxException =>
                 logWarning(
                   log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
-                  log"does not have a valid URI ${MDC(DeltaLogKeys.URI, uri)}.")
+                    log"does not have a valid URI ${MDC(DeltaLogKeys.URI, uri)}.")
                 None
             }
           case None =>
             logWarning(
               log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it does " +
-              "not have uri configured in Spark Session.")
+                "not have uri configured in Spark Session.")
             None
         }
       }
@@ -263,7 +264,7 @@ object UCCommitCoordinatorBuilder
    */
   private[delta] def getCatalogConfigMap(spark: SparkSession): Map[String, UCCatalogConfig] = {
     getCatalogConfigs(spark).map {
-      case (name, uri, authConfigs) => name -> UCCatalogConfig(name, uri, authConfigs)
+      case (name, uri, authConfig) => name -> UCCatalogConfig(name, uri, authConfig)
     }.toMap
   }
 
@@ -278,20 +279,20 @@ object UCCommitCoordinatorBuilder
 
   def clearCache(): Unit = {
     commitCoordinatorClientCache.clear()
-    uriAuthConfigsToMetastoreIdCache.clear()
+    uriAuthConfigToMetastoreIdCache.clear()
   }
 }
 
 trait UCClientFactory {
-  def createUCClient(uri: String, authConfigs: Map[String, String]): UCClient
+  def createUCClient(uri: String, authConfig: Map[String, String]): UCClient
 }
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
-  override def createUCClient(uri: String, authConfigs: Map[String, String]): UCClient = {
+  override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
     // Create TokenProvider from the authentication configuration map
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
-    val tokenProvider = TokenProvider.create(authConfigs.asJava)
+    val tokenProvider = TokenProvider.create(authConfig.asJava)
     new UCTokenBasedRestClient(uri, tokenProvider)
   }
 }
@@ -300,4 +301,4 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
  * Holder for Unity Catalog configuration extracted from Spark configs.
  * Used by [[UCCommitCoordinatorBuilder.getCatalogConfigMap]].
  */
-case class UCCatalogConfig(catalogName: String, uri: String, authConfigs: Map[String, String])
+case class UCCatalogConfig(catalogName: String, uri: String, authConfig: Map[String, String])
