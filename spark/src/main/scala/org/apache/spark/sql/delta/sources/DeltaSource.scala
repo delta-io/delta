@@ -629,7 +629,11 @@ trait DeltaSourceBase extends Source
       } else {
         // Column mapping schema changes
         assert(!trackingMetadataChange, "should not check schema change while tracking it")
-        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
+        !DeltaColumnMapping.hasNoColumnMappingSchemaChangesBySchema(
+          newMetadata.schema, oldMetadata.schema,
+          newMetadata.partitionColumns, oldMetadata.partitionColumns,
+          oldMetadata.configuration,
+          newMetadata.columnMappingMode, oldMetadata.columnMappingMode,
           allowUnsafeStreamingReadOnPartitionColumnChanges)
       }
 
