@@ -18,7 +18,7 @@ package io.sparkuctest;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.Arrays;
+import java.util.List;
 
 /**
  * DML test suite for Delta Table operations through Unity Catalog.
@@ -37,10 +37,10 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       sql("UPDATE %s SET status = 'processed' WHERE id = 1", tableName);
 
       // Verify update
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "processed"),
-          Arrays.asList("2", "pending"),
-          Arrays.asList("3", "completed")
+      check(tableName, List.of(
+          List.of("1", "processed"),
+          List.of("2", "pending"),
+          List.of("3", "completed")
       ));
     });
   }
@@ -56,11 +56,11 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       sql("UPDATE %s SET status = 'urgent' WHERE priority >= 5", tableName);
 
       // Verify update
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "1", "low"),
-          Arrays.asList("2", "5", "urgent"),
-          Arrays.asList("3", "10", "urgent"),
-          Arrays.asList("4", "2", "low")
+      check(tableName, List.of(
+          List.of("1", "1", "low"),
+          List.of("2", "5", "urgent"),
+          List.of("3", "10", "urgent"),
+          List.of("4", "2", "low")
       ));
     });
   }
@@ -75,9 +75,9 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       sql("DELETE FROM %s WHERE active = false", tableName);
 
       // Verify deletion
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "true"),
-          Arrays.asList("3", "true")
+      check(tableName, List.of(
+          List.of("1", "true"),
+          List.of("3", "true")
       ));
     });
   }
@@ -93,9 +93,9 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       sql("DELETE FROM %s WHERE category = 'A' OR value < 10", tableName);
 
       // Verify deletion
-      check(tableName, Arrays.asList(
-          Arrays.asList("2", "B", "20"),
-          Arrays.asList("5", "B", "15")
+      check(tableName, List.of(
+          List.of("2", "B", "20"),
+          List.of("5", "B", "15")
       ));
     });
   }
@@ -117,11 +117,11 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       });
 
       // Verify merge result
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "existing1"),
-          Arrays.asList("2", "existing2"),
-          Arrays.asList("3", "new3"),
-          Arrays.asList("4", "new4")
+      check(tableName, List.of(
+          List.of("1", "existing1"),
+          List.of("2", "existing2"),
+          List.of("3", "new3"),
+          List.of("4", "new4")
       ));
     });
   }
@@ -143,10 +143,10 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       });
 
       // Verify merge result
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "old1"),
-          Arrays.asList("2", "updated2"),
-          Arrays.asList("3", "updated3")
+      check(tableName, List.of(
+          List.of("1", "old1"),
+          List.of("2", "updated2"),
+          List.of("3", "updated3")
       ));
     });
   }
@@ -170,11 +170,11 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       });
 
       // Verify merge result
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "Alice", "active"),
-          Arrays.asList("2", "Bob", "active"),
-          Arrays.asList("3", "Charlie", "active"),
-          Arrays.asList("4", "Diana", "pending")
+      check(tableName, List.of(
+          List.of("1", "Alice", "active"),
+          List.of("2", "Bob", "active"),
+          List.of("3", "Charlie", "active"),
+          List.of("4", "Diana", "pending")
       ));
     });
   }
@@ -198,10 +198,10 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       });
 
       // Verify merge result - records 2 and 3 should be deleted
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "true"),
-          Arrays.asList("4", "true"),
-          Arrays.asList("5", "true")
+      check(tableName, List.of(
+          List.of("1", "true"),
+          List.of("4", "true"),
+          List.of("5", "true")
       ));
     });
   }
@@ -218,9 +218,9 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
             "SELECT id, name FROM %s WHERE name = 'TypeA'", targetTable, sourceTable);
 
         // Verify result
-        check(targetTable, Arrays.asList(
-            Arrays.asList("1", "TypeA"),
-            Arrays.asList("3", "TypeA")
+        check(targetTable, List.of(
+            List.of("1", "TypeA"),
+            List.of("3", "TypeA")
         ));
       });
     });
@@ -236,10 +236,10 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       sql("INSERT INTO %s VALUES (2, 'appended1'), (3, 'appended2')", tableName);
 
       // Verify appended data
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "initial"),
-          Arrays.asList("2", "appended1"),
-          Arrays.asList("3", "appended2")
+      check(tableName, List.of(
+          List.of("1", "initial"),
+          List.of("2", "appended1"),
+          List.of("3", "appended2")
       ));
     });
   }
@@ -254,9 +254,9 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       sql("INSERT OVERWRITE %s VALUES (4, 'new'), (5, 'new')", tableName);
 
       // Verify data was overwritten
-      check(tableName, Arrays.asList(
-          Arrays.asList("4", "new"),
-          Arrays.asList("5", "new")
+      check(tableName, List.of(
+          List.of("4", "new"),
+          List.of("5", "new")
       ));
     });
   }
@@ -272,10 +272,10 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
           "VALUES (1, 'replaced'), (2, 'replaced')", tableName);
 
       // Verify replacement
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "replaced"),
-          Arrays.asList("2", "replaced"),
-          Arrays.asList("3", "completed")
+      check(tableName, List.of(
+          List.of("1", "replaced"),
+          List.of("2", "replaced"),
+          List.of("3", "completed")
       ));
     });
   }
@@ -291,11 +291,11 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       sql("INSERT INTO %s VALUES (4, 'User4', false)", tableName);
 
       // Verify all inserts worked
-      check(tableName, Arrays.asList(
-          Arrays.asList("1", "User1", "true"),
-          Arrays.asList("2", "User2", "false"),
-          Arrays.asList("3", "User3", "true"),
-          Arrays.asList("4", "User4", "false")
+      check(tableName, List.of(
+          List.of("1", "User1", "true"),
+          List.of("2", "User2", "false"),
+          List.of("3", "User3", "true"),
+          List.of("4", "User4", "false")
       ));
     });
   }
