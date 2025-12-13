@@ -146,6 +146,7 @@ public abstract class UnityCatalogSupport {
     serverProps.setProperty("server.env", "test");
     // Enable managed tables (experimental feature in Unity Catalog)
     serverProps.setProperty("server.managed-table.enabled", "true");
+    serverProps.setProperty("storage-root.tables", new File(ucTempDir, "ucroot").getAbsolutePath());
 
     // Start UC server with configuration
     ServerProperties initServerProperties = new ServerProperties(serverProps);

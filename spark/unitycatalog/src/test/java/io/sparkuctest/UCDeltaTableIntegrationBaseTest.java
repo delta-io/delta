@@ -43,11 +43,10 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /**
    * Provides all table types for parameterized tests.
-   * Currently only returns EXTERNAL as Delta Lake does not support MANAGED (catalog-owned) tables.
    * Tests can use this as a @MethodSource to test different table types.
    */
   protected static Stream<TableType> allTableTypes() {
-    return Stream.of(TableType.EXTERNAL);
+    return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
   }
 
   private static SparkSession sparkSession;
@@ -75,6 +74,11 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     conf = configureSparkWithUnityCatalog(conf);
     
     sparkSession = SparkSession.builder().config(conf).getOrCreate();
+
+    // Enable testing so that catalogManaged UC tables can be created.
+    // This is checked by CreateDeltaTableCommand which calls org.apache.spark.util.Utils.isTesting.
+    // TODO: clean up once it's not required.
+    System.setProperty("spark.testing", "any");
   }
 
   /**
