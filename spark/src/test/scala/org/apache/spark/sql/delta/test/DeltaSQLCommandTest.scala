@@ -40,7 +40,7 @@ trait DeltaSQLCommandTest extends SharedSparkSession {
   }
 
   /**
-   * Override this method in test suites to enable STRICT mode (SparkTable with conversion).
+   * Override this method in test suites to disable STRICT mode if needed.
    * Default is STRICT (SparkTable with conversion to DeltaTableV2).
    */
   protected def v2EnableMode: String = "STRICT"

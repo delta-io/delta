@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.catalog;
 
-import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.spark.catalog.SparkTable;
 import org.apache.spark.sql.delta.sources.DeltaSQLConfV2;
 import java.util.HashMap;
@@ -96,9 +95,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
               return super.loadCatalogTable(ident, catalogTable);
             }
             throw e;
-          } catch (UnsupportedTableFeatureException e) {
-            // Fallback to V1 if Kernel doesn't support the table features
-            return super.loadCatalogTable(ident, catalogTable);
           }
         },
         () -> super.loadCatalogTable(ident, catalogTable));
@@ -130,9 +126,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
               return super.loadPathTable(ident);
             }
             throw e;
-          } catch (UnsupportedTableFeatureException e) {
-            // Fallback to V1 if Kernel doesn't support the table features
-            return super.loadPathTable(ident);
           }
         },
         () -> super.loadPathTable(ident));
@@ -148,7 +141,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     return catalogTable.properties()
         .contains("delta.coordinatedCommits.commitCoordinator-preview");
   }
-
 
   /**
    * Loads a table based on the {@link DeltaSQLConfV2#V2_ENABLE_MODE} SQL configuration.
