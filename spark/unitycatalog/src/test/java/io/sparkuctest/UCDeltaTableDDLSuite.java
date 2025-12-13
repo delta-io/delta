@@ -16,9 +16,10 @@
 
 package io.sparkuctest;
 
-import org.apache.spark.SparkConf;
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.File;
 import java.util.Arrays;
@@ -31,18 +32,14 @@ import java.util.stream.Collectors;
  *
  * Covers CREATE, ALTER, DROP, and other schema-related operations.
  */
-public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
+public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationBaseTest {
 
-  @Override
-  protected SQLExecutor getSqlExecutor() {
-    return new SparkSQLExecutor(spark());
-  }
-
-  @Test
-  public void testCreateTableWithDifferentDataTypes() throws Exception {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testCreateTableWithDifferentDataTypes(TableType tableType) throws Exception {
     withNewTable("create_types_test",
         "id BIGINT, name STRING, price DECIMAL(10,2), active BOOLEAN, created_at TIMESTAMP",
-        tableName -> {
+        tableType, tableName -> {
           // Insert data with various types
           sql("INSERT INTO " + tableName + " VALUES " +
               "(1L, 'Product A', 99.99, true, '2023-01-01 10:00:00'), " +
@@ -76,16 +73,17 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
 
         // Verify table properties can be queried
         List<List<String>> description = sql("DESCRIBE EXTENDED " + tableName);
-        Assert.assertTrue("Should be able to describe the table", !description.isEmpty());
+        Assertions.assertTrue(!description.isEmpty(), "Should be able to describe the table");
       } finally {
         spark().sql("DROP TABLE IF EXISTS " + tableName);
       }
     });
   }
 
-  @Test
-  public void testCreateTableAsSelect() throws Exception {
-    withNewTable("ctas_source", "id INT, category STRING, value DOUBLE", sourceTable -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testCreateTableAsSelect(TableType tableType) throws Exception {
+    withNewTable("ctas_source", "id INT, category STRING, value DOUBLE", tableType, sourceTable -> {
       // Setup source data
       sql("INSERT INTO " + sourceTable + " VALUES " +
           "(1, 'A', 10.5), (2, 'B', 20.0), (3, 'A', 15.75), (4, 'C', 30.25)");
@@ -134,16 +132,17 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
       // Verify table no longer exists
       try {
         sql("SELECT * FROM " + tableName);
-        Assert.fail("Expected exception when querying dropped table");
+        Assertions.fail("Expected exception when querying dropped table");
       } catch (Exception e) {
         // Expected
       }
     });
   }
 
-  @Test
-  public void testShowTablesInUnityCatalog() throws Exception {
-    withNewTable("show_tables_test", "id INT", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testShowTablesInUnityCatalog(TableType tableType) throws Exception {
+    withNewTable("show_tables_test", "id INT", tableType, tableName -> {
       sql("INSERT INTO " + tableName + " VALUES (1)");
 
       // Show tables in the schema
@@ -153,16 +152,17 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
           .collect(Collectors.toList());
 
       // Verify our test table appears in the list
-      Assert.assertTrue(
-          "Table should appear in SHOW TABLES. Found tables: " + String.join(", ", tableNames),
-          tableNames.contains("show_tables_test")
+      Assertions.assertTrue(
+          tableNames.contains("show_tables_test"),
+          "Table should appear in SHOW TABLES. Found tables: " + String.join(", ", tableNames)
       );
     });
   }
 
-  @Test
-  public void testDescribeTableOperation() throws Exception {
-    withNewTable("describe_test", "id BIGINT, name STRING, active BOOLEAN", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testDescribeTableOperation(TableType tableType) throws Exception {
+    withNewTable("describe_test", "id BIGINT, name STRING, active BOOLEAN", tableType, tableName -> {
       sql("INSERT INTO " + tableName + " VALUES (1, 'test', true)");
 
       // Describe the table structure
@@ -172,38 +172,39 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
       Map<String, String> columnInfo = description.stream()
           .collect(Collectors.toMap(row -> row.get(0), row -> row.get(1)));
 
-      Assert.assertTrue("Should have 'id' column", columnInfo.containsKey("id"));
-      Assert.assertTrue("Should have 'name' column", columnInfo.containsKey("name"));
-      Assert.assertTrue("Should have 'active' column", columnInfo.containsKey("active"));
+      Assertions.assertTrue(columnInfo.containsKey("id"), "Should have 'id' column");
+      Assertions.assertTrue(columnInfo.containsKey("name"), "Should have 'name' column");
+      Assertions.assertTrue(columnInfo.containsKey("active"), "Should have 'active' column");
 
       // Verify data types
-      Assert.assertTrue(
-          "ID should be bigint, got: " + columnInfo.get("id"),
-          columnInfo.get("id").contains("bigint")
+      Assertions.assertTrue(
+          columnInfo.get("id").contains("bigint"),
+          "ID should be bigint, got: " + columnInfo.get("id")
       );
-      Assert.assertTrue(
-          "Name should be string, got: " + columnInfo.get("name"),
-          columnInfo.get("name").contains("string")
+      Assertions.assertTrue(
+          columnInfo.get("name").contains("string"),
+          "Name should be string, got: " + columnInfo.get("name")
       );
-      Assert.assertTrue(
-          "Active should be boolean, got: " + columnInfo.get("active"),
-          columnInfo.get("active").contains("boolean")
+      Assertions.assertTrue(
+          columnInfo.get("active").contains("boolean"),
+          "Active should be boolean, got: " + columnInfo.get("active")
       );
     });
   }
 
-  @Test
-  public void testDescribeExtendedTableOperation() throws Exception {
-    withNewTable("describe_extended_test", "id INT, data STRING", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testDescribeExtendedTableOperation(TableType tableType) throws Exception {
+    withNewTable("describe_extended_test", "id INT, data STRING", tableType, tableName -> {
       sql("INSERT INTO " + tableName + " VALUES (1, 'sample')");
 
       // Get extended description
       List<List<String>> extendedDesc = sql("DESCRIBE EXTENDED " + tableName);
 
       // Verify we get extended information (should be more than just column info)
-      Assert.assertTrue(
-          "Extended description should contain more than just column definitions",
-          extendedDesc.size() > 3
+      Assertions.assertTrue(
+          extendedDesc.size() > 3,
+          "Extended description should contain more than just column definitions"
       );
 
       // Look for key extended properties
@@ -212,9 +213,9 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
           .collect(Collectors.joining(" "))
           .toLowerCase();
 
-      Assert.assertTrue(
-          "Extended description should contain table metadata information",
-          descText.contains("table") || descText.contains("location") || descText.contains("provider")
+      Assertions.assertTrue(
+          descText.contains("table") || descText.contains("location") || descText.contains("provider"),
+          "Extended description should contain table metadata information"
       );
     });
   }
@@ -244,7 +245,7 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
         List<String> columns = description.stream()
             .map(row -> row.get(0))
             .collect(Collectors.toList());
-        Assert.assertFalse("Schema should not have been modified", columns.contains("extra"));
+        Assertions.assertFalse(columns.contains("extra"), "Schema should not have been modified");
 
       } finally {
         spark().sql("DROP TABLE IF EXISTS " + tableName);
@@ -273,9 +274,9 @@ public class UCDeltaTableDDLSuite extends UCDeltaTableIntegrationSuiteBase {
             .map(row -> row.get(1))
             .collect(Collectors.toList());
 
-        Assert.assertTrue(
-            "Special table name should appear in SHOW TABLES. Found: " + String.join(", ", tableNames),
-            tableNames.contains("test_table_with_underscores")
+        Assertions.assertTrue(
+            tableNames.contains("test_table_with_underscores"),
+            "Special table name should appear in SHOW TABLES. Found: " + String.join(", ", tableNames)
         );
 
       } finally {
