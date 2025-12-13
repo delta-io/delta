@@ -28,36 +28,25 @@ import java.util.List;
 public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
   @Test
-  public void testInsertOperationsBasicAppend() throws Exception {
-    withNewTable("insert_append_test", "id INT, value STRING", tableName -> {
-      // Initial data
-      sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
+  public void testBasicInsertOperations() throws Exception {
+    withNewTable("insert_basic_test", "id INT, name STRING, active BOOLEAN", tableName -> {
+      // Single row INSERT
+      sql("INSERT INTO %s VALUES (1, 'initial', true)", tableName);
 
-      // Append more data
-      sql("INSERT INTO %s VALUES (2, 'appended1'), (3, 'appended2')", tableName);
-
-      // Verify appended data
+      // Verify single row
       check(tableName, List.of(
-          List.of("1", "initial"),
-          List.of("2", "appended1"),
-          List.of("3", "appended2")
+          List.of("1", "initial", "true")
       ));
-    });
-  }
 
-  @Test
-  public void testInsertWithValuesMultiplePatterns() throws Exception {
-    withNewTable("insert_patterns_test", "id INT, name STRING, active BOOLEAN", tableName -> {
-      // Single INSERT with multiple rows
-      sql("INSERT INTO %s VALUES (1, 'User1', true), (2, 'User2', false)", tableName);
+      // Multiple rows in single INSERT
+      sql("INSERT INTO %s VALUES (2, 'User2', false), (3, 'User3', true)", tableName);
 
       // Multiple separate INSERT operations
-      sql("INSERT INTO %s VALUES (3, 'User3', true)", tableName);
       sql("INSERT INTO %s VALUES (4, 'User4', false)", tableName);
 
-      // Verify all inserts worked
+      // Verify all inserts (appended data)
       check(tableName, List.of(
-          List.of("1", "User1", "true"),
+          List.of("1", "initial", "true"),
           List.of("2", "User2", "false"),
           List.of("3", "User3", "true"),
           List.of("4", "User4", "false")
@@ -66,53 +55,36 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
-  public void testInsertWithSelect() throws Exception {
+  public void testAdvancedInsertOperations() throws Exception {
+    // Test INSERT ... SELECT
     withNewTable("insert_select_target", "id INT, category STRING", targetTable -> {
       withNewTable("insert_select_source", "id INT, name STRING", sourceTable -> {
-        // Setup source data
         sql("INSERT INTO %s VALUES (1, 'TypeA'), (2, 'TypeB'), (3, 'TypeA')", sourceTable);
-
-        // Insert from SELECT
-        sql("INSERT INTO %s " +
-            "SELECT id, name FROM %s WHERE name = 'TypeA'", targetTable, sourceTable);
-
-        // Verify result
+        sql("INSERT INTO %s SELECT id, name FROM %s WHERE name = 'TypeA'", targetTable, sourceTable);
+        
         check(targetTable, List.of(
             List.of("1", "TypeA"),
             List.of("3", "TypeA")
         ));
       });
     });
-  }
 
-  @Test
-  public void testInsertOverwriteOperation() throws Exception {
+    // Test INSERT OVERWRITE
     withNewTable("insert_overwrite_test", "id INT, status STRING", tableName -> {
-      // Initial data
       sql("INSERT INTO %s VALUES (1, 'old'), (2, 'old'), (3, 'old')", tableName);
-
-      // Overwrite with new data
       sql("INSERT OVERWRITE %s VALUES (4, 'new'), (5, 'new')", tableName);
-
-      // Verify data was overwritten
+      
       check(tableName, List.of(
           List.of("4", "new"),
           List.of("5", "new")
       ));
     });
-  }
 
-  @Test
-  public void testInsertReplaceWhereOperation() throws Exception {
+    // Test INSERT ... REPLACE WHERE
     withNewTable("insert_replace_test", "id INT, status STRING", tableName -> {
-      // Initial data
       sql("INSERT INTO %s VALUES (1, 'pending'), (2, 'pending'), (3, 'completed')", tableName);
-
-      // Replace specific rows
-      sql("INSERT INTO %s REPLACE WHERE id <= 2 " +
-          "VALUES (1, 'replaced'), (2, 'replaced')", tableName);
-
-      // Verify replacement
+      sql("INSERT INTO %s REPLACE WHERE id <= 2 VALUES (1, 'replaced'), (2, 'replaced')", tableName);
+      
       check(tableName, List.of(
           List.of("1", "replaced"),
           List.of("2", "replaced"),
@@ -124,81 +96,65 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
   // ========== UPDATE TESTS ==========
 
   @Test
-  public void testUpdateWithSimpleCondition() throws Exception {
-    withNewTable("update_simple_test", "id INT, status STRING", tableName -> {
-      // Setup initial data
-      sql("INSERT INTO %s VALUES (1, 'pending'), (2, 'pending'), (3, 'completed')", tableName);
+  public void testUpdateOperations() throws Exception {
+    withNewTable("update_test", "id INT, priority INT, status STRING", tableName -> {
+      // Setup data
+      sql("INSERT INTO %s VALUES " +
+          "(1, 1, 'pending'), (2, 5, 'pending'), (3, 10, 'pending'), (4, 2, 'completed')", tableName);
 
-      // Update specific rows
+      // Simple update: update specific row by id
       sql("UPDATE %s SET status = 'processed' WHERE id = 1", tableName);
 
-      // Verify update
+      // Verify simple update
       check(tableName, List.of(
-          List.of("1", "processed"),
-          List.of("2", "pending"),
-          List.of("3", "completed")
+          List.of("1", "1", "processed"),
+          List.of("2", "5", "pending"),
+          List.of("3", "10", "pending"),
+          List.of("4", "2", "completed")
       ));
-    });
-  }
 
-  @Test
-  public void testUpdateWithComplexCondition() throws Exception {
-    withNewTable("update_complex_test", "id INT, priority INT, status STRING", tableName -> {
-      // Setup data
-      sql("INSERT INTO %s VALUES " +
-          "(1, 1, 'low'), (2, 5, 'medium'), (3, 10, 'high'), (4, 2, 'low')", tableName);
-
-      // Update based on priority
+      // Complex update: update based on priority condition
       sql("UPDATE %s SET status = 'urgent' WHERE priority >= 5", tableName);
 
-      // Verify update
+      // Verify complex update
       check(tableName, List.of(
-          List.of("1", "1", "low"),
+          List.of("1", "1", "processed"),
           List.of("2", "5", "urgent"),
           List.of("3", "10", "urgent"),
-          List.of("4", "2", "low")
-      ));
-    });
-  }
-
-  // ========== DELETE TESTS ==========
-
-  @Test
-  public void testDeleteWithSimpleCondition() throws Exception {
-    withNewTable("delete_simple_test", "id INT, active BOOLEAN", tableName -> {
-      // Setup data
-      sql("INSERT INTO %s VALUES (1, true), (2, false), (3, true), (4, false)", tableName);
-
-      // Delete inactive records
-      sql("DELETE FROM %s WHERE active = false", tableName);
-
-      // Verify deletion
-      check(tableName, List.of(
-          List.of("1", "true"),
-          List.of("3", "true")
+          List.of("4", "2", "completed")
       ));
     });
   }
 
   @Test
-  public void testDeleteWithComplexCondition() throws Exception {
-    withNewTable("delete_complex_test", "id INT, category STRING, value INT", tableName -> {
+  public void testDeleteOperations() throws Exception {
+    withNewTable("delete_test", "id INT, category STRING, value INT, active BOOLEAN", tableName -> {
       // Setup data
       sql("INSERT INTO %s VALUES " +
-          "(1, 'A', 10), (2, 'B', 20), (3, 'A', 30), (4, 'C', 5), (5, 'B', 15)", tableName);
+          "(1, 'A', 10, true), (2, 'B', 20, false), (3, 'A', 30, true), " +
+          "(4, 'C', 5, false), (5, 'B', 15, true)", tableName);
 
-      // Delete records with specific conditions
+      // Simple delete: single condition
+      sql("DELETE FROM %s WHERE active = false", tableName);
+
+      // Verify simple delete
+      check(tableName, List.of(
+          List.of("1", "A", "10", "true"),
+          List.of("3", "A", "30", "true"),
+          List.of("5", "B", "15", "true")
+      ));
+
+      // Complex delete: multiple conditions with OR
       sql("DELETE FROM %s WHERE category = 'A' OR value < 10", tableName);
 
-      // Verify deletion
+      // Verify complex delete
       check(tableName, List.of(
-          List.of("2", "B", "20"),
-          List.of("5", "B", "15")
+          List.of("5", "B", "15", "true")
       ));
     });
   }
 
-  // ========== MERGE TESTS (Most Complex) ==========
+  // ========== MERGE TESTS ==========
 
   @Test
   public void testMergeInsertOnly() throws Exception {
