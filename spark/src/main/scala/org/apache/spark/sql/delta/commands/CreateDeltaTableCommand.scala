@@ -121,7 +121,7 @@ case class CreateDeltaTableCommand(
       getSupportedFeaturesFromTableConfigs(table.properties)
     if (!Utils.isTesting && (tableFeatures.contains(CatalogOwnedTableFeature) ||
       CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
-      throw DeltaErrors.deltaCannotCreateCatalogOwnedTable()
+      throw DeltaErrors.deltaCannotCreateCatalogManagedTable()
     }
 
     val tableWithLocation = getCatalogTableWithLocation(sparkSession)

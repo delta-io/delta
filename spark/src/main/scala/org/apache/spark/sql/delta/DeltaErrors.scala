@@ -3827,9 +3827,9 @@ trait DeltaErrorsBase
       messageParameters = Array.empty)
   }
 
-  def deltaCannotCreateCatalogOwnedTable(): Throwable = {
+  def deltaCannotCreateCatalogManagedTable(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION",
+      errorClass = "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_CREATION",
       messageParameters = Array.empty)
   }
 
