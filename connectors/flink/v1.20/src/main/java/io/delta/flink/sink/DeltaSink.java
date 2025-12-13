@@ -1,12 +1,11 @@
 package io.delta.flink.sink;
 
-import io.delta.flink.DeltaTable;
-import io.delta.flink.table.CCv2KernelTable;
-import io.delta.flink.table.FileSystemKernelTable;
+import io.delta.flink.table.*;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.types.StructType;
 import java.io.IOException;
 import java.net.URI;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -175,6 +174,7 @@ public class DeltaSink
     private String tableId;
     private String catalogEndpoint;
     private String catalogToken;
+    private Map<String, String> configurations;
 
     public Builder withDeltaTable(DeltaTable deltaTable) {
       this.deltaTable = deltaTable;
@@ -213,26 +213,38 @@ public class DeltaSink
       return this;
     }
 
+    public Builder withConfigurations(Map<String, String> configurations) {
+      this.configurations = configurations;
+      return this;
+    }
+
     public DeltaSink build() {
+      if (configurations == null) {
+        configurations = Map.of();
+      }
       if (deltaTable == null) {
         // Can use only one from tablePath or tableId
-        Preconditions.checkArgument((tablePath != null) ^ (tableId != null),
-                "Use either tablePath or tableId");
-        if( tablePath != null ) {
+        Preconditions.checkArgument(
+            (tablePath != null) ^ (tableId != null), "Use either tablePath or tableId");
+        if (tablePath != null) {
           // File-based table
           StructType tableSchema = null;
           if (flinkSchema != null) {
             tableSchema = Conversions.FlinkToDelta.schema(flinkSchema);
           }
-          deltaTable = new FileSystemKernelTable(
-                  URI.create(tablePath), tableSchema, partitionColNames);
+          deltaTable =
+              new HadoopTable(
+                  URI.create(tablePath), configurations, tableSchema, partitionColNames);
         } else {
           // Catalog-based table
           Objects.requireNonNull(catalogEndpoint);
           Objects.requireNonNull(catalogToken);
-          deltaTable = new CCv2KernelTable(tableId,
-                  Map.of(CCv2KernelTable.CATALOG_ENDPOINT, catalogEndpoint,
-                          CCv2KernelTable.CATALOG_TOKEN, catalogToken));
+          Map<String, String> finalConf = new HashMap<>(configurations);
+          finalConf.put(CCv2Table.CATALOG_ENDPOINT, catalogEndpoint);
+          finalConf.put(CCv2Table.CATALOG_TOKEN, catalogToken);
+          // TODO Support separated endpoints for catalog and table
+          Catalog restCatalog = new RESTCatalog(catalogEndpoint, catalogToken);
+          deltaTable = new CCv2Table(restCatalog, tableId, finalConf);
         }
       }
       return new DeltaSink(deltaTable);

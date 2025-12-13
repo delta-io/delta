@@ -5,7 +5,7 @@ import java.net.URI
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
 
 import io.delta.flink.TestHelper
-import io.delta.flink.table.FileSystemKernelTable
+import io.delta.flink.table.HadoopTable
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 
@@ -24,7 +24,7 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new FileSystemKernelTable(URI.create(tablePath), schema, List("part").asJava)
+      val table = new HadoopTable(URI.create(tablePath), schema, List("part").asJava)
 
       val sinkWriter = new DeltaSinkWriter.Builder()
         .withJobId("test-job")
@@ -57,7 +57,7 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
 
       // Create a non-empty table
       createNonEmptyTable(engine, tablePath, schema, Seq("part"))
-      val table = new FileSystemKernelTable(URI.create(tablePath), schema, List("part").asJava)
+      val table = new HadoopTable(URI.create(tablePath), schema, List("part").asJava)
 
       val sinkWriter = new DeltaSinkWriter.Builder()
         .withDeltaTable(table)

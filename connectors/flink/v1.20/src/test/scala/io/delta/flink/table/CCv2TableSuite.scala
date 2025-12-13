@@ -1,10 +1,10 @@
 package io.delta.flink.table
 
+import io.delta.flink.TestHelper
+
 import java.net.URI
 import java.util.{Collections, Optional}
-
 import scala.jdk.CollectionConverters.{IterableHasAsJava, MapHasAsJava}
-
 import io.delta.kernel.Transaction
 import io.delta.kernel.TransactionSuite.longVector
 import io.delta.kernel.data.{ColumnVector, FilteredColumnarBatch}
@@ -14,22 +14,21 @@ import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.{DataType, IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterable
-
 import org.scalatest.funsuite.AnyFunSuite
 
-class CCv2KernelTableSuite extends AnyFunSuite {
+class CCv2TableSuite extends AnyFunSuite with TestHelper {
 
   val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
   val CATALOG_TOKEN = ""
 
   test("load table from e2dogfood") {
-    val table = new CCv2KernelTable(
+    val table = new CCv2Table(
+      new RESTCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
       "main.hao.testccv2",
       Map(
-        CCv2KernelTable.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
-        CCv2KernelTable.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
+        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
 
-    table.loadCatalogTable()
     assert(table.getId == "main.hao.testccv2")
     assert(table.getTablePath == URI.create("s3://us-west-2-extstaging-managed-" +
       "catalog-test-bucket-1/" +
@@ -38,11 +37,12 @@ class CCv2KernelTableSuite extends AnyFunSuite {
   }
 
   test("commit data to e2dogfood") {
-    val table = new CCv2KernelTable(
+    val table = new CCv2Table(
+      new RESTCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
       "main.hao.testccv2",
       Map(
-        CCv2KernelTable.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
-        CCv2KernelTable.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
+        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
 
     val values = (0 until 100)
     val colVector = new ColumnVector() {
@@ -64,4 +64,14 @@ class CCv2KernelTableSuite extends AnyFunSuite {
     table.commit(CloseableIterable.inMemoryIterable(rows))
   }
 
+  test("serializablity") {
+    val table = new CCv2Table(
+      new RESTCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
+      "main.hao.testccv2",
+      Map(
+        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
+        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+
+    checkSerializability(table)
+  }
 }

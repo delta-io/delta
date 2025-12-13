@@ -1,6 +1,6 @@
 package io.delta.flink.sink;
 
-import io.delta.flink.DeltaTable;
+import io.delta.flink.table.DeltaTable;
 import io.delta.kernel.expressions.Literal;
 import java.io.IOException;
 import java.util.*;

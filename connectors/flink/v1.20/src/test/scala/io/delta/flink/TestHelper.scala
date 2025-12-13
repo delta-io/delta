@@ -1,6 +1,6 @@
 package io.delta.flink
 
-import java.io.File
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, File, ObjectInputStream, ObjectOutputStream}
 import java.net.URI
 import java.nio.file.{Files, Path}
 import java.util.{Collections, Optional, UUID}
@@ -150,5 +150,18 @@ trait TestHelper {
         Literal.ofLong(random.nextLong())
       case _ => throw new UnsupportedOperationException
     }
+  }
+
+  protected def checkSerializability(input: Object): Unit = {
+    val baos = new ByteArrayOutputStream()
+    val oos = new ObjectOutputStream(baos)
+    oos.writeObject(input)
+    oos.close()
+    val bytes = baos.toByteArray
+    val ois = new ObjectInputStream(new ByteArrayInputStream(bytes))
+    val restored = ois.readObject()
+    ois.close()
+
+    assert(restored.getClass == input.getClass)
   }
 }

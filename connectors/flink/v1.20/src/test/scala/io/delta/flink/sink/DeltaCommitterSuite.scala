@@ -6,7 +6,7 @@ import java.nio.file.Paths
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
 
 import io.delta.flink.TestHelper
-import io.delta.flink.table.FileSystemKernelTable
+import io.delta.flink.table.HadoopTable
 import io.delta.kernel.{Table, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.defaults.engine.DefaultEngine
@@ -33,7 +33,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new FileSystemKernelTable(dir.toURI, schema, List("part").asJava)
+      val table = new HadoopTable(dir.toURI, schema, List("part").asJava)
 
       val committer = new DeltaCommitter.Builder()
         .withDeltaTable(table)
@@ -75,7 +75,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new FileSystemKernelTable(dir.toPath.toUri, schema, List("part").asJava)
+      val table = new HadoopTable(dir.toPath.toUri, schema, List("part").asJava)
 
       val committer = new DeltaCommitter.Builder()
         .withDeltaTable(table)
@@ -129,7 +129,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         .add("v1", StringType.STRING)
         .add("v2", StringType.STRING)
 
-      val table = new FileSystemKernelTable(dir.toURI, schema, List("part").asJava)
+      val table = new HadoopTable(dir.toURI, schema, List("part").asJava)
 
       createNonEmptyTable(engine, dir.getAbsolutePath, anotherSchema, Seq("v1"))
 

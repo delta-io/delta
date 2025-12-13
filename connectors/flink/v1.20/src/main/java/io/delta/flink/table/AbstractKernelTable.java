@@ -1,6 +1,5 @@
 package io.delta.flink.table;
 
-import io.delta.flink.DeltaTable;
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -26,35 +25,62 @@ import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 
-/** An abstract class providing access to Delta table backed by Delta kernel. */
+/**
+ * An abstract base class for {@link DeltaTable} implementations backed by the Delta Kernel.
+ *
+ * <p>{@code AbstractKernelTable} provides common functionality for interacting with Delta tables,
+ * including access to table metadata, schema, partitioning information, and commit operations.
+ * Concrete subclasses are responsible for supplying catalog-specific or filesystem-specific logic
+ * such as table discovery, path resolution, and storage I/O.
+ *
+ * <p>This class centralizes shared behavior so that different table backends (e.g., Hadoop-based
+ * tables, CCv2 catalog tables, custom catalogs) can implement only the backend-specific portions
+ * while inheriting consistent Delta table semantics.
+ *
+ * <p>Subclasses must provide their own mechanisms for interpreting table identifiers and resolving
+ * them into physical locations or catalog entries. See
+ * also @link{io.delta.flink.table.DeltaCatalog}
+ */
 public abstract class AbstractKernelTable implements DeltaTable {
-
   protected static String ENGINE_INFO = "DeltaSink/Kernel";
 
+  protected final Catalog catalog;
+  protected String tableId;
+  protected String uuid;
   protected URI tablePath;
   protected final Map<String, String> configuration;
   protected String serializableTableState;
+  protected List<String> partitionColumns;
 
+  // These fields are not serializable. They need to be recreated
+  // after the table are serialized. Always access them using getters.
   protected transient StructType schema;
-  protected transient List<String> partitionColumns;
   protected transient Row tableState;
   protected transient Engine engine;
 
-  public AbstractKernelTable(Map<String, String> conf) {
-    this.configuration = new HashMap<>(conf);
-  }
-
   public AbstractKernelTable(
-      Map<String, String> conf, StructType schema, List<String> partitionColumns) {
-    this.configuration = new HashMap<>(conf);
+      Catalog catalog,
+      String tableId,
+      Map<String, String> conf,
+      StructType schema,
+      List<String> partitionColumns) {
+    this.catalog = catalog;
+    this.tableId = tableId;
+    this.configuration = conf;
     this.schema = schema;
     this.partitionColumns = partitionColumns;
+    initialize();
   }
 
-  /** Subclass should call this method after init the variables */
-  protected void postInit() {
-    Objects.requireNonNull(tablePath);
+  public AbstractKernelTable(Catalog catalog, String tableId, Map<String, String> conf) {
+    this(catalog, tableId, conf, null, null);
+  }
+
+  protected void initialize() {
     try {
+      Catalog.TableBrief info = catalog.getTable(tableId);
+      uuid = info.uuid;
+      tablePath = URI.create(info.tablePath);
       loadExistingTable();
     } catch (TableNotFoundException e) {
       Preconditions.checkArgument(schema != null);
@@ -66,14 +92,16 @@ public abstract class AbstractKernelTable implements DeltaTable {
     // With an existing table, partitions loaded from the table take precedence
     final Snapshot latestSnapshot = loadLatestSnapshot();
     // We use a temporary transaction to generate a TransactionStateRow.
-    // It will be used as context for Writer and Committer.
-    // The transaction will not be committed. It is discarded afterward.
+    // It serves as a holder for schema and partition columns.
+    // The transaction will not be committed, and is discarded afterward.
     Row existingTableState =
         latestSnapshot
             .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
             .build(getEngine())
             .getTransactionState(getEngine());
     this.serializableTableState = JsonUtils.rowToJson(existingTableState);
+    this.schema = TransactionStateRow.getLogicalSchema(existingTableState);
+    this.partitionColumns = TransactionStateRow.getPartitionColumnsList(existingTableState);
   }
 
   protected void initNewTable(StructType schema, List<String> partitionColumns) {
@@ -99,21 +127,48 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   /**
-   * Subclass should implement this method to generate an engine.
+   * Subclass may implement this method to generate an engine.
    *
    * @return engine to access the tables
    */
   protected Engine createEngine() {
     Configuration conf = new Configuration();
 
-    // Built-in configurations that can be overwritten
+    // Built-in configurations for common file system access
     conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
     conf.set("fs.s3a.path.style.access", "true");
     conf.set("fs.s3.impl.disable.cache", "true");
     conf.set("fs.s3a.impl.disable.cache", "true");
 
+    conf.set("fs.abfs.impl", "org.apache.hadoop.fs.azurebfs.AzureBlobFileSystem");
+    conf.set("fs.abfss.impl", "org.apache.hadoop.fs.azurebfs.SecureAzureBlobFileSystem");
+    conf.set("fs.AbstractFileSystem.abfs.impl", "org.apache.hadoop.fs.azurebfs.Abfs");
+    conf.set("fs.AbstractFileSystem.abfss.impl", "org.apache.hadoop.fs.azurebfs.Abfss");
+
+    conf.set("fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem");
+    conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
+
     this.configuration.forEach(conf::set);
+    this.catalog.getCredentials(uuid).forEach(conf::set);
+
     return DefaultEngine.create(conf);
+  }
+
+  public Catalog getCatalog() {
+    return catalog;
+  }
+
+  @Override
+  public String getId() {
+    return tableId;
+  }
+
+  public String getUuid() {
+    return uuid;
+  }
+
+  public Map<String, String> getConfiguration() {
+    return configuration;
   }
 
   protected Row getWriteState() {
@@ -124,7 +179,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   /**
-   * Subclass should implement this method to fetch a Kernel snapshot
+   * Subclass must implement this method to fetch a Kernel snapshot
    *
    * @return latest snapshot of the table
    */
@@ -145,9 +200,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   @Override
   public List<String> getPartitionColumns() {
-    if (partitionColumns == null) {
-      partitionColumns = TransactionStateRow.getPartitionColumnsList(getWriteState());
-    }
     return partitionColumns;
   }
 
@@ -207,6 +259,21 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return Transaction.generateAppendActions(localEngine, writeState, dataFiles, writeContext);
   }
 
+  /**
+   * Normalizes the given URI string to a canonical form. The normalization includes:
+   *
+   * <ul>
+   *   <li>Ensuring file URIs use the standard triple-slash form (e.g., {@code file:/abc/def} →
+   *       {@code file:///abc/def}).
+   *   <li>Appending a trailing slash to paths that do not already end with {@code /}.
+   * </ul>
+   *
+   * <p>This method is useful for making URI comparisons consistent and avoiding issues caused by
+   * variations in file URI formatting or missing trailing path delimiters.
+   *
+   * @param input the URI to normalize;
+   * @return the normalized URI
+   */
   public static URI normalize(URI input) {
     if (input == null) {
       return null;

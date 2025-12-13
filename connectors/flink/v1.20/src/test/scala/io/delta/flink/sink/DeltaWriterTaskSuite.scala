@@ -6,7 +6,7 @@ import java.nio.file.Files
 import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 
 import io.delta.flink.TestHelper
-import io.delta.flink.table.FileSystemKernelTable
+import io.delta.flink.table.HadoopTable
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.expressions.Literal
@@ -26,7 +26,7 @@ class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new FileSystemKernelTable(URI.create(tablePath), schema, List("part").asJava)
+      val table = new HadoopTable(URI.create(tablePath), schema, List("part").asJava)
       val partitionValues = Map("part" -> Literal.ofString("p0")).asJava
 
       val writerTask = new DeltaWriterTask(
@@ -74,7 +74,7 @@ class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new FileSystemKernelTable(URI.create(tablePath), schema, List("part").asJava)
+      val table = new HadoopTable(URI.create(tablePath), schema, List("part").asJava)
       val partitionValues = Map("part" -> Literal.ofString("p0")).asJava
 
       val writerTask = new DeltaWriterTask(
