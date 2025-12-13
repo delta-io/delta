@@ -49,9 +49,7 @@ trait ServerSidePlanningClient {
    *
    * @param databaseName The database or schema name
    * @param table The table name
-   * @param filter Optional filter expression to push down to server (Spark Filter format).
-   *               Each catalog implementation is responsible for converting this to their
-   *               native filter format (e.g., Iceberg Expression, UC filter format, etc.)
+   * @param filter Optional filter expression to push down to server (Spark Filter format)
    * @param projection Optional projection (required columns) to push down to server
    * @return ScanPlan containing files to read
    */
