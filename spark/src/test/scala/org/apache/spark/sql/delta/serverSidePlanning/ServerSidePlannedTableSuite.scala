@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.serverSidePlanning
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.sources.{And, EqualTo, Filter, GreaterThan, LessThan}
 
 /**
  * Tests for server-side planning with a mock client.
@@ -50,8 +51,30 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
    * This prevents test pollution from leaked configuration.
    */
   private def withServerSidePlanningEnabled(f: => Unit): Unit = {
+    withServerSidePlanningFactory(new TestServerSidePlanningClientFactory())(f)
+  }
+
+  /**
+   * Helper method to run tests with pushdown capturing enabled.
+   * TestServerSidePlanningClient captures pushdowns (filter, projection) passed to planScan().
+   */
+  private def withPushdownCapturingEnabled(f: => Unit): Unit = {
+    withServerSidePlanningFactory(new TestServerSidePlanningClientFactory()) {
+      try {
+        f
+      } finally {
+        TestServerSidePlanningClient.clearCaptured()
+      }
+    }
+  }
+
+  /**
+   * Common helper for setting up server-side planning with a specific factory.
+   */
+  private def withServerSidePlanningFactory(factory: ServerSidePlanningClientFactory)
+      (f: => Unit): Unit = {
     val originalConfig = spark.conf.getOption(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
-    ServerSidePlanningClientFactory.setFactory(new TestServerSidePlanningClientFactory())
+    ServerSidePlanningClientFactory.setFactory(factory)
     spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "true")
     try {
       f
@@ -64,6 +87,15 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
         case None => spark.conf.unset(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
       }
     }
+  }
+
+  /**
+   * Extract all leaf filters from a filter tree.
+   * Spark may wrap filters with And and IsNotNull checks, so this flattens the tree.
+   */
+  private def collectLeafFilters(filter: Filter): Seq[Filter] = filter match {
+    case And(left, right) => collectLeafFilters(left) ++ collectLeafFilters(right)
+    case other => Seq(other)
   }
 
   test("full query through DeltaCatalog with server-side planning") {
@@ -177,7 +209,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
-  test("fromTable returns metadata with empty defaults for non-UC catalogs") {
+  test("ServerSidePlanningMetadata.fromTable returns empty defaults for non-UC catalogs") {
     import org.apache.spark.sql.connector.catalog.Identifier
 
     // Create a simple identifier for testing
@@ -196,5 +228,60 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     assert(metadata.planningEndpointUri == "")
     assert(metadata.authToken.isEmpty)
     assert(metadata.tableProperties.isEmpty)
+  }
+
+  test("simple EqualTo filter pushed to planning client") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test WHERE id = 2").collect()
+
+      val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
+      assert(capturedFilter.isDefined, "Filter should be pushed down")
+
+      // Extract leaf filters and find the EqualTo filter
+      val leafFilters = collectLeafFilters(capturedFilter.get)
+      val eqFilter = leafFilters.collectFirst {
+        case eq: EqualTo if eq.attribute == "id" => eq
+      }
+      assert(eqFilter.isDefined, "Expected EqualTo filter on 'id'")
+      assert(eqFilter.get.value == 2, s"Expected EqualTo value 2, got ${eqFilter.get.value}")
+    }
+  }
+
+  test("compound And filter pushed to planning client") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test WHERE id > 1 AND value < 30").collect()
+
+      val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
+      assert(capturedFilter.isDefined, "Filter should be pushed down")
+
+      val filter = capturedFilter.get
+      assert(filter.isInstanceOf[And], s"Expected And filter, got ${filter.getClass.getSimpleName}")
+
+      // Extract all leaf filters from the And tree (Spark may add IsNotNull checks)
+      val leafFilters = collectLeafFilters(filter)
+
+      // Verify GreaterThan(id, 1) is present
+      val gtFilter = leafFilters.collectFirst {
+        case gt: GreaterThan if gt.attribute == "id" => gt
+      }
+      assert(gtFilter.isDefined, "Expected GreaterThan filter on 'id'")
+      assert(gtFilter.get.value == 1, s"Expected GreaterThan value 1, got ${gtFilter.get.value}")
+
+      // Verify LessThan(value, 30) is present
+      val ltFilter = leafFilters.collectFirst {
+        case lt: LessThan if lt.attribute == "value" => lt
+      }
+      assert(ltFilter.isDefined, "Expected LessThan filter on 'value'")
+      assert(ltFilter.get.value == 30, s"Expected LessThan value 30, got ${ltFilter.get.value}")
+    }
+  }
+
+  test("no filter pushed when no WHERE clause") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test").collect()
+
+      val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
+      assert(capturedFilter.isEmpty, "No filter should be pushed when there's no WHERE clause")
+    }
   }
 }
