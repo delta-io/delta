@@ -28,6 +28,7 @@ import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Abstract base class for Unity Catalog + Delta Table integration tests.
@@ -39,6 +40,15 @@ import java.util.stream.Collectors;
  * Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
+
+  /**
+   * Provides all table types for parameterized tests.
+   * Currently only returns EXTERNAL as Delta Lake does not support MANAGED (catalog-owned) tables.
+   * Tests can use this as a @MethodSource to test different table types.
+   */
+  protected static Stream<TableType> allTableTypes() {
+    return Stream.of(TableType.EXTERNAL);
+  }
 
   private static SparkSession sparkSession;
 
@@ -151,33 +161,61 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   }
 
   /**
+   * Table types for parameterized testing.
+   */
+  public enum TableType {
+    EXTERNAL,  // Requires LOCATION clause
+    MANAGED    // No LOCATION clause (Spark manages the data)
+  }
+
+  /**
    * Helper method to create a new Delta table, run test code, and clean up.
    *
    * @param tableName The simple table name (without catalog/schema prefix)
-   * @param schema The table schema (e.g., "id INT, name STRING")
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
    * @param testCode The test function that receives the full table name
    */
-  protected void withNewTable(String tableName, String schema, TestCode testCode) throws Exception {
-    withTempDir((File dir) -> {
-      File tablePath = new File(dir, tableName);
-      String fullTableName = getCatalogName() + ".default." + tableName;
+  protected void withNewTable(String tableName, String tableSchema, TableType tableType, TestCode testCode) throws Exception {
+    String fullTableName = getCatalogName() + ".default." + tableName;
 
-      // Create the table
-      sql(
-          "CREATE TABLE " + fullTableName + " (" +
-          schema +
-          ") USING DELTA " +
-          "LOCATION '" + tablePath.getAbsolutePath() + "'"
-      );
+    if (tableType == TableType.EXTERNAL) {
+      // External table requires a location
+      withTempDir((File dir) -> {
+        File tablePath = new File(dir, tableName);
+        sql("CREATE TABLE %s (%s) USING DELTA LOCATION '%s'", 
+            fullTableName, tableSchema, tablePath.getAbsolutePath());
+
+        try {
+          testCode.run(fullTableName);
+        } finally {
+          spark().sql("DROP TABLE IF EXISTS " + fullTableName);
+        }
+      });
+    } else {
+      // Managed table - Spark manages the location
+      // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
+      sql("CREATE TABLE %s (%s) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')", 
+          fullTableName, tableSchema);
 
       try {
-        // Run the test code with the full table name
         testCode.run(fullTableName);
       } finally {
-        // Clean up the table
         spark().sql("DROP TABLE IF EXISTS " + fullTableName);
       }
-    });
+    }
+  }
+
+  /**
+   * Helper method to create a new Delta table (defaults to EXTERNAL for backwards compatibility).
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(String tableName, String tableSchema, TestCode testCode) throws Exception {
+    withNewTable(tableName, tableSchema, TableType.EXTERNAL, testCode);
   }
 
   /**

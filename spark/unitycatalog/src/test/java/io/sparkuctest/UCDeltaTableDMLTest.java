@@ -16,7 +16,8 @@
 
 package io.sparkuctest;
 
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.List;
 
@@ -24,12 +25,15 @@ import java.util.List;
  * DML test suite for Delta Table operations through Unity Catalog.
  *
  * Covers INSERT, UPDATE, DELETE, and MERGE operations with various conditions and scenarios.
+ * Tests are parameterized to support different table types (currently EXTERNAL only, as Delta
+ * does not support MANAGED catalog-owned tables).
  */
 public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
-  @Test
-  public void testBasicInsertOperations() throws Exception {
-    withNewTable("insert_basic_test", "id INT, name STRING, active BOOLEAN", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testBasicInsertOperations(TableType tableType) throws Exception {
+    withNewTable("insert_basic_test", "id INT, name STRING, active BOOLEAN", tableType, tableName -> {
       // Single row INSERT
       sql("INSERT INTO %s VALUES (1, 'initial', true)", tableName);
 
@@ -54,11 +58,12 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
   }
 
-  @Test
-  public void testAdvancedInsertOperations() throws Exception {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testAdvancedInsertOperations(TableType tableType) throws Exception {
     // Test INSERT ... SELECT
-    withNewTable("insert_select_target", "id INT, category STRING", targetTable -> {
-      withNewTable("insert_select_source", "id INT, name STRING", sourceTable -> {
+    withNewTable("insert_select_target", "id INT, category STRING", tableType, targetTable -> {
+      withNewTable("insert_select_source", "id INT, name STRING", tableType, sourceTable -> {
         sql("INSERT INTO %s VALUES (1, 'TypeA'), (2, 'TypeB'), (3, 'TypeA')", sourceTable);
         sql("INSERT INTO %s SELECT id, name FROM %s WHERE name = 'TypeA'", targetTable, sourceTable);
         
@@ -70,7 +75,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
 
     // Test INSERT OVERWRITE
-    withNewTable("insert_overwrite_test", "id INT, status STRING", tableName -> {
+    withNewTable("insert_overwrite_test", "id INT, status STRING", tableType, tableName -> {
       sql("INSERT INTO %s VALUES (1, 'old'), (2, 'old'), (3, 'old')", tableName);
       sql("INSERT OVERWRITE %s VALUES (4, 'new'), (5, 'new')", tableName);
       
@@ -81,7 +86,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
 
     // Test INSERT ... REPLACE WHERE
-    withNewTable("insert_replace_test", "id INT, status STRING", tableName -> {
+    withNewTable("insert_replace_test", "id INT, status STRING", tableType, tableName -> {
       sql("INSERT INTO %s VALUES (1, 'pending'), (2, 'pending'), (3, 'completed')", tableName);
       sql("INSERT INTO %s REPLACE WHERE id <= 2 VALUES (1, 'replaced'), (2, 'replaced')", tableName);
       
@@ -95,9 +100,10 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
   // ========== UPDATE TESTS ==========
 
-  @Test
-  public void testUpdateOperations() throws Exception {
-    withNewTable("update_test", "id INT, priority INT, status STRING", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testUpdateOperations(TableType tableType) throws Exception {
+    withNewTable("update_test", "id INT, priority INT, status STRING", tableType, tableName -> {
       // Setup data
       sql("INSERT INTO %s VALUES " +
           "(1, 1, 'pending'), (2, 5, 'pending'), (3, 10, 'pending'), (4, 2, 'completed')", tableName);
@@ -126,9 +132,10 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
   }
 
-  @Test
-  public void testDeleteOperations() throws Exception {
-    withNewTable("delete_test", "id INT, category STRING, value INT, active BOOLEAN", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testDeleteOperations(TableType tableType) throws Exception {
+    withNewTable("delete_test", "id INT, category STRING, value INT, active BOOLEAN", tableType, tableName -> {
       // Setup data
       sql("INSERT INTO %s VALUES " +
           "(1, 'A', 10, true), (2, 'B', 20, false), (3, 'A', 30, true), " +
@@ -156,14 +163,15 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
   // ========== MERGE TESTS ==========
 
-  @Test
-  public void testMergeInsertOnly() throws Exception {
-    withNewTable("merge_insert_test", "id INT, value STRING", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testMergeInsertOnly(TableType tableType) throws Exception {
+    withNewTable("merge_insert_test", "id INT, value STRING", tableType, tableName -> {
       // Setup target table with initial data
       sql("INSERT INTO %s VALUES (1, 'existing1'), (2, 'existing2')", tableName);
 
       // Create source data and perform merge
-      withNewTable("merge_source", "id INT, value STRING", sourceTable -> {
+      withNewTable("merge_source", "id INT, value STRING", tableType, sourceTable -> {
         sql("INSERT INTO %s VALUES (3, 'new3'), (4, 'new4')", sourceTable);
 
         sql("MERGE INTO %s AS target " +
@@ -182,14 +190,15 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
   }
 
-  @Test
-  public void testMergeUpdateOnly() throws Exception {
-    withNewTable("merge_update_test", "id INT, value STRING", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testMergeUpdateOnly(TableType tableType) throws Exception {
+    withNewTable("merge_update_test", "id INT, value STRING", tableType, tableName -> {
       // Setup target table
       sql("INSERT INTO %s VALUES (1, 'old1'), (2, 'old2'), (3, 'old3')", tableName);
 
       // Perform merge to update existing records
-      withNewTable("merge_update_source", "id INT, value STRING", sourceTable -> {
+      withNewTable("merge_update_source", "id INT, value STRING", tableType, sourceTable -> {
         sql("INSERT INTO %s VALUES (2, 'updated2'), (3, 'updated3')", sourceTable);
 
         sql("MERGE INTO %s AS target " +
@@ -207,14 +216,15 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
   }
 
-  @Test
-  public void testMergeCombinedInsertAndUpdate() throws Exception {
-    withNewTable("merge_combined_test", "id INT, name STRING, status STRING", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testMergeCombinedInsertAndUpdate(TableType tableType) throws Exception {
+    withNewTable("merge_combined_test", "id INT, name STRING, status STRING", tableType, tableName -> {
       // Setup target table
       sql("INSERT INTO %s VALUES (1, 'Alice', 'active'), (2, 'Bob', 'inactive')", tableName);
 
       // Perform merge with both insert and update
-      withNewTable("merge_combined_source", "id INT, name STRING, status STRING", sourceTable -> {
+      withNewTable("merge_combined_source", "id INT, name STRING, status STRING", tableType, sourceTable -> {
         sql("INSERT INTO %s VALUES " +
             "(2, 'Bob', 'active'), (3, 'Charlie', 'active'), (4, 'Diana', 'pending')", sourceTable);
 
@@ -235,14 +245,15 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
   }
 
-  @Test
-  public void testMergeWithDeleteAction() throws Exception {
-    withNewTable("merge_delete_test", "id INT, active BOOLEAN", tableName -> {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testMergeWithDeleteAction(TableType tableType) throws Exception {
+    withNewTable("merge_delete_test", "id INT, active BOOLEAN", tableType, tableName -> {
       // Setup target table
       sql("INSERT INTO %s VALUES (1, true), (2, true), (3, false), (4, true)", tableName);
 
       // Perform merge with delete action
-      withNewTable("merge_delete_source", "id INT, active BOOLEAN", sourceTable -> {
+      withNewTable("merge_delete_source", "id INT, active BOOLEAN", tableType, sourceTable -> {
         sql("INSERT INTO %s VALUES (2, false), (3, false), (5, true)", sourceTable);
 
         sql("MERGE INTO %s AS target " +
