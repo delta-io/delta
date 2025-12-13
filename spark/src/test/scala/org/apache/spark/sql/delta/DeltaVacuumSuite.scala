@@ -56,6 +56,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
+import org.apache.logging.log4j.Level
 
 trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession
@@ -1459,6 +1460,39 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
     retentionHours = 20, // vacuum will not delete any files
     timeGapHours = 10
   )
+
+  test("vacuum logs listing progress when progress logging is enabled") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_VACUUM_PROGRESS_LOGGING_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_VACUUM_PROGRESS_LOGGING_INTERVAL_MS.key -> "10") {
+      withEnvironment { (dir, clock) =>
+        // Create a small table; the point is to exercise the progress logging path, not duration.
+        spark.range(0, 10).write.format("delta").save(dir.getAbsolutePath)
+
+        DeltaLog.clearCache()
+        val table = DeltaTableV2(spark, dir, clock)
+
+        val appender =
+          // Use a high maxEvents to avoid tripping the LogAppender limit while still
+          // capturing the specific progress log we care about in this test.
+          new LogAppender("vacuum listing progress", maxEvents = 1000000)
+        appender.setThreshold(Level.INFO)
+
+        withLogAppender(appender, level = Some(Level.INFO)) {
+          VacuumCommand.gc(
+            spark,
+            table,
+            dryRun = false,
+            retentionHours = Some(0.0),
+            vacuumTypeOpt = Some("FULL"))
+        }
+
+        val events = appender.loggingEvents
+        assert(events.exists(e =>
+          e.getMessage.getFormattedMessage.contains("Directory listing in progres")))
+      }
+    }
+  }
 
   test(s"vacuum sql syntax checks") {
     val tableName = "testTable"
