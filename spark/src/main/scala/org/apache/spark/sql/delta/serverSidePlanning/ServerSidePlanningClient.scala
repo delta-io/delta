@@ -38,12 +38,10 @@ case class ScanPlan(
 )
 
 /**
- * Interface for planning table scans via server-side planning (e.g., Iceberg REST catalog).
- * This interface is intentionally simple and has no dependencies
- * on Iceberg libraries, allowing it to live in delta-spark module.
- *
+ * Interface for planning table scans via server-side planning.
  * This interface uses Spark's standard `org.apache.spark.sql.sources.Filter` as the universal
- * representation for filter pushdown.
+ * representation for filter pushdown. This keeps the interface catalog-agnostic while allowing
+ * each server-side planning catalog implementation to convert filters to their own native format.
  */
 trait ServerSidePlanningClient {
   /**
