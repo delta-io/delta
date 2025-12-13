@@ -19,11 +19,14 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
+
 import java.util.Map;
 import java.util.Optional;
+
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
+import org.apache.spark.sql.delta.coordinatedcommits.UCClientParams;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
 
 /**
@@ -35,13 +38,14 @@ import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$
 public final class UCUtils {
 
   // Utility class - no instances
-  private UCUtils() {}
+  private UCUtils() {
+  }
 
   /**
    * Extracts Unity Catalog table information from Spark catalog table metadata.
    *
    * @param catalogTable Spark catalog table metadata
-   * @param spark SparkSession for resolving Unity Catalog configurations
+   * @param spark        SparkSession for resolving Unity Catalog configurations
    * @return table info if table is UC-managed, empty otherwise
    * @throws IllegalArgumentException if table is UC-managed but configuration is invalid
    */
@@ -83,9 +87,9 @@ public final class UCUtils {
               + "'.");
     }
 
-    UCCatalogConfig config = configOpt.get();
-    String ucUri = config.uri();
-    String ucToken = config.token();
+    UCClientParams config = configOpt.get().ucClientParams();
+    String ucUri = config.uri().get();
+    String ucToken = config.token().get();
 
     return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, ucToken));
   }
