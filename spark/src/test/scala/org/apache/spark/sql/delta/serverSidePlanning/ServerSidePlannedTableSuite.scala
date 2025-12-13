@@ -284,4 +284,51 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       assert(capturedFilter.isEmpty, "No filter should be pushed when there's no WHERE clause")
     }
   }
+
+  test("projection pushed when selecting specific columns") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name FROM test_db.shared_test").collect()
+
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isDefined, "Projection should be pushed down")
+      assert(capturedProjection.get.fieldNames.toSet == Set("id", "name"),
+        s"Expected {id, name}, got {${capturedProjection.get.fieldNames.mkString(", ")}}")
+    }
+  }
+
+  test("no projection pushed when selecting all columns") {
+    withPushdownCapturingEnabled {
+      sql("SELECT * FROM test_db.shared_test").collect()
+
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isEmpty,
+        "No projection should be pushed when selecting all columns")
+    }
+  }
+
+  test("projection and filter pushed together") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id FROM test_db.shared_test WHERE value > 10").collect()
+
+      // Verify projection was pushed with exactly the expected columns
+      // Spark needs 'id' for SELECT and 'value' for WHERE clause
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isDefined, "Projection should be pushed down")
+      val projectedFields = capturedProjection.get.fieldNames.toSet
+      assert(projectedFields == Set("id", "value"),
+        s"Expected projection with exactly {id, value}, got {${projectedFields.mkString(", ")}}")
+
+      // Verify filter was also pushed
+      val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
+      assert(capturedFilter.isDefined, "Filter should be pushed down")
+
+      // Verify GreaterThan(value, 10) is in the filter
+      val leafFilters = collectLeafFilters(capturedFilter.get)
+      val gtFilter = leafFilters.collectFirst {
+        case gt: GreaterThan if gt.attribute == "value" => gt
+      }
+      assert(gtFilter.isDefined, "Expected GreaterThan filter on 'value'")
+      assert(gtFilter.get.value == 10, s"Expected GreaterThan value 10, got ${gtFilter.get.value}")
+    }
+  }
 }
