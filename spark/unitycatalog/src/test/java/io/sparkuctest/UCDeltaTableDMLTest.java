@@ -28,6 +28,102 @@ import java.util.List;
 public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
   @Test
+  public void testInsertOperationsBasicAppend() throws Exception {
+    withNewTable("insert_append_test", "id INT, value STRING", tableName -> {
+      // Initial data
+      sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
+
+      // Append more data
+      sql("INSERT INTO %s VALUES (2, 'appended1'), (3, 'appended2')", tableName);
+
+      // Verify appended data
+      check(tableName, List.of(
+          List.of("1", "initial"),
+          List.of("2", "appended1"),
+          List.of("3", "appended2")
+      ));
+    });
+  }
+
+  @Test
+  public void testInsertWithValuesMultiplePatterns() throws Exception {
+    withNewTable("insert_patterns_test", "id INT, name STRING, active BOOLEAN", tableName -> {
+      // Single INSERT with multiple rows
+      sql("INSERT INTO %s VALUES (1, 'User1', true), (2, 'User2', false)", tableName);
+
+      // Multiple separate INSERT operations
+      sql("INSERT INTO %s VALUES (3, 'User3', true)", tableName);
+      sql("INSERT INTO %s VALUES (4, 'User4', false)", tableName);
+
+      // Verify all inserts worked
+      check(tableName, List.of(
+          List.of("1", "User1", "true"),
+          List.of("2", "User2", "false"),
+          List.of("3", "User3", "true"),
+          List.of("4", "User4", "false")
+      ));
+    });
+  }
+
+  @Test
+  public void testInsertWithSelect() throws Exception {
+    withNewTable("insert_select_target", "id INT, category STRING", targetTable -> {
+      withNewTable("insert_select_source", "id INT, name STRING", sourceTable -> {
+        // Setup source data
+        sql("INSERT INTO %s VALUES (1, 'TypeA'), (2, 'TypeB'), (3, 'TypeA')", sourceTable);
+
+        // Insert from SELECT
+        sql("INSERT INTO %s " +
+            "SELECT id, name FROM %s WHERE name = 'TypeA'", targetTable, sourceTable);
+
+        // Verify result
+        check(targetTable, List.of(
+            List.of("1", "TypeA"),
+            List.of("3", "TypeA")
+        ));
+      });
+    });
+  }
+
+  @Test
+  public void testInsertOverwriteOperation() throws Exception {
+    withNewTable("insert_overwrite_test", "id INT, status STRING", tableName -> {
+      // Initial data
+      sql("INSERT INTO %s VALUES (1, 'old'), (2, 'old'), (3, 'old')", tableName);
+
+      // Overwrite with new data
+      sql("INSERT OVERWRITE %s VALUES (4, 'new'), (5, 'new')", tableName);
+
+      // Verify data was overwritten
+      check(tableName, List.of(
+          List.of("4", "new"),
+          List.of("5", "new")
+      ));
+    });
+  }
+
+  @Test
+  public void testInsertReplaceWhereOperation() throws Exception {
+    withNewTable("insert_replace_test", "id INT, status STRING", tableName -> {
+      // Initial data
+      sql("INSERT INTO %s VALUES (1, 'pending'), (2, 'pending'), (3, 'completed')", tableName);
+
+      // Replace specific rows
+      sql("INSERT INTO %s REPLACE WHERE id <= 2 " +
+          "VALUES (1, 'replaced'), (2, 'replaced')", tableName);
+
+      // Verify replacement
+      check(tableName, List.of(
+          List.of("1", "replaced"),
+          List.of("2", "replaced"),
+          List.of("3", "completed")
+      ));
+    });
+  }
+
+  // ========== UPDATE TESTS ==========
+
+  @Test
   public void testUpdateWithSimpleCondition() throws Exception {
     withNewTable("update_simple_test", "id INT, status STRING", tableName -> {
       // Setup initial data
@@ -65,6 +161,8 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
   }
 
+  // ========== DELETE TESTS ==========
+
   @Test
   public void testDeleteWithSimpleCondition() throws Exception {
     withNewTable("delete_simple_test", "id INT, active BOOLEAN", tableName -> {
@@ -99,6 +197,8 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       ));
     });
   }
+
+  // ========== MERGE TESTS (Most Complex) ==========
 
   @Test
   public void testMergeInsertOnly() throws Exception {
@@ -202,100 +302,6 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
           List.of("1", "true"),
           List.of("4", "true"),
           List.of("5", "true")
-      ));
-    });
-  }
-
-  @Test
-  public void testInsertWithSelect() throws Exception {
-    withNewTable("insert_select_target", "id INT, category STRING", targetTable -> {
-      withNewTable("insert_select_source", "id INT, name STRING", sourceTable -> {
-        // Setup source data
-        sql("INSERT INTO %s VALUES (1, 'TypeA'), (2, 'TypeB'), (3, 'TypeA')", sourceTable);
-
-        // Insert from SELECT
-        sql("INSERT INTO %s " +
-            "SELECT id, name FROM %s WHERE name = 'TypeA'", targetTable, sourceTable);
-
-        // Verify result
-        check(targetTable, List.of(
-            List.of("1", "TypeA"),
-            List.of("3", "TypeA")
-        ));
-      });
-    });
-  }
-
-  @Test
-  public void testInsertOperationsBasicAppend() throws Exception {
-    withNewTable("insert_append_test", "id INT, value STRING", tableName -> {
-      // Initial data
-      sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
-
-      // Append more data
-      sql("INSERT INTO %s VALUES (2, 'appended1'), (3, 'appended2')", tableName);
-
-      // Verify appended data
-      check(tableName, List.of(
-          List.of("1", "initial"),
-          List.of("2", "appended1"),
-          List.of("3", "appended2")
-      ));
-    });
-  }
-
-  @Test
-  public void testInsertOverwriteOperation() throws Exception {
-    withNewTable("insert_overwrite_test", "id INT, status STRING", tableName -> {
-      // Initial data
-      sql("INSERT INTO %s VALUES (1, 'old'), (2, 'old'), (3, 'old')", tableName);
-
-      // Overwrite with new data
-      sql("INSERT OVERWRITE %s VALUES (4, 'new'), (5, 'new')", tableName);
-
-      // Verify data was overwritten
-      check(tableName, List.of(
-          List.of("4", "new"),
-          List.of("5", "new")
-      ));
-    });
-  }
-
-  @Test
-  public void testInsertReplaceWhereOperation() throws Exception {
-    withNewTable("insert_replace_test", "id INT, status STRING", tableName -> {
-      // Initial data
-      sql("INSERT INTO %s VALUES (1, 'pending'), (2, 'pending'), (3, 'completed')", tableName);
-
-      // Replace specific rows
-      sql("INSERT INTO %s REPLACE WHERE id <= 2 " +
-          "VALUES (1, 'replaced'), (2, 'replaced')", tableName);
-
-      // Verify replacement
-      check(tableName, List.of(
-          List.of("1", "replaced"),
-          List.of("2", "replaced"),
-          List.of("3", "completed")
-      ));
-    });
-  }
-
-  @Test
-  public void testInsertWithValuesMultiplePatterns() throws Exception {
-    withNewTable("insert_patterns_test", "id INT, name STRING, active BOOLEAN", tableName -> {
-      // Single INSERT with multiple rows
-      sql("INSERT INTO %s VALUES (1, 'User1', true), (2, 'User2', false)", tableName);
-
-      // Multiple separate INSERT operations
-      sql("INSERT INTO %s VALUES (3, 'User3', true)", tableName);
-      sql("INSERT INTO %s VALUES (4, 'User4', false)", tableName);
-
-      // Verify all inserts worked
-      check(tableName, List.of(
-          List.of("1", "User1", "true"),
-          List.of("2", "User2", "false"),
-          List.of("3", "User3", "true"),
-          List.of("4", "User4", "false")
       ));
     });
   }
