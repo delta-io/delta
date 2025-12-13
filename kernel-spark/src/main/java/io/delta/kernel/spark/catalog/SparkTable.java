@@ -166,6 +166,24 @@ public class SparkTable implements Table, SupportsRead {
   }
 
   /**
+   * Returns the filesystem path to the Delta table root.
+   *
+   * @return the table path string
+   */
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  /**
+   * Returns the table options used to configure Hadoop conf, table reads and writes.
+   *
+   * @return an unmodifiable map of options
+   */
+  public Map<String, String> getOptions() {
+    return options;
+  }
+
+  /**
    * Returns the table name in a format compatible with DeltaTableV2.
    *
    * <p>For catalog-based tables, returns the fully qualified table name (e.g.,
