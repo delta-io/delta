@@ -916,7 +916,7 @@ object CoordinatedCommitsTableFeature
 
 /** Table feature to represent tables that commits are managed by catalog */
 object CatalogOwnedTableFeature
-  extends ReaderWriterFeature(name = "catalogOwned-preview")
+  extends ReaderWriterFeature(name = "catalogManaged")
   with RemovableFeature {
 
   override def requiredFeatures: Set[TableFeature] =
