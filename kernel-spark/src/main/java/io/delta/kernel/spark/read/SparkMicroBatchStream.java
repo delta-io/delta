@@ -93,6 +93,10 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
    */
   private boolean isFirstBatch = false;
 
+  // Cached starting version to ensure idempotent behavior for "latest" starting version.
+  // getStartingVersion() must return the same value across multiple calls.
+  private volatile Optional<Long> cachedStartingVersion = null;
+
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Snapshot snapshotAtSourceInit,
@@ -334,7 +338,11 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
    *
    * <p>This is the DSv2 Kernel-based implementation of DeltaSource.getStartingVersion.
    */
-  Optional<Long> getStartingVersion() {
+  synchronized Optional<Long> getStartingVersion() {
+    if (cachedStartingVersion != null) {
+      return cachedStartingVersion;
+    }
+
     // TODO(#5319): DeltaSource.scala uses `allowOutOfRange` parameter from
     // DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.
     if (options.startingVersion().isDefined()) {
@@ -342,7 +350,8 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
       if (startingVersion instanceof StartingVersionLatest$) {
         Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
         // "latest": start reading from the next commit
-        return Optional.of(latestSnapshot.getVersion() + 1);
+        cachedStartingVersion = Optional.of(latestSnapshot.getVersion() + 1);
+        return cachedStartingVersion;
       } else if (startingVersion instanceof StartingVersion) {
         long version = ((StartingVersion) startingVersion).version();
         if (!validateProtocolAt(spark, snapshotManager, engine, version)) {
@@ -354,11 +363,13 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
           snapshotManager.checkVersionExists(
               version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
         }
-        return Optional.of(version);
+        cachedStartingVersion = Optional.of(version);
+        return cachedStartingVersion;
       }
     }
     // TODO(#5319): Implement startingTimestamp support
-    return Optional.empty();
+    cachedStartingVersion = Optional.empty();
+    return cachedStartingVersion;
   }
 
   /**
@@ -489,6 +500,20 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     List<IndexedFile> allIndexedFiles = new ArrayList<>();
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
+
+    // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
+    // endVersion to be an actual existing version or empty.
+    if (endVersionOpt.isPresent()) {
+      long latestVersion = snapshotAtSourceInit.getVersion();
+      if (endVersionOpt.get() > latestVersion) {
+        // This could happen because:
+        // 1. data could be added after snapshotAtSourceInit was captured.
+        // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
+        // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
+        // TODO(#5318): kernel should ideally relax this constraint.
+        endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+      }
+    }
 
     CommitRange commitRange;
     try {

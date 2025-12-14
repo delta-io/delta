@@ -1315,6 +1315,89 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("new commits arrive after stream initialization") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Add version 0
+      Seq(1, 2, 3).toDF("value").write.format("delta").save(inputDir.getCanonicalPath)
+
+      val df = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
+        .load(inputDir.getCanonicalPath)
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+
+      try {
+        // Process the initial snapshot
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq(1, 2, 3).toDF("value"))
+
+        // Add version 1 and version 2 (after snapshotAtSourceInit was captured)
+        Seq(4, 5, 6).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+        Seq(7, 8, 9).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+
+        q.processAllAvailable()
+
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          (1 to 9).toDF("value"))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("new commits arrive after stream initialization with startingVersion") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Add version 0 and version 1
+      Seq(1, 2, 3).toDF("value").write.format("delta").save(inputDir.getCanonicalPath)
+      Seq(4, 5, 6).toDF("value").write
+        .format("delta").mode("append").save(inputDir.getCanonicalPath)
+
+      // Start streaming from version 1
+      val df = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(
+          "startingVersion" -> "1",
+          DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"
+        )
+      )
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+
+      try {
+        // Process version 1 only
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq(4, 5, 6).toDF("value"))
+
+        // Add version 2 and version 3 (after snapshotAtSourceInit was captured)
+        Seq(7, 8, 9).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+        Seq(10, 11, 12).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          (4 to 12).toDF("value"))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test(
       "can delete old files of a snapshot without update"
   ) {
@@ -1576,7 +1659,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   /** Disable log cleanup to avoid deleting logs we are testing. */
-  private def disableLogCleanup(tablePath: String): Unit = {
+  protected def disableLogCleanup(tablePath: String): Unit = {
     sql(s"alter table delta.`$tablePath` " +
       s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
   }
@@ -1588,11 +1671,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       generateCommits(tablePath, start, start + 20.minutes)
 
       def testStartingVersion(startingVersion: Long): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", startingVersion)
-          .load(tablePath)
-          .writeStream
+        val df = loadStreamWithOptions(
+          tablePath, Map("startingVersion" -> startingVersion.toString))
+        val q = df.writeStream
           .format("memory")
           .queryName("startingVersion_test")
           .start()
@@ -1897,10 +1978,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempView("startingVersionTest") {
         val path = dir.getAbsolutePath
         spark.range(0, 10).write.format("delta").save(path)
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val q = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1933,10 +2011,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Define the stream, but don't start it, before a second write. The startingVersion
         // latest should be resolved when the query *starts*, so there'll be no data even though
         // some was added after the stream was defined.
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val streamDef = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1961,10 +2036,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempView("startingVersionTest") {
         val path = dir.getAbsolutePath
         spark.range(0).write.format("delta").save(path)
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val streamDef = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
