@@ -54,8 +54,8 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
   private SparkSession spark;
 
   @BeforeEach
-  public void setUp() throws Exception {
-    super.setup(); // Start UC server first
+  public void setUpSparkSession() throws Exception {
+    // UC server is started once by UnityCatalogSupport.setup()
 
     SparkConf conf = new SparkConf()
         .setAppName("UnityCatalog Support Tests")
@@ -73,12 +73,12 @@ public class UnityCatalogSupportSuite extends UnityCatalogSupport {
   }
 
   @AfterEach
-  public void tearDown() throws Exception {
+  public void tearDownSparkSession() throws Exception {
     if (spark != null) {
       spark.stop();
       spark = null;
     }
-    super.tearDown(); // Stop UC server last
+    // UC server is stopped once by UnityCatalogSupport.tearDown()
   }
 
   /**
