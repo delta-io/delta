@@ -253,9 +253,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
         .filter($"value" contains "keep")
 
       testStream(df)(
@@ -282,9 +280,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       Seq("keep1", "keep2", "drop3").toDF.write
         .format("delta").mode("append").save(inputDir.getAbsolutePath)
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
         .filter($"value" contains "keep")
 
       testStream(df)(
@@ -316,9 +312,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       val expected = (
           (0 until 5).map(_.toString -> null) ++ (5 until 10).map(_.toString).map(x => x -> x)
@@ -363,10 +357,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .writeStream
         .format("memory")
         .queryName("maxFilesPerTriggerTest")
@@ -393,10 +386,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .writeStream
         .format("memory")
         .queryName("maxFilesPerTriggerTest")
@@ -423,10 +415,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -450,10 +441,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q2 = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "2")
-        .load(inputDir.getCanonicalPath)
+      val q2 = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -482,10 +472,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       Seq(0, -1, "string").foreach { invalidMaxFilesPerTrigger =>
         val e = intercept[StreamingQueryException] {
-          spark.readStream
-            .format("delta")
-            .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, invalidMaxFilesPerTrigger.toString)
-            .load(inputDir.getCanonicalPath)
+          loadStreamWithOptions(
+            inputDir.getCanonicalPath,
+            Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> invalidMaxFilesPerTrigger.toString))
             .writeStream
             .format("console")
             .start()
@@ -508,10 +497,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
 
       def runTriggerOnceAndVerifyResult(expected: Seq[Int]): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-          .load(inputDir.getCanonicalPath)
+        val q = loadStreamWithOptions(
+          inputDir.getCanonicalPath,
+          Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
           .writeStream
           .format("memory")
           .trigger(Trigger.Once)
@@ -659,10 +647,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("memory")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -690,10 +677,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("memory")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -721,10 +707,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -748,10 +733,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q2 = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "100g")
-        .load(inputDir.getCanonicalPath)
+      val q2 = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "100g"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -780,10 +764,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       Seq(0, -1, "string").foreach { invalidMaxBytesPerTrigger =>
         val e = intercept[StreamingQueryException] {
-          spark.readStream
-            .format("delta")
-            .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, invalidMaxBytesPerTrigger.toString)
-            .load(inputDir.getCanonicalPath)
+          loadStreamWithOptions(
+            inputDir.getCanonicalPath,
+            Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> invalidMaxBytesPerTrigger.toString))
             .writeStream
             .format("console")
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -848,11 +831,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1") // should process a file at a time
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "100gb")
-        .load(inputDir.getCanonicalPath)
+      // should process a file at a time due to MAX_FILES_PER_TRIGGER_OPTION
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(
+          DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1",
+          DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "100gb"))
         .writeStream
         .format("memory")
         .queryName("maxBytesPerTriggerTest")
@@ -869,11 +853,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         q.stop()
       }
 
-      val q2 = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "2")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val q2 = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(
+          DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2",
+          DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("memory")
         .queryName("maxBytesPerTriggerTest")
@@ -1283,7 +1267,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream.format("delta").load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       // clear the cache so that the writer creates its own DeltaLog instead of reusing the reader's
       DeltaLog.clearCache()
@@ -1312,6 +1296,88 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         CheckAnswer("0", "1", "2", "3", "4")
       )
       assert(deltaLog.snapshot.version == 0)
+    }
+  }
+
+  test("new commits arrive after stream initialization") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Add version 0
+      Seq(1, 2, 3).toDF("value").write.format("delta").save(inputDir.getCanonicalPath)
+
+      val df = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+
+      try {
+        // Process the initial snapshot
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq(1, 2, 3).toDF("value"))
+
+        // Add version 1 and version 2 (after snapshotAtSourceInit was captured)
+        Seq(4, 5, 6).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+        Seq(7, 8, 9).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+
+        q.processAllAvailable()
+
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          (1 to 9).toDF("value"))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("new commits arrive after stream initialization with startingVersion") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Add version 0 and version 1
+      Seq(1, 2, 3).toDF("value").write.format("delta").save(inputDir.getCanonicalPath)
+      Seq(4, 5, 6).toDF("value").write
+        .format("delta").mode("append").save(inputDir.getCanonicalPath)
+
+      // Start streaming from version 1
+      val df = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(
+          "startingVersion" -> "1",
+          DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"
+        )
+      )
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+
+      try {
+        // Process version 1 only
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq(4, 5, 6).toDF("value"))
+
+        // Add version 2 and version 3 (after snapshotAtSourceInit was captured)
+        Seq(7, 8, 9).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+        Seq(10, 11, 12).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          (4 to 12).toDF("value"))
+      } finally {
+        q.stop()
+      }
     }
   }
 
@@ -1378,7 +1444,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
 
-      val df = spark.readStream.format("delta").load(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.toString, Map.empty)
       val stream = df.writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
@@ -1576,7 +1642,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   /** Disable log cleanup to avoid deleting logs we are testing. */
-  private def disableLogCleanup(tablePath: String): Unit = {
+  protected def disableLogCleanup(tablePath: String): Unit = {
     sql(s"alter table delta.`$tablePath` " +
       s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
   }
@@ -1588,11 +1654,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       generateCommits(tablePath, start, start + 20.minutes)
 
       def testStartingVersion(startingVersion: Long): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", startingVersion)
-          .load(tablePath)
-          .writeStream
+        val df = loadStreamWithOptions(
+          tablePath, Map("startingVersion" -> startingVersion.toString))
+        val q = df.writeStream
           .format("memory")
           .queryName("startingVersion_test")
           .start()
@@ -1897,10 +1961,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempView("startingVersionTest") {
         val path = dir.getAbsolutePath
         spark.range(0, 10).write.format("delta").save(path)
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val q = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1933,10 +1994,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Define the stream, but don't start it, before a second write. The startingVersion
         // latest should be resolved when the query *starts*, so there'll be no data even though
         // some was added after the stream was defined.
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val streamDef = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1961,10 +2019,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempView("startingVersionTest") {
         val path = dir.getAbsolutePath
         spark.range(0).write.format("delta").save(path)
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val streamDef = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -2029,11 +2084,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         spark.range(0, 5).repartition(2).write.mode("append").format("delta").save(path)
         spark.range(5, 10).repartition(2).write.mode("append").format("delta").save(path)
 
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", 1)
-          .option("maxFilesPerTrigger", 1)
-          .load(path)
+        val q = loadStreamWithOptions(
+          path,
+          Map("startingVersion" -> "1", "maxFilesPerTrigger" -> "1"))
           .writeStream
           .format("memory")
           .queryName("startingVersionWithRateLimit")
