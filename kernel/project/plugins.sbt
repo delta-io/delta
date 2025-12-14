@@ -26,6 +26,9 @@ addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.0.1")
 
 addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.9.15")
 
+// Assembly plugin for shading Jackson in kernelApi
+addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "2.1.5")
+
 addSbtPlugin("com.etsy" % "sbt-checkstyle-plugin" % "3.1.1")
 
 // By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the

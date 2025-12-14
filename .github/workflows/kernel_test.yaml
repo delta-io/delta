@@ -60,9 +60,10 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
-      - name: Run unit tests
+      - name: Run kernel tests (nested build)
         run: |
-          python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
+          cd kernel
+          sbt "+kernelApi/test" "+kernelDefaults/test" "+kernelUnityCatalog/test"
 
   integration-test:
     name: "DK: Integration"

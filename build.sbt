@@ -72,11 +72,32 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
+val kernelVersion = settingKey[String]("Kernel artifact version")
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
 val targetJvm = settingKey[String]("Target JVM version")
 Global / targetJvm := "11"
+
+ThisBuild / kernelVersion := {
+  val env = sys.env.get("KERNEL_VERSION")
+  val fromFile = IO.read(file("kernel-version.sbt")).trim
+  (env, fromFile) match {
+    case (Some(e), f) if e != f =>
+      sys.error(s"KERNEL_VERSION env ($e) != kernel-version.sbt ($f)")
+    case (Some(e), _) => e
+    case _ => fromFile
+  }
+}
+
+val checkNoKernelSources = taskKey[Unit]("Fail if root build references kernel source projects")
+checkNoKernelSources := {
+  val txt = IO.read(file("build.sbt"))
+  val markers = Seq("lazy val kernelApi", "lazy val kernelDefaults", "kernelGroup")
+  markers.foreach { m =>
+    if (txt.contains(m)) sys.error(s"kernel source reference found: $m")
+  }
+}
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
 lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
@@ -461,7 +482,6 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 // ============================================================
 lazy val sparkV2 = (project in file("kernel-spark"))
   .dependsOn(sparkV1Filtered)
-  .dependsOn(kernelDefaults)
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-spark-v2",
@@ -472,14 +492,10 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
     Test / javaOptions ++= Seq("-ea"),
-    // make sure shaded kernel-api jar exists before compiling/testing
-    Compile / compile := (Compile / compile)
-      .dependsOn(kernelApi / Compile / packageBin).value,
-    Test / test := (Test / test)
-      .dependsOn(kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
-    Compile / unmanagedJars ++= Seq(
-      (kernelApi / Compile / packageBin).value
+    libraryDependencies ++= Seq(
+      "io.delta" % "delta-kernel-api" % kernelVersion.value,
+      "io.delta" % "delta-kernel-defaults" % kernelVersion.value,
+      "io.delta" % "delta-storage" % kernelVersion.value
     ),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -800,220 +816,6 @@ lazy val sharing = (project in file("sharing"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
     ),
     TestParallelization.settings
-  ).configureUnidoc()
-
-lazy val kernelApi = (project in file("kernel/kernel-api"))
-  .enablePlugins(ScalafmtPlugin)
-  .settings(
-    name := "delta-kernel-api",
-    commonSettings,
-    scalaStyleSettings,
-    javaOnlyReleaseSettings,
-    javafmtCheckSettings,
-    scalafmtCheckSettings,
-
-    // Use unique classDirectory name to avoid conflicts in connectClient test setup
-    // This allows connectClient to create symlinks without FileAlreadyExistsException
-    Compile / classDirectory := target.value / "scala-2.13" / "kernel-api-classes",
-
-    Test / javaOptions ++= Seq("-ea"),
-
-    // Also publish a test-jar (classifier = "tests") so consumers (e.g. kernelDefault)
-    // can depend on test utilities via a published artifact instead of depending on raw class directories.
-    Test / publishArtifact := true,
-    Test / packageBin / artifactClassifier := Some("tests"),
-    libraryDependencies ++= Seq(
-      "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
-      "org.slf4j" % "slf4j-api" % "1.7.36",
-
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
-      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
-
-      // JSR-305 annotations for @Nullable
-      "com.google.code.findbugs" % "jsr305" % "3.0.2",
-
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13.2" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
-      "org.assertj" % "assertj-core" % "3.26.3" % "test",
-      // JMH dependencies allow writing micro-benchmarks for testing performance of components.
-      // JMH has framework to define benchmarks and takes care of many common functionalities
-      // such as warm runs, cold runs, defining benchmark parameter variables etc.
-      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
-      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test"
-    ),
-    // Shade jackson libraries so that connector developers don't have to worry
-    // about jackson version conflicts.
-    Compile / packageBin := assembly.value,
-    assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
-    assembly / logLevel := Level.Info,
-    assembly / test := {},
-    assembly / assemblyExcludedJars := {
-      val cp = (assembly / fullClasspath).value
-      val allowedPrefixes = Set("META_INF", "io", "jackson")
-      cp.filter { f =>
-        !allowedPrefixes.exists(prefix => f.data.getName.startsWith(prefix))
-      }
-    },
-     assembly / assemblyShadeRules := Seq(
-      ShadeRule.rename("com.fasterxml.jackson.**" -> "io.delta.kernel.shaded.com.fasterxml.jackson.@1").inAll
-    ),
-    assembly / assemblyMergeStrategy := {
-      // Discard `module-info.class` to fix the `different file contents found` error.
-      // TODO Upgrade SBT to 1.5 which will do this automatically
-      case "module-info.class" => MergeStrategy.discard
-      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
-    },
-    // Generate the package object to provide the version information in runtime.
-    Compile / sourceGenerators += Def.task {
-      val file = (Compile / sourceManaged).value / "io" / "delta" / "kernel" / "Meta.java"
-      IO.write(file,
-        s"""/*
-           | * Copyright (2024) The Delta Lake Project Authors.
-           | *
-           | * Licensed under the Apache License, Version 2.0 (the "License");
-           | * you may not use this file except in compliance with the License.
-           | * You may obtain a copy of the License at
-           | *
-           | * http://www.apache.org/licenses/LICENSE-2.0
-           | *
-           | * Unless required by applicable law or agreed to in writing, software
-           | * distributed under the License is distributed on an "AS IS" BASIS,
-           | * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-           | * See the License for the specific language governing permissions and
-           | * limitations under the License.
-           | */
-           |package io.delta.kernel;
-           |
-           |public final class Meta {
-           |    public static final String KERNEL_VERSION = "${version.value}";
-           |}
-           |""".stripMargin)
-      Seq(file)
-    },
-    MultiShardMultiJVMTestParallelization.settings,
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
-    // Unidoc settings
-    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
-  ).configureUnidoc(docTitle = "Delta Kernel")
-
-lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
-  .enablePlugins(ScalafmtPlugin)
-  .dependsOn(storage)
-  .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
-  .dependsOn(goldenTables % "test")
-  .settings(
-    name := "delta-kernel-defaults",
-    commonSettings,
-    scalaStyleSettings,
-    javaOnlyReleaseSettings,
-    javafmtCheckSettings,
-    scalafmtCheckSettings,
-
-    // Use unique classDirectory name to avoid conflicts in connectClient test setup
-    // This allows connectClient to create symlinks without FileAlreadyExistsException
-    Compile / classDirectory := target.value / "scala-2.13" / "kernel-defaults-classes",
-
-    Test / javaOptions ++= Seq("-ea"),
-    // This allows generating tables with unsupported test table features in delta-spark
-    Test / envVars += ("DELTA_TESTING", "1"),
-
-    // Put the shaded kernel-api JAR on the classpath (compile & test)
-    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
-
-    // Make sure the shaded JAR is produced before we compile/run tests
-    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
-
-    libraryDependencies ++= Seq(
-      "org.assertj" % "assertj-core" % "3.26.3" % Test,
-      "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
-
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13.2" % "test",
-      "commons-io" % "commons-io" % "2.8.0" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
-      // JMH dependencies allow writing micro-benchmarks for testing performance of components.
-      // JMH has framework to define benchmarks and takes care of many common functionalities
-      // such as warm runs, cold runs, defining benchmark parameter variables etc.
-      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
-      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
-      "io.delta" %% "delta-spark" % "4.0.0" % "test",
-
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
-    ),
-    MultiShardMultiJVMTestParallelization.settings,
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
-      // Unidoc settings
-    unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
-  ).configureUnidoc(docTitle = "Delta Kernel Defaults")
-
-lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
-  .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelDefaults % "test->test")
-  .dependsOn(kernelApi % "test->test")
-  .dependsOn(storage % "test->test")
-  .dependsOn(kernelUnityCatalog % "test->test")
-  .settings(
-    name := "delta-kernel-benchmarks",
-    commonSettings,
-    skipReleaseSettings,
-    exportJars := false,
-    javafmtCheckSettings,
-    scalafmtCheckSettings,
-    
-    libraryDependencies ++= Seq(
-      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
-      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
-    ),
-  )
-
-lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
-  .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelDefaults % "test->test")
-  .dependsOn(storage)
-  .settings (
-    name := "delta-kernel-unitycatalog",
-    commonSettings,
-    javaOnlyReleaseSettings,
-    javafmtCheckSettings,
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
-    scalaStyleSettings,
-    scalafmtCheckSettings,
-
-    // Put the shaded kernel-api JAR on the classpath (compile & test)
-    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
-
-    // Make sure the shaded JAR is produced before we compile/run tests
-    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
-
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
-    ),
-    unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
   ).configureUnidoc()
 
 // TODO javastyle tests
@@ -1343,19 +1145,6 @@ lazy val icebergGroup = project
     publish / skip := false,
   )
 */
-
-lazy val kernelGroup = project
-  .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
-  .settings(
-    // crossScalaVersions must be set to Nil on the aggregating project
-    crossScalaVersions := Nil,
-    publishArtifact := false,
-    publish / skip := false,
-    unidocSourceFilePatterns := {
-      (kernelApi / unidocSourceFilePatterns).value.scopeToProject(kernelApi) ++
-      (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
-    }
-  ).configureUnidoc(docTitle = "Delta Kernel")
 
 /*
  ********************

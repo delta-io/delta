@@ -62,6 +62,9 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
         os.environ["SHARD_ID"] = str(shard)
 
     if test_group:
+        if test_group == "kernel":
+            # Use nested kernel build; kernel tests run independently of root build graph
+            return run_cmd(["bash", "-lc", "cd kernel && sbt +test"], stream_output=True)
         # if test group is specified, then run tests only on that test group
         test_cmd = "{}Group/test".format(test_group)
 

@@ -34,11 +34,12 @@ jobs:
           java-version: "11"
       - name: Generate docs
         run: |
-          build/sbt kernelGroup/unidoc
-          mkdir -p kernel/docs/snapshot/kernel-api/java
-          mkdir -p kernel/docs/snapshot/kernel-defaults/java
-          cp -r kernel/kernel-api/target/javaunidoc/. kernel/docs/snapshot/kernel-api/java/
-          cp -r kernel/kernel-defaults/target/javaunidoc/. kernel/docs/snapshot/kernel-defaults/java/
+          cd kernel
+          sbt unidoc
+          mkdir -p docs/snapshot/kernel-api/java
+          mkdir -p docs/snapshot/kernel-defaults/java
+          cp -r kernel-api/target/javaunidoc/. docs/snapshot/kernel-api/java/
+          cp -r kernel-defaults/target/javaunidoc/. docs/snapshot/kernel-defaults/java/
       - name: Setup Pages
         uses: actions/configure-pages@v3
       - name: Upload artifact

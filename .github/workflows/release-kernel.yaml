@@ -1,0 +1,189 @@
+# Copyright (2024) The Delta Lake Project Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Release Delta Kernel
+
+on:
+  push:
+    tags:
+      - 'kernel-v*'
+
+env:
+  JAVA_VERSION: '17'
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - name: Extract version from tag
+        id: extract
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/kernel-v}
+          if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Invalid version format: $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "::notice::Releasing Delta Kernel version: $VERSION"
+
+  build-and-test:
+    needs: validate-tag
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'zulu'
+
+      - name: Cache SBT
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+          key: sbt-kernel-release-${{ runner.os }}-${{ hashFiles('**/build.sbt') }}
+
+      - name: Test Kernel modules
+        run: |
+          cd kernel && sbt \
+            kernelApi/test \
+            kernelDefaults/test \
+            storage/test \
+            kernelUnityCatalog/test
+
+      - name: Verify artifacts build
+        run: |
+          cd kernel && sbt \
+            kernelApi/package \
+            kernelDefaults/package \
+            storage/package \
+            kernelUnityCatalog/package
+          echo "::notice::Artifacts built successfully"
+
+  publish:
+    needs: [validate-tag, build-and-test]
+    runs-on: ubuntu-24.04
+    environment: maven-central-release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK with signing
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'zulu'
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      - name: Cache SBT
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+          key: sbt-kernel-release-${{ runner.os }}-${{ hashFiles('**/build.sbt') }}
+
+      - name: Set version and publish
+        run: |
+          # Update kernel version
+          echo 'ThisBuild / version := "${{ needs.validate-tag.outputs.version }}"' > kernel/version.sbt
+
+          cd kernel && sbt \
+            kernelApi/publishSigned \
+            kernelDefaults/publishSigned \
+            storage/publishSigned \
+            kernelUnityCatalog/publishSigned \
+            sonatypeBundleRelease
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          SONATYPE_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+
+  create-github-release:
+    needs: [validate-tag, publish]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Extract changes since last kernel release
+          PREV_TAG=$(git describe --tags --match "kernel-v*" --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" -- kernel/ storage/ > changelog.txt
+          else
+            echo "- Initial release" > changelog.txt
+          fi
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          cat changelog.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Delta Kernel ${{ needs.validate-tag.outputs.version }}
+          tag_name: kernel-v${{ needs.validate-tag.outputs.version }}
+          body: |
+            ## Delta Kernel ${{ needs.validate-tag.outputs.version }}
+
+            This is an independent release of Delta Kernel, separate from Delta Lake (delta-spark) releases.
+
+            ### Maven Coordinates
+
+            ```xml
+            <dependency>
+              <groupId>io.delta</groupId>
+              <artifactId>delta-kernel-api</artifactId>
+              <version>${{ needs.validate-tag.outputs.version }}</version>
+            </dependency>
+
+            <dependency>
+              <groupId>io.delta</groupId>
+              <artifactId>delta-kernel-defaults</artifactId>
+              <version>${{ needs.validate-tag.outputs.version }}</version>
+            </dependency>
+
+            <dependency>
+              <groupId>io.delta</groupId>
+              <artifactId>delta-storage</artifactId>
+              <version>${{ needs.validate-tag.outputs.version }}</version>
+            </dependency>
+
+            <dependency>
+              <groupId>io.delta</groupId>
+              <artifactId>delta-kernel-unitycatalog</artifactId>
+              <version>${{ needs.validate-tag.outputs.version }}</version>
+            </dependency>
+            ```
+
+            ### Changes
+
+            ${{ steps.changelog.outputs.changelog }}
+
+            ### Compatibility
+
+            - Java: 8+
+            - Hadoop: 3.x
+          generate_release_notes: false
