@@ -175,22 +175,6 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     commonSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     releaseSettings,
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-connect-common",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-connect-common",
-      emptyValue = ()).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-connect-common",
-      emptyValue = ()).value,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
       "io.grpc" % "grpc-protobuf" % grpcVersion,
@@ -204,7 +188,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     Compile / PB.targets := Seq(
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
-    ),
+    )
   )
 
 lazy val connectClient = (project in file("spark-connect/client"))
@@ -215,24 +199,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-connect-client",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-connect-client",
-      emptyValue = ()
-    ).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-connect-client",
-      emptyValue = ()
-    ).value,
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -244,6 +210,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
     (Test / javaOptions) += {
       // Create a (mini) Spark Distribution based on the server classpath.
       val serverClassPath = (connectServer / Compile / fullClasspath).value
+      val serverAssemblyJar = (connectServer / assembly).value
       val distributionDir = crossTarget.value / "test-dist"
       if (!distributionDir.exists()) {
         val jarsDir = distributionDir / "jars"
@@ -252,20 +219,29 @@ lazy val connectClient = (project in file("spark-connect/client"))
         serverClassPath.distinct.foreach { entry =>
           val jarFile = entry.data.toPath
           val linkedJarFile = jarsDir / entry.data.getName
-          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+          if (!java.nio.file.Files.exists(linkedJarFile.toPath)) {
+            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+          }
+        }
+        // Add the connectServer assembly JAR which contains SimpleDeltaConnectService
+        val assemblyLink = jarsDir / serverAssemblyJar.getName
+        if (!java.nio.file.Files.exists(assemblyLink.toPath)) {
+          Files.createSymbolicLink(assemblyLink.toPath, serverAssemblyJar.toPath)
         }
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
         IO.createDirectory(confDir)
         val log4jProps = (spark / Test / resourceDirectory).value / "log4j2.properties"
         val linkedLog4jProps = confDir / "log4j2.properties"
-        Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
+        if (!java.nio.file.Files.exists(linkedLog4jProps.toPath)) {
+          Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
+        }
       }
       // Return the location of the distribution directory.
       "-Ddelta.spark.home=" + distributionDir
     },
     // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
+    Test / envVars += ("DELTA_TESTING", "1")
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -285,24 +261,6 @@ lazy val connectServer = (project in file("spark-connect/server"))
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     },
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-connect-server",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-connect-server",
-      emptyValue = ()
-    ).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-connect-server",
-      emptyValue = ()
-    ).value,
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
@@ -327,7 +285,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
       ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
     // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
+    Test / envVars += ("DELTA_TESTING", "1")
   )
 
 lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
@@ -1325,7 +1283,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, hudi, sharing)
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, hudi, sharing, connectCommon, connectClient, connectServer)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
