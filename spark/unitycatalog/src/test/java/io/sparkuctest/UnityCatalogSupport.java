@@ -25,8 +25,9 @@ import io.unitycatalog.server.UnityCatalogServer;
 import io.unitycatalog.server.utils.ServerProperties;
 import org.apache.log4j.Logger;
 import org.apache.spark.SparkConf;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.TestInstance;
 
 import java.io.File;
 import java.io.IOException;
@@ -64,6 +65,7 @@ import java.util.Properties;
  * }
  * </pre>
  */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class UnityCatalogSupport {
 
   private static final Logger logger = Logger.getLogger(UnityCatalogSupport.class);
@@ -93,7 +95,7 @@ public abstract class UnityCatalogSupport {
 
   /**
    * The URI of the Unity Catalog server.
-   * Available after setup() is called.
+   * Available after setupServer() is called.
    */
   protected String getServerUri() {
     return "http://localhost:" + ucPort;
@@ -132,8 +134,8 @@ public abstract class UnityCatalogSupport {
    * IMPORTANT: Starts the server BEFORE calling other setup to ensure
    * the server is running when SharedSparkSession creates the SparkSession.
    */
-  @BeforeEach
-  public void setup() throws Exception {
+  @BeforeAll
+  public void setupServer() throws Exception {
     // Create temporary directory for UC server data
     ucTempDir = Files.createTempDirectory("unity-catalog-test-").toFile();
     ucTempDir.deleteOnExit();
@@ -144,6 +146,9 @@ public abstract class UnityCatalogSupport {
     // Set up server properties
     Properties serverProps = new Properties();
     serverProps.setProperty("server.env", "test");
+    // Enable managed tables (experimental feature in Unity Catalog)
+    serverProps.setProperty("server.managed-table.enabled", "true");
+    serverProps.setProperty("storage-root.tables", new File(ucTempDir, "ucroot").getAbsolutePath());
 
     // Start UC server with configuration
     ServerProperties initServerProperties = new ServerProperties(serverProps);
@@ -209,8 +214,8 @@ public abstract class UnityCatalogSupport {
   /**
    * Stops the Unity Catalog server after all tests.
    */
-  @AfterEach
-  public void tearDown() throws Exception {
+  @AfterAll
+  public void tearDownServer() throws Exception {
     if (ucServer != null) {
       ucServer.stop();
       logger.info("Unity Catalog server stopped");
