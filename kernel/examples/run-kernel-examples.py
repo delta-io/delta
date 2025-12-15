@@ -183,10 +183,8 @@ if __name__ == "__main__":
     clear_artifact_cache()
 
     if args.use_local:
-        # First publish delta-storage from root build (kernel depends on it)
-        with WorkingDirectory(project_root_dir):
-            run_cmd(["build/sbt", "storage/publishM2"], stream_output=True)
-        # Then publish kernel artifacts from nested kernel build
+        # Publish kernel artifacts from nested kernel build
+        # (kernel fetches delta-storage from Maven Central)
         with WorkingDirectory(path.join(project_root_dir, "kernel")):
             run_cmd(["../build/sbt",
                      "kernelApi/publishM2",

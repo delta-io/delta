@@ -204,14 +204,8 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Publish delta-storage first (kernel depends on it)
-        if not self.run_sbt_command(
-            "Running: build/sbt +storage/publishM2",
-            ["build/sbt", "+storage/publishM2"]
-        ):
-            return False
-
         # Publish Kernel artifacts so Spark build can resolve them
+        # (kernel fetches delta-storage from Maven Central)
         if not self.run_sbt_command(
             "Running: ../build/sbt +kernelApi/publishM2 +kernelDefaults/publishM2 +kernelUnityCatalog/publishM2",
             ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+kernelUnityCatalog/publishM2\""]
@@ -240,14 +234,7 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Publish delta-storage first (kernel depends on it)
-        if not self.run_sbt_command(
-            "Running: build/sbt +storage/publishM2",
-            ["build/sbt", "+storage/publishM2"]
-        ):
-            return False
-
-        # Publish Kernel artifacts (cache was just cleared)
+        # Publish Kernel artifacts (kernel fetches delta-storage from Maven Central)
         if not self.run_sbt_command(
             "Running: ../build/sbt +kernelApi/publishM2 +kernelDefaults/publishM2 +kernelUnityCatalog/publishM2",
             ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+kernelUnityCatalog/publishM2\""]
@@ -275,16 +262,9 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Publish delta-storage first (kernel depends on it)
+        # Publish Kernel artifacts (kernel fetches delta-storage from Maven Central)
         if not self.run_sbt_command(
-            "Step 0a: publish delta-storage (kernel dependency)",
-            ["build/sbt", "+storage/publishM2"]
-        ):
-            return False
-
-        # Publish Kernel artifacts (cache was just cleared)
-        if not self.run_sbt_command(
-            "Step 0b: publish kernel artifacts",
+            "Step 0: publish kernel artifacts",
             ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+kernelUnityCatalog/publishM2\""]
         ):
             return False

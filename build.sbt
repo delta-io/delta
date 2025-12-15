@@ -78,10 +78,6 @@ val grpcVersion = "1.62.2"
 // sbt 'set targetJvm := "11"' [commands]
 val targetJvm = settingKey[String]("Target JVM version")
 Global / targetJvm := "11"
-ThisBuild / resolvers ++= Seq(
-  Resolver.mavenLocal,
-  Resolver.defaultLocal
-)
 
 val checkNoKernelSources = taskKey[Unit]("Fail if root build references kernel source projects")
 checkNoKernelSources := {

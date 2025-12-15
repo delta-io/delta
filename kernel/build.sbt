@@ -21,6 +21,7 @@ import Keys._
 val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val jacksonVersion = "2.13.5"
+val deltaStorageVersion = "4.0.0" // Released version from Maven Central
 
 val scala213 = "2.13.16"
 
@@ -156,7 +157,7 @@ lazy val kernelDefaults = (project in file("kernel-defaults"))
     commonSettings,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
-      "io.delta" % "delta-storage" % version.value
+      "io.delta" % "delta-storage" % deltaStorageVersion
     ),
     // Put the shaded kernel-api JAR on the classpath
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,

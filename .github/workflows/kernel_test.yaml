@@ -60,9 +60,6 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
-      - name: Publish delta-storage (kernel dependency)
-        run: |
-          build/sbt "+storage/publishM2"
       - name: Run kernel tests (nested build)
         run: |
           cd kernel
@@ -73,7 +70,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
-      # Run integration tests with JDK 17 (needed for root build to publish delta-storage)
       - name: install java
         uses: actions/setup-java@v3
         with:

@@ -24,10 +24,6 @@ jobs:
           distribution: "zulu"
           java-version: "17"
         if: steps.git-diff.outputs.diff
-      - name: Publish delta-storage (kernel dependency)
-        run: |
-          build/sbt "+storage/publishM2"
-        if: steps.git-diff.outputs.diff
       - name: Run Unity tests with coverage
         run: |
           cd kernel
