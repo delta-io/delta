@@ -79,6 +79,9 @@ val grpcVersion = "1.62.2"
 val targetJvm = settingKey[String]("Target JVM version")
 Global / targetJvm := "11"
 
+// Root build needs mavenLocal to find locally published kernel artifacts
+ThisBuild / resolvers += Resolver.mavenLocal
+
 val checkNoKernelSources = taskKey[Unit]("Fail if root build references kernel source projects")
 checkNoKernelSources := {
   val txt = IO.read(file("build.sbt"))
