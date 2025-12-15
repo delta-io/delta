@@ -37,3 +37,6 @@ dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "8.43"
 
 // Code coverage plugin for test coverage reports
 addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.4.0")
+
+// Resolve scala-xml version conflict between scoverage (needs 2.3.0) and scalastyle (needs 1.0.6)
+dependencyOverrides += "org.scala-lang.modules" %% "scala-xml" % "2.3.0"
