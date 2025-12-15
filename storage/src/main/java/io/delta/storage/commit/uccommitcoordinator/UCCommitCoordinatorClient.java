@@ -716,15 +716,15 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    *    delete the commit for v from its database.
    * 6. Now this client retries commit v (without conflict resolution since conflict=false
    *    in step 3).
-   * 7. UC rejects the commit because v <= latest_table_version and returns a retryable
+   * 7. UC rejects the commit because {@code v <= latest_table_version} and returns a retryable
    *    conflict (retryable=true, conflict=true).
    *
    * Without this check, Delta's default response to retryable=true, conflict=true would be to
    * rebase the commit on top of the latest table version and retry, effectively trying to
    * commit the contents of v as v+2. This would result in duplicate data being written.
    *
-   * This method prevents that by checking if the backfilled commit (v.json) has the same
-   * content as our retry attempt (v.<uuid>.json). If yes, we know our original commit
+   * This method prevents that by checking if the backfilled commit ({@code v.json}) has the same
+   * content as our retry attempt ({@code v.<uuid>.json}). If yes, we know our original commit
    * succeeded and can safely ignore the conflict and exit early without rebasing.
    *
    * Below is a concrete example of the failure and retry sequence:
@@ -733,7 +733,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    * - Attempt 2: Try to commit v without conflict resolution since conflict=false in attempt-1.
    *              UC responds with retryable=true, conflict=true in the above scenario.
    *              (i.e. v is backfilled and latest version is v+1).
-   * - Fix: Compare v.<uuid>.json and v.json and *early exit* here.
+   * - Fix: Compare {@code v.<uuid>.json} and {@code v.json} and *early exit* here.
    * - Attempt 3: [Without fix] Rebase, conflict-resolution + Try to commit v+2
    *              => double-commit for contents of v => bug.
    */
