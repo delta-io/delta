@@ -15,22 +15,28 @@
  */
 package io.delta.kernel.spark.utils;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.spark.read.DeltaParquetFileFormatV2;
 import io.delta.kernel.spark.read.SparkReaderFactory;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.PartitioningUtils;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -40,7 +46,7 @@ import scala.Function1;
 import scala.Option;
 import scala.Tuple2;
 import scala.collection.Iterator;
-import scala.collection.JavaConverters;
+import scala.jdk.javaapi.CollectionConverters;
 
 /** Utility class for partition-related operations shared across Delta Kernel Spark components. */
 public class PartitionUtils {
@@ -74,6 +80,10 @@ public class PartitionUtils {
   /**
    * Build the partition {@link InternalRow} from kernel partition values by casting them to the
    * desired Spark types using the session time zone for temporal types.
+   *
+   * <p>Note: Partition values in AddFile use physical column names as keys when column mapping is
+   * enabled. This method uses DeltaColumnMapping.getPhysicalName to map from logical schema fields
+   * to physical partition value keys.
    */
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
@@ -87,10 +97,13 @@ public class PartitionUtils {
 
     final Object[] values = new Object[numPartCols];
 
-    // Build field name -> index map once
-    final Map<String, Integer> fieldIndex = new HashMap<>(numPartCols);
+    // Build physical name -> index map once
+    // Partition values use physical names as keys when column mapping is enabled
+    final Map<String, Integer> physicalNameToIndex = new HashMap<>(numPartCols);
     for (int i = 0; i < numPartCols; i++) {
-      fieldIndex.put(partitionSchema.fields()[i].name(), i);
+      StructField field = partitionSchema.fields()[i];
+      String physicalName = DeltaColumnMapping.getPhysicalName(field);
+      physicalNameToIndex.put(physicalName, i);
       values[i] = null;
     }
 
@@ -98,7 +111,7 @@ public class PartitionUtils {
     for (int idx = 0; idx < partitionValues.getSize(); idx++) {
       final String key = partitionValues.getKeys().getString(idx);
       final String strVal = partitionValues.getValues().getString(idx);
-      final Integer pos = fieldIndex.get(key);
+      final Integer pos = physicalNameToIndex.get(key);
       if (pos != null) {
         final StructField field = partitionSchema.fields()[pos];
         values[pos] =
@@ -108,7 +121,7 @@ public class PartitionUtils {
       }
     }
     return InternalRow.fromSeq(
-        JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
+        CollectionConverters.asScala(Arrays.asList(values).iterator()).toSeq());
   }
 
   /**
@@ -116,7 +129,7 @@ public class PartitionUtils {
    *
    * @param addFile The AddFile to convert
    * @param partitionSchema The partition schema for parsing partition values
-   * @param tablePath The table path (must end with '/')
+   * @param tablePath The table path
    * @param zoneId The timezone for temporal partition values
    * @return A PartitionedFile ready for Spark execution
    */
@@ -133,7 +146,7 @@ public class PartitionUtils {
 
     return new PartitionedFile(
         partitionRow,
-        SparkPath.fromUrlString(tablePath + addFile.getPath()),
+        SparkPath.fromUrlString(new Path(tablePath, addFile.getPath()).toString()),
         /* start= */ 0L,
         /* length= */ addFile.getSize(),
         preferredLocations,
@@ -142,8 +155,16 @@ public class PartitionUtils {
         otherConstantMetadataColumnValues);
   }
 
-  /** Create a PartitionReaderFactory for reading Parquet files with partition support. */
-  public static PartitionReaderFactory createParquetReaderFactory(
+  /**
+   * Create a PartitionReaderFactory for reading Parquet files with Delta-specific features.
+   *
+   * <p>Uses DeltaParquetFileFormatV2 which supports column mapping, deletion vectors, and other
+   * Delta features through the ProtocolMetadataAdapterV2.
+   *
+   * @param snapshot The Delta table snapshot containing protocol, metadata, and table path
+   */
+  public static PartitionReaderFactory createDeltaParquetReaderFactory(
+      Snapshot snapshot,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -151,25 +172,39 @@ public class PartitionUtils {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
       SQLConf sqlConf) {
+    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
+    Protocol protocol = snapshotImpl.getProtocol();
+    Metadata metadata = snapshotImpl.getMetadata();
+    String tablePath = snapshotImpl.getDataPath().toUri().toString();
+
     boolean enableVectorizedReader =
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
             new Tuple2<>(
-                FileFormat$.MODULE$
-                    .OPTION_RETURNING_BATCH(), // Option name for enabling vectorized reading
+                FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
                 String.valueOf(enableVectorizedReader)));
-    // TODO(#5318): deletion vector support.
+
+    // Use DeltaParquetFileFormatV2 to support column mapping and other Delta features
+    DeltaParquetFileFormatV2 deltaFormat =
+        new DeltaParquetFileFormatV2(
+            protocol,
+            metadata,
+            /* nullableRowTrackingConstantFields */ false,
+            /* nullableRowTrackingGeneratedFields */ false,
+            /* optimizationsEnabled */ true,
+            Option.apply(tablePath),
+            /* isCDCRead */ false);
+
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
-        new ParquetFileFormat()
-            .buildReaderWithPartitionValues(
-                SparkSession.active(),
-                dataSchema,
-                partitionSchema,
-                readDataSchema,
-                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-                optionsWithVectorizedReading,
-                hadoopConf);
+        deltaFormat.buildReaderWithPartitionValues(
+            SparkSession.active(),
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            CollectionConverters.asScala(Arrays.asList(dataFilters)).toSeq(),
+            optionsWithVectorizedReading,
+            hadoopConf);
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
   }

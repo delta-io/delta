@@ -297,7 +297,8 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    return PartitionUtils.createParquetReaderFactory(
+    return PartitionUtils.createDeltaParquetReaderFactory(
+        snapshotAtSourceInit,
         dataSchema,
         partitionSchema,
         readDataSchema,
