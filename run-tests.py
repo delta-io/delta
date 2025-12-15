@@ -68,13 +68,8 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
         # if test group is specified, then run tests only on that test group
         test_cmd = "{}Group/test".format(test_group)
 
-    # Ensure kernel artifacts exist locally for spark-related groups
-    # (kernel fetches delta-storage from Maven Central)
-    if test_group in ["spark", "spark-python"]:
-        run_cmd([
-            "bash", "-lc",
-            "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+kernelUnityCatalog/publishM2\""
-        ], stream_output=True)
+    # Kernel artifacts are fetched from Maven Central (released version)
+    # No local kernel publish needed
 
     if coverage:
         cmd += ["coverage"]
