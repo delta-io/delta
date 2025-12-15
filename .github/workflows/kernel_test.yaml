@@ -63,7 +63,7 @@ jobs:
       - name: Run kernel tests (nested build)
         run: |
           cd kernel
-          sbt "+kernelApi/test" "+kernelDefaults/test" "+kernelUnityCatalog/test"
+          ../build/sbt "+kernelApi/test" "+kernelDefaults/test" "+kernelUnityCatalog/test"
 
   integration-test:
     name: "DK: Integration"

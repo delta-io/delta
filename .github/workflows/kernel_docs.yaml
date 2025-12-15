@@ -35,7 +35,7 @@ jobs:
       - name: Generate docs
         run: |
           cd kernel
-          sbt unidoc
+          ../build/sbt unidoc
           mkdir -p docs/snapshot/kernel-api/java
           mkdir -p docs/snapshot/kernel-defaults/java
           cp -r kernel-api/target/javaunidoc/. docs/snapshot/kernel-api/java/

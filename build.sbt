@@ -16,6 +16,8 @@
 
 // scalastyle:off line.size.limit
 
+import KernelKeys._
+
 import java.io.BufferedInputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
@@ -72,23 +74,10 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-val kernelVersion = settingKey[String]("Kernel artifact version")
-
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
 val targetJvm = settingKey[String]("Target JVM version")
 Global / targetJvm := "11"
-
-ThisBuild / kernelVersion := {
-  val env = sys.env.get("KERNEL_VERSION")
-  val fromFile = IO.read(file("kernel-version.sbt")).trim
-  (env, fromFile) match {
-    case (Some(e), f) if e != f =>
-      sys.error(s"KERNEL_VERSION env ($e) != kernel-version.sbt ($f)")
-    case (Some(e), _) => e
-    case _ => fromFile
-  }
-}
 
 val checkNoKernelSources = taskKey[Unit]("Fail if root build references kernel source projects")
 checkNoKernelSources := {

@@ -11,6 +11,7 @@
 .ammonite
 .bloop
 .bsp
+.bazelbsp
 .cache
 .classpath
 .ensime
@@ -139,4 +140,3 @@ kernel/kernel-benchmarks/benchmark_report.json
 # Unity Catalog test artifacts
 spark/unitycatalog/etc/
 .scala-build/
-
