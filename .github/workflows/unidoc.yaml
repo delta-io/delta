@@ -1,19 +1,25 @@
-  name: "Unidoc"
-  on: [push, pull_request]
-  jobs:
-    build:
-      name: "U: Scala ${{ matrix.scala }}"
-      runs-on: ubuntu-24.04
-      strategy:
-        matrix:
-          # These Scala versions must match those in the build.sbt
-          scala: [2.13.16]
-      steps:
-        - name: install java
-          uses: actions/setup-java@v3
-          with:
-            distribution: "zulu"
-            java-version: "17"
-        - uses: actions/checkout@v3
-        - name: generate unidoc
-          run: build/sbt "++ ${{ matrix.scala }}" unidoc
+name: "Unidoc"
+on: [push, pull_request]
+jobs:
+  build:
+    name: "U: Scala ${{ matrix.scala }}"
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        # These Scala versions must match those in the build.sbt
+        scala: [2.13.16]
+    env:
+      # Use local kernel - published before unidoc generation
+      KERNEL_VERSION: "0.1.0-SNAPSHOT"
+    steps:
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/checkout@v3
+      - name: Publish Kernel Locally
+        # Root build needs newer kernel APIs not yet on Maven Central
+        run: cd kernel && ./build/sbt +publishLocal
+      - name: generate unidoc
+        run: build/sbt "++ ${{ matrix.scala }}" unidoc
