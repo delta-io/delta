@@ -83,9 +83,10 @@ class IcebergRESTCatalogPlanningClient(
       table: String,
       filter: Option[Filter] = None,
       projection: Option[StructType] = None): ScanPlan = {
-    // Construct the /plan endpoint URI. For Unity Catalog tables, the icebergRestCatalogUriRoot
-    // is constructed by UnityCatalogMetadata which calls /v1/config to get the optional prefix
-    // and builds the proper endpoint (e.g., {ucUri}/api/2.1/unity-catalog/iceberg-rest/v1/{prefix}).
+    // Construct the /plan endpoint URI. For Unity Catalog tables, the
+    // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
+    // /v1/config to get the optional prefix and builds the proper endpoint
+    // (e.g., {ucUri}/api/2.1/unity-catalog/iceberg-rest/v1/{prefix}).
     // For other catalogs, the endpoint is passed directly via metadata.
     // See: https://iceberg.apache.org/rest-catalog-spec/
     val planTableScanUri =
