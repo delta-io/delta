@@ -230,6 +230,25 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     assert(metadata.tableProperties.isEmpty)
   }
 
+  test("UnityCatalogMetadata constructs IRC endpoint from UC URI") {
+    val ucUri = "https://my-workspace.cloud.databricks.com"
+    val metadata = UnityCatalogMetadata(
+      catalogName = "test_catalog",
+      ucUri = ucUri,
+      ucToken = "test-token",
+      tableProps = Map.empty
+    )
+
+    // This test validates the fallback case where /v1/config is unreachable.
+    // The endpoint construction logic attempts to call /v1/config at the UC URI,
+    // but since there's no server at this URL, it falls back to the simple path
+    // without prefix. For tests of the prefix case with a real IRC server, see
+    // IcebergRESTCatalogPlanningClientSuite.
+    val expectedEndpoint =
+      "https://my-workspace.cloud.databricks.com/api/2.1/unity-catalog/iceberg-rest"
+    assert(metadata.planningEndpointUri == expectedEndpoint)
+  }
+
   test("simple EqualTo filter pushed to planning client") {
     withPushdownCapturingEnabled {
       sql("SELECT id, name, value FROM test_db.shared_test WHERE id = 2").collect()

@@ -186,5 +186,42 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  test("UnityCatalogMetadata uses prefix from /v1/config endpoint") {
+    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+
+    // Configure server to return prefix
+    server.setCatalogPrefix("catalogs/test-catalog")
+
+    val metadata = UnityCatalogMetadata(
+      catalogName = "test_catalog",
+      ucUri = serverUri,
+      ucToken = "test-token",
+      tableProps = Map.empty
+    )
+
+    // Verify endpoint includes prefix from /v1/config response
+    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest/v1/catalogs/test-catalog"
+    assert(metadata.planningEndpointUri == expectedEndpoint,
+      s"Expected endpoint to include prefix: ${metadata.planningEndpointUri}")
+  }
+
+  test("UnityCatalogMetadata falls back when /v1/config returns no prefix") {
+    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+
+    // Configure server to return no prefix (fallback case)
+    server.setCatalogPrefix(null)
+
+    val metadata = UnityCatalogMetadata(
+      catalogName = "test_catalog",
+      ucUri = serverUri,
+      ucToken = "test-token",
+      tableProps = Map.empty
+    )
+
+    // Verify endpoint uses simple path without prefix
+    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
+    assert(metadata.planningEndpointUri == expectedEndpoint,
+      s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
+  }
 
 }
