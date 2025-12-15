@@ -633,6 +633,9 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
+      // Kernel dependencies for tests that use kernel classes directly
+      "io.delta" % "delta-kernel-api" % kernelVersion.value % "test",
+      "io.delta" % "delta-kernel-defaults" % kernelVersion.value % "test"
     ),
 
     Test / testOptions += Tests.Argument("-oDF"),
