@@ -115,6 +115,7 @@ lazy val kernelApi = (project in file("kernel-api"))
     name := "delta-kernel-api",
     commonSettings,
     javaOnlyReleaseSettings,
+    coverageEnabled := false,
     kernelApiAssemblySettings,
     generateMetaSettings,
     // Publish test jar for consumers
