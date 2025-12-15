@@ -55,7 +55,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * Create the SparkSession before all tests.
    */
   @BeforeAll
-  public static void setUpSpark() throws Exception {
+  public static void setUpSpark() {
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
     
@@ -91,22 +91,14 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   }
 
   /**
-   * Get the SparkSession for tests.
+   * Get the SQL executor. Private to force subclasses to use sql() and check() methods.
    */
-  protected static SparkSession spark() {
-    return sparkSession;
+  private SQLExecutor getSqlExecutor() {
+    return new SparkSQLExecutor(sparkSession);
   }
 
   /**
-   * The SQL executor used to run queries and verify results.
-   * Defaults to SparkSQLExecutor. Subclasses can override to provide alternative execution engines.
-   */
-  protected SQLExecutor getSqlExecutor() {
-    return new SparkSQLExecutor(spark());
-  }
-
-  /**
-   * Convenience method for getSqlExecutor().runSQL - executes SQL and returns results.
+   * Execute SQL through the SQL executor and return results.
    * 
    * When called with arguments, formats the SQL query using String.format:
    * <pre>
@@ -128,10 +120,13 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   }
 
   /**
-   * Convenience method for getSqlExecutor().checkTable - verifies table contents.
+   * Verify table contents by selecting all rows ordered by the first column.
+   * 
+   * @param tableName The fully qualified table name
+   * @param expected The expected results as a list of rows
    */
   protected void check(String tableName, List<List<String>> expected) {
-    getSqlExecutor().checkTable(tableName, expected);
+    getSqlExecutor().checkWithSQL("SELECT * FROM " + tableName + " ORDER BY 1", expected);
   }
 
   /**
@@ -240,14 +235,6 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     List<List<String>> runSQL(String sql);
 
     /**
-     * Read all data from a table and verify it matches the expected results.
-     *
-     * @param tableName The fully qualified table name
-     * @param expected The expected results as a list of rows
-     */
-    void checkTable(String tableName, List<List<String>> expected);
-
-    /**
      * Execute a SQL query and verify the results match the expected output.
      *
      * @param sql The SQL query to execute
@@ -285,17 +272,6 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     }
 
     @Override
-    public void checkTable(String tableName, List<List<String>> expected) {
-      List<List<String>> actual = runSQL("SELECT * FROM " + tableName + " ORDER BY 1");
-      if (!actual.equals(expected)) {
-        throw new AssertionError(
-            "Table " + tableName + " contents do not match.\n" +
-            "Expected: " + expected + "\n" +
-            "Actual: " + actual);
-      }
-    }
-
-    @Override
     public void checkWithSQL(String sql, List<List<String>> expected) {
       List<List<String>> actual = runSQL(sql);
       if (!actual.equals(expected)) {
@@ -306,6 +282,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
             "Actual: " + actual);
       }
     }
+
   }
 }
 
