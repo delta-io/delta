@@ -28,6 +28,8 @@ import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
+import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.types.StructType
 import shadedForDelta.org.apache.iceberg.PartitionSpec
 import shadedForDelta.org.apache.iceberg.rest.requests.{PlanTableScanRequest, PlanTableScanRequestParser}
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
@@ -57,31 +59,42 @@ class IcebergRESTCatalogPlanningClient(
   // Partition spec ID for unpartitioned tables
   private val UNPARTITIONED_SPEC_ID = 0
 
-  private val httpHeaders = Map(
-    // TODO: Authentication not yet implemented. Uncomment when ready to add Bearer token auth.
-    // HttpHeaders.AUTHORIZATION -> s"Bearer $token",
-    HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
-    HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType
-  ).map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
+  private val httpHeaders = {
+    val baseHeaders = Map(
+      HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
+      HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType
+    )
+    // Add Bearer token authentication if token is provided
+    val headersWithAuth = if (token != null && token.nonEmpty) {
+      baseHeaders + (HttpHeaders.AUTHORIZATION -> s"Bearer $token")
+    } else {
+      baseHeaders
+    }
+    headersWithAuth.map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
+  }
 
   private lazy val httpClient = HttpClientBuilder.create()
     .setDefaultHeaders(httpHeaders)
     .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
     .build()
 
-  override def planScan(database: String, table: String): ScanPlan = {
-    // TODO: Follow Iceberg REST catalog spec for proper path construction. Per the spec, clients
-    // should first call GET /v1/config to retrieve catalog configuration including the optional
-    // "prefix" parameter in the overrides section (e.g., overrides.prefix). This prefix should
-    // then be used to construct all subsequent API paths as /v1/{prefix}/namespaces/... instead
-    // of hardcoding /v1/namespaces/... This allows catalogs to support multi-tenant hierarchies
-    // (e.g., AWS Glue uses /catalogs/{catalog}, S3 Tables uses table bucket ARNs).
+  override def planScan(
+      database: String,
+      table: String,
+      filter: Option[Filter] = None,
+      projection: Option[StructType] = None): ScanPlan = {
+    // Construct the /plan endpoint URI. For Unity Catalog tables, the icebergRestCatalogUriRoot
+    // is constructed by UnityCatalogMetadata which calls /v1/config to get the optional prefix
+    // and builds the proper endpoint (e.g., {ucUri}/api/2.1/unity-catalog/iceberg-rest/v1/{prefix}).
+    // For other catalogs, the endpoint is passed directly via metadata.
     // See: https://iceberg.apache.org/rest-catalog-spec/
     val planTableScanUri =
       s"$icebergRestCatalogUriRoot/v1/namespaces/$database/tables/$table/plan"
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
+    // TODO: Add filter and projection pushdown to PlanTableScanRequest once Iceberg REST spec
+    // supports these parameters. For now, filters and projections are passed but not used.
     val request = new PlanTableScanRequest.Builder().withSnapshotId(CURRENT_SNAPSHOT_ID).build()
 
     val requestJson = PlanTableScanRequestParser.toJson(request)
