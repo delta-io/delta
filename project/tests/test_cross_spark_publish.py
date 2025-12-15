@@ -258,9 +258,9 @@ class CrossSparkPublishTest:
         ):
             return False
 
+        # runOnlyForReleasableSparkModules only publishes Spark-dependent modules
+        # Non-Spark modules (hudi, storage) are NOT published in this mode
         expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version)
-        expected |= substitute_xversion(DELTA_ONLY_NON_SPARK_JARS, self.delta_version)
-        expected |= substitute_xversion(spark_spec.non_spark_related_jars, self.delta_version)
         return self.validate_jars(expected, "runOnlyForReleasableSparkModules")
 
     def test_cross_spark_workflow(self) -> bool:
