@@ -68,8 +68,12 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
         # if test group is specified, then run tests only on that test group
         test_cmd = "{}Group/test".format(test_group)
 
-    # Kernel artifacts are fetched from Maven Central (released version)
-    # No local kernel publish needed
+    # Publish kernel locally so root build can use newer kernel APIs not yet on Maven Central.
+    # Set KERNEL_VERSION to match the locally published kernel version.
+    print("##### Publishing kernel locally #####")
+    kernel_dir = path.join(root_dir, "kernel")
+    run_cmd(["bash", "-lc", "cd {} && sbt +publishM2".format(kernel_dir)], stream_output=True)
+    os.environ["KERNEL_VERSION"] = "0.1.0-SNAPSHOT"
 
     if coverage:
         cmd += ["coverage"]

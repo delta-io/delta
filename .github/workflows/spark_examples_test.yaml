@@ -10,6 +10,8 @@ jobs:
         scala: [2.13.16]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      # Use local kernel version (published from kernel/ directory)
+      KERNEL_VERSION: "0.1.0-SNAPSHOT"
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4
@@ -43,9 +45,14 @@ jobs:
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
         if: steps.git-diff.outputs.diff
+      - name: Publish Kernel Locally
+        # Publish kernel to local Maven so root build can use the newer kernel APIs
+        run: cd kernel && sbt +publishM2
+        if: steps.git-diff.outputs.diff
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.
+        # KERNEL_VERSION env var tells root build to use locally published kernel.
         run: |
           build/sbt clean
           build/sbt publishM2
