@@ -47,7 +47,7 @@ jobs:
         if: steps.git-diff.outputs.diff
       - name: Publish Kernel Locally
         # Publish kernel to local Maven so root build can use the newer kernel APIs
-        run: cd kernel && sbt +publishM2
+        run: cd kernel && ./build/sbt +publishM2
         if: steps.git-diff.outputs.diff
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).

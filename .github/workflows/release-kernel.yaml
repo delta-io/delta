@@ -63,7 +63,7 @@ jobs:
 
       - name: Test Kernel modules
         run: |
-          cd kernel && sbt \
+          cd kernel && ./build/sbt \
             kernelApi/test \
             kernelDefaults/test \
             storage/test \
@@ -71,7 +71,7 @@ jobs:
 
       - name: Verify artifacts build
         run: |
-          cd kernel && sbt \
+          cd kernel && ./build/sbt \
             kernelApi/package \
             kernelDefaults/package \
             storage/package \
@@ -108,7 +108,7 @@ jobs:
           # Update kernel version
           echo 'ThisBuild / version := "${{ needs.validate-tag.outputs.version }}"' > kernel/version.sbt
 
-          cd kernel && sbt \
+          cd kernel && ./build/sbt \
             kernelApi/publishSigned \
             kernelDefaults/publishSigned \
             storage/publishSigned \
