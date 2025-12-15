@@ -175,22 +175,10 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     commonSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     releaseSettings,
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-connect-common",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-connect-common",
-      emptyValue = ()).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-connect-common",
-      emptyValue = ()).value,
+    // Export as JAR instead of classes directory. This ensures protobuf-generated classes
+    // (e.g., io.delta.connect.proto.DeltaCommand) are available as a JAR file in fullClasspath,
+    // which can be symlinked and picked up by Spark Submit's jars/* wildcard in connectClient tests.
+    exportJars := true,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
       "io.grpc" % "grpc-protobuf" % grpcVersion,
@@ -204,7 +192,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     Compile / PB.targets := Seq(
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
-    ),
+    )
   )
 
 lazy val connectClient = (project in file("spark-connect/client"))
@@ -215,24 +203,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-connect-client",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-connect-client",
-      emptyValue = ()
-    ).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-connect-client",
-      emptyValue = ()
-    ).value,
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -245,27 +215,32 @@ lazy val connectClient = (project in file("spark-connect/client"))
       // Create a (mini) Spark Distribution based on the server classpath.
       val serverClassPath = (connectServer / Compile / fullClasspath).value
       val distributionDir = crossTarget.value / "test-dist"
+      val jarsDir = distributionDir / "jars"
+
       if (!distributionDir.exists()) {
-        val jarsDir = distributionDir / "jars"
         IO.createDirectory(jarsDir)
-        // Create symlinks for all dependencies
-        serverClassPath.distinct.foreach { entry =>
+        // Create symlinks for all dependencies (filter to only JAR files)
+        serverClassPath.distinct.filter(_.data.isFile).foreach { entry =>
           val jarFile = entry.data.toPath
           val linkedJarFile = jarsDir / entry.data.getName
-          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+          if (!java.nio.file.Files.exists(linkedJarFile.toPath)) {
+            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+          }
         }
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
         IO.createDirectory(confDir)
         val log4jProps = (spark / Test / resourceDirectory).value / "log4j2.properties"
         val linkedLog4jProps = confDir / "log4j2.properties"
-        Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
+        if (!java.nio.file.Files.exists(linkedLog4jProps.toPath)) {
+          Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
+        }
       }
       // Return the location of the distribution directory.
       "-Ddelta.spark.home=" + distributionDir
     },
     // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
+    Test / envVars += ("DELTA_TESTING", "1")
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -277,6 +252,10 @@ lazy val connectServer = (project in file("spark-connect/server"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    // Export as JAR instead of classes directory. Required for connectClient test setup so that
+    // classes like SimpleDeltaConnectService are available as a JAR file that can be symlinked
+    // and picked up by Spark Submit's jars/* wildcard. Also prevents classpath conflicts.
+    exportJars := true,
     assembly / assemblyMergeStrategy := {
       // Discard module-info.class files from Java 9+ modules and multi-release JARs
       case "module-info.class" => MergeStrategy.discard
@@ -285,24 +264,6 @@ lazy val connectServer = (project in file("spark-connect/server"))
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     },
-    Compile / compile := runTaskOnlyOnSparkMaster(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-connect-server",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkMaster(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-connect-server",
-      emptyValue = ()
-    ).value,
-    publish := runTaskOnlyOnSparkMaster(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-connect-server",
-      emptyValue = ()
-    ).value,
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
@@ -327,7 +288,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
       ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
     // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
+    Test / envVars += ("DELTA_TESTING", "1")
   )
 
 lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
@@ -1262,7 +1223,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
   // TODO: add sharing back after fixing compilation
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, hudi)
+  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, storage, storageS3DynamoDB, hudi, connectCommon, connectClient, connectServer)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

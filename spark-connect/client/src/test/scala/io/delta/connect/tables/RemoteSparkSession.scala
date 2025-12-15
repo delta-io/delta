@@ -85,8 +85,8 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     command += "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED"
     command += "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
     command += "--add-opens=java.base/java.io=ALL-UNNAMED"
-    command += "--add-opens=java.base/java.net=ALL-UNNAMED"
     command += "--add-opens=java.base/java.nio=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.net=ALL-UNNAMED"
     command += "--add-opens=java.base/java.util=ALL-UNNAMED"
     command += "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
     command += "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED"
@@ -129,3 +129,4 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     super.afterAll()
   }
 }
+

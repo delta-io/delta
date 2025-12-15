@@ -463,3 +463,4 @@ class DeltaMergeBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 }
+
