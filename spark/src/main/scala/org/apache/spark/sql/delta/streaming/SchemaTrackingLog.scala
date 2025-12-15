@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.JsonIgnore
 
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.{HDFSMetadataLog, MetadataVersionUtil}
 import org.apache.spark.sql.types.{DataType, StructType}
@@ -103,7 +103,7 @@ class SchemaTrackingLog[T <: PartitionAndDataSchema: ClassTag: Manifest](
     sparkSession: SparkSession,
     path: String,
     schemaSerializer: SchemaSerializer[T])
-  extends HDFSMetadataLog[T](sparkSession, path) with LoggingShims {
+  extends HDFSMetadataLog[T](sparkSession, path) with Logging {
 
   import SchemaTrackingExceptions._
 

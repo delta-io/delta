@@ -152,16 +152,6 @@ trait UCCatalogManagedTestUtils
     (ucClient, ucCatalogManagedClient)
   }
 
-  /**
-   * Initializes a UC table in the InMemoryUCClient after creation.
-   * This should be called after creating a table with buildCreateTableTransaction.
-   */
-  def initializeUCTable(ucClient: InMemoryUCClient, ucTableId: String): Unit = {
-    val tableData =
-      new InMemoryUCClient.TableData(-1, scala.collection.mutable.ArrayBuffer[Commit]())
-    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
-  }
-
   /** Version TS for the test table used in [[withUCClientAndTestTable]] */
   val v0Ts = 1749830855993L // published commit
   val v1Ts = 1749830871085L // ratified staged commit
@@ -189,20 +179,14 @@ trait UCCatalogManagedTestUtils
           fileStatus.getModificationTime)
       }
     val tableData = new TableData(maxRatifiedVersion, ArrayBuffer(catalogCommits: _*))
-    ucClient.createTableIfNotExistsOrThrow("testUcTableId", tableData)
+    ucClient.insertTableData("testUcTableId", tableData)
     textFx(ucClient, tablePath, maxRatifiedVersion)
   }
 
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-  /**
-   * When a new UC table is created, it will have Delta version 0 but the max ratified verison in
-   * UC is -1. This is a special edge case.
-   */
-  def createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne(
+  def createUCCatalogManagedClientForTableAfterCreate(
       ucTableId: String = "testUcTableId"): UCCatalogManagedClient = {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableData = new TableData(-1, ArrayBuffer[Commit]())
-    ucClient.createTableIfNotExistsOrThrow(ucTableId, tableData)
+    ucClient.insertTableDataAfterCreate(ucTableId)
     new UCCatalogManagedClient(ucClient)
   }
 

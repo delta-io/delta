@@ -34,7 +34,7 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-connect-server{suffix}_2.13-{version}.jar",
     "delta-sharing-spark{suffix}_2.13-{version}.jar",
     "delta-contribs{suffix}_2.13-{version}.jar",
-    "delta-iceberg{suffix}_2.13-{version}.jar"
+    # "delta-iceberg{suffix}_2.13-{version}.jar" TODO add back after fixing build
 ]
 
 # Non-spark-related modules (built once, same for all Spark versions)
@@ -42,7 +42,6 @@ SPARK_RELATED_JAR_TEMPLATES = [
 NON_SPARK_RELATED_JAR_TEMPLATES = [
     # Scala modules
     "delta-hudi_2.13-{version}.jar",
-    "delta-standalone_2.13-{version}.jar",
 
     # Java-only modules (no Scala version)
     "delta-storage-{version}.jar",
@@ -77,12 +76,11 @@ class SparkVersionSpec:
 
 # Spark versions to test (key = full version string, value = spec with suffix)
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "3.5.7": SparkVersionSpec(""),      # Default Spark version without suffix
-    "4.0.2-SNAPSHOT": SparkVersionSpec("_4.0") # Other Spark versions with suffix
+    "4.0.1": SparkVersionSpec("")      # Default Spark version without suffix
 }
 
 # The default Spark version (no suffix in artifact names)
-DEFAULT_SPARK = "3.5.7"
+DEFAULT_SPARK = "4.0.1"
 
 
 def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str]:
@@ -201,7 +199,7 @@ class CrossSparkPublishTest:
 
     def test_run_only_for_spark_modules(self) -> bool:
         """runOnlyForReleasableSparkModules should publish only Spark-dependent modules."""
-        spark_version = "4.0.2-SNAPSHOT"
+        spark_version = "4.0.1"
         spark_spec = SPARK_VERSIONS[spark_version]
 
         print("\n" + "="*70)

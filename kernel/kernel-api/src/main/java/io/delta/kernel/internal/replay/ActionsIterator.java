@@ -497,22 +497,30 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
-    final CloseableIterator<FileReadResult> dataIter =
-        wrapEngineExceptionThrowsIO(
-            () ->
-                engine
-                    .getJsonHandler()
-                    .readJsonFiles(
-                        singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
-                    .map(batch -> new FileReadResult(batch, nextFile.getPath())),
-            "Reading JSON log file `%s` with readSchema=%s",
-            nextFile,
-            deltaReadSchema);
-    return combine(
-        dataIter,
-        false /* isFromCheckpoint */,
-        fileVersion,
-        Optional.of(nextFile.getModificationTime()) /* timestamp */);
+    CloseableIterator<FileReadResult> dataIter = null;
+    try {
+      dataIter =
+          wrapEngineExceptionThrowsIO(
+              () ->
+                  engine
+                      .getJsonHandler()
+                      .readJsonFiles(
+                          singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
+                      .map(batch -> new FileReadResult(batch, nextFile.getPath())),
+              "Reading JSON log file `%s` with readSchema=%s",
+              nextFile,
+              deltaReadSchema);
+      return combine(
+          dataIter,
+          false /* isFromCheckpoint */,
+          fileVersion,
+          Optional.of(nextFile.getModificationTime()) /* timestamp */);
+    } catch (Exception e) {
+      if (dataIter != null) {
+        Utils.closeCloseablesSilently(dataIter); // close it avoid leaking resources
+      }
+      throw e;
+    }
   }
 
   /**

@@ -89,7 +89,11 @@ object SparkMimaExcludes {
       // Changes in 4.0.0
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.improveUnsupportedOpError"),
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.improveUnsupportedOpError"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute")
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute"),
+
+      // Changes in 4.1.0
+      // TODO: change in type hierarchy due to removal of DeltaThrowableConditionShim
+      ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*")
 
       // scalastyle:on line.size.limit
   )
