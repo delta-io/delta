@@ -175,6 +175,10 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     commonSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     releaseSettings,
+    // Export as JAR instead of classes directory. This ensures protobuf-generated classes
+    // (e.g., io.delta.connect.proto.DeltaCommand) are available as a JAR file in fullClasspath,
+    // which can be symlinked and picked up by Spark Submit's jars/* wildcard in connectClient tests.
+    exportJars := true,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
       "io.grpc" % "grpc-protobuf" % grpcVersion,
@@ -210,23 +214,18 @@ lazy val connectClient = (project in file("spark-connect/client"))
     (Test / javaOptions) += {
       // Create a (mini) Spark Distribution based on the server classpath.
       val serverClassPath = (connectServer / Compile / fullClasspath).value
-      val serverAssemblyJar = (connectServer / assembly).value
       val distributionDir = crossTarget.value / "test-dist"
+      val jarsDir = distributionDir / "jars"
+
       if (!distributionDir.exists()) {
-        val jarsDir = distributionDir / "jars"
         IO.createDirectory(jarsDir)
-        // Create symlinks for all dependencies
-        serverClassPath.distinct.foreach { entry =>
+        // Create symlinks for all dependencies (filter to only JAR files)
+        serverClassPath.distinct.filter(_.data.isFile).foreach { entry =>
           val jarFile = entry.data.toPath
           val linkedJarFile = jarsDir / entry.data.getName
           if (!java.nio.file.Files.exists(linkedJarFile.toPath)) {
             Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
           }
-        }
-        // Add the connectServer assembly JAR which contains SimpleDeltaConnectService
-        val assemblyLink = jarsDir / serverAssemblyJar.getName
-        if (!java.nio.file.Files.exists(assemblyLink.toPath)) {
-          Files.createSymbolicLink(assemblyLink.toPath, serverAssemblyJar.toPath)
         }
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
@@ -253,6 +252,10 @@ lazy val connectServer = (project in file("spark-connect/server"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    // Export as JAR instead of classes directory. Required for connectClient test setup so that
+    // classes like SimpleDeltaConnectService are available as a JAR file that can be symlinked
+    // and picked up by Spark Submit's jars/* wildcard. Also prevents classpath conflicts.
+    exportJars := true,
     assembly / assemblyMergeStrategy := {
       // Discard module-info.class files from Java 9+ modules and multi-release JARs
       case "module-info.class" => MergeStrategy.discard
