@@ -958,15 +958,19 @@ trait DataSkippingReaderBase
           // Create an expression that returns true if a file must be read because it has mismatched
           // min-max values or partial nulls on any of the referenced columns.
           val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
-          val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
-          val statsCols = ArrayBuffer(numRecordsStatsCol)
-          val finalExpr = referencedStats.foldLeft(newExpr) {
-            case (oldExpr, resolvedReference) =>
-              val updatedExpr = Or(
-                oldExpr, fileMustBeScanned(resolvedReference, numRecordsColOpt))
-              statsCols ++= resolvedReference.referencedStatsCols
-              updatedExpr
-          }
+          val statsCols = referencedStats.flatMap(_.referencedStatsCols) + numRecordsStatsCol
+          val mustScanFileExpression = referencedStats.map { resolvedReference =>
+            fileMustBeScanned(resolvedReference, numRecordsColOpt)
+          }.toSeq.reduceLeftOption { (l, r) => Or(l, r) }.getOrElse(Literal(false))
+
+          // Only evaluate the rewritten expression if the file passes the validation expression,
+          // ensuring that any non-partition-like input (that might cause a filter evaluation
+          // exception) is skipped. Note that we cannot rely on short-circuiting here, since
+          // common subexpression elimination during codegen may move the evaluation of the
+          // condition before that of the file validation expression, so we need to explicitly use
+          // a conditional expression to guarantee the correct evaluation order.
+          val finalExpr = If(mustScanFileExpression, Literal(true), newExpr)
+
           // Create the final data skipping expression - read a file either if it's has nulls on any
           // referenced column, has mismatched stats on any referenced column, or the filter
           // expression evaluates to `true`.
