@@ -94,6 +94,17 @@ public class SparkMicroBatchStream
    */
   private boolean isFirstBatch = false;
 
+  /**
+   * When AvailableNow is used, this offset will be the upper bound where this run of the query will
+   * process up. We may run multiple micro batches, but the query will stop itself when it reaches
+   * this offset.
+   */
+  private Optional<DeltaSourceOffset> lastOffsetForTriggerAvailableNow = Optional.empty();
+
+  private boolean isLastOffsetForTriggerAvailableNowInitialized = false;
+
+  private boolean isTriggerAvailableNow = false;
+
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Snapshot snapshotAtSourceInit,
@@ -130,17 +141,6 @@ public class SparkMicroBatchStream
         (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
   }
 
-  /**
-   * When AvailableNow is used, this offset will be the upper bound where this run of the query will
-   * process up. We may run multiple micro batches, but the query will stop itself when it reaches
-   * this offset.
-   */
-  protected Optional<DeltaSourceOffset> lastOffsetForTriggerAvailableNow = Optional.empty();
-
-  private boolean isLastOffsetForTriggerAvailableNowInitialized = false;
-
-  private boolean isTriggerAvailableNow = false;
-
   @Override
   public void prepareForTriggerAvailableNow() {
     logger.info("The streaming query reports to use Trigger.AvailableNow.");
@@ -151,14 +151,14 @@ public class SparkMicroBatchStream
    * initialize the internal states for AvailableNow if this method is called first time after
    * prepareForTriggerAvailableNow.
    */
-  protected void initForTriggerAvailableNowIfNeeded(DeltaSourceOffset startOffsetOpt) {
+  private void initForTriggerAvailableNowIfNeeded(DeltaSourceOffset startOffsetOpt) {
     if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
       isLastOffsetForTriggerAvailableNowInitialized = true;
       initLastOffsetForTriggerAvailableNow(startOffsetOpt);
     }
   }
 
-  protected void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
+  private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
     lastOffsetForTriggerAvailableNow =
         latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
 
@@ -221,7 +221,7 @@ public class SparkMicroBatchStream
     return endOffset;
   }
 
-  protected Optional<DeltaSourceOffset> latestOffsetInternal(
+  private Optional<DeltaSourceOffset> latestOffsetInternal(
       DeltaSourceOffset deltaStartOffset, ReadLimit limit) {
     Optional<DeltaSource.AdmissionLimits> limits =
         ScalaUtils.toJavaOptional(DeltaSource.AdmissionLimits$.MODULE$.apply(options, limit));
