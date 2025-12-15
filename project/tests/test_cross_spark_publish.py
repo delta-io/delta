@@ -150,8 +150,7 @@ class CrossSparkPublishTest:
         """Runs an SBT command and returns True if successful."""
         print(f"  {description}")
         try:
-            subprocess.run(command, cwd=self.delta_root, check=True,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+            subprocess.run(command, cwd=self.delta_root, check=True)
             return True
         except subprocess.CalledProcessError:
             print(f"  ✗ Command failed: {' '.join(command)}")
@@ -201,8 +200,8 @@ class CrossSparkPublishTest:
 
         # Publish Kernel artifacts first so Spark build can resolve them
         if not self.run_sbt_command(
-            "Running: ../build/sbt +kernelApi/publishM2 +kernelDefaults/publishM2 +storage/publishM2 +kernelUnityCatalog/publishM2",
-            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+storage/publishM2\" \"+kernelUnityCatalog/publishM2\""]
+            "Running: ../build/sbt +kernelApi/publishLocal +kernelDefaults/publishLocal +storage/publishLocal +kernelUnityCatalog/publishLocal",
+            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishLocal\" \"+kernelDefaults/publishLocal\" \"+storage/publishLocal\" \"+kernelUnityCatalog/publishLocal\""]
         ):
             return False
 
@@ -227,11 +226,7 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        if not self.run_sbt_command(
-            "Running: ../build/sbt +kernelApi/publishM2 +kernelDefaults/publishM2 +storage/publishM2 +kernelUnityCatalog/publishM2",
-            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+storage/publishM2\" \"+kernelUnityCatalog/publishM2\""]
-        ):
-            return False
+        # Kernel artifacts already published in default publish step
 
         if not self.run_sbt_command(
             f"Running: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\"",
@@ -252,12 +247,7 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Step 1: Publish all modules for default Spark version
-        if not self.run_sbt_command(
-            "Step 0: publish kernel artifacts",
-            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+storage/publishM2\" \"+kernelUnityCatalog/publishM2\""]
-        ):
-            return False
+        # Kernel artifacts already published in default publish step
 
         if not self.run_sbt_command(
             f"Step 1: build/sbt publishM2 (Spark {DEFAULT_SPARK} - all modules)",
