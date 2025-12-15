@@ -20,7 +20,7 @@ import io.delta.kernel.internal.metrics.MetricsReportSerializer;
 import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.metrics.MetricsReport;
 import io.delta.kernel.shaded.com.fasterxml.jackson.annotation.JsonPropertyOrder;
-import io.delta.kernel.shaded.com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import java.util.Optional;
 
 /**
@@ -136,8 +136,12 @@ public class UcPublishTelemetry {
     }
 
     @Override
-    public String toJson() throws JsonProcessingException {
-      return MetricsReportSerializer.OBJECT_MAPPER.writeValueAsString(this);
+    public String toJson() {
+      try {
+        return MetricsReportSerializer.OBJECT_MAPPER.writeValueAsString(this);
+      } catch (JsonProcessingException e) {
+        throw new RuntimeException("Failed to serialize UC publish telemetry", e);
+      }
     }
   }
 }

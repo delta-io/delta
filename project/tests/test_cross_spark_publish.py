@@ -38,15 +38,16 @@ SPARK_RELATED_JAR_TEMPLATES = [
 ]
 
 # Non-spark-related modules (built once, same for all Spark versions)
-# Template format: {version} = Delta version (e.g., "3.4.0-SNAPSHOT")
-NON_SPARK_RELATED_JAR_TEMPLATES = [
-    # Scala modules
+# Split into delta-only (uses delta version) and kernel/storage (uses kernel version)
+DELTA_ONLY_NON_SPARK_JARS = [
     "delta-hudi_2.13-{version}.jar",
+]
 
+NON_SPARK_RELATED_JAR_TEMPLATES = [
     # Java-only modules (no Scala version)
-    "delta-storage-{version}.jar",
     "delta-kernel-api-{version}.jar",
     "delta-kernel-defaults-{version}.jar",
+    "delta-storage-{version}.jar",
     "delta-storage-s3-dynamodb-{version}.jar",
     "delta-kernel-unitycatalog-{version}.jar"
 ]
@@ -112,7 +113,12 @@ class CrossSparkPublishTest:
         with open(self.delta_root / "kernel-version.sbt", 'r') as f:
             for line in f:
                 if 'kernelVersion :=' in line:
-                    return line.split('"')[1]
+                    import re
+                    matches = re.findall(r'"([^"]+)"', line)
+                    if matches:
+                        # Use the last quoted token (handles env fallback syntax)
+                        return matches[-1]
+        # Fallback to delta version if not found
         # Fallback to delta version if not found
         return self.delta_version
 
@@ -200,8 +206,8 @@ class CrossSparkPublishTest:
 
         # Publish Kernel artifacts first so Spark build can resolve them
         if not self.run_sbt_command(
-            "Running: ../build/sbt +kernelApi/publishLocal +kernelDefaults/publishLocal +storage/publishLocal +kernelUnityCatalog/publishLocal",
-            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishLocal\" \"+kernelDefaults/publishLocal\" \"+storage/publishLocal\" \"+kernelUnityCatalog/publishLocal\""]
+            "Running: ../build/sbt +kernelApi/publishM2 +kernelDefaults/publishM2 +kernelUnityCatalog/publishM2",
+            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+kernelUnityCatalog/publishM2\""]
         ):
             return False
 
@@ -211,8 +217,9 @@ class CrossSparkPublishTest:
         ):
             return False
 
-        expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version) | substitute_xversion(
-            spark_spec.non_spark_related_jars, self.kernel_version)
+        expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version)
+        expected |= substitute_xversion(DELTA_ONLY_NON_SPARK_JARS, self.delta_version)
+        expected |= substitute_xversion(spark_spec.non_spark_related_jars, self.kernel_version)
         return self.validate_jars(expected, "Default publishM2")
 
     def test_run_only_for_spark_modules(self) -> bool:
@@ -226,7 +233,12 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Kernel artifacts already published in default publish step
+        # Publish Kernel artifacts (cache was just cleared)
+        if not self.run_sbt_command(
+            "Running: ../build/sbt +kernelApi/publishM2 +kernelDefaults/publishM2 +kernelUnityCatalog/publishM2",
+            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+kernelUnityCatalog/publishM2\""]
+        ):
+            return False
 
         if not self.run_sbt_command(
             f"Running: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\"",
@@ -235,6 +247,8 @@ class CrossSparkPublishTest:
             return False
 
         expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version)
+        expected |= substitute_xversion(DELTA_ONLY_NON_SPARK_JARS, self.delta_version)
+        expected |= substitute_xversion(spark_spec.non_spark_related_jars, self.kernel_version)
         return self.validate_jars(expected, "runOnlyForReleasableSparkModules")
 
     def test_cross_spark_workflow(self) -> bool:
@@ -247,7 +261,12 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Kernel artifacts already published in default publish step
+        # Publish Kernel artifacts (cache was just cleared)
+        if not self.run_sbt_command(
+            "Step 0: publish kernel artifacts",
+            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+kernelUnityCatalog/publishM2\""]
+        ):
+            return False
 
         if not self.run_sbt_command(
             f"Step 1: build/sbt publishM2 (Spark {DEFAULT_SPARK} - all modules)",
@@ -270,6 +289,7 @@ class CrossSparkPublishTest:
         expected = set()
         for spark_spec in SPARK_VERSIONS.values():
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
+        expected.update(substitute_xversion(DELTA_ONLY_NON_SPARK_JARS, self.delta_version))
         expected.update(substitute_xversion(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.kernel_version))
 
         return self.validate_jars(expected, "Cross-Spark Workflow")
@@ -281,12 +301,13 @@ class CrossSparkPublishTest:
         Uses 'build/sbt showSparkVersions' to query versions directly from the build.
         """
         try:
-            # Query Spark versions from SBT
+            # Query Spark versions from SBT; avoid capture_output for Python 3.6 compatibility
             result = subprocess.run(
                 ["build/sbt", "showSparkVersions"],
                 cwd=self.delta_root,
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
                 check=True
             )
 

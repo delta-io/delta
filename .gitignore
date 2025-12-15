@@ -12,6 +12,7 @@
 .bloop
 .bsp
 .bazelbsp
+.venv/
 .cache
 .classpath
 .ensime

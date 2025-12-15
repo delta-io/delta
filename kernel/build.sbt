@@ -32,8 +32,9 @@ lazy val commonSettings = Seq(
   autoScalaLibrary := false,
   scalaVersion := scala213,
   crossScalaVersions := Seq(scala213),
-  // Target Java 8 for compatibility
-  javacOptions ++= Seq("-source", "8", "-target", "8", "-Xlint:all"),
+  // Target Java 11 (updated from 8); avoid doc tool errors by excluding -Xlint from Javadoc
+  javacOptions ++= Seq("--release", "11", "-Xlint:all"),
+  Compile / doc / javacOptions := Seq("--release", "11"),
   // Publishing settings
   publishMavenStyle := true,
   publishTo := sonatypePublishToBundle.value,
@@ -116,7 +117,6 @@ lazy val kernelApi = (project in file("kernel-api"))
     name := "delta-kernel-api",
     commonSettings,
     javaOnlyReleaseSettings,
-    coverageEnabled := false,
     kernelApiAssemblySettings,
     generateMetaSettings,
     // Publish test jar for consumers
@@ -146,35 +146,18 @@ lazy val kernelApi = (project in file("kernel-api"))
   )
 
 // ============================================================================
-// Storage - Storage abstraction layer
-// NOTE: Storage must be physically moved to kernel/storage/ for this to work
-// ============================================================================
-lazy val storage = (project in file("storage"))
-  .settings(
-    name := "delta-storage",
-    commonSettings,
-    javaOnlyReleaseSettings,
-    exportJars := true,
-    libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
-      // Test dependencies
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-    ),
-  )
-
-// ============================================================================
 // Kernel Defaults - Default implementations
 // ============================================================================
 lazy val kernelDefaults = (project in file("kernel-defaults"))
   .dependsOn(kernelApi)
   .dependsOn(kernelApi % "test->test")
-  .dependsOn(storage)
-  .dependsOn(storage % "test->test")
   .settings(
     name := "delta-kernel-defaults",
     commonSettings,
     javaOnlyReleaseSettings,
+    libraryDependencies ++= Seq(
+      "io.delta" % "delta-storage" % version.value
+    ),
     // Put the shaded kernel-api JAR on the classpath
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
@@ -205,7 +188,6 @@ lazy val kernelDefaults = (project in file("kernel-defaults"))
 lazy val kernelUnityCatalog = (project in file("unitycatalog"))
   .dependsOn(kernelDefaults)
   .dependsOn(kernelDefaults % "test->test")
-  .dependsOn(storage)
   .settings(
     name := "delta-kernel-unitycatalog",
     commonSettings,
@@ -230,7 +212,7 @@ lazy val kernelUnityCatalog = (project in file("unitycatalog"))
 // Root project - aggregates all kernel modules
 // ============================================================================
 lazy val root = (project in file("."))
-  .aggregate(kernelApi, kernelDefaults, storage, kernelUnityCatalog)
+  .aggregate(kernelApi, kernelDefaults, kernelUnityCatalog)
   .settings(
     name := "delta-kernel",
     publish / skip := true,

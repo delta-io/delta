@@ -530,9 +530,10 @@ public class PartitionUtils {
   }
 
   /**
-   * Serialize the given partition value to a string according to the Delta protocol <a
-   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md
-   * #partition-value-serialization">partition value serialization rules</a>.
+   * Serialize the given partition value to a string according to the Delta protocol partition value
+   * serialization rules. See <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#partition-value-serialization">
+   * partition value serialization rules</a>.
    *
    * @param literal Literal representing the partition value of specific datatype.
    * @return Serialized string representation of the partition value.
