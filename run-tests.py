@@ -70,9 +70,7 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
 
     # Publish kernel locally - root build needs newer kernel APIs not yet on Maven Central
     print("##### Publishing kernel locally #####")
-    kernel_dir = path.join(root_dir, "kernel")
-    kernel_sbt = path.join(kernel_dir, "build", "sbt")
-    run_cmd([kernel_sbt, "+publishLocal"], stream_output=True)
+    run_cmd(["bash", "-lc", "cd kernel && ./build/sbt +publishLocal"], stream_output=True)
     os.environ["KERNEL_VERSION"] = "0.1.0-SNAPSHOT"
 
     if coverage:
