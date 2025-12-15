@@ -134,6 +134,25 @@ class CrossSparkPublishTest:
         else:
             print("Maven cache already clean\n")
 
+    def publish_kernel_locally(self) -> bool:
+        """Publishes kernel to local Ivy repository for root build to use."""
+        import os
+        print("Publishing kernel locally (root build needs newer kernel APIs)...")
+        kernel_dir = self.delta_root / "kernel"
+        try:
+            subprocess.run(
+                ["./build/sbt", "+publishLocal"],
+                cwd=kernel_dir,
+                check=True
+            )
+            # Set KERNEL_VERSION so root build uses local kernel
+            os.environ["KERNEL_VERSION"] = "0.1.0-SNAPSHOT"
+            print("✓ Kernel published locally\n")
+            return True
+        except subprocess.CalledProcessError:
+            print("✗ Failed to publish kernel locally")
+            return False
+
     def find_all_jars(self) -> Set[str]:
         """Finds all JAR files from Maven local repository."""
         m2_repo = Path.home() / ".m2" / "repository" / "io" / "delta"
@@ -203,8 +222,10 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Kernel artifacts are fetched from Maven Central (released version)
-        # No local kernel publish needed
+        # Publish kernel locally - root build needs newer kernel APIs not yet on Maven Central
+        if not self.publish_kernel_locally():
+            return False
+
         if not self.run_sbt_command(
             "Running: build/sbt publishM2",
             ["build/sbt", "publishM2"]
@@ -227,8 +248,10 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Kernel artifacts are fetched from Maven Central (released version)
-        # No local kernel publish needed
+        # Publish kernel locally - root build needs newer kernel APIs not yet on Maven Central
+        if not self.publish_kernel_locally():
+            return False
+
         if not self.run_sbt_command(
             f"Running: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\"",
             ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForReleasableSparkModules publishM2"]
@@ -250,8 +273,10 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
-        # Kernel artifacts are fetched from Maven Central (released version)
-        # No local kernel publish needed
+        # Publish kernel locally - root build needs newer kernel APIs not yet on Maven Central
+        if not self.publish_kernel_locally():
+            return False
+
         if not self.run_sbt_command(
             f"Step 1: build/sbt publishM2 (Spark {DEFAULT_SPARK} - all modules)",
             ["build/sbt", "publishM2"]
