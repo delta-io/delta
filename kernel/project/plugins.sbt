@@ -26,8 +26,17 @@ addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.0.1")
 
 addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.9.15")
 
+// Assembly plugin for shading Jackson in kernelApi
+addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "2.1.5")
+
 addSbtPlugin("com.etsy" % "sbt-checkstyle-plugin" % "3.1.1")
 
 // By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the
 // same version as Spark
 dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "8.43"
+
+// Code coverage plugin for test coverage reports
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.4.0")
+
+// Resolve scala-xml version conflict between scoverage (needs 2.3.0) and scalastyle (needs 1.0.6)
+dependencyOverrides += "org.scala-lang.modules" %% "scala-xml" % "2.3.0"

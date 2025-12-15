@@ -152,7 +152,7 @@ if __name__ == "__main__":
     # get the version of the package
     examples_root_dir = path.abspath(path.dirname(__file__))
     project_root_dir = path.join(examples_root_dir, "../../")
-    with open(path.join(project_root_dir, "version.sbt")) as fd:
+    with open(path.join(project_root_dir, "kernel/version.sbt")) as fd:
         default_version = fd.readline().split('"')[1]
 
         parser = argparse.ArgumentParser()
@@ -183,8 +183,13 @@ if __name__ == "__main__":
     clear_artifact_cache()
 
     if args.use_local:
-        with WorkingDirectory(project_root_dir):
-            run_cmd(["build/sbt", "kernelGroup/publishM2", "storage/publishM2"], stream_output=True)
+        # Publish kernel artifacts from nested kernel build
+        # (kernel fetches delta-storage from Maven Central)
+        with WorkingDirectory(path.join(project_root_dir, "kernel")):
+            run_cmd(["../build/sbt",
+                     "kernelApi/publishM2",
+                     "kernelDefaults/publishM2",
+                     "kernelUnityCatalog/publishM2"], stream_output=True)
 
     golden_file_dir = path.join(
         examples_root_dir,

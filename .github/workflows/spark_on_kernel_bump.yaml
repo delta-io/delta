@@ -1,0 +1,22 @@
+name: delta-spark on kernel bump
+
+on:
+  push:
+    paths:
+      - "kernel-version.sbt"
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    env:
+      SCALA_VERSION: 2.13.16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Run delta-spark tests with pinned kernel
+        run: |
+          ./build/sbt "++ ${SCALA_VERSION}" checkNoKernelSources delta-spark/test

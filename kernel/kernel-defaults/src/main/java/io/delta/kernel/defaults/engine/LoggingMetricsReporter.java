@@ -17,7 +17,7 @@ package io.delta.kernel.defaults.engine;
 
 import io.delta.kernel.engine.MetricsReporter;
 import io.delta.kernel.metrics.MetricsReport;
-import io.delta.kernel.shaded.com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,9 +34,8 @@ public class LoggingMetricsReporter implements MetricsReporter {
     try {
       logger.info("{} = {}", report.getClass().getName(), report.toJson());
     } catch (JsonProcessingException e) {
+      // Log4j format keeps the stack trace clear; fallback to toString() to avoid noisy stacks
       logger.warn("Serialization issue while logging metrics report {}: {}", report, e.toString());
-    } catch (Exception e) {
-      logger.warn("Unexpected error while logging metrics report {}:", report, e);
     }
   }
 }

@@ -14,6 +14,8 @@ jobs:
       SCALA_VERSION: ${{ matrix.scala }}
       # Important: This must be the same as the length of shards in matrix
       NUM_SHARDS: 4
+      # Use local kernel - run-tests.py publishes it before root build
+      KERNEL_VERSION: "0.1.0-SNAPSHOT"
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4

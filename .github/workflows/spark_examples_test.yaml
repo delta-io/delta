@@ -10,6 +10,8 @@ jobs:
         scala: [2.13.16]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      # Use local kernel - published before root build
+      KERNEL_VERSION: "0.1.0-SNAPSHOT"
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4
@@ -42,6 +44,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
+        if: steps.git-diff.outputs.diff
+      - name: Publish Kernel Locally
+        # Root build needs newer kernel APIs not yet on Maven Central
+        run: cd kernel && ./build/sbt +publishLocal
         if: steps.git-diff.outputs.diff
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).

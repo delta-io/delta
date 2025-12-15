@@ -26,5 +26,6 @@ jobs:
         if: steps.git-diff.outputs.diff
       - name: Run Unity tests with coverage
         run: |
-          ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v
+          cd kernel
+          ../build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v
         if: steps.git-diff.outputs.diff

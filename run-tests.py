@@ -62,8 +62,16 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
         os.environ["SHARD_ID"] = str(shard)
 
     if test_group:
+        if test_group == "kernel":
+            # Use nested kernel build; kernel tests run independently of root build graph
+            return run_cmd(["bash", "-lc", "cd kernel && ./build/sbt +test"], stream_output=True)
         # if test group is specified, then run tests only on that test group
         test_cmd = "{}Group/test".format(test_group)
+
+    # Publish kernel locally - root build needs newer kernel APIs not yet on Maven Central
+    print("##### Publishing kernel locally #####")
+    run_cmd(["bash", "-lc", "cd kernel && ./build/sbt +publishLocal"], stream_output=True)
+    os.environ["KERNEL_VERSION"] = "0.1.0-SNAPSHOT"
 
     if coverage:
         cmd += ["coverage"]
