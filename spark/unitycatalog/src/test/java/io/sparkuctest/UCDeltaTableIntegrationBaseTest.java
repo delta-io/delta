@@ -56,16 +56,13 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    */
   @BeforeAll
   public static void setUpSpark() throws Exception {
-    // UC server is started by UnityCatalogSupport.setup()
+    // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
     
     SparkConf conf = new SparkConf()
         .setAppName("UnityCatalog Integration Tests")
         .setMaster("local[2]")
         .set("spark.ui.enabled", "false")
-        .set("spark.sql.shuffle.partitions", "5")
-        .set("spark.databricks.delta.snapshotPartitions", "2")
-        .set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5")
         // Delta Lake required configurations
         .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog");
@@ -78,19 +75,19 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // Enable testing so that catalogManaged UC tables can be created.
     // This is checked by CreateDeltaTableCommand which calls org.apache.spark.util.Utils.isTesting.
     // TODO: clean up once it's not required.
-    System.setProperty("spark.testing", "any");
+    System.setProperty("spark.testing", "true");
   }
 
   /**
    * Stop the SparkSession after all tests.
    */
   @AfterAll
-  public static void tearDownSpark() throws Exception {
+  public static void tearDownSpark() {
     if (sparkSession != null) {
       sparkSession.stop();
       sparkSession = null;
     }
-    // UC server is stopped by UnityCatalogSupport.tearDown()
+    // UC server is stopped by UnityCatalogSupport.tearDownServer()
   }
 
   /**
@@ -193,7 +190,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
         try {
           testCode.run(fullTableName);
         } finally {
-          spark().sql("DROP TABLE IF EXISTS " + fullTableName);
+          sql("DROP TABLE IF EXISTS %s", fullTableName);
         }
       });
     } else {
@@ -206,20 +203,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       try {
         testCode.run(fullTableName);
       } finally {
-        spark().sql("DROP TABLE IF EXISTS " + fullTableName);
+        sql("DROP TABLE IF EXISTS %s", fullTableName);
       }
     }
-  }
-
-  /**
-   * Helper method to create a new Delta table (defaults to EXTERNAL for backwards compatibility).
-   *
-   * @param tableName The simple table name (without catalog/schema prefix)
-   * @param tableSchema The table schema (e.g., "id INT, name STRING")
-   * @param testCode The test function that receives the full table name
-   */
-  protected void withNewTable(String tableName, String tableSchema, TestCode testCode) throws Exception {
-    withNewTable(tableName, tableSchema, TableType.EXTERNAL, testCode);
   }
 
   /**

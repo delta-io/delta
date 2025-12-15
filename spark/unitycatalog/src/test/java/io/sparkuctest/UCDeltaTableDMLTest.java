@@ -98,8 +98,6 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
     });
   }
 
-  // ========== UPDATE TESTS ==========
-
   @ParameterizedTest
   @MethodSource("allTableTypes")
   public void testUpdateOperations(TableType tableType) throws Exception {
@@ -160,8 +158,6 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
       ));
     });
   }
-
-  // ========== MERGE TESTS ==========
 
   @ParameterizedTest
   @MethodSource("allTableTypes")
@@ -254,7 +250,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
       // Perform merge with delete action
       withNewTable("merge_delete_source", "id INT, active BOOLEAN", tableType, sourceTable -> {
-        sql("INSERT INTO %s VALUES (2, false), (3, false), (5, true)", sourceTable);
+        sql("INSERT INTO %s VALUES (2, false), (3, true), (5, true)", sourceTable);
 
         sql("MERGE INTO %s AS target " +
             "USING %s AS source " +
@@ -264,11 +260,12 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
             "WHEN NOT MATCHED THEN INSERT (id, active) VALUES (source.id, source.active)", tableName, sourceTable);
       });
 
-      // Verify merge result - records 2 and 3 should be deleted
+      // Verify merge result - record 2 should be deleted, record 3 should be updated
       check(tableName, List.of(
-          List.of("1", "true"),
-          List.of("4", "true"),
-          List.of("5", "true")
+          List.of("1", "true"), // not in source, no change
+          List.of("3", "true"), // matched and updated from false to true
+          List.of("4", "true"), // not in source, no change
+          List.of("5", "true")  // not matched in target, inserted
       ));
     });
   }

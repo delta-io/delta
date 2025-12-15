@@ -93,7 +93,7 @@ public abstract class UnityCatalogSupport {
 
   /**
    * The URI of the Unity Catalog server.
-   * Available after setup() is called.
+   * Available after setupServer() is called.
    */
   protected static String getServerUri() {
     return "http://localhost:" + ucPort;
@@ -133,7 +133,7 @@ public abstract class UnityCatalogSupport {
    * the server is running when SharedSparkSession creates the SparkSession.
    */
   @BeforeAll
-  public static void setup() throws Exception {
+  public static void setupServer() throws Exception {
     // Create temporary directory for UC server data
     ucTempDir = Files.createTempDirectory("unity-catalog-test-").toFile();
     ucTempDir.deleteOnExit();
@@ -213,7 +213,7 @@ public abstract class UnityCatalogSupport {
    * Stops the Unity Catalog server after all tests.
    */
   @AfterAll
-  public static void tearDown() throws Exception {
+  public static void tearDownServer() throws Exception {
     if (ucServer != null) {
       ucServer.stop();
       logger.info("Unity Catalog server stopped");
