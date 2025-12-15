@@ -183,11 +183,14 @@ if __name__ == "__main__":
     clear_artifact_cache()
 
     if args.use_local:
+        # First publish delta-storage from root build (kernel depends on it)
+        with WorkingDirectory(project_root_dir):
+            run_cmd(["build/sbt", "storage/publishM2"], stream_output=True)
+        # Then publish kernel artifacts from nested kernel build
         with WorkingDirectory(path.join(project_root_dir, "kernel")):
             run_cmd(["../build/sbt",
                      "kernelApi/publishM2",
                      "kernelDefaults/publishM2",
-                     "storage/publishM2",
                      "kernelUnityCatalog/publishM2"], stream_output=True)
 
     golden_file_dir = path.join(

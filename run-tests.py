@@ -70,9 +70,13 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
 
     # Ensure kernel artifacts exist locally for spark-related groups
     if test_group in ["spark", "spark-python"]:
+        # First publish delta-storage from root build (kernel depends on it)
+        sbt_path = path.join(root_dir, path.join("build", "sbt"))
+        run_cmd([sbt_path, "+storage/publishM2"], stream_output=True)
+        # Then publish kernel artifacts from nested kernel build
         run_cmd([
             "bash", "-lc",
-            "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+storage/publishM2\" \"+kernelUnityCatalog/publishM2\""
+            "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+kernelUnityCatalog/publishM2\""
         ], stream_output=True)
 
     if coverage:

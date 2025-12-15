@@ -34,3 +34,6 @@ addSbtPlugin("com.etsy" % "sbt-checkstyle-plugin" % "3.1.1")
 // By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the
 // same version as Spark
 dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "8.43"
+
+// Code coverage plugin for test coverage reports
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.11")
