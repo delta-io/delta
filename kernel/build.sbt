@@ -167,6 +167,10 @@ lazy val kernelDefaults = (project in file("kernel-defaults"))
     Test / test := (Test / test).dependsOn(kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Test / packageBin).value,
     Test / envVars += ("DELTA_TESTING", "1"),
+    // Exclude Scala tests in standalone kernel build - they depend on delta-spark
+    // which is only available when kernel is built as part of the root Delta build.
+    // Integration tests (using Spark to set up test data) run from root build only.
+    Test / unmanagedSources / excludeFilter := "*.scala",
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
@@ -200,6 +204,9 @@ lazy val kernelUnityCatalog = (project in file("unitycatalog"))
     Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
     Test / test := (Test / test).dependsOn(kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+    // Exclude Scala tests in standalone kernel build - they depend on TestUtils
+    // from kernel-defaults which requires delta-spark (only available in root build).
+    Test / unmanagedSources / excludeFilter := "*.scala",
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       // Test dependencies
