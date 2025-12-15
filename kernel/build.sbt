@@ -70,6 +70,7 @@ lazy val kernelApiAssemblySettings = Seq(
   ),
   assembly / assemblyMergeStrategy := {
     case "module-info.class" => MergeStrategy.discard
+    case PathList("META-INF", "versions", "9", "module-info.class") => MergeStrategy.discard
     case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
     case x =>
       val oldStrategy = (assembly / assemblyMergeStrategy).value
