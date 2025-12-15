@@ -69,11 +69,8 @@ def prepare(root_dir, use_spark_master):
     for filepath in ivy_caches_to_clear:
         delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
-    # Publish kernel artifacts first so spark modules resolve kernel deps
-    run_cmd([
-        "bash", "-lc",
-        "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+storage/publishM2\" \"+kernelUnityCatalog/publishM2\""
-    ], stream_output=True)
+    # Kernel artifacts are fetched from Maven Central (released version 4.0.0)
+    # No local kernel publish needed
 
     sbt_command = [sbt_path]
     packages = ["spark/publishM2", "storage/publishM2"]

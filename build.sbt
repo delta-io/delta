@@ -96,6 +96,8 @@ lazy val commonSettings = Seq(
   scalaVersion := default_scala_version.value,
   crossScalaVersions := all_scala_versions,
   fork := true,
+  // Enable local Maven repository for kernel SNAPSHOT dependencies
+  resolvers += Resolver.mavenLocal,
   scalacOptions ++= Seq("-Ywarn-unused:imports"),
   javacOptions ++= {
     if (javaVersion.startsWith("1.8")) {
@@ -471,6 +473,7 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 // ============================================================
 lazy val sparkV2 = (project in file("kernel-spark"))
   .dependsOn(sparkV1Filtered)
+  .dependsOn(storage)  // Use local storage project, not external artifact
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-spark-v2",
@@ -483,8 +486,8 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "io.delta" % "delta-kernel-api" % kernelVersion.value,
-      "io.delta" % "delta-kernel-defaults" % kernelVersion.value,
-      "io.delta" % "delta-storage" % kernelVersion.value
+      "io.delta" % "delta-kernel-defaults" % kernelVersion.value
+      // delta-storage provided via dependsOn(storage) above
     ),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",

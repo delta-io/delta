@@ -10,8 +10,6 @@ jobs:
         scala: [2.13.16]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
-      # Use local kernel version (in case Python tests trigger SBT builds)
-      KERNEL_VERSION: "0.1.0-SNAPSHOT"
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4

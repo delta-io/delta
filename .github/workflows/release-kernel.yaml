@@ -66,7 +66,6 @@ jobs:
           cd kernel && ./build/sbt \
             kernelApi/test \
             kernelDefaults/test \
-            storage/test \
             kernelUnityCatalog/test
 
       - name: Verify artifacts build
@@ -74,7 +73,6 @@ jobs:
           cd kernel && ./build/sbt \
             kernelApi/package \
             kernelDefaults/package \
-            storage/package \
             kernelUnityCatalog/package
           echo "::notice::Artifacts built successfully"
 
@@ -111,7 +109,6 @@ jobs:
           cd kernel && ./build/sbt \
             kernelApi/publishSigned \
             kernelDefaults/publishSigned \
-            storage/publishSigned \
             kernelUnityCatalog/publishSigned \
             sonatypeBundleRelease
         env:
