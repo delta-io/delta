@@ -192,7 +192,7 @@ public class Utils {
    */
   public static <T> CloseableIterator<T> flatten(
       CloseableIterator<CloseableIterator<T>> nestedIterator) {
-    return new CloseableIterator<>() {
+    return new CloseableIterator<T>() {
       private CloseableIterator<T> currentInnerIterator = null;
 
       @Override

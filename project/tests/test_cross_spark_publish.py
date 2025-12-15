@@ -96,6 +96,7 @@ class CrossSparkPublishTest:
     def __init__(self, delta_root: Path):
         self.delta_root = delta_root
         self.delta_version = self._get_delta_version()
+        self.kernel_version = self._get_kernel_version()
         self.scala_version = "2.13"
 
     def _get_delta_version(self) -> str:
@@ -105,6 +106,15 @@ class CrossSparkPublishTest:
                 if 'version :=' in line:
                     return line.split('"')[1]
         sys.exit("Error: Could not parse version from version.sbt")
+
+    def _get_kernel_version(self) -> str:
+        """Reads Kernel version from kernel-version.sbt."""
+        with open(self.delta_root / "kernel-version.sbt", 'r') as f:
+            for line in f:
+                if 'kernelVersion :=' in line:
+                    return line.split('"')[1]
+        # Fallback to delta version if not found
+        return self.delta_version
 
     def clean_maven_cache(self) -> None:
         """Clears Maven local cache for io.delta artifacts."""
@@ -127,11 +137,12 @@ class CrossSparkPublishTest:
             return set()
 
         found_jars = set()
-        for version_dir in m2_repo.rglob(self.delta_version):
-            for jar_file in version_dir.glob("*.jar"):
-                # Exclude test/source/javadoc JARs
-                if not any(x in jar_file.name for x in ["-tests", "-sources", "-javadoc"]):
-                    found_jars.add(jar_file.name)
+        for version in {self.delta_version, self.kernel_version}:
+            for version_dir in m2_repo.rglob(version):
+                for jar_file in version_dir.glob("*.jar"):
+                    # Exclude test/source/javadoc JARs
+                    if not any(x in jar_file.name for x in ["-tests", "-sources", "-javadoc"]):
+                        found_jars.add(jar_file.name)
 
         return found_jars
 
@@ -188,13 +199,21 @@ class CrossSparkPublishTest:
 
         self.clean_maven_cache()
 
+        # Publish Kernel artifacts first so Spark build can resolve them
+        if not self.run_sbt_command(
+            "Running: ../build/sbt +kernelApi/publishM2 +kernelDefaults/publishM2 +storage/publishM2 +kernelUnityCatalog/publishM2",
+            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+storage/publishM2\" \"+kernelUnityCatalog/publishM2\""]
+        ):
+            return False
+
         if not self.run_sbt_command(
             "Running: build/sbt publishM2",
             ["build/sbt", "publishM2"]
         ):
             return False
 
-        expected = substitute_xversion(spark_spec.all_jars, self.delta_version)
+        expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version) | substitute_xversion(
+            spark_spec.non_spark_related_jars, self.kernel_version)
         return self.validate_jars(expected, "Default publishM2")
 
     def test_run_only_for_spark_modules(self) -> bool:
@@ -207,6 +226,12 @@ class CrossSparkPublishTest:
         print("="*70)
 
         self.clean_maven_cache()
+
+        if not self.run_sbt_command(
+            "Running: ../build/sbt +kernelApi/publishM2 +kernelDefaults/publishM2 +storage/publishM2 +kernelUnityCatalog/publishM2",
+            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+storage/publishM2\" \"+kernelUnityCatalog/publishM2\""]
+        ):
+            return False
 
         if not self.run_sbt_command(
             f"Running: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\"",
@@ -229,6 +254,12 @@ class CrossSparkPublishTest:
 
         # Step 1: Publish all modules for default Spark version
         if not self.run_sbt_command(
+            "Step 0: publish kernel artifacts",
+            ["bash", "-lc", "cd kernel && ../build/sbt \"+kernelApi/publishM2\" \"+kernelDefaults/publishM2\" \"+storage/publishM2\" \"+kernelUnityCatalog/publishM2\""]
+        ):
+            return False
+
+        if not self.run_sbt_command(
             f"Step 1: build/sbt publishM2 (Spark {DEFAULT_SPARK} - all modules)",
             ["build/sbt", "publishM2"]
         ):
@@ -249,7 +280,7 @@ class CrossSparkPublishTest:
         expected = set()
         for spark_spec in SPARK_VERSIONS.values():
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
-        expected.update(substitute_xversion(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.delta_version))
+        expected.update(substitute_xversion(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.kernel_version))
 
         return self.validate_jars(expected, "Cross-Spark Workflow")
 
