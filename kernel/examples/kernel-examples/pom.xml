@@ -28,6 +28,7 @@ limitations under the License.-->
         <maven.compiler.target>1.8</maven.compiler.target>
         <staging.repo.url>""</staging.repo.url>
         <delta-kernel.version>3.2.0-SNAPSHOT</delta-kernel.version>
+        <delta-storage.version>4.0.0</delta-storage.version>
         <hadoop.version>3.3.1</hadoop.version>
     </properties>
 
@@ -54,7 +55,7 @@ limitations under the License.-->
         <dependency>
             <groupId>io.delta</groupId>
             <artifactId>delta-storage</artifactId>
-            <version>${delta-kernel.version}</version>
+            <version>${delta-storage.version}</version>
         </dependency>
 
         <dependency>
