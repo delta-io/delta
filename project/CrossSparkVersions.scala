@@ -197,7 +197,7 @@ import Unidoc._
  *
  * @param fullVersion The full Spark version (e.g., "3.5.7", "4.0.2-SNAPSHOT")
  * @param targetJvm Target JVM version (e.g., "11", "17")
- * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "spark-3.5")
+ * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
  */
@@ -370,10 +370,8 @@ object CrossSparkVersions extends AutoPlugin {
 
     val additionalSourceDirSettings = spec.additionalSourceDir.map { dir =>
       Seq(
-        Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / s"scala-$dir",
-        Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / s"java-$dir",
-        Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / s"scala-$dir",
-        Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / s"java-$dir"
+        Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / dir,
+        Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / dir
       )
     }.getOrElse(Seq.empty)
 
