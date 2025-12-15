@@ -76,8 +76,7 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
     val configs = Seq(
       s"spark.sql.catalog.$catalogName" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogName.uri" -> uri,
-      s"spark.sql.catalog.$catalogName.auth.type" -> "static",
-      s"spark.sql.catalog.$catalogName.auth.token" -> token)
+      s"spark.sql.catalog.$catalogName.token" -> token)
     val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
 
     try {
@@ -197,13 +196,11 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       // catalogGamma config (should NOT be used)
       s"spark.sql.catalog.$catalogGamma" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogGamma.uri" -> ucUriGamma,
-      s"spark.sql.catalog.$catalogGamma.auth.type" -> "static",
-      s"spark.sql.catalog.$catalogGamma.auth.token" -> ucTokenGamma,
+      s"spark.sql.catalog.$catalogGamma.token" -> ucUriGamma,
       // catalogBeta config (should be used)
       s"spark.sql.catalog.$catalogBeta" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogBeta.uri" -> ucUriBeta,
-      s"spark.sql.catalog.$catalogBeta.auth.type" -> "static",
-      s"spark.sql.catalog.$catalogBeta.auth.token" -> ucTokenBeta)
+      s"spark.sql.catalog.$catalogBeta.token" -> ucTokenBeta)
     val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
 
     try {

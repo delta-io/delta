@@ -42,9 +42,8 @@ class UCTableInfoTest {
     assertEquals(tablePath, info.getTablePath(), "Table path should be stored correctly");
     assertEquals(ucUri, info.getUcUri(), "UC URI should be stored correctly");
 
-    Map<String, String> returnedConfig = info.getAuthConfig();
-    assertEquals("static", returnedConfig.get("type"), "Type should be static");
-    assertEquals(
-        ucToken, returnedConfig.get("token"), "UC token should be stored correctly in configMap");
+    Map<String, String> ret = info.getAuthConfig();
+    assertEquals("static", ret.get("type"), "Type should be static");
+    assertEquals(ucToken, ret.get("token"), "UC token should be stored correctly in configMap");
   }
 }
