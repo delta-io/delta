@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.connector.catalog;
+package org.apache.spark.sql.connector.catalog
 
-public interface SupportsV1OverwriteWithSaveAsTable extends TableProvider {
-  String OPTION_NAME = "__v1_save_as_table_overwrite";
+trait SupportsV1OverwriteWithSaveAsTable extends TableProvider {
+  def addV1OverwriteWithSaveAsTableOption(): Boolean = true
+}
 
-  default boolean addV1OverwriteWithSaveAsTableOption() {
-    return true;
-  }
+object SupportsV1OverwriteWithSaveAsTable {
+  val OPTION_NAME: String = "__v1_save_as_table_overwrite"
 }
