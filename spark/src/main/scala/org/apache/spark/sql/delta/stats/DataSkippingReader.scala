@@ -958,6 +958,7 @@ trait DataSkippingReaderBase
           // Create an expression that returns true if a file must be read because it has mismatched
           // min-max values or partial nulls on any of the referenced columns.
           val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
+          val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
           val statsCols = referencedStats.flatMap(_.referencedStatsCols) + numRecordsStatsCol
           val mustScanFileExpression = referencedStats.map { resolvedReference =>
             fileMustBeScanned(resolvedReference, numRecordsColOpt)
