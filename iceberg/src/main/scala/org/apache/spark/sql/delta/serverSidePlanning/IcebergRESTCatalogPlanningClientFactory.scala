@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,18 +23,13 @@ import org.apache.spark.sql.SparkSession
  * Lives in the iceberg module alongside the implementation.
  */
 class IcebergRESTCatalogPlanningClientFactory extends ServerSidePlanningClientFactory {
-  override def buildForCatalog(
+  override def buildClient(
       spark: SparkSession,
-      catalogName: String): ServerSidePlanningClient = {
-    val catalogUri = spark.conf.get(s"spark.sql.catalog.$catalogName.uri", "")
-    val token = spark.conf.get(s"spark.sql.catalog.$catalogName.token", "")
+      metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
 
-    if (catalogUri.isEmpty) {
-      throw new IllegalStateException(
-        s"Catalog URI not configured for catalog '$catalogName'. " +
-        s"Please set spark.sql.catalog.$catalogName.uri")
-    }
+    val endpointUri = metadata.planningEndpointUri
+    val token = metadata.authToken.getOrElse("")
 
-    new IcebergRESTCatalogPlanningClient(catalogUri, token)
+    new IcebergRESTCatalogPlanningClient(endpointUri, token)
   }
 }
