@@ -22,12 +22,16 @@ val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val jacksonVersion = "2.13.5"
 
+val scala213 = "2.13.16"
+
 // Common settings for all kernel modules
 lazy val commonSettings = Seq(
   organization := "io.delta",
   // Java-only modules - no Scala version suffix in artifact names
   crossPaths := false,
   autoScalaLibrary := false,
+  scalaVersion := scala213,
+  crossScalaVersions := Seq(scala213),
   // Target Java 8 for compatibility
   javacOptions ++= Seq("-source", "8", "-target", "8", "-Xlint:all"),
   // Publishing settings
@@ -133,6 +137,9 @@ lazy val kernelApi = (project in file("kernel-api"))
       "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
       "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
+      // JMH for benchmarks in tests
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
     ),
   )
 
