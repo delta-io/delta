@@ -49,13 +49,13 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
   }
 
-  private static SparkSession sparkSession;
+  private SparkSession sparkSession;
 
   /**
    * Create the SparkSession before all tests.
    */
   @BeforeAll
-  public static void setUpSpark() {
+  public void setUpSpark() {
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
     
@@ -82,7 +82,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * Stop the SparkSession after all tests.
    */
   @AfterAll
-  public static void tearDownSpark() {
+  public void tearDownSpark() {
     if (sparkSession != null) {
       sparkSession.stop();
       sparkSession = null;
