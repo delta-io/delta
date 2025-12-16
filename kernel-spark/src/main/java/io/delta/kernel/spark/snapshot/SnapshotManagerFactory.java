@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.spark.snapshot;
 
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.spark.snapshot.unitycatalog.UCManagedTableSnapshotManager;
 import io.delta.kernel.spark.snapshot.unitycatalog.UCTableInfo;
@@ -24,7 +23,6 @@ import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import java.util.Optional;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -49,30 +47,29 @@ public final class SnapshotManagerFactory {
    * Creates a snapshot manager for the given table.
    *
    * @param tablePath the filesystem path to the Delta table
-   * @param hadoopConf the Hadoop configuration for table operations
+   * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
    * @param catalogTable optional Spark catalog table metadata
    * @return a {@link DeltaSnapshotManager} appropriate for the table type
    */
   public static DeltaSnapshotManager create(
-      String tablePath, Configuration hadoopConf, Optional<CatalogTable> catalogTable) {
+      String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
 
     if (catalogTable.isPresent()) {
       Optional<UCTableInfo> ucTableInfo =
           UCUtils.extractTableInfo(catalogTable.get(), SparkSession.active());
       if (ucTableInfo.isPresent()) {
-        return createUCManagedSnapshotManager(ucTableInfo.get(), hadoopConf);
+        return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
       }
     }
 
     // Default: path-based snapshot manager for non-UC tables
-    return new PathBasedSnapshotManager(tablePath, hadoopConf);
+    return new PathBasedSnapshotManager(tablePath, kernelEngine);
   }
 
   private static UCManagedTableSnapshotManager createUCManagedSnapshotManager(
-      UCTableInfo tableInfo, Configuration hadoopConf) {
+      UCTableInfo tableInfo, Engine kernelEngine) {
     UCClient ucClient = new UCTokenBasedRestClient(tableInfo.getUcUri(), tableInfo.getUcToken());
     UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
-    Engine engine = DefaultEngine.create(hadoopConf);
-    return new UCManagedTableSnapshotManager(ucCatalogClient, tableInfo, engine);
+    return new UCManagedTableSnapshotManager(ucCatalogClient, tableInfo, kernelEngine);
   }
 }

@@ -19,6 +19,8 @@ import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.spark.snapshot.SnapshotManagerFactory;
@@ -51,8 +53,6 @@ public class SparkTable implements Table, SupportsRead {
   private final DeltaSnapshotManager snapshotManager;
   /** Snapshot created during connector setup */
   private final Snapshot initialSnapshot;
-
-  private final Configuration hadoopConf;
 
   private final SchemaProvider schemaProvider;
   private final Optional<CatalogTable> catalogTable;
@@ -135,9 +135,10 @@ public class SparkTable implements Table, SupportsRead {
     merged.putAll(userOptions);
     this.options = Collections.unmodifiableMap(merged);
 
-    this.hadoopConf =
+    Configuration hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.snapshotManager = SnapshotManagerFactory.create(tablePath, hadoopConf, catalogTable);
+    Engine kernelEngine = DefaultEngine.create(hadoopConf);
+    this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 
