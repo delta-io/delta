@@ -27,6 +27,7 @@ import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{LongType, StructField, StructType}
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
 import shadedForDelta.org.apache.iceberg.expressions.Binder
@@ -313,4 +314,40 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       .mode("append")
       .save(tableName)
   }
+
+  test("projection sent to IRC server over HTTP") {
+    withTempTable("projectionTest") { table =>
+      // Create test data with SQL
+      val tableName = s"rest_catalog.${defaultNamespace}.projectionTest"
+      sql(s"""
+        INSERT INTO $tableName (id, name)
+        VALUES (1, 'alice'), (2, 'bob')
+      """)
+
+      server.clearCaptured()
+
+      // Call client with projection (only select "id" column)
+      val projection = StructType(Seq(
+        StructField("id", LongType)
+      ))
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        client.planScan(defaultNamespace.toString, "projectionTest", projection = Some(projection))
+
+        // Verify server captured the projection
+        val capturedProjection = server.getCapturedProjection
+        assert(capturedProjection != null, "Server should have captured projection")
+
+        // Verify it contains only "id" field (as List[String])
+        val fieldNames = capturedProjection.asScala.toSet
+        assert(fieldNames == Set("id"),
+          s"Expected projection with {id}, got: $fieldNames")
+      } finally {
+        client.close()
+        server.clearCaptured()
+      }
+    }
+  }
+
 }
