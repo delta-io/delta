@@ -165,12 +165,11 @@ class IcebergRESTCatalogPlanningClient(
       }
     }
 
-    // Convert Spark StructType to Iceberg Schema and add to request if projection is present.
+    // Extract column names from projection and add to request if projection is present.
     // This enables the server to optimize file listing for large tables with many columns.
     projection.foreach { sparkSchema =>
-      SparkToIcebergSchemaConverter.convert(sparkSchema).foreach { icebergSchema =>
-        builder.withProjectedSchema(icebergSchema)
-      }
+      val columnNames = sparkSchema.fieldNames.toSeq.asJava
+      builder.withSelect(columnNames)
     }
 
     val request = builder.build()
