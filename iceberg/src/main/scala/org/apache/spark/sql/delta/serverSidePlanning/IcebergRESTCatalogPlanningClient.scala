@@ -30,6 +30,7 @@ import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 import shadedForDelta.org.apache.iceberg.PartitionSpec
 import shadedForDelta.org.apache.iceberg.rest.requests.{PlanTableScanRequest, PlanTableScanRequestParser}
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
@@ -62,7 +63,8 @@ class IcebergRESTCatalogPlanningClient(
   private val httpHeaders = {
     val baseHeaders = Map(
       HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
-      HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType
+      HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType,
+      HttpHeaders.USER_AGENT -> buildUserAgent()
     )
     // Add Bearer token authentication if token is provided
     val headersWithAuth = if (token != null && token.nonEmpty) {
@@ -71,6 +73,66 @@ class IcebergRESTCatalogPlanningClient(
       baseHeaders
     }
     headersWithAuth.map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
+  }
+
+  /**
+   * Build User-Agent header with Delta and Spark version information.
+   * Format: "Delta-Lake/<version> Apache-Spark/<version>"
+   */
+  private def buildUserAgent(): String = {
+    val deltaVersion = getDeltaVersion().getOrElse("unknown")
+    val sparkVersion = getSparkVersion().getOrElse("unknown")
+    s"Delta-Lake/$deltaVersion Apache-Spark/$sparkVersion"
+  }
+
+  /**
+   * Get Spark version. Returns None if Spark version cannot be determined.
+   */
+  private def getSparkVersion(): Option[String] = {
+    try {
+      val packageClass = Utils.classForName("org.apache.spark.package$")
+      val moduleField = packageClass.getField("MODULE$")
+      val moduleObj = moduleField.get(null)
+      val versionObj = packageClass.getMethod("SPARK_VERSION").invoke(moduleObj)
+      if (versionObj != null) {
+        Some(versionObj.toString)
+      } else {
+        None
+      }
+    } catch {
+      case _: Exception => None
+    }
+  }
+
+  /**
+   * Get Delta version. Returns None if Delta is not available or version cannot be determined.
+   */
+  private def getDeltaVersion(): Option[String] = {
+    // Try io.delta.Version.getVersion() first (preferred method)
+    try {
+      val versionClass = Utils.classForName("io.delta.Version")
+      val versionObj = versionClass.getMethod("getVersion").invoke(null)
+      if (versionObj != null) {
+        return Some(versionObj.toString)
+      }
+    } catch {
+      case _: Exception => // Fall through to fallback
+    }
+
+    // Fall back to io.delta.VERSION constant
+    try {
+      val packageClass = Utils.classForName("io.delta.package$")
+      val moduleField = packageClass.getField("MODULE$")
+      val moduleObj = moduleField.get(null)
+      val versionObj = packageClass.getMethod("VERSION").invoke(moduleObj)
+      if (versionObj != null) {
+        return Some(versionObj.toString)
+      }
+    } catch {
+      case _: Exception => // Delta not available or version not accessible
+    }
+
+    None
   }
 
   private lazy val httpClient = HttpClientBuilder.create()
@@ -189,10 +251,8 @@ class IcebergRESTCatalogPlanningClient(
 
     // Use reflection to access the private fromJson method in the Iceberg parser class.
     // The method is not part of the public API, so we need reflection and setAccessible.
-    // scalastyle:off classforname
-    val parserClass = Class.forName(
+    val parserClass = Utils.classForName(
       "shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponseParser")
-    // scalastyle:on classforname
 
     val fromJsonMethod: Method = parserClass.getDeclaredMethod(
       "fromJson",
