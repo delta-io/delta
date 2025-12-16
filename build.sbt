@@ -230,7 +230,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
         // Create a symlink for the log4j properties
         val confDir = distributionDir / "conf"
         IO.createDirectory(confDir)
-        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2.properties"
+        val log4jProps = (sparkV1 / Test / resourceDirectory).value / "log4j2.properties"
         val linkedLog4jProps = confDir / "log4j2.properties"
         if (!java.nio.file.Files.exists(linkedLog4jProps.toPath)) {
           Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
