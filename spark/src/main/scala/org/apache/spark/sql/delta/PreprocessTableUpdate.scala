@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.delta.util.Utils.isAllowedSubqueryPattern
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -40,7 +41,7 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: DeltaUpdateTable if u.resolved =>
       u.condition.foreach { cond =>
-        if (SubqueryExpression.hasSubquery(cond)) {
+        if (SubqueryExpression.hasSubquery(cond) && isAllowedSubqueryPattern(cond)) {
           throw DeltaErrors.subqueryNotSupportedException("UPDATE", cond)
         }
       }

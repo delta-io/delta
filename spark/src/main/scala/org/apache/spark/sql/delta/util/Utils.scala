@@ -28,6 +28,9 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.ElementAt
 
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+
 /**
  * Various utility methods used by Delta.
  */
@@ -84,5 +87,44 @@ object Utils {
    */
   def try_element_at(mapColumn: Column, key: Any): Column = {
     functions.try_element_at(mapColumn, functions.lit(key))
+  }
+
+  /**
+   * Subquery allowed patterns identifier helper methods
+   */
+
+  /**
+   * Check for the allowed subquery pattern for UPDATE command
+   */
+  def isAllowedSubqueryPattern(expr: Expression): Boolean = expr match {
+    case exists: Exists =>
+      !hasNestedSubquery(exists.plan)
+
+    case scalar: ScalarSubquery =>
+      !hasNestedSubquery(scalar.plan)
+
+    case InSubquery(_, ListQuery(plan, _, _, _, _, _)) =>
+      !hasNestedSubquery(plan)
+
+    case Not(InSubquery(_, ListQuery(plan, _, _, _, _, _))) =>
+      !hasNestedSubquery(plan)
+
+    case _ => false
+  }
+
+
+  /**
+   * Checks whether a query has nested subqueries, if not then return 'true else return 'false'
+   */
+  def hasNestedSubquery(plan: LogicalPlan): Boolean = {
+    // Check if any plan node contains an expression that itself contains a SubqueryExpression
+    plan.exists { planNode =>
+      planNode.expressions.exists { expr =>
+        expr.exists {
+          case _: SubqueryExpression => true
+          case _ => false
+        }
+      }
+    }
   }
 }
