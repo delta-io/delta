@@ -16,20 +16,16 @@
 
 package io.delta.kernel.unitycatalog;
 
-import static io.delta.kernel.commit.CatalogCommitterUtils.METASTORE_LAST_COMMIT_TIMESTAMP;
-import static io.delta.kernel.commit.CatalogCommitterUtils.METASTORE_LAST_UPDATE_VERSION;
+import static io.delta.kernel.commit.CatalogCommitterUtils.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.delta.kernel.commit.CatalogCommitterUtils;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StructType;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -74,8 +70,7 @@ public class UnityCatalogUtils {
     properties.putAll(postCreateSnapshot.getTableProperties());
 
     // Case 2: Protocol-derived properties
-    properties.putAll(
-        CatalogCommitterUtils.extractProtocolProperties(postCreateSnapshot.getProtocol()));
+    properties.putAll(extractProtocolProperties(postCreateSnapshot.getProtocol()));
 
     // Case 3: UC-specific properties
     properties.put(METASTORE_LAST_UPDATE_VERSION, String.valueOf(postCreateSnapshot.getVersion()));
@@ -83,55 +78,55 @@ public class UnityCatalogUtils {
         METASTORE_LAST_COMMIT_TIMESTAMP, String.valueOf(postCreateSnapshot.getTimestamp(engine)));
 
     // Case 4: Clustering properties if present
-    postCreateSnapshot
-        .getDomainMetadata(ClusteringMetadataDomain.DOMAIN_NAME)
-        .ifPresent(
-            clusteringConfig ->
-                properties.putAll(
-                    generateClusteringProperties(
-                        postCreateSnapshot.getSchema(), clusteringConfig)));
+    properties.putAll(extractClusteringProperties(postCreateSnapshot));
 
     return properties;
   }
 
   /**
-   * Generate clustering properties from the clustering domain metadata.
+   * Extract clustering properties from the snapshot.
    *
-   * <p>This converts physical clustering column names to logical column names and serializes them
-   * as a JSON array of arrays for the "clusteringColumns" property.
+   * <p>Converts physical clustering columns to logical column names and serializes them as a JSON
+   * array of arrays for the "clusteringColumns" property.
    *
-   * <p>Example: Top-level column "id" and nested column "address.city" will be serialized as
-   * "[["id"], ["address", "city"]]".
+   * <p>Examples:
    *
-   * @param schema the table schema
-   * @param clusteringConfiguration the clustering domain metadata configuration JSON
-   * @return a map containing the "clusteringColumns" property
+   * <ul>
+   *   <li>Not clustered: returns empty map (no "clusteringColumns" property)
+   *   <li>Clustered with empty list: returns {"clusteringColumns": "[]"}
+   *   <li>Clustered with columns: physical column "col-abcd-1234" maps to nested logical column
+   *       "address.city" and is serialized as {"clusteringColumns": "[["address", "city"]]"}
+   * </ul>
+   *
+   * @return clustering properties if present, otherwise empty map
    */
-  private static Map<String, String> generateClusteringProperties(
-      StructType schema, String clusteringConfiguration) {
-    try {
-      final ClusteringMetadataDomain clusteringDomain =
-          ClusteringMetadataDomain.fromJsonConfiguration(clusteringConfiguration);
+  private static Map<String, String> extractClusteringProperties(SnapshotImpl snapshot) {
+    return snapshot
+        .getPhysicalClusteringColumns()
+        .map(
+            physicalClusteringCols -> {
+              // Convert physical to logical column names
+              final List<List<String>> logicalClusteringCols =
+                  physicalClusteringCols.stream()
+                      .map(
+                          physicalCol -> {
+                            final Tuple2<Column, DataType> logicalColumnAndType =
+                                ColumnMapping.getLogicalColumnNameAndDataType(
+                                    snapshot.getSchema(), physicalCol);
+                            final Column logicalColumn = logicalColumnAndType._1;
+                            return Arrays.asList(logicalColumn.getNames());
+                          })
+                      .collect(Collectors.toList());
 
-      final List<Column> physicalClusteringCols = clusteringDomain.getClusteringColumns();
-
-      final List<List<String>> logicalClusteringCols =
-          physicalClusteringCols.stream()
-              .map(
-                  physicalCol -> {
-                    Tuple2<Column, DataType> logicalColumnAndType =
-                        ColumnMapping.getLogicalColumnNameAndDataType(schema, physicalCol);
-                    Column logicalColumn = logicalColumnAndType._1;
-                    // Return column names as nested lists (e.g., List("a", "b") for a.b)
-                    return Arrays.asList(logicalColumn.getNames());
-                  })
-              .collect(Collectors.toList());
-
-      final String clusteringColumnsJson = OBJECT_MAPPER.writeValueAsString(logicalClusteringCols);
-
-      return Map.of(UC_PROP_CLUSTERING_COLUMNS, clusteringColumnsJson);
-    } catch (JsonProcessingException ex) {
-      throw new RuntimeException("Failed to generate clustering properties", ex);
-    }
+              // Serialize to JSON
+              try {
+                final String clusteringColumnsJson =
+                    OBJECT_MAPPER.writeValueAsString(logicalClusteringCols);
+                return Map.of(UC_PROP_CLUSTERING_COLUMNS, clusteringColumnsJson);
+              } catch (JsonProcessingException ex) {
+                throw new RuntimeException("Failed to serialize clustering columns to JSON", ex);
+              }
+            })
+        .orElse(Map.of());
   }
 }

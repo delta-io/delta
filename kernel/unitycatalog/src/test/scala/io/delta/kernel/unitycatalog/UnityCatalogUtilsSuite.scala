@@ -64,7 +64,11 @@ class UnityCatalogUtilsSuite
 
       val snapshot = ucCatalogManagedClient
         .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
-        .withTableProperties(Map("foo" -> "bar", "delta.enableRowTracking" -> "true").asJava)
+        .withTableProperties(
+          Map(
+            "foo" -> "bar",
+            "delta.enableRowTracking" -> "true",
+            "delta.columnMapping.mode" -> "name").asJava)
         .withDataLayoutSpec(DataLayoutSpec.clustered(clusteringColumns.asJava))
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable())
@@ -84,19 +88,21 @@ class UnityCatalogUtilsSuite
         // Case 1: Table properties from metadata.configuration
         "foo" -> "bar",
         "delta.enableRowTracking" -> "true",
+        "delta.columnMapping.mode" -> "name",
 
         // Case 2: Protocol-derived properties
         "delta.minReaderVersion" -> "3",
         "delta.minWriterVersion" -> "7",
         "delta.feature.catalogManaged" -> "supported",
         "delta.feature.rowTracking" -> "supported",
+        "delta.feature.columnMapping" -> "supported",
         "delta.feature.inCommitTimestamp" -> "supported",
 
         // Case 3: UC metastore properties
         "delta.lastUpdateVersion" -> "0",
         "delta.lastCommitTimestamp" -> s"$snapshotTimestamp",
 
-        // Case 4: Clustering properties
+        // Case 4: Clustering properties - these should be the LOGICAL names not the PHYSICAL names
         "clusteringColumns" -> """[["id"],["address","city"]]""")
 
       val failures = expectedProps.collect {
@@ -105,6 +111,26 @@ class UnityCatalogUtilsSuite
       }
 
       assert(failures.isEmpty, failures.mkString("Property mismatches:\n", "\n", ""))
+    }
+  }
+
+  test("getPropertiesForCreate: clustered table with empty clustering columns") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+
+      val snapshot = ucCatalogManagedClient
+        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
+        .withDataLayoutSpec(DataLayoutSpec.clustered(List.empty.asJava))
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+        .getPostCommitSnapshot
+        .get()
+        .asInstanceOf[SnapshotImpl]
+
+      val props = UnityCatalogUtils.getPropertiesForCreate(engine, snapshot).asScala
+      assert(props("clusteringColumns") == "[]")
     }
   }
 }
