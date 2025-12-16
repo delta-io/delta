@@ -163,6 +163,86 @@ trait UpdateSQLTests extends UpdateSQLMixin {
           "object")))
     }
   }
+
+  test("Simple IN subquery allowed via temp view") {
+    withTable("target") {
+      withTable("source") {
+        withTempView("t") {
+          Seq((1, "a"), (2, "b")).toDF("key", "val")
+            .write.format("delta").saveAsTable("target")
+          Seq((2)).toDF("key").write.format("delta").saveAsTable("source")
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+          sql("UPDATE t SET val = 'update' WHERE key IN (SELECT key FROM source)")
+          checkAnswer(sql("SELECT * FROM target ORDER BY key"),
+            Seq(Row(1, "a"), Row(2, "update")))
+        }
+      }
+    }
+  }
+
+  test("Simple IN correlated subquery allowed via temp view") {
+    withTable("target") {
+      withTable("source") {
+        withTempView("t") {
+          Seq((1, "a"), (2, "b"), (3, "c")).toDF("key", "val")
+            .write.format("delta").saveAsTable("target")
+          Seq(2, 3).toDF("key").write.format("delta").saveAsTable("source")
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+          sql("UPDATE t SET val = 'update' WHERE key IN" +
+            " (SELECT key FROM source where t.key = source.key)")
+          checkAnswer(sql("SELECT * FROM target ORDER BY key"),
+            Seq(Row(1, "a"), Row(2, "update"), Row(3, "update")))
+        }
+      }
+    }
+  }
+
+  test("EXISTS subquery with correlated allowed via temp view") {
+    withTable("target") {
+      withTable("source") {
+        withTempView("t") {
+          Seq((1, 10, "a"), (2, 20, "b"), (3, 30, "c")).toDF("key", "val_i", "val")
+            .write.format("delta").saveAsTable("target")
+          Seq(2, 1).toDF("key").write.format("delta").saveAsTable("source")
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+          sql("UPDATE t SET val = 'update' WHERE EXISTS (" +
+            "SELECT 1 FROM source WHERE t.key = source.key)")
+          checkAnswer(sql("SELECT * FROM target ORDER BY key"),
+            Seq(Row(1, 10, "update"), Row(2, 20, "update"), Row(3, 30, "c")))
+        }
+      }
+    }
+  }
+
+  test("Scalar subquery in condition allowed via temp view") {
+    withTable("target") {
+      withTable("source") {
+        withTempView("t") {
+          Seq((1, "a"), (2, "b")).toDF("key", "val").write.format("delta").saveAsTable("target")
+          Seq(2, 3).toDF("key").write.format("delta").saveAsTable("source")
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+          sql("UPDATE t SET val = 'update' WHERE key < (SELECT min(key) FROM source)")
+          checkAnswer(sql("SELECT * FROM target ORDER BY key"),
+            Seq(Row(1, "update"), Row(2, "b")))
+        }
+      }
+    }
+  }
+
+  test("Simple NOT IN subquery allowed via temp view") {
+    withTable("target") {
+      withTable("source") {
+        withTempView("t") {
+          Seq(("X"), ("Y"), ("Z")).toDF("category").write.format("delta").saveAsTable("target")
+          Seq(("Y")).toDF("category").write.format("delta").saveAsTable("source")
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+          sql("UPDATE t SET category = 'unset' WHERE category NOT IN (SELECT category FROM source)")
+          checkAnswer(sql("SELECT * FROM target ORDER BY category"),
+            Seq(Row("Y"), Row("unset"), Row("unset")))
+        }
+      }
+    }
+  }
 }
 
 trait UpdateSQLWithDeletionVectorsMixin extends UpdateSQLMixin
