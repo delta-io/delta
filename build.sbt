@@ -288,7 +288,9 @@ lazy val connectServer = (project in file("spark-connect/server"))
       ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
     // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1")
+    Test / envVars += ("DELTA_TESTING", "1"),
+    // Force Spark to bind to localhost to avoid network issues
+    Test / envVars += ("SPARK_LOCAL_IP", "127.0.0.1")
   )
 
 lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
