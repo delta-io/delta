@@ -21,6 +21,8 @@ import subprocess
 import shutil
 from os import path
 
+# Update this when we upgrade the default to a new released version
+DEFAULT_SPARK = "4.0.1"
 
 def test(root_dir, code_dir, packages):
     # Test the codes in the code_dir directory using its "tests" subdirectory,
@@ -57,7 +59,7 @@ def delete_if_exists(path):
         print("Deleted %s " % path)
 
 
-def prepare(root_dir, use_spark_master):
+def prepare(root_dir, spark_version):
     print("##### Preparing python tests & building packages #####")
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
@@ -71,19 +73,24 @@ def prepare(root_dir, use_spark_master):
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
     packages = ["spark/publishM2", "storage/publishM2"]
-    if use_spark_master:
-        sbt_command = sbt_command + ["-DsparkVersion=master"]
-        packages = packages + ["connectCommon/publishM2", "connectServer/publishM2"]
+    sbt_command = sbt_command + [f"-DsparkVersion={spark_version}"]
+    packages = packages + ["connectCommon/publishM2", "connectServer/publishM2"]
     run_cmd(sbt_command + ["clean"] + packages, stream_output=True)
 
 
-def get_local_package(package_name, use_spark_master):
+def get_local_package(package_name, spark_version):
     # Get current release which is required to be loaded
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
 
-    return f"io.delta:{package_name}_2.13:" + version
+    if spark_version == "default" or spark_version == DEFAULT_SPARK:
+        package_name_suffix = ""
+    else:
+        # For non-default spark versions we have suffix _MajorVersion.MinorVersion
+        package_name_suffix = f"_{spark_version[0:3]}"
+
+    return f"io.delta:{package_name}{package_name_suffix}_2.13:" + version
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
@@ -193,22 +200,21 @@ def run_delta_connect_codegen_python(root_dir):
 if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    use_spark_master = os.getenv("USE_SPARK_MASTER") or False
-    prepare(root_dir, use_spark_master)
-    delta_spark_package = get_local_package("delta-spark", use_spark_master)
+    spark_version = os.getenv("SPARK_VERSION") or "default"
+    prepare(root_dir, spark_version)
+    delta_spark_package = get_local_package("delta-spark", spark_version)
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
     run_pypi_packaging_tests(root_dir)
     test(root_dir, "delta", [delta_spark_package])
 
-    # For versions 4.0+ run Delta Connect tests as well
-    if use_spark_master:
-        run_delta_connect_codegen_python(root_dir)
-        # TODO: In the future, find a way to get these
-        # packages locally instead of downloading from Maven.
-        delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
-                                  "org.apache.spark:spark-connect_2.13:4.0.0",
-                                  get_local_package("delta-connect-server", use_spark_master)]
+    # Run Delta Connect tests as well
+    run_delta_connect_codegen_python(root_dir)
+    # TODO: In the future, find a way to get these
+    # packages locally instead of downloading from Maven.
+    delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
+                              "org.apache.spark:spark-connect_2.13:4.0.0",
+                              get_local_package("delta-connect-server", spark_version)]
 
-        test(root_dir, path.join("delta", "connect"), delta_connect_packages)
+    test(root_dir, path.join("delta", "connect"), delta_connect_packages)
