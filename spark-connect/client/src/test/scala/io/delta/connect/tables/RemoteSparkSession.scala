@@ -112,6 +112,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
     val builder = new ProcessBuilder(command.result(): _*)
     builder.environment().put("SPARK_HOME", sparkHome)
+    builder.environment().put("SPARK_LOCAL_IP", "127.0.0.1")
     builder.directory(new File(sparkHome))
     builder.redirectError(ProcessBuilder.Redirect.INHERIT)
     builder.redirectOutput(ProcessBuilder.Redirect.INHERIT)
