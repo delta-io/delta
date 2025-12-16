@@ -27,6 +27,7 @@ import shadedForDelta.org.apache.iceberg.jdbc.JdbcCatalog;
 import shadedForDelta.org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import shadedForDelta.org.apache.iceberg.util.PropertyUtil;
 import shadedForDelta.org.apache.iceberg.expressions.Expression;
+import java.util.List;
 
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Server;
@@ -162,7 +163,15 @@ public class IcebergRESTServer {
   }
 
   /**
-   * Clear captured filter. Call between tests.
+   * Get the projection (list of column names) captured from the most recent /plan request.
+   * Delegates to adapter. For test verification.
+   */
+  public List<String> getCapturedProjection() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedProjection();
+  }
+
+  /**
+   * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {
     IcebergRESTCatalogAdapterWithPlanSupport.clearCaptured();
