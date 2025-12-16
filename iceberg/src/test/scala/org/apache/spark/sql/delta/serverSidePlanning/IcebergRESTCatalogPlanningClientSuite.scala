@@ -185,6 +185,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       func(table)
     } finally {
       catalog.dropTable(tableId, false)
+      server.clearCaptured()
     }
   }
 
@@ -235,8 +236,6 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')
       """)
 
-      server.clearCaptured()
-
       // Call client with filter
       val filter = EqualTo("id", 2L)
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
@@ -253,7 +252,6 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           s"Expected filter with id=2, got: $filterStr")
       } finally {
         client.close()
-        server.clearCaptured()
       }
     }
   }
