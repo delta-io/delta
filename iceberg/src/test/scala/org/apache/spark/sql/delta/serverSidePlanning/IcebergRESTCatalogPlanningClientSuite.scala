@@ -324,8 +324,6 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         VALUES (1, 'alice'), (2, 'bob')
       """)
 
-      server.clearCaptured()
-
       // Call client with projection (only select "id" column)
       val projection = StructType(Seq(
         StructField("id", LongType)
@@ -345,7 +343,6 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           s"Expected projection with {id}, got: $fieldNames")
       } finally {
         client.close()
-        server.clearCaptured()
       }
     }
   }
