@@ -111,7 +111,12 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
       throws VersionNotFoundException {
     // Load latest to get the current version bounds
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
-    long latestVersion = snapshot.getVersion();
+    long latestRatifiedVersion = snapshot.getVersion();
+
+    // Fast path: check upper bound before expensive filesystem operations
+    if ((version > latestRatifiedVersion) && !allowOutOfRange) {
+      throw new VersionNotFoundException(version, 0, latestRatifiedVersion);
+    }
 
     // Compute earliestRatifiedCommitVersion from catalog commits
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
@@ -126,8 +131,8 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
             : DeltaHistoryManager.getEarliestDeltaFile(
                 engine, snapshot.getLogPath(), earliestRatifiedCommitVersion);
 
-    if (version < earliestVersion || ((version > latestVersion) && !allowOutOfRange)) {
-      throw new VersionNotFoundException(version, earliestVersion, latestVersion);
+    if (version < earliestVersion) {
+      throw new VersionNotFoundException(version, earliestVersion, latestRatifiedVersion);
     }
   }
 

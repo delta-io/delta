@@ -41,6 +41,29 @@ class UCManagedTableSnapshotManagerSuite
     new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
   }
 
+  // ==================== Constructor ====================
+
+  test("constructor rejects null arguments") {
+    val ucClient = new InMemoryUCClient("testMetastore")
+    val client = new UCCatalogManagedClient(ucClient)
+    val tableInfo = new UCTableInfo(testUcTableId, "/test/path", testUcUri, testUcToken)
+
+    val ex1 = intercept[NullPointerException] {
+      new UCManagedTableSnapshotManager(null, tableInfo, defaultEngine)
+    }
+    assert(ex1.getMessage == "ucCatalogManagedClient is null")
+
+    val ex2 = intercept[NullPointerException] {
+      new UCManagedTableSnapshotManager(client, null, defaultEngine)
+    }
+    assert(ex2.getMessage == "tableInfo is null")
+
+    val ex3 = intercept[NullPointerException] {
+      new UCManagedTableSnapshotManager(client, tableInfo, null)
+    }
+    assert(ex3.getMessage == "engine is null")
+  }
+
   // ==================== loadLatestSnapshot ====================
 
   test("loadLatestSnapshot returns snapshot at max ratified version") {
