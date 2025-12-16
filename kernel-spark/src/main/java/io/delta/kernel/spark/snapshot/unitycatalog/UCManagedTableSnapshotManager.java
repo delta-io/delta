@@ -103,7 +103,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   /**
    * Checks if a specific version exists and is accessible.
    *
-   * <p>For UC-managed tables with CCv2, log files may be cleaned up, so we need to use
+   * <p>For UC-managed tables with catalogManaged, log files may be cleaned up, so we need to use
    * DeltaHistoryManager to find the earliest available version based on filesystem state.
    */
   @Override

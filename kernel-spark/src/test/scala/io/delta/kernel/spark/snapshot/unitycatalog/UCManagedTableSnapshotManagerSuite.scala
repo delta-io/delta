@@ -66,7 +66,7 @@ class UCManagedTableSnapshotManagerSuite
 
   // ==================== loadLatestSnapshot ====================
 
-  test("loadLatestSnapshot returns snapshot at max ratified version") {
+  test("loadLatestSnapshot: returns snapshot at max ratified version") {
     withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
       val manager = createManager(ucClient, tablePath)
 
@@ -76,7 +76,7 @@ class UCManagedTableSnapshotManagerSuite
     }
   }
 
-  test("loadLatestSnapshot throws when table does not exist in catalog") {
+  test("loadLatestSnapshot: throws when table does not exist in catalog") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val tableInfo = new UCTableInfo("nonExistentTableId", "/fake/path", testUcUri, testUcToken)
     val client = new UCCatalogManagedClient(ucClient)
@@ -90,111 +90,56 @@ class UCManagedTableSnapshotManagerSuite
 
   // ==================== loadSnapshotAt ====================
 
-  test("loadSnapshotAt returns snapshot at specified version") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val snapshot = manager.loadSnapshotAt(1L)
-
-      assert(snapshot.getVersion == 1L)
-    }
-  }
-
-  test("loadSnapshotAt at version zero returns correct snapshot") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val snapshot = manager.loadSnapshotAt(0L)
-
-      assert(snapshot.getVersion == 0L)
-    }
-  }
-
-  test("loadSnapshotAt with negative version throws IllegalArgumentException") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val ex = intercept[IllegalArgumentException] {
-        manager.loadSnapshotAt(-1L)
-      }
-    }
-  }
-
-  test("loadSnapshotAt with version beyond max throws IllegalArgumentException") {
+  test("loadSnapshotAt: valid versions including v0 succeed, invalid versions throw") {
     withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
       val manager = createManager(ucClient, tablePath)
 
-      val ex = intercept[IllegalArgumentException] {
-        manager.loadSnapshotAt(maxRatifiedVersion + 10)
-      }
+      assert(manager.loadSnapshotAt(0L).getVersion == 0L)
+      assert(manager.loadSnapshotAt(1L).getVersion == 1L)
+
+      intercept[IllegalArgumentException] { manager.loadSnapshotAt(-1L) }
+      intercept[IllegalArgumentException] { manager.loadSnapshotAt(maxRatifiedVersion + 10) }
     }
   }
 
   // ==================== checkVersionExists ====================
 
-  test("checkVersionExists: version within valid range does not throw") {
+  test("checkVersionExists: validates version bounds and allowOutOfRange flag") {
     withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
       val manager = createManager(ucClient, tablePath)
 
-      manager.checkVersionExists(
-        maxRatifiedVersion - 1,
-        true /* mustBeRecreatable */,
-        false /* allowOutOfRange */ )
-    }
-  }
-
-  test("checkVersionExists: version at boundary zero does not throw") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
+      // Valid versions including v0 do not throw
       manager.checkVersionExists(0L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
-    }
-  }
-
-  test("checkVersionExists: version at boundary latest does not throw") {
-    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
-      val manager = createManager(ucClient, tablePath)
-
       manager.checkVersionExists(
         maxRatifiedVersion,
         true /* mustBeRecreatable */,
         false /* allowOutOfRange */ )
-    }
-  }
+      manager.checkVersionExists(
+        maxRatifiedVersion - 1,
+        true /* mustBeRecreatable */,
+        false /* allowOutOfRange */ )
+      manager.checkVersionExists(1L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
+      manager.checkVersionExists(1L, false /* mustBeRecreatable */, false /* allowOutOfRange */ )
 
-  test("checkVersionExists: version below zero throws VersionNotFoundException") {
-    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val exception = intercept[VersionNotFoundException] {
+      // Out-of-bounds versions throw
+      val belowLowerBound = intercept[VersionNotFoundException] {
         manager.checkVersionExists(-1L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
       }
-      assert(exception.getUserVersion == -1L)
-      assert(exception.getEarliest == 0L)
-      assert(exception.getLatest == maxRatifiedVersion)
-    }
-  }
+      assert(belowLowerBound.getUserVersion == -1L)
+      assert(belowLowerBound.getEarliest == 0L)
+      assert(belowLowerBound.getLatest == maxRatifiedVersion)
 
-  test("checkVersionExists: version above latest with allowOutOfRange=false throws") {
-    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val exception = intercept[VersionNotFoundException] {
+      val aboveUpperBound = intercept[VersionNotFoundException] {
         manager.checkVersionExists(
           maxRatifiedVersion + 10,
           true /* mustBeRecreatable */,
           false /* allowOutOfRange */ )
       }
-      assert(exception.getUserVersion == maxRatifiedVersion + 10)
-      assert(exception.getEarliest == 0L)
-      assert(exception.getLatest == maxRatifiedVersion)
-    }
-  }
+      assert(aboveUpperBound.getUserVersion == maxRatifiedVersion + 10)
+      assert(aboveUpperBound.getEarliest == 0L)
+      assert(aboveUpperBound.getLatest == maxRatifiedVersion)
 
-  test("checkVersionExists: version above latest with allowOutOfRange=true does not throw") {
-    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
-      val manager = createManager(ucClient, tablePath)
-
+      // allowOutOfRange=true bypasses upper bound check
       manager.checkVersionExists(
         maxRatifiedVersion + 10,
         true /* mustBeRecreatable */,
@@ -202,42 +147,73 @@ class UCManagedTableSnapshotManagerSuite
     }
   }
 
-  test("checkVersionExists: mustBeRecreatable flag is accepted (UC tables always recreatable)") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      manager.checkVersionExists(1L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
-      manager.checkVersionExists(1L, false /* mustBeRecreatable */, false /* allowOutOfRange */ )
-    }
-  }
-
   // ==================== getActiveCommitAtTime ====================
 
-  test("getActiveCommitAtTime: before earliest without earliest flag throws") {
+  test("getActiveCommitAtTime: resolves timestamps across all boundaries") {
     withUCClientAndTestTable { (ucClient, tablePath, _) =>
       val manager = createManager(ucClient, tablePath)
 
-      val ex = intercept[KernelException] {
+      // Before first commit (v0) - throws without canReturnEarliestCommit
+      intercept[KernelException] {
         manager.getActiveCommitAtTime(
           v0Ts - 1,
           false /* canReturnLastCommit */,
           true /* mustBeRecreatable */,
           false /* canReturnEarliestCommit */ )
       }
-    }
-  }
-
-  test("getActiveCommitAtTime: before earliest with earliest flag returns v0") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val active = manager.getActiveCommitAtTime(
+      intercept[KernelException] {
+        manager.getActiveCommitAtTime(
+          -100L,
+          false /* canReturnLastCommit */,
+          true /* mustBeRecreatable */,
+          false /* canReturnEarliestCommit */ )
+      }
+      // With canReturnEarliestCommit, returns v0
+      val earliestCommit = manager.getActiveCommitAtTime(
         v0Ts - 1,
         false /* canReturnLastCommit */,
         true /* mustBeRecreatable */,
         true /* canReturnEarliestCommit */ )
+      assert(earliestCommit.getVersion == 0L)
 
-      assert(active.getVersion == 0L)
+      // Exact and between-commit timestamps
+      def activeVersion(ts: Long): Long =
+        manager
+          .getActiveCommitAtTime(
+            ts,
+            false /* canReturnLastCommit */,
+            true /* mustBeRecreatable */,
+            false /* canReturnEarliestCommit */ )
+          .getVersion
+
+      assert(activeVersion(v0Ts) == 0L)
+      assert(activeVersion(v0Ts + 1) == 0L)
+      assert(activeVersion(v1Ts) == 1L)
+      assert(activeVersion(v1Ts + 1) == 1L)
+      assert(activeVersion(v2Ts) == 2L)
+
+      // After last commit (v2) - throws without canReturnLastCommit
+      intercept[KernelException] {
+        manager.getActiveCommitAtTime(
+          v2Ts + 1,
+          false /* canReturnLastCommit */,
+          true /* mustBeRecreatable */,
+          false /* canReturnEarliestCommit */ )
+      }
+      intercept[KernelException] {
+        manager.getActiveCommitAtTime(
+          Long.MaxValue,
+          false /* canReturnLastCommit */,
+          true /* mustBeRecreatable */,
+          false /* canReturnEarliestCommit */ )
+      }
+      // With canReturnLastCommit, returns v2
+      val lastCommit = manager.getActiveCommitAtTime(
+        v2Ts + 1,
+        true /* canReturnLastCommit */,
+        true /* mustBeRecreatable */,
+        false /* canReturnEarliestCommit */ )
+      assert(lastCommit.getVersion == 2L)
     }
   }
 
@@ -255,155 +231,47 @@ class UCManagedTableSnapshotManagerSuite
     }
   }
 
-  test("getActiveCommitAtTime: exact boundaries and between commits") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      def activeVersion(ts: Long): Long = {
-        manager
-          .getActiveCommitAtTime(
-            ts,
-            false /* canReturnLastCommit */,
-            true /* mustBeRecreatable */,
-            false /* canReturnEarliestCommit */ )
-          .getVersion
-      }
-
-      assert(activeVersion(v0Ts) == 0L)
-      assert(activeVersion(v0Ts + 1) == 0L)
-      assert(activeVersion(v1Ts) == 1L)
-      assert(activeVersion(v1Ts + 1) == 1L)
-      assert(activeVersion(v2Ts) == 2L)
-    }
-  }
-
-  test("getActiveCommitAtTime: after latest without last-commit flag throws") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val ex = intercept[KernelException] {
-        manager.getActiveCommitAtTime(
-          v2Ts + 1,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
-      }
-    }
-  }
-
-  test("getActiveCommitAtTime: after latest with last-commit flag returns last version") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val active = manager.getActiveCommitAtTime(
-        v2Ts + 1,
-        true /* canReturnLastCommit */,
-        true /* mustBeRecreatable */,
-        false /* canReturnEarliestCommit */ )
-
-      assert(active.getVersion == 2L)
-    }
-  }
-
-  test("getActiveCommitAtTime: negative and very large timestamps are handled") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val negativeTsEx = intercept[KernelException] {
-        manager.getActiveCommitAtTime(
-          -100L,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
-      }
-
-      val largeTsEx = intercept[KernelException] {
-        manager.getActiveCommitAtTime(
-          Long.MaxValue,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
-      }
-    }
-  }
-
   // ==================== getTableChanges ====================
 
-  test("getTableChanges with explicit end version returns correct commit range") {
+  test("getTableChanges: returns valid ranges and rejects invalid arguments") {
     withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
       val manager = createManager(ucClient, tablePath)
 
-      val commitRange = manager.getTableChanges(defaultEngine, 0L, Optional.of(maxRatifiedVersion))
+      // Valid ranges including v0 and latest boundaries
+      val fullRange = manager.getTableChanges(defaultEngine, 0L, Optional.of(maxRatifiedVersion))
+      assert(fullRange.getStartVersion == 0L)
+      assert(fullRange.getEndVersion == maxRatifiedVersion)
 
-      assert(commitRange.getStartVersion == 0L)
-      assert(commitRange.getEndVersion == maxRatifiedVersion)
-    }
-  }
+      val toLatest = manager.getTableChanges(defaultEngine, 1L, Optional.empty())
+      assert(toLatest.getStartVersion == 1L)
+      assert(toLatest.getEndVersion == maxRatifiedVersion)
 
-  test("getTableChanges without end version returns range to latest") {
-    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
-      val manager = createManager(ucClient, tablePath)
+      val single = manager.getTableChanges(defaultEngine, 1L, Optional.of(1L))
+      assert(single.getStartVersion == 1L)
+      assert(single.getEndVersion == 1L)
 
-      val commitRange = manager.getTableChanges(defaultEngine, 1L, Optional.empty())
+      val first = manager.getTableChanges(defaultEngine, 0L, Optional.of(0L))
+      assert(first.getStartVersion == 0L)
+      assert(first.getEndVersion == 0L)
 
-      assert(commitRange.getStartVersion == 1L)
-      assert(commitRange.getEndVersion == maxRatifiedVersion)
-    }
-  }
-
-  test("getTableChanges with start equals end returns single-version range") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val commitRange = manager.getTableChanges(defaultEngine, 1L, Optional.of(1L))
-
-      assert(commitRange.getStartVersion == 1L)
-      assert(commitRange.getEndVersion == 1L)
-    }
-  }
-
-  test("getTableChanges with inverted range (start > end) throws IllegalArgumentException") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val ex = intercept[IllegalArgumentException] {
-        manager.getTableChanges(defaultEngine, 2L, Optional.of(1L))
-      }
-    }
-  }
-
-  test("getTableChanges with start beyond latest throws") {
-    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val ex = intercept[IllegalArgumentException] {
-        manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
-      }
-    }
-  }
-
-  test("getTableChanges with start=end=0 returns first commit") {
-    withUCClientAndTestTable { (ucClient, tablePath, _) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val commitRange = manager.getTableChanges(defaultEngine, 0L, Optional.of(0L))
-
-      assert(commitRange.getStartVersion == 0L)
-      assert(commitRange.getEndVersion == 0L)
-    }
-  }
-
-  test("getTableChanges with start=end=max returns latest commit") {
-    withUCClientAndTestTable { (ucClient, tablePath, maxRatifiedVersion) =>
-      val manager = createManager(ucClient, tablePath)
-
-      val commitRange = manager.getTableChanges(
+      val last = manager.getTableChanges(
         defaultEngine,
         maxRatifiedVersion,
         Optional.of(maxRatifiedVersion))
+      assert(last.getStartVersion == maxRatifiedVersion)
+      assert(last.getEndVersion == maxRatifiedVersion)
 
-      assert(commitRange.getStartVersion == maxRatifiedVersion)
-      assert(commitRange.getEndVersion == maxRatifiedVersion)
+      // Invalid ranges throw
+      intercept[IllegalArgumentException] {
+        manager.getTableChanges(
+          defaultEngine,
+          maxRatifiedVersion,
+          Optional.of(maxRatifiedVersion - 1))
+      }
+
+      intercept[IllegalArgumentException] {
+        manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
+      }
     }
   }
 
