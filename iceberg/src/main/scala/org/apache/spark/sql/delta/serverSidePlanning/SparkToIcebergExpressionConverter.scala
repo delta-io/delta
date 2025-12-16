@@ -30,7 +30,9 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  * - IsNull, IsNotNull
  * - And, Or (for combining filters)
  *
- * Unsupported filters return None and are silently ignored.
+ * Unsupported filters return None and are not pushed to the server.
+ * This only affects performance (server returns more data), not correctness
+ * (Spark always re-applies all filters locally as residuals).
  *
  * Example usage:
  * {{{
@@ -87,13 +89,15 @@ object SparkToIcebergExpressionConverter {
 
     case _ =>
       // Unsupported filter type (e.g., StringStartsWith, In, Not, etc.)
-      // Return None to indicate this filter cannot be pushed down
+      // Return None to indicate this filter cannot be pushed down to the server.
+      // Correctness is preserved because Spark re-applies all filters as residuals.
       None
   }
 
   /**
    * Convert an array of Spark filters to a single Iceberg Expression.
-   * Multiple filters are combined with AND. Unsupported filters are silently dropped.
+   * Multiple filters are combined with AND. Unsupported filters are not pushed to the server
+   * (affects performance only, not correctness - Spark re-applies all filters as residuals).
    *
    * @param filters Array of Spark filters
    * @param schema The table schema
