@@ -1,8 +1,8 @@
-name: "Delta Spark Latest"
+name: "Delta Spark"
 on: [push, pull_request]
 jobs:
   test:
-    name: "DSL: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
+    name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     strategy:
       matrix:
