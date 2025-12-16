@@ -17,8 +17,8 @@
 package org.apache.spark.sql.delta.test.shims
 
 /**
- * Test shim for UNSUPPORTED_FEATURE.TABLE_OPERATION error codes that changed between Spark versions.
- * In Spark 4.0, the error code is _LEGACY_ERROR_TEMP_2096
+ * Test shim for UNSUPPORTED_FEATURE.TABLE_OPERATION error codes that changed between Spark
+ * versions. In Spark 4.0, the error code is _LEGACY_ERROR_TEMP_2096
  */
 object UnsupportedTableOperationErrorShims {
   val UNSUPPORTED_TABLE_OPERATION_ERROR_CODE: String = "_LEGACY_ERROR_TEMP_2096"

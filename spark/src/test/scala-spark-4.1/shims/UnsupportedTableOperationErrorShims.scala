@@ -17,8 +17,8 @@
 package org.apache.spark.sql.delta.test.shims
 
 /**
- * Test shim for UNSUPPORTED_FEATURE.TABLE_OPERATION error codes that changed between Spark versions.
- * In Spark 4.1, the error code is UNSUPPORTED_FEATURE.TABLE_OPERATION
+ * Test shim for UNSUPPORTED_FEATURE.TABLE_OPERATION error codes that changed between
+ * Spark versions. In Spark 4.1, the error code is UNSUPPORTED_FEATURE.TABLE_OPERATION
  */
 object UnsupportedTableOperationErrorShims {
   val UNSUPPORTED_TABLE_OPERATION_ERROR_CODE: String = "UNSUPPORTED_FEATURE.TABLE_OPERATION"

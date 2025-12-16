@@ -517,7 +517,8 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       // Thrown when running with name-based SQL
       case e: SparkUnsupportedOperationException =>
         checkError(e, UnsupportedTableOperationErrorShims.UNSUPPORTED_TABLE_OPERATION_ERROR_CODE,
-          parameters = UnsupportedTableOperationErrorShims.updateTableErrorParameters(tableSQLIdentifier))
+          parameters = UnsupportedTableOperationErrorShims.updateTableErrorParameters(
+            tableSQLIdentifier))
     }
   }
 

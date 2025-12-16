@@ -30,10 +30,12 @@ object StreamingTestShims {
   type MicroBatchExecution = org.apache.spark.sql.execution.streaming.runtime.MicroBatchExecution
 
   // StreamingQueryWrapper - moved to runtime package (class only, no companion object)
-  type StreamingQueryWrapper = org.apache.spark.sql.execution.streaming.runtime.StreamingQueryWrapper
+  type StreamingQueryWrapper =
+    org.apache.spark.sql.execution.streaming.runtime.StreamingQueryWrapper
 
   // StreamingExecutionRelation - moved to runtime package (class only, no companion object)
-  type StreamingExecutionRelation = org.apache.spark.sql.execution.streaming.runtime.StreamingExecutionRelation
+  type StreamingExecutionRelation =
+    org.apache.spark.sql.execution.streaming.runtime.StreamingExecutionRelation
 
   // OffsetSeqLog - moved to checkpointing package (class only, no companion object)
   type OffsetSeqLog = org.apache.spark.sql.execution.streaming.checkpointing.OffsetSeqLog

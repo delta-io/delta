@@ -33,7 +33,8 @@ object StreamingTestShims {
   type StreamingQueryWrapper = org.apache.spark.sql.execution.streaming.StreamingQueryWrapper
 
   // StreamingExecutionRelation (class only, no companion object)
-  type StreamingExecutionRelation = org.apache.spark.sql.execution.streaming.StreamingExecutionRelation
+  type StreamingExecutionRelation =
+    org.apache.spark.sql.execution.streaming.StreamingExecutionRelation
 
   // OffsetSeqLog (class only, no companion object)
   type OffsetSeqLog = org.apache.spark.sql.execution.streaming.OffsetSeqLog
