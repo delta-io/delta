@@ -2005,6 +2005,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK =
+    buildConf("liquid.alterColumnAfter.statsSchemaCheck")
+      .internal()
+      .doc(
+         """
+           |When enabled, validates that clustering columns remain in the stats schema after
+           | a user executes `ALTER TABLE ALTER COLUMN col1 AFTER col2`. The validation checks
+           | that all clustering columns that were in the stats schema before the column reordering
+           | remain in the stats schema after the operation. This ensures that clustering columns
+           | continue to have statistics collected even if their position in the table schema
+           | changes. When disabled, no validation is performed and stats collection may follow
+           | position-based indexing rules (e.g., `dataSkippingNumIndexedCols`), potentially
+           | causing clustering columns to lose stats collection if they move outside the indexed
+           | range.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CHANGE_COLUMN_CHECK_DEPENDENT_EXPRESSIONS_USE_V2 =
     buildConf("changeColumn.checkDependentExpressionsUseV2")
       .internal()
@@ -2827,6 +2845,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .booleanConf
     .createWithDefault(false)
 
+  val FORCE_USE_PREVIEW_SHREDDING_FEATURE =
+    buildConf("variantShredding.forceUsePreviewTableFeature")
+    .internal()
+    .doc(
+      """
+        | If true, attach the 'variantShredding-preview' table feature when enabling shredding
+        | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
+
   ///////////
   // TESTING
   ///////////
@@ -2903,6 +2931,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         """When disabled all DML commands using reliable metrics just log a warning on command
           |invariant violation and proceed to commit.
           |When enabled, it's decided by a per-command flag.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val ENABLE_SERVER_SIDE_PLANNING =
+    buildConf("catalog.enableServerSidePlanning")
+      .internal()
+      .doc(
+        """When enabled, DeltaCatalog will use server-side scan planning path
+          |instead of normal table loading.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 }

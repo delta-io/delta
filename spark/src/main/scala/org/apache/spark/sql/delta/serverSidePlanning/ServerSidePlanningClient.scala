@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.types.StructType
 
 /**
  * Simple data class representing a file to scan.
@@ -36,9 +38,10 @@ case class ScanPlan(
 )
 
 /**
- * Interface for planning table scans via server-side planning (e.g., Iceberg REST catalog).
- * This interface is intentionally simple and has no dependencies
- * on Iceberg libraries, allowing it to live in delta-spark module.
+ * Interface for planning table scans via server-side planning.
+ * This interface uses Spark's standard `org.apache.spark.sql.sources.Filter` as the universal
+ * representation for filter pushdown. This keeps the interface catalog-agnostic while allowing
+ * each server-side planning catalog implementation to convert filters to their own native format.
  */
 trait ServerSidePlanningClient {
   /**
@@ -46,9 +49,15 @@ trait ServerSidePlanningClient {
    *
    * @param databaseName The database or schema name
    * @param table The table name
+   * @param filter Optional filter expression to push down to server (Spark Filter format)
+   * @param projection Optional projection (required columns) to push down to server
    * @return ScanPlan containing files to read
    */
-  def planScan(databaseName: String, table: String): ScanPlan
+  def planScan(
+      databaseName: String,
+      table: String,
+      filter: Option[Filter] = None,
+      projection: Option[StructType] = None): ScanPlan
 }
 
 /**
@@ -57,15 +66,15 @@ trait ServerSidePlanningClient {
  */
 private[serverSidePlanning] trait ServerSidePlanningClientFactory {
   /**
-   * Create a client for a specific catalog by reading catalog-specific configuration.
-   * This method reads configuration from spark.sql.catalog.<catalogName>.uri and
-   * spark.sql.catalog.<catalogName>.token.
+   * Create a client using metadata necessary for server-side planning.
    *
    * @param spark The SparkSession
-   * @param catalogName The name of the catalog (e.g., "spark_catalog", "unity")
-   * @return A ServerSidePlanningClient configured for the specified catalog
+   * @param metadata Metadata necessary for server-side planning
+   * @return A ServerSidePlanningClient configured with the metadata
    */
-  def buildForCatalog(spark: SparkSession, catalogName: String): ServerSidePlanningClient
+  def buildClient(
+      spark: SparkSession,
+      metadata: ServerSidePlanningMetadata): ServerSidePlanningClient
 }
 
 /**
@@ -93,19 +102,23 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
   }
 
   /**
-   * Get a client for a specific catalog using the registered factory.
-   * This is the single public entry point for obtaining a ServerSidePlanningClient.
-   *
-   * @param spark The SparkSession
-   * @param catalogName The name of the catalog (e.g., "spark_catalog", "unity")
-   * @return A ServerSidePlanningClient configured for the specified catalog
-   * @throws IllegalStateException if no factory has been registered
+   * Get the currently registered factory.
+   * Throws IllegalStateException if no factory has been registered.
    */
-  def getClient(spark: SparkSession, catalogName: String): ServerSidePlanningClient = {
+  def getFactory(): ServerSidePlanningClientFactory = {
     registeredFactory.getOrElse {
       throw new IllegalStateException(
         "No ServerSidePlanningClientFactory has been registered. " +
         "Call ServerSidePlanningClientFactory.setFactory() to register an implementation.")
-    }.buildForCatalog(spark, catalogName)
+    }
+  }
+
+  /**
+   * Convenience method to create a client from metadata using the registered factory.
+   */
+  def buildClient(
+      spark: SparkSession,
+      metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
+    getFactory().buildClient(spark, metadata)
   }
 }

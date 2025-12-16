@@ -24,13 +24,144 @@ import scala.collection.JavaConverters._
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.delta.serverSidePlanning.ServerSidePlanningClient
+import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.connector.catalog.{SupportsRead, Table, TableCapability}
 import org.apache.spark.sql.connector.read._
 import org.apache.spark.sql.execution.datasources.{FileFormat, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.sources.{And, Filter}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+
+/**
+ * Companion object for ServerSidePlannedTable with factory methods.
+ */
+object ServerSidePlannedTable extends DeltaLogging {
+  /**
+   * Property keys that indicate table credentials are available.
+   * Unity Catalog tables may expose temporary credentials via these properties.
+   */
+  private val CREDENTIAL_PROPERTY_KEYS = Seq(
+    "storage.credential",
+    "aws.temporary.credentials",
+    "azure.temporary.credentials",
+    "gcs.temporary.credentials",
+    "credential"
+  )
+
+  /**
+   * Determine if server-side planning should be used based on catalog type,
+   * credential availability, and configuration.
+   *
+   * Decision logic:
+   * - Use server-side planning if forceServerSidePlanning is true (config override)
+   * - Use server-side planning if Unity Catalog table lacks credentials
+   * - Otherwise use normal table loading path
+   *
+   * @param isUnityCatalog Whether this is a Unity Catalog instance
+   * @param hasCredentials Whether the table has credentials available
+   * @param forceServerSidePlanning Whether to force server-side planning (config flag)
+   * @return true if server-side planning should be used
+   */
+  private[serverSidePlanning] def shouldUseServerSidePlanning(
+      isUnityCatalog: Boolean,
+      hasCredentials: Boolean,
+      forceServerSidePlanning: Boolean): Boolean = {
+    (isUnityCatalog && !hasCredentials) || forceServerSidePlanning
+  }
+
+  /**
+   * Try to create a ServerSidePlannedTable if server-side planning is needed.
+   * Returns None if not needed or if the planning client factory is not available.
+   *
+   * This method encapsulates all the logic to decide whether to use server-side planning:
+   * - Checks if Unity Catalog table lacks credentials
+   * - Checks if server-side planning is forced via config (for testing)
+   * - Extracts catalog name and table identifiers
+   * - Attempts to create the planning client
+   *
+   * Test coverage: ServerSidePlanningSuite tests verify the decision logic through
+   * shouldUseServerSidePlanning() method with different input combinations.
+   *
+   * @param spark The SparkSession
+   * @param ident The table identifier
+   * @param table The loaded table from the delegate catalog
+   * @param isUnityCatalog Whether this is a Unity Catalog instance
+   * @return Some(ServerSidePlannedTable) if server-side planning should be used, None otherwise
+   */
+  def tryCreate(
+      spark: SparkSession,
+      ident: Identifier,
+      table: Table,
+      isUnityCatalog: Boolean): Option[ServerSidePlannedTable] = {
+    // Check if we should force server-side planning (for testing)
+    val forceServerSidePlanning =
+      spark.conf.get(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false").toBoolean
+    val hasTableCredentials = hasCredentials(table)
+
+    // Check if we should use server-side planning
+    if (shouldUseServerSidePlanning(isUnityCatalog, hasTableCredentials, forceServerSidePlanning)) {
+      val namespace = ident.namespace().mkString(".")
+      val tableName = ident.name()
+
+      // Create metadata from table
+      val metadata = ServerSidePlanningMetadata.fromTable(table, spark, ident, isUnityCatalog)
+
+      // Try to create ServerSidePlannedTable with server-side planning
+      val plannedTable = tryCreate(spark, namespace, tableName, table.schema(), metadata)
+      if (plannedTable.isEmpty) {
+        logWarning(
+          s"Server-side planning not available for catalog ${metadata.catalogName}. " +
+            "Falling back to normal table loading.")
+      }
+      plannedTable
+    } else {
+      None
+    }
+  }
+
+  /**
+   * Try to create a ServerSidePlannedTable with server-side planning.
+   * Returns None if the planning client factory is not available.
+   *
+   * @param spark The SparkSession
+   * @param databaseName The database name (may include catalog prefix)
+   * @param tableName The table name
+   * @param tableSchema The table schema
+   * @param metadata Metadata extracted from loadTable response
+   * @return Some(ServerSidePlannedTable) if successful, None if factory not registered
+   */
+  private def tryCreate(
+      spark: SparkSession,
+      databaseName: String,
+      tableName: String,
+      tableSchema: StructType,
+      metadata: ServerSidePlanningMetadata): Option[ServerSidePlannedTable] = {
+    try {
+      val client = ServerSidePlanningClientFactory.buildClient(spark, metadata)
+      Some(new ServerSidePlannedTable(spark, databaseName, tableName, tableSchema, client))
+    } catch {
+      case _: IllegalStateException =>
+        // Factory not registered - this shouldn't happen in production but could during testing
+        None
+    }
+  }
+
+  /**
+   * Check if a table has credentials available.
+   * Unity Catalog tables may lack credentials when accessed without proper permissions.
+   * UC injects credentials as table properties, see:
+   * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
+   *   io/unitycatalog/spark/UCSingleCatalog.scala#L260
+   */
+  private def hasCredentials(table: Table): Boolean = {
+    // Check table properties for credential information
+    val properties = table.properties()
+    CREDENTIAL_PROPERTY_KEYS.exists(key => properties.containsKey(key))
+  }
+}
 
 /**
  * A Spark Table implementation that uses server-side scan planning
@@ -45,7 +176,8 @@ class ServerSidePlannedTable(
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient) extends Table with SupportsRead {
+    planningClient: ServerSidePlanningClient)
+    extends Table with SupportsRead with DeltaLogging {
 
   // Returns fully qualified name (e.g., "catalog.database.table").
   // The databaseName parameter receives ident.namespace().mkString(".") from DeltaCatalog,
@@ -65,16 +197,40 @@ class ServerSidePlannedTable(
 
 /**
  * ScanBuilder that uses ServerSidePlanningClient to plan the scan.
+ * Implements SupportsPushDownFilters to enable WHERE clause pushdown to the server.
+ * Implements SupportsPushDownRequiredColumns to enable column pruning pushdown to the server.
  */
 class ServerSidePlannedScanBuilder(
     spark: SparkSession,
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient) extends ScanBuilder {
+    planningClient: ServerSidePlanningClient)
+  extends ScanBuilder with SupportsPushDownFilters with SupportsPushDownRequiredColumns {
+
+  // Filters that have been pushed down and will be sent to the server
+  private var _pushedFilters: Array[Filter] = Array.empty
+
+  // Required schema (columns) that have been pushed down
+  private var _requiredSchema: StructType = tableSchema
+
+  override def pushFilters(filters: Array[Filter]): Array[Filter] = {
+    // Store filters to send to catalog, but return all as residuals.
+    // Since we don't know what the catalog can handle yet, we conservatively claim we handle
+    // none. Even if the catalog applies some filters, Spark will redundantly re-apply them.
+    _pushedFilters = filters
+    filters  // Return all as residuals
+  }
+
+  override def pushedFilters(): Array[Filter] = _pushedFilters
+
+  override def pruneColumns(requiredSchema: StructType): Unit = {
+    _requiredSchema = requiredSchema
+  }
 
   override def build(): Scan = {
-    new ServerSidePlannedScan(spark, databaseName, tableName, tableSchema, planningClient)
+    new ServerSidePlannedScan(
+      spark, databaseName, tableName, tableSchema, planningClient, _pushedFilters, _requiredSchema)
   }
 }
 
@@ -86,15 +242,39 @@ class ServerSidePlannedScan(
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient) extends Scan with Batch {
+    planningClient: ServerSidePlanningClient,
+    pushedFilters: Array[Filter],
+    requiredSchema: StructType) extends Scan with Batch {
 
   override def readSchema(): StructType = tableSchema
 
   override def toBatch: Batch = this
 
+  // Convert pushed filters to a single Spark Filter for the API call.
+  // If no filters, pass None. If filters exist, combine them into a single filter.
+  private val combinedFilter: Option[Filter] = {
+    if (pushedFilters.isEmpty) {
+      None
+    } else if (pushedFilters.length == 1) {
+      Some(pushedFilters.head)
+    } else {
+      // Combine multiple filters with And
+      Some(pushedFilters.reduce((left, right) => And(left, right)))
+    }
+  }
+
+  // Only pass projection if columns are actually pruned (not SELECT *)
+  private val projection: Option[StructType] = {
+    if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
+      None
+    } else {
+      Some(requiredSchema)
+    }
+  }
+
   override def planInputPartitions(): Array[InputPartition] = {
     // Call the server-side planning API to get the scan plan
-    val scanPlan = planningClient.planScan(databaseName, tableName)
+    val scanPlan = planningClient.planScan(databaseName, tableName, combinedFilter, projection)
 
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>

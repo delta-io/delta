@@ -47,6 +47,7 @@ import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
@@ -193,7 +194,7 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public Offset deserializeOffset(String json) {
-    throw new UnsupportedOperationException("deserializeOffset is not supported");
+    return DeltaSourceOffset$.MODULE$.apply(tableId, json);
   }
 
   @Override
@@ -296,7 +297,8 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    return PartitionUtils.createParquetReaderFactory(
+    return PartitionUtils.createDeltaParquetReaderFactory(
+        snapshotAtSourceInit,
         dataSchema,
         partitionSchema,
         readDataSchema,
@@ -312,12 +314,12 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
 
   @Override
   public void commit(Offset end) {
-    throw new UnsupportedOperationException("commit is not supported");
+    // TODO(#5319): update metadata tracking log.
   }
 
   @Override
   public void stop() {
-    throw new UnsupportedOperationException("stop is not supported");
+    // TODO(#5318): unpersist any cached initial snapshot.
   }
 
   ///////////////////////

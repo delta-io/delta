@@ -151,7 +151,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public Batch toBatch() {
     ensurePlanned();
     return new SparkBatch(
-        getTablePath(),
+        initialSnapshot,
         dataSchema,
         partitionSchema,
         readDataSchema,

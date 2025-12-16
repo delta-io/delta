@@ -16,62 +16,104 @@
 
 package org.apache.spark.sql.delta.serverSidePlanning
 
-import java.util.Locale
-
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.input_file_name
+import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.types.StructType
 
 /**
  * Implementation of ServerSidePlanningClient that uses Spark SQL with input_file_name()
  * to discover the list of files in a table. This allows end-to-end testing without
  * a real server that can do server-side planning.
+ *
+ * Also captures filter/projection parameters for test verification via companion object.
  */
 class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanningClient {
 
-  override def planScan(databaseName: String, table: String): ScanPlan = {
+  override def planScan(
+      databaseName: String,
+      table: String,
+      filter: Option[Filter] = None,
+      projection: Option[StructType] = None): ScanPlan = {
+    // Capture filter and projection for test verification
+    TestServerSidePlanningClient.capturedFilter = filter
+    TestServerSidePlanningClient.capturedProjection = projection
+
     val fullTableName = s"$databaseName.$table"
 
-    // Use input_file_name() to get the list of files
-    // Query: SELECT DISTINCT input_file_name() FROM table
-    val filesDF = spark.table(fullTableName)
-      .select(input_file_name().as("file_path"))
-      .distinct()
+    // Temporarily disable server-side planning to avoid infinite recursion
+    // when this test client internally loads the table
+    val originalConfigValue = spark.conf.getOption(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+    spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false")
 
-    // Collect file paths
-    val filePaths = filesDF.collect().map(_.getString(0))
+    try {
+      // Use input_file_name() to get the list of files
+      // Query: SELECT DISTINCT input_file_name() FROM table
+      val filesDF = spark.table(fullTableName)
+        .select(input_file_name().as("file_path"))
+        .distinct()
 
-    // Get file metadata (size, format) from filesystem
-    // scalastyle:off deltahadoopconfiguration
-    val hadoopConf = spark.sessionState.newHadoopConf()
-    // scalastyle:on deltahadoopconfiguration
-    val files = filePaths.map { filePath =>
-      // input_file_name() returns URL-encoded paths, decode them
-      val decodedPath = java.net.URLDecoder.decode(filePath, "UTF-8")
-      val path = new Path(decodedPath)
-      val fs = path.getFileSystem(hadoopConf)
-      val fileStatus = fs.getFileStatus(path)
+      // Collect file paths
+      val filePaths = filesDF.collect().map(_.getString(0))
 
-      ScanFile(
-        filePath = decodedPath,
-        fileSizeInBytes = fileStatus.getLen,
-        fileFormat = getFileFormat(path)
-      )
-    }.toSeq
+      // Get file metadata (size, format) from filesystem
+      // scalastyle:off deltahadoopconfiguration
+      // The rule prevents accessing Hadoop conf on executors where it could use wrong credentials
+      // for multi-catalog scenarios. Safe here: test-only code simulating server filesystem access.
+      val hadoopConf = spark.sessionState.newHadoopConf()
+      // scalastyle:on deltahadoopconfiguration
+      val files = filePaths.map { filePath =>
+        // input_file_name() returns URL-encoded paths, decode them
+        val decodedPath = java.net.URLDecoder.decode(filePath, "UTF-8")
+        val path = new Path(decodedPath)
+        val fs = path.getFileSystem(hadoopConf)
+        val fileStatus = fs.getFileStatus(path)
 
-    ScanPlan(files = files)
+        ScanFile(
+          filePath = decodedPath,
+          fileSizeInBytes = fileStatus.getLen,
+          fileFormat = getFileFormat(path)
+        )
+      }.toSeq
+
+      ScanPlan(files = files)
+    } finally {
+      // Restore original config value
+      originalConfigValue match {
+        case Some(value) => spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, value)
+        case None => spark.conf.unset(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+      }
+    }
   }
 
   private def getFileFormat(path: Path): String = "parquet"
 }
 
 /**
+ * Companion object for TestServerSidePlanningClient.
+ * Stores captured pushdown parameters (filter, projection) for test verification.
+ */
+object TestServerSidePlanningClient {
+  private var capturedFilter: Option[Filter] = None
+  private var capturedProjection: Option[StructType] = None
+
+  def getCapturedFilter: Option[Filter] = capturedFilter
+  def getCapturedProjection: Option[StructType] = capturedProjection
+  def clearCaptured(): Unit = {
+    capturedFilter = None
+    capturedProjection = None
+  }
+}
+
+/**
  * Factory for creating TestServerSidePlanningClient instances.
  */
 class TestServerSidePlanningClientFactory extends ServerSidePlanningClientFactory {
-  override def buildForCatalog(
+  override def buildClient(
       spark: SparkSession,
-      catalogName: String): ServerSidePlanningClient = {
+      metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
     new TestServerSidePlanningClient(spark)
   }
 }
