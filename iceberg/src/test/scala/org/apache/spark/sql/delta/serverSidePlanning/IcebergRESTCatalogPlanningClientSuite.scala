@@ -25,6 +25,7 @@ import org.apache.http.entity.ContentType
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.sources.EqualTo
 import org.apache.spark.sql.test.SharedSparkSession
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
@@ -63,6 +64,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   override def afterAll(): Unit = {
     try {
       if (server != null) {
+        server.clearCaptured()
         server.stop()
       }
     } finally {
@@ -222,6 +224,38 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
     assert(metadata.planningEndpointUri == expectedEndpoint,
       s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
+  }
+
+  test("filter sent to IRC server over HTTP") {
+    withTempTable("filterTest") { table =>
+      // Create test data with SQL
+      val tableName = s"rest_catalog.${defaultNamespace}.filterTest"
+      sql(s"""
+        INSERT INTO $tableName (id, name)
+        VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')
+      """)
+
+      server.clearCaptured()
+
+      // Call client with filter
+      val filter = EqualTo("id", 2L)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        client.planScan(defaultNamespace.toString, "filterTest", filter = Some(filter))
+
+        // Verify server captured the filter
+        val capturedFilter = server.getCapturedFilter
+        assert(capturedFilter != null, "Server should have captured filter")
+
+        // Verify it's an EqualTo expression (converted to Iceberg: equal("id", 2))
+        val filterStr = capturedFilter.toString
+        assert(filterStr.contains("id") && filterStr.contains("2"),
+          s"Expected filter with id=2, got: $filterStr")
+      } finally {
+        client.close()
+        server.clearCaptured()
+      }
+    }
   }
 
 }
