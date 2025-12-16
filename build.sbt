@@ -1330,7 +1330,6 @@ lazy val sparkGroup = project
     publish / skip := false,
   )
 
-/*
 lazy val icebergGroup = project
   .aggregate(iceberg, testDeltaIcebergJar)
   .settings(
@@ -1339,7 +1338,6 @@ lazy val icebergGroup = project
     publishArtifact := false,
     publish / skip := false,
   )
-*/
 
 lazy val kernelGroup = project
   .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
