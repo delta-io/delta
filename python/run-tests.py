@@ -21,8 +21,10 @@ import subprocess
 import shutil
 from os import path
 
+
 # Update this when we upgrade the default to a new released version
 DEFAULT_SPARK = "4.0.1"
+
 
 def test(root_dir, code_dir, packages):
     # Test the codes in the code_dir directory using its "tests" subdirectory,
