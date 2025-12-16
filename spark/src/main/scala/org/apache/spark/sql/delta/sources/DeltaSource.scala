@@ -617,29 +617,7 @@ trait DeltaSourceBase extends Source
         newTableId = newMetadata.id, oldTableId = oldMetadata.id)
     }
 
-    def shouldTrackSchema: Boolean =
-      if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
-        TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
-        // If schema tracking is enabled for type widening, we will detect widening type changes and
-        // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
-        // DROP/RENAME for column mapping.
-        true
-      } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
-        false
-      } else {
-        // Column mapping schema changes
-        assert(!trackingMetadataChange, "should not check schema change while tracking it")
-        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
-          allowUnsafeStreamingReadOnPartitionColumnChanges)
-      }
-
-    if (shouldTrackSchema) {
-      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-        spark,
-        oldMetadata.schema,
-        newMetadata.schema,
-        detectedDuringStreaming = !validatedDuringStreamStart)
-    }
+    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart)
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart ||
@@ -736,6 +714,36 @@ trait DeltaSourceBase extends Source
           Some(version),
           includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
       }
+    }
+  }
+
+  private def checkNonAdditiveSchemaChanges(
+      oldMetadata: Metadata,
+      newMetadata: Metadata,
+      validatedDuringStreamStart: Boolean
+  ): Unit = {
+    def shouldTrackSchema: Boolean =
+      if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
+          TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
+        // If schema tracking is enabled for type widening, we will detect widening type changes and
+        // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
+        // DROP/RENAME for column mapping.
+        true
+      } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
+        false
+      } else {
+        // Column mapping schema changes
+        assert(!trackingMetadataChange, "should not check schema change while tracking it")
+        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
+          allowUnsafeStreamingReadOnPartitionColumnChanges)
+      }
+
+    if (shouldTrackSchema) {
+      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
+        spark,
+        oldMetadata.schema,
+        newMetadata.schema,
+        detectedDuringStreaming = !validatedDuringStreamStart)
     }
   }
 }
