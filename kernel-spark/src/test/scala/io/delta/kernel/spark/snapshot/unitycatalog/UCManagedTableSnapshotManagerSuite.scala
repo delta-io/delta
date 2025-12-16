@@ -241,6 +241,20 @@ class UCManagedTableSnapshotManagerSuite
     }
   }
 
+  test("getActiveCommitAtTime: non-recreatable path returns earliest delta file") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val manager = createManager(ucClient, tablePath)
+
+      val active = manager.getActiveCommitAtTime(
+        v0Ts - 1,
+        false /* canReturnLastCommit */,
+        false /* mustBeRecreatable */,
+        true /* canReturnEarliestCommit */ )
+
+      assert(active.getVersion == 0L)
+    }
+  }
+
   test("getActiveCommitAtTime: exact boundaries and between commits") {
     withUCClientAndTestTable { (ucClient, tablePath, _) =>
       val manager = createManager(ucClient, tablePath)
