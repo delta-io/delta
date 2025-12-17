@@ -282,7 +282,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           assert(capturedFilter != null,
             s"[$description] Server should have captured filter")
 
-          // Bind both expressions to schema and compare using isEquivalentTo()
+          // isEquivalentTo() only works on bound expressions, so bind both to schema for comparison
+          // Binding resolves field references from names to schema-specific field IDs and types
           val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
           val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
 
