@@ -71,22 +71,26 @@ object Invariants {
 
   /** Extract invariants from the given schema */
   def getFromSchema(schema: StructType, spark: SparkSession): Seq[Constraint] = {
-    val columns = SchemaUtils.filterRecursively(schema, checkComplexTypes = false) { field =>
-      !field.nullable || field.metadata.contains(INVARIANTS_FIELD)
+    val nullConstraints = SchemaUtils.filterRecursively(schema, checkComplexTypes = false,
+        stopEagerly = true) { field =>
+      !field.nullable
+    }.map { case (parents, field) =>
+      Constraints.NotNull(parents :+ field.name)
     }
-    columns.map {
-      case (parents, field) if !field.nullable =>
-        Constraints.NotNull(parents :+ field.name)
-      case (parents, field) =>
-        val rule = field.metadata.getString(INVARIANTS_FIELD)
-        val invariant = Option(JsonUtils.mapper.readValue[PersistedRule](rule).unwrap) match {
-          case Some(PersistedExpression(exprString)) =>
-            ArbitraryExpression(spark, exprString)
-          case _ =>
-            throw DeltaErrors.unrecognizedInvariant()
-        }
-        Constraints.Check(invariant.name, invariant.expression)
+    val checkConstraints = SchemaUtils.filterRecursively(schema,
+        checkComplexTypes = false) { field =>
+      field.metadata.contains(INVARIANTS_FIELD)
+    }.map { case (parents, field) =>
+      val rule = field.metadata.getString(INVARIANTS_FIELD)
+      val invariant = Option(JsonUtils.mapper.readValue[PersistedRule](rule).unwrap) match {
+        case Some(PersistedExpression(exprString)) =>
+          ArbitraryExpression(spark, exprString)
+        case _ =>
+          throw DeltaErrors.unrecognizedInvariant()
+      }
+      Constraints.Check(invariant.name, invariant.expression)
     }
+    nullConstraints ++ checkConstraints
   }
 
   val INVARIANTS_FIELD = "delta.invariants"
