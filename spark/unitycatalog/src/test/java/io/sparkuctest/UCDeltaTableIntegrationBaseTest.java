@@ -99,17 +99,17 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /**
    * Execute SQL through the SQL executor and return results.
-   * 
+   *
    * When called with arguments, formats the SQL query using String.format:
    * <pre>
    * sql("INSERT INTO %s VALUES (%d, '%s')", tableName, 1, "value")
    * </pre>
-   * 
+   *
    * When called without arguments, executes the SQL as-is:
    * <pre>
    * sql("CREATE TABLE test (id INT)")
    * </pre>
-   * 
+   *
    * @param sqlQuery SQL query with optional format specifiers (e.g., "SELECT * FROM %s WHERE id = %d")
    * @param args Arguments to be formatted into the SQL query
    * @return List of result rows, each row is a list of string values
@@ -121,7 +121,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /**
    * Verify table contents by selecting all rows ordered by the first column.
-   * 
+   *
    * @param tableName The fully qualified table name
    * @param expected The expected results as a list of rows
    */
@@ -173,13 +173,14 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * @param testCode The test function that receives the full table name
    */
   protected void withNewTable(String tableName, String tableSchema, TableType tableType, TestCode testCode) throws Exception {
-    String fullTableName = getCatalogName() + ".default." + tableName;
+    UCatalogInfo ucCatalog = catalogInfo();
+    String fullTableName = ucCatalog.catalogName() + ".default." + tableName;
 
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location
       withTempDir((File dir) -> {
         File tablePath = new File(dir, tableName);
-        sql("CREATE TABLE %s (%s) USING DELTA LOCATION '%s'", 
+        sql("CREATE TABLE %s (%s) USING DELTA LOCATION '%s'",
             fullTableName, tableSchema, tablePath.getAbsolutePath());
 
         try {
@@ -192,7 +193,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       // Managed table - Spark manages the location
       // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
       sql("CREATE TABLE %s (%s) USING DELTA " +
-          "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')", 
+          "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
           fullTableName, tableSchema);
 
       try {
