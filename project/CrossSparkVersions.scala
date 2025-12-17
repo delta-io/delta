@@ -236,7 +236,7 @@ object SparkVersionSpec {
     additionalSourceDir = Some("scala-spark-4.1"),
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.20.0"
+    jacksonVersion = "2.18.2"
   )
 
   // TODO: 4.2.0-SNAPSHOT (actual master)
