@@ -55,6 +55,7 @@ public class IcebergRESTServer {
   private final Map<String, String> config;
   private Catalog catalog;
   private Map<String, String> catalogConfiguration;
+  private IcebergRESTCatalogAdapterWithPlanSupport adapter;
 
   public IcebergRESTServer() {
     this.config = Maps.newHashMap();
@@ -97,12 +98,13 @@ public class IcebergRESTServer {
   public void start(boolean join) throws Exception {
     initializeBackendCatalog();
 
-    RESTCatalogAdapter adapter = new IcebergRESTCatalogAdapterWithPlanSupport(catalog);
+    this.adapter = new IcebergRESTCatalogAdapterWithPlanSupport(catalog);
     // Use custom servlet that supports the /plan endpoint
     RESTCatalogServlet servlet = new IcebergRESTServletWithPlanSupport(adapter);
 
     ServletContextHandler servletContext = new ServletContextHandler(ServletContextHandler.NO_SESSIONS);
     ServletHolder servletHolder = new ServletHolder(servlet);
+    // Serve on root path for IcebergRESTCatalogPlanningClient tests
     servletContext.addServlet(servletHolder, "/*");
     servletContext.insertHandler(new GzipHandler());
 
@@ -134,6 +136,19 @@ public class IcebergRESTServer {
       return ((ServerConnector) connectors[0]).getLocalPort();
     } else {
       throw new IllegalStateException("HTTP server has no connectors");
+    }
+  }
+
+  /**
+   * Set the catalog prefix to be returned by /v1/config endpoint.
+   * Used for testing prefix-based endpoint construction in Unity Catalog metadata.
+   * Delegates to the adapter which handles the actual /v1/config request interception.
+   *
+   * @param prefix The prefix to return in config.overrides, or null for no prefix
+   */
+  public void setCatalogPrefix(String prefix) {
+    if (adapter != null) {
+      adapter.setCatalogPrefix(prefix);
     }
   }
 

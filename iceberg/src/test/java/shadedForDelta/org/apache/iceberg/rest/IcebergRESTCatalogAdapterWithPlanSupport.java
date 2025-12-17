@@ -28,6 +28,7 @@ import shadedForDelta.org.apache.iceberg.TableScan;
 import shadedForDelta.org.apache.iceberg.catalog.Catalog;
 import shadedForDelta.org.apache.iceberg.catalog.TableIdentifier;
 import shadedForDelta.org.apache.iceberg.io.CloseableIterable;
+import shadedForDelta.org.apache.iceberg.rest.HTTPRequest;
 import shadedForDelta.org.apache.iceberg.rest.RESTCatalogAdapter;
 import shadedForDelta.org.apache.iceberg.rest.requests.PlanTableScanRequest;
 import shadedForDelta.org.apache.iceberg.rest.requests.PlanTableScanRequestParser;
@@ -47,10 +48,35 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   private static final Logger LOG = LoggerFactory.getLogger(IcebergRESTCatalogAdapterWithPlanSupport.class);
 
   private final Catalog catalog;
+  // Catalog prefix returned in /v1/config that gets inserted into REST paths.
+  // Example: prefix="iceberg" transforms /v1/namespaces/db/tables/t1/plan
+  //          to /v1/iceberg/namespaces/db/tables/t1/plan
+  private String catalogPrefix = null;  // null = no prefix (fallback case)
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
     this.catalog = catalog;
+  }
+
+  /**
+   * Set the catalog prefix to be returned by /v1/config endpoint.
+   * The prefix is inserted into REST paths: /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan
+   * Used for testing prefix-based endpoint construction.
+   * Package-private as this is an implementation detail - tests should use
+   * IcebergRESTServer.setCatalogPrefix() instead.
+   *
+   * @param prefix The prefix to return in config.overrides, or null for no prefix
+   */
+  void setCatalogPrefix(String prefix) {
+    this.catalogPrefix = prefix;
+  }
+
+  /**
+   * Get the catalog prefix for testing.
+   * Package-private for servlet access.
+   */
+  String getCatalogPrefix() {
+    return this.catalogPrefix;
   }
 
   @Override
