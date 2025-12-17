@@ -25,7 +25,7 @@ import org.apache.http.entity.ContentType
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.sources.EqualTo
+import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.SharedSparkSession
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
@@ -229,27 +229,53 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
   test("filter sent to IRC server over HTTP") {
     withTempTable("filterTest") { table =>
-      // Create test data with SQL
+      // Create test data with more varied values for comprehensive testing
       val tableName = s"rest_catalog.${defaultNamespace}.filterTest"
       sql(s"""
         INSERT INTO $tableName (id, name)
-        VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')
+        VALUES
+          (1, 'alice'),
+          (2, 'bob'),
+          (3, 'charlie'),
+          (10, 'david'),
+          (20, 'eve')
       """)
 
-      // Call client with filter
-      val filter = EqualTo("id", 2L)
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
-        client.planScan(defaultNamespace.toString, "filterTest", filter = Some(filter))
+        // Test cases: (filter, description, expectedInFilterString)
+        val testCases = Seq(
+          (EqualTo("id", 2L), "EqualTo numeric", Seq("id", "2")),
+          (EqualTo("name", "bob"), "EqualTo string", Seq("name", "bob")),
+          (LessThan("id", 10L), "LessThan", Seq("id", "10")),
+          (GreaterThan("id", 5L), "GreaterThan", Seq("id", "5")),
+          (LessThanOrEqual("id", 3L), "LessThanOrEqual", Seq("id", "3")),
+          (GreaterThanOrEqual("id", 2L), "GreaterThanOrEqual", Seq("id", "2")),
+          (IsNull("name"), "IsNull", Seq("name", "null")),
+          (IsNotNull("name"), "IsNotNull", Seq("name", "null")),
+          (And(EqualTo("id", 2L), EqualTo("name", "bob")), "And", Seq("id", "2", "name", "bob")),
+          (Or(EqualTo("id", 1L), EqualTo("id", 3L)), "Or", Seq("id", "1", "3"))
+        )
 
-        // Verify server captured the filter
-        val capturedFilter = server.getCapturedFilter
-        assert(capturedFilter != null, "Server should have captured filter")
+        testCases.foreach { case (filter, description, expectedStrings) =>
+          // Clear previous captured filter
+          server.clearCaptured()
 
-        // Verify it's an EqualTo expression (converted to Iceberg: equal("id", 2))
-        val filterStr = capturedFilter.toString
-        assert(filterStr.contains("id") && filterStr.contains("2"),
-          s"Expected filter with id=2, got: $filterStr")
+          // Call client with filter
+          client.planScan(defaultNamespace.toString, "filterTest", filter = Some(filter))
+
+          // Verify server captured the filter
+          val capturedFilter = server.getCapturedFilter
+          assert(capturedFilter != null,
+            s"[$description] Server should have captured filter")
+
+          // Verify the filter string contains expected components
+          val filterStr = capturedFilter.toString.toLowerCase
+          expectedStrings.foreach { expected =>
+            assert(filterStr.contains(expected.toLowerCase),
+              s"[$description] Expected filter to contain '$expected', got: $capturedFilter")
+          }
+        }
       } finally {
         client.close()
       }

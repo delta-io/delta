@@ -25,10 +25,22 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  *
  * This is a pure utility class with no side effects. All methods are thread-safe and stateless.
  *
- * Supported filters:
- * - EqualTo, LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual
- * - IsNull, IsNotNull
- * - And, Or (for combining filters)
+ * Filter Mapping Table:
+ * {{{
+ * +-----------------------+--------------------------------+
+ * | Spark Filter          | Iceberg Expression             |
+ * +-----------------------+--------------------------------+
+ * | EqualTo               | Expressions.equal()            |
+ * | LessThan              | Expressions.lessThan()         |
+ * | GreaterThan           | Expressions.greaterThan()      |
+ * | LessThanOrEqual       | Expressions.lessThanOrEqual()  |
+ * | GreaterThanOrEqual    | Expressions.greaterThanOrEqual()|
+ * | IsNull                | Expressions.isNull()           |
+ * | IsNotNull             | Expressions.notNull()          |
+ * | And                   | Expressions.and()              |
+ * | Or                    | Expressions.or()               |
+ * +-----------------------+--------------------------------+
+ * }}}
  *
  * Unsupported filters return None and are not pushed to the server.
  * This only affects performance (server returns more data), not correctness
@@ -54,39 +66,38 @@ object SparkToIcebergExpressionConverter {
    * @return Some(Expression) if the filter is supported, None otherwise
    */
   def convert(filter: Filter, schema: StructType): Option[Expression] = filter match {
+    // Equality and Comparison Operators
     case EqualTo(attribute, value) =>
-      Some(convertEqualTo(attribute, value))
-
+      Some(convertEqualTo(attribute, value))              // Expressions.equal()
     case LessThan(attribute, value) =>
-      Some(convertLessThan(attribute, value))
-
+      Some(convertLessThan(attribute, value))             // Expressions.lessThan()
     case GreaterThan(attribute, value) =>
-      Some(convertGreaterThan(attribute, value))
-
+      Some(convertGreaterThan(attribute, value))          // Expressions.greaterThan()
     case LessThanOrEqual(attribute, value) =>
-      Some(convertLessThanOrEqual(attribute, value))
-
+      Some(convertLessThanOrEqual(attribute, value))      // Expressions.lessThanOrEqual()
     case GreaterThanOrEqual(attribute, value) =>
-      Some(convertGreaterThanOrEqual(attribute, value))
+      Some(convertGreaterThanOrEqual(attribute, value))   // Expressions.greaterThanOrEqual()
 
+    // Null Checks
     case IsNull(attribute) =>
-      Some(Expressions.isNull(attribute))
-
+      Some(Expressions.isNull(attribute))                 // Expressions.isNull()
     case IsNotNull(attribute) =>
-      Some(Expressions.notNull(attribute))
+      Some(Expressions.notNull(attribute))                // Expressions.notNull()
 
+    // Logical Combinators
     case And(left, right) =>
       for {
         leftExpr <- convert(left, schema)
         rightExpr <- convert(right, schema)
-      } yield Expressions.and(leftExpr, rightExpr)
+      } yield Expressions.and(leftExpr, rightExpr)  // Expressions.and()
 
     case Or(left, right) =>
       for {
         leftExpr <- convert(left, schema)
         rightExpr <- convert(right, schema)
-      } yield Expressions.or(leftExpr, rightExpr)
+      } yield Expressions.or(leftExpr, rightExpr)   // Expressions.or()
 
+    // Unsupported Filters
     case _ =>
       // Unsupported filter type (e.g., StringStartsWith, In, Not, etc.)
       // Return None to indicate this filter cannot be pushed down to the server.
