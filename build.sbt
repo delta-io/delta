@@ -66,7 +66,7 @@ val sparkVersion = settingKey[String]("Spark version")
 
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
-val hadoopVersion = "3.4.0"
+val hadoopVersion = "3.4.2"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
