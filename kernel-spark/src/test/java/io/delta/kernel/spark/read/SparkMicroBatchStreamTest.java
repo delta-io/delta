@@ -1189,8 +1189,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     // Enable availableNow
     stream.prepareForTriggerAvailableNow();
     // Advance through multiple batches using dsv2, collecting offset after each batch
