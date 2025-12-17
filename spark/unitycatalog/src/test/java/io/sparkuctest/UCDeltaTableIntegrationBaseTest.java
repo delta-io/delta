@@ -39,7 +39,6 @@ import org.junit.jupiter.api.BeforeAll;
  * <p>Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
-
   /**
    * Provides all table types for parameterized tests. Tests can use this as a @MethodSource to test
    * different table types.
@@ -135,7 +134,10 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     getSqlExecutor().checkWithSQL("SELECT * FROM " + tableName + " ORDER BY 1", expected);
   }
 
-  /** Helper method to run code with a temporary directory that gets cleaned up. */
+  /**
+   * Helper method to run code with a temporary directory that gets cleaned up. For local mode, uses
+   * local filesystem. For remote mode, uses cloud storage.
+   */
   protected void withTempDir(TempDirCode code) throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
     Path tempDir = new Path(uc.baseTableLocation(), "temp-" + UUID.randomUUID());
