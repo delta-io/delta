@@ -193,8 +193,7 @@ public class ParquetStatsReader {
       return Literal.ofTimestampNtz((Long) statValue);
     } else if (dataType instanceof StringType) {
       byte[] binaryStat = getBinaryStat(statistics, decodeMin);
-      StringType stringType = (StringType) dataType;
-      return Literal.ofString(new String(binaryStat, UTF_8), stringType.getCollationIdentifier());
+      return Literal.ofString(new String(binaryStat, UTF_8));
     } else if (dataType instanceof BinaryType) {
       return Literal.ofBinary(getBinaryStat(statistics, decodeMin));
     }

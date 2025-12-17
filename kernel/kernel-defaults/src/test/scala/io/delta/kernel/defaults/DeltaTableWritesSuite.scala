@@ -476,6 +476,38 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  test("insert into table - collated string column with nulls") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val unicode = new StringType("ICU.UNICODE.74.1")
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("name", unicode)
+
+      val batchSize = 4
+      val idValues = Array[java.lang.Integer](1, 2, 3, 4).asInstanceOf[Array[AnyRef]]
+      val nameValues = Array[AnyRef]("Alice", null, "Bob", null)
+
+      val idVector = DefaultGenericVector.fromArray(IntegerType.INTEGER, idValues)
+      val nameVector = DefaultGenericVector.fromArray(unicode, nameValues)
+      val batch = new DefaultColumnarBatch(
+        batchSize,
+        schema,
+        Array[ColumnVector](idVector, nameVector))
+      val fcb = new FilteredColumnarBatch(batch, Optional.empty())
+
+      val commit = appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        data = Seq(Map.empty[String, Literal] -> Seq(fcb)))
+      verifyCommitResult(commit, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 0)
+
+      verifyWrittenContent(tblPath, schema, fcb.toTestRows)
+    }
+  }
+
   test("insert into table - complex types with collated strings in nested/array/map") {
     withTempDirAndEngine { (tblPath, engine) =>
       val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
@@ -492,11 +524,11 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val schemaWithVersion = new StructType()
         .add("nested", nestedWithVersion)
         .add("arr", new ArrayType(utf8Lcase, true))
-        .add("map", new MapType(utf8Lcase, unicode, true))
+        .add("map", new MapType(STRING, unicode, true))
       val schemaWithoutVersion = new StructType()
         .add("nested", nestedWithoutVersion)
         .add("arr", new ArrayType(utf8Lcase, true))
-        .add("map", new MapType(utf8Lcase, unicode, true))
+        .add("map", new MapType(STRING, unicode, true))
 
       val batchSize = 4
 
@@ -516,7 +548,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         }
         val arrVector = buildArrayVector(arrValues, utf8Lcase, containsNull = true)
 
-        val mapType = new MapType(utf8Lcase, unicode, true)
+        val mapType = new MapType(STRING, unicode, true)
         val mapValues: Seq[Map[AnyRef, AnyRef]] = (0 until batchSize).map { i =>
           Map[AnyRef, AnyRef](s"${seed}k$i" -> s"${seed}v$i")
         }
@@ -603,7 +635,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         .add("c1", IntegerType.INTEGER)
         .add("c2", nested)
         .add("c3", new ArrayType(utf8Lcase, true))
-        .add("c4", new MapType(utf8Lcase, unicode, true))
+        .add("c4", new MapType(STRING, unicode, true))
 
       // Build vectors
       val batchSize = 5
@@ -620,7 +652,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       }
       val c3Vector = buildArrayVector(c3Values, utf8Lcase, containsNull = true)
 
-      val c4Type = new MapType(utf8Lcase, unicode, true)
+      val c4Type = new MapType(STRING, unicode, true)
       val c4Values: Seq[Map[AnyRef, AnyRef]] = (0 until batchSize).map { i =>
         Map[AnyRef, AnyRef](s"k$i" -> s"v$i")
       }
@@ -942,7 +974,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val schema = new StructType()
         .add("name", unicode)
         .add("arr", new ArrayType(utf8Lcase, true))
-        .add("map", new MapType(unicode, INTEGER, true))
+        .add("map", new MapType(STRING, utf8Lcase, true))
 
       val txn = getCreateTxn(engine, tblPath, schema)
       commitTransaction(txn, engine, emptyIterable())
@@ -956,9 +988,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       }
       val arrVec = buildArrayVector(arrValues, utf8Lcase, containsNull = true)
 
-      val mapType = new MapType(unicode, INTEGER, true)
+      val mapType = new MapType(STRING, utf8Lcase, true)
       val mapValues: Seq[Map[AnyRef, AnyRef]] = (0 until batchSize).map { i =>
-        Map[AnyRef, AnyRef](s"k$i" -> java.lang.Integer.valueOf(i))
+        Map[AnyRef, AnyRef](s"k$i" -> s"v$i")
       }
       val mapVec = buildMapVector(mapValues, mapType)
 

@@ -18,11 +18,10 @@ package io.delta.kernel.types
 import org.scalatest.funsuite.AnyFunSuite
 
 class DataTypeSuite extends AnyFunSuite {
+  val utf8LcaseString = new StringType("SPARK.UTF8_LCASE")
+  val unicodeString = new StringType("ICU.UNICODE")
 
-  test("test equivalentIgnoreCollations") {
-    val utf8LcaseString = new StringType("SPARK.UTF8_LCASE")
-    val unicodeString = new StringType("ICU.UNICODE")
-
+  test("isInputCompatible") {
     val testCases = Seq(
       (StringType.STRING, StringType.STRING, true),
       (StringType.STRING, utf8LcaseString, true),
@@ -41,16 +40,16 @@ class DataTypeSuite extends AnyFunSuite {
         new ArrayType(utf8LcaseString, false),
         false),
       (
+        new MapType(StringType.STRING, utf8LcaseString, false),
+        new MapType(StringType.STRING, unicodeString, false),
+        true),
+      (
+        new MapType(StringType.STRING, utf8LcaseString, false),
+        new MapType(StringType.STRING, StringType.STRING, false),
+        true),
+      (
         new MapType(StringType.STRING, IntegerType.INTEGER, false),
-        new MapType(utf8LcaseString, IntegerType.INTEGER, false),
-        true),
-      (
-        new MapType(unicodeString, IntegerType.INTEGER, false),
-        new MapType(utf8LcaseString, IntegerType.INTEGER, false),
-        true),
-      (
-        new MapType(unicodeString, IntegerType.INTEGER, false),
-        new MapType(utf8LcaseString, IntegerType.INTEGER, true),
+        new MapType(StringType.STRING, IntegerType.INTEGER, true),
         false),
       (
         new StructType()
@@ -74,7 +73,7 @@ class DataTypeSuite extends AnyFunSuite {
           .add("c2", new MapType(StringType.STRING, utf8LcaseString, false)),
         new StructType()
           .add("c1", new ArrayType(StringType.STRING, true))
-          .add("c2", new MapType(utf8LcaseString, unicodeString, false)),
+          .add("c2", new MapType(StringType.STRING, unicodeString, false)),
         true),
       (
         new StructType()
@@ -82,7 +81,7 @@ class DataTypeSuite extends AnyFunSuite {
           .add("c2", new MapType(StringType.STRING, utf8LcaseString, false)),
         new StructType()
           .add("c1", new ArrayType(StringType.STRING, true))
-          .add("c2", new MapType(utf8LcaseString, unicodeString, false)),
+          .add("c2", new MapType(StringType.STRING, unicodeString, false)),
         false),
       (
         new StructType()
@@ -90,11 +89,11 @@ class DataTypeSuite extends AnyFunSuite {
           .add("c2", new MapType(StringType.STRING, utf8LcaseString, false)),
         new StructType()
           .add("c1", new ArrayType(StringType.STRING, true))
-          .add("c2", new MapType(utf8LcaseString, unicodeString, false)),
+          .add("c2", new MapType(StringType.STRING, unicodeString, false)),
         false),
       (
         new ArrayType(
-          new StructType().add("c1", new MapType(utf8LcaseString, StringType.STRING, true), true),
+          new StructType().add("c1", new MapType(StringType.STRING, StringType.STRING, true), true),
           true),
         new ArrayType(
           new StructType().add("c1", new MapType(StringType.STRING, utf8LcaseString, true), true),
@@ -102,15 +101,18 @@ class DataTypeSuite extends AnyFunSuite {
         true),
       (
         new ArrayType(
-          new StructType().add("c1", new MapType(utf8LcaseString, StringType.STRING, true), true),
+          new StructType().add("c1", new MapType(StringType.STRING, StringType.STRING, true), true),
           true),
         new ArrayType(
-          new StructType().add("c2", new MapType(StringType.STRING, utf8LcaseString, true), true),
+          new StructType().add("c2", new MapType(StringType.STRING, unicodeString, true), true),
           true),
         false),
       (
         new ArrayType(
-          new StructType().add("c1", new MapType(utf8LcaseString, StringType.STRING, true), false),
+          new StructType().add(
+            "c1",
+            new MapType(StringType.STRING, StringType.STRING, true),
+            false),
           true),
         new ArrayType(
           new StructType().add("c1", new MapType(StringType.STRING, utf8LcaseString, true), true),
@@ -118,7 +120,7 @@ class DataTypeSuite extends AnyFunSuite {
         false),
       (
         new MapType(
-          new StructType().add("c1", utf8LcaseString),
+          new StructType().add("c1", StringType.STRING),
           new ArrayType(utf8LcaseString, false),
           true),
         new MapType(
@@ -128,7 +130,7 @@ class DataTypeSuite extends AnyFunSuite {
         true),
       (
         new MapType(
-          new StructType().add("c1", utf8LcaseString),
+          new StructType().add("c1", StringType.STRING),
           new ArrayType(utf8LcaseString, false),
           false),
         new MapType(
@@ -137,12 +139,41 @@ class DataTypeSuite extends AnyFunSuite {
           true),
         false),
       (
-        new MapType(new StructType().add("c1", utf8LcaseString), StringType.STRING, false),
+        new MapType(new StructType().add("c1", StringType.STRING), StringType.STRING, false),
         new MapType(new StructType().add("c1", StringType.STRING), utf8LcaseString, true),
         false))
 
     testCases.foreach { case (dt1, dt2, expected) =>
-      assert(dt1.equivalentIgnoreCollations(dt2) == expected)
+      assert(dt1.isInputCompatible(dt2) == expected)
+    }
+  }
+
+  test("check MapType cannot be created with collated key") {
+    intercept[IllegalArgumentException] {
+      // invalid version for SPARK.UTF8_BINARY
+      new MapType(new StringType("SPARK.UTF8_BINARY.23"), StringType.STRING, true)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(utf8LcaseString, StringType.STRING, true)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(unicodeString, StringType.STRING, false)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(new ArrayType(unicodeString, true), StringType.STRING, true)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(
+        new StructType().add("c1", StringType.STRING).add("c1", utf8LcaseString),
+        StringType.STRING,
+        false)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(
+        new StructType().add("c1", StringType.STRING)
+          .add("c1", new ArrayType(unicodeString, false)),
+        StringType.STRING,
+        false)
     }
   }
 }

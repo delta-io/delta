@@ -18,6 +18,7 @@ package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
 import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * Represent {@code array} data type
@@ -56,13 +57,15 @@ public class ArrayType extends DataType {
   }
 
   /**
-   * Are the data types same? The collations could be different.
+   * Is `dataType` compatible input type for this type? The collations could be different.
+   *
+   * <p>Should be used for schema comparisons when checking input type compatibility.
    *
    * @param dataType
    * @return
    */
   @Override
-  public boolean equivalentIgnoreCollations(DataType dataType) {
+  public boolean isInputCompatible(DataType dataType) {
     if (this == dataType) {
       return true;
     }
@@ -71,13 +74,17 @@ public class ArrayType extends DataType {
     }
     ArrayType arrayType = (ArrayType) dataType;
     return (elementField == null && arrayType.elementField == null)
-        || (elementField != null
-            && elementField.equivalentIgnoreCollations(arrayType.elementField));
+        || (elementField != null && elementField.isInputCompatible(arrayType.elementField));
   }
 
   @Override
   public boolean isNested() {
     return true;
+  }
+
+  @Override
+  public boolean existsRecursively(Predicate<DataType> predicate) {
+    return super.existsRecursively(predicate) || getElementType().existsRecursively(predicate);
   }
 
   @Override
