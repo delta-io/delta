@@ -1118,11 +1118,19 @@ lazy val iceberg = (project in file("iceberg"))
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
       "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
-      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test"
+      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
+      "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
+      "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
+      "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
+      "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
+      "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
+    Compile / scalacOptions += "-nowarn",
+    Test / unmanagedJars += (icebergTestsShaded / assembly).value,
+    Test / scalacOptions += "-nowarn",
     assembly / assemblyJarName := {
       s"${moduleName.value}_${scalaBinaryVersion.value}-${version.value}.jar"
     },
@@ -1223,6 +1231,39 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / assemblyMergeStrategy := updateMergeStrategy((assembly / assemblyMergeStrategy).value),
     assemblyPackageScala / assembleArtifact := false,
   )
+
+lazy val icebergTestsShaded = (project in file("icebergTestsShaded"))
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
+  .settings (
+    name := "iceberg-tests-shaded",
+    commonSettings,
+    skipReleaseSettings,
+    // must exclude all dependencies from Iceberg that delta-spark includes
+    libraryDependencies ++= Seq(
+      "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion classifier "tests" excludeAll (
+        icebergExclusionRules: _*
+      ),
+    ),
+    // Generated shaded Iceberg JARs
+    Compile / packageBin := assembly.value,
+    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyShadeRules := Seq(
+      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll
+    ),
+    assembly / assemblyExcludedJars := {
+      val cp = (fullClasspath in assembly).value
+      cp.filter { jar =>
+        val doExclude = jar.data.getName.contains("jackson-annotations") ||
+          jar.data.getName.contains("RoaringBitmap")
+        doExclude
+      }
+    },
+    assembly / assemblyMergeStrategy := updateMergeStrategy((assembly / assemblyMergeStrategy).value),
+    assemblyPackageScala / assembleArtifact := false,
+  )
+
 
 lazy val hudi = (project in file("hudi"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
