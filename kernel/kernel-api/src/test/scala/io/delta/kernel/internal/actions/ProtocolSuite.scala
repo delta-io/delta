@@ -425,4 +425,120 @@ class ProtocolSuite extends AnyFunSuite with TestUtils {
     assert(deserialized === source)
     assert(deserialized.hashCode() === source.hashCode())
   }
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  // Tests for supportsFeature                                                                  //
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  test("supportsFeature - legacy protocol with readerVersion=1, writerVersion=2") {
+    // Protocol (1, 2) implicitly supports appendOnly and invariants
+    val protocol = new Protocol(1, 2)
+
+    // appendOnly is a writer-only feature with minWriterVersion = 2
+    assert(protocol.supportsFeature(TableFeatures.APPEND_ONLY_W_FEATURE))
+    // invariants is a writer-only feature with minWriterVersion = 2
+    assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
+    // checkConstraints is a writer-only feature with minWriterVersion = 3
+    assert(!protocol.supportsFeature(TableFeatures.CONSTRAINTS_W_FEATURE))
+    // columnMapping is a reader-writer feature with minReaderVersion = 2, minWriterVersion = 5
+    assert(!protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+  }
+
+  test("supportsFeature - legacy protocol with readerVersion=2, writerVersion=5") {
+    // Protocol (2, 5) implicitly supports columnMapping (and other legacy writer features)
+    val protocol = new Protocol(2, 5)
+
+    // columnMapping is a reader-writer feature with minReaderVersion = 2, minWriterVersion = 5
+    assert(protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+    // changeDataFeed is a writer feature with minWriterVersion = 4
+    assert(protocol.supportsFeature(TableFeatures.CHANGE_DATA_FEED_W_FEATURE))
+    // identityColumns is a writer-only feature with minWriterVersion = 6
+    assert(!protocol.supportsFeature(TableFeatures.IDENTITY_COLUMNS_W_FEATURE))
+  }
+
+  test("supportsFeature - protocol with table features support") {
+    // Protocol (3, 7) with explicit features
+    val protocol = new Protocol(
+      3,
+      7,
+      Set("columnMapping", "v2Checkpoint").asJava,
+      Set("columnMapping", "domainMetadata", "rowTracking").asJava)
+
+    // Features explicitly listed
+    assert(protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+    assert(protocol.supportsFeature(TableFeatures.CHECKPOINT_V2_RW_FEATURE))
+    assert(protocol.supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE))
+    assert(protocol.supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE))
+
+    // Features not listed
+    assert(!protocol.supportsFeature(TableFeatures.APPEND_ONLY_W_FEATURE))
+    assert(!protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE))
+  }
+
+  test("supportsFeature - protocol with only writer features (and legacy reader version)") {
+    // Protocol (1, 7) with only writer features
+    val protocol = new Protocol(
+      1,
+      7,
+      Set().asJava,
+      Set("appendOnly", "invariants", "domainMetadata").asJava)
+
+    // Writer features listed
+    assert(protocol.supportsFeature(TableFeatures.APPEND_ONLY_W_FEATURE))
+    assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
+    assert(protocol.supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE))
+
+    // Writer features not listed
+    assert(!protocol.supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE))
+    // Reader-writer features not listed (reader version too low)
+    assert(!protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+    assert(!protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE))
+  }
+
+  test("supportsFeature - doesn't throw on unknown writer feature when checking reader feature") {
+    // Protocol with unknown writer features in the set
+    val protocol = new Protocol(
+      3,
+      7,
+      Set("columnMapping").asJava,
+      Set("columnMapping", "unknownWriterFeature").asJava)
+
+    // Check a reader-writer feature that is present - should not throw
+    assert(protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+
+    // Check a reader-writer feature that is not present - should not throw, just return false
+    assert(!protocol.supportsFeature(TableFeatures.CHECKPOINT_V2_RW_FEATURE))
+  }
+
+  test("supportsFeature - doesn't throw on unknown features in reader or writer list") {
+    // Protocol with unknown features in both reader and writer feature sets
+    val protocol = new Protocol(
+      3,
+      7,
+      Set("columnMapping", "unknownReaderWriterFeature").asJava,
+      Set(
+        "columnMapping",
+        "domainMetadata",
+        "unknownReaderWriterFeature",
+        "unknownWriterFeature").asJava)
+
+    // Check reader-writer features - should not throw
+    assert(protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+    assert(!protocol.supportsFeature(TableFeatures.CHECKPOINT_V2_RW_FEATURE))
+
+    // Check writer features - should not throw
+    assert(protocol.supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE))
+    assert(!protocol.supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE))
+    assert(!protocol.supportsFeature(TableFeatures.APPEND_ONLY_W_FEATURE))
+  }
+
+  test("supportsFeature - empty feature sets") {
+    // Protocol (3, 7) with empty feature sets
+    val protocol = new Protocol(3, 7, Set().asJava, Set().asJava)
+
+    // No features should be supported
+    assert(!protocol.supportsFeature(TableFeatures.APPEND_ONLY_W_FEATURE))
+    assert(!protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+    assert(!protocol.supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE))
+  }
 }
