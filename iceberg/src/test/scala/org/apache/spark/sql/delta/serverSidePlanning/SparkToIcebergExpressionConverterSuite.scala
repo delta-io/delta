@@ -48,7 +48,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   private def assertContainsOperator(filter: Filter, operators: String*): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(filter, testSchema)
     assert(result.isDefined, s"Should convert: $filter")
-    val expr = result.get.toString.toLowerCase
+    val expr = result.get.toString.toLowerCase(java.util.Locale.ROOT)
     operators.foreach(op =>
       assert(expr.contains(op), s"Missing operator '$op' in: $expr")
     )
@@ -64,7 +64,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     // EqualTo with null becomes IsNull
     val nullResult = SparkToIcebergExpressionConverter.convert(EqualTo("name", null), testSchema)
     assert(nullResult.isDefined, "Should convert EqualTo with null")
-    assert(nullResult.get.toString.toLowerCase.contains("null"), "Should handle null value")
+    assert(
+      nullResult.get.toString.toLowerCase(java.util.Locale.ROOT).contains("null"),
+      "Should handle null value")
   }
 
   // Comparison operator tests
@@ -125,7 +127,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val result = SparkToIcebergExpressionConverter.convertFilters(filters, testSchema)
 
     assert(result.isDefined, "Should convert multiple filters")
-    val exprStr = result.get.toString.toLowerCase
+    val exprStr = result.get.toString.toLowerCase(java.util.Locale.ROOT)
     assert(exprStr.contains("and"), "Multiple filters should be combined with AND")
     assert(exprStr.contains("id"), "Should contain 'id' filter")
     assert(exprStr.contains("age"), "Should contain 'age' filter")
@@ -144,7 +146,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val exprStr = result.get.toString
     assert(exprStr.contains("id"), "Should contain 'id' filter")
     assert(exprStr.contains("age"), "Should contain 'age' filter")
-    assert(exprStr.toLowerCase.contains("and"), "Should combine remaining filters with AND")
+    assert(
+      exprStr.toLowerCase(java.util.Locale.ROOT).contains("and"),
+      "Should combine remaining filters with AND")
   }
 
   test("convertFilters returns None when all filters are unsupported") {
