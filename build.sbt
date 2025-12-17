@@ -1116,9 +1116,7 @@ lazy val iceberg = (project in file("iceberg"))
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
       "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
-      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
-      // BoneCP is required for Hive Metastore tests (UniFormWithIcebergCompatV2Suite)
-      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test"
+      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
