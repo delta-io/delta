@@ -695,8 +695,7 @@ trait DeltaSourceBase extends Source
   private def checkNonAdditiveSchemaChanges(
       oldMetadata: Metadata,
       newMetadata: Metadata,
-      validatedDuringStreamStart: Boolean
-  ): Unit = {
+      validatedDuringStreamStart: Boolean): Unit = {
     def shouldTrackSchema: Boolean =
       if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
           TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
@@ -1476,8 +1475,7 @@ object DeltaSource extends DeltaLogging {
       backfilling: Boolean,
       shouldForbidTightenNullability: Boolean,
       allowWideningTypeChanges: Boolean,
-      shouldAllowMissingColumns: Boolean
-  ): (Boolean, Option[Boolean]) = {
+      shouldAllowMissingColumns: Boolean): (Boolean, Option[Boolean]) = {
     if (!SchemaUtils.isReadCompatible(
       existingSchema = dataSchema,
       readSchema = readSchema,
