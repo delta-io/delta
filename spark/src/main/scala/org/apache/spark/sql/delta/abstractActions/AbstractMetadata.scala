@@ -34,9 +34,6 @@ trait AbstractMetadata {
   /** User-specified table description. */
   def description: String
 
-  /** The table schema in string representation (JSON format). */
-  def schemaString: String
-
   /** Returns the schema as a [[StructType]]. */
   def schema: StructType
 
