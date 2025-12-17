@@ -741,9 +741,6 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
       "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
 
-      // Cloud storage support.
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
-
       // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
       "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
