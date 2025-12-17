@@ -27,7 +27,7 @@ import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{LongType, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType}
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
 import shadedForDelta.org.apache.iceberg.expressions.Binder
@@ -321,26 +321,33 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       val tableName = s"rest_catalog.${defaultNamespace}.projectionTest"
       sql(s"""
         INSERT INTO $tableName (id, name)
-        VALUES (1, 'alice'), (2, 'bob')
+        VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')
       """)
 
-      // Call client with projection (only select "id" column)
-      val projection = StructType(Seq(
-        StructField("id", LongType)
-      ))
+      // Test cases covering different projection scenarios
+      val testCases = Seq(
+        ("single column", StructType(Seq(StructField("id", LongType))), Set("id")),
+        ("multiple columns", StructType(Seq(StructField("id", LongType), StructField("name", StringType))), Set("id", "name")),
+        ("all columns", StructType(Seq(StructField("id", LongType), StructField("name", StringType))), Set("id", "name")),
+        ("different order", StructType(Seq(StructField("name", StringType), StructField("id", LongType))), Set("name", "id"))
+      )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
-        client.planScan(defaultNamespace.toString, "projectionTest", projection = Some(projection))
+        testCases.foreach { case (description, projection, expectedFields) =>
+          // Call planScan with projection
+          client.planScan(defaultNamespace.toString, "projectionTest", projection = Some(projection))
 
-        // Verify server captured the projection
-        val capturedProjection = server.getCapturedProjection
-        assert(capturedProjection != null, "Server should have captured projection")
+          // Verify server captured the projection
+          val capturedProjection = server.getCapturedProjection
+          assert(capturedProjection != null,
+            s"[$description] Server should have captured projection")
 
-        // Verify it contains only "id" field (as List[String])
-        val fieldNames = capturedProjection.asScala.toSet
-        assert(fieldNames == Set("id"),
-          s"Expected projection with {id}, got: $fieldNames")
+          // Verify field names match expected
+          val fieldNames = capturedProjection.asScala.toSet
+          assert(fieldNames == expectedFields,
+            s"[$description] Expected $expectedFields, got: $fieldNames")
+        }
       } finally {
         client.close()
       }
