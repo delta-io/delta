@@ -206,25 +206,27 @@ case class SparkVersionSpec(
 
 object SparkVersionSpec {
 
+  private val java17TestSettings = Seq(
+    // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+  )
+
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
     targetJvm = "17",
     additionalSourceDir = Some("scala-spark-4.0"),
     antlr4Version = "4.13.1",
-    additionalJavaOptions = Seq(
-      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
-      "--add-opens=java.base/java.lang=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens=java.base/java.io=ALL-UNNAMED",
-      "--add-opens=java.base/java.net=ALL-UNNAMED",
-      "--add-opens=java.base/java.nio=ALL-UNNAMED",
-      "--add-opens=java.base/java.util=ALL-UNNAMED",
-      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
-      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    ),
+    additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
   )
 
@@ -233,21 +235,8 @@ object SparkVersionSpec {
     targetJvm = "17",
     additionalSourceDir = Some("scala-spark-4.1"),
     antlr4Version = "4.13.1",
-    additionalJavaOptions = Seq(
-      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
-      "--add-opens=java.base/java.lang=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens=java.base/java.io=ALL-UNNAMED",
-      "--add-opens=java.base/java.net=ALL-UNNAMED",
-      "--add-opens=java.base/java.nio=ALL-UNNAMED",
-      "--add-opens=java.base/java.util=ALL-UNNAMED",
-      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
-      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    ),
-    jacksonVersion = "2.18.2"
+    additionalJavaOptions = java17TestSettings,
+    jacksonVersion = "2.20.0"
   )
 
   // TODO: 4.2.0-SNAPSHOT (actual master)
