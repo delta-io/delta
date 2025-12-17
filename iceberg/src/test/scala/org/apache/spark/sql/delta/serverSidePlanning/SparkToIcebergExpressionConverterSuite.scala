@@ -56,7 +56,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // EqualTo tests
   test("convert EqualTo with various types") {
-    // Spark Filter                          | Expected terms in output
     assertConverts(EqualTo("id", 5),           "id", "5")              // integer
     assertConverts(EqualTo("name", "Alice"),   "name")                 // string
     assertConverts(EqualTo("id", 1234567890L), "id")                   // long
@@ -70,7 +69,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Comparison operator tests
   test("convert comparison operators") {
-    // Spark Filter                                       | Expected terms
     assertConverts(LessThan("age", 30),                    "age", "30")
     assertConverts(GreaterThan("age", 18),                 "age", "18")
     assertConverts(LessThanOrEqual("price", 99.99),        "price")
@@ -79,14 +77,12 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Null check tests
   test("convert null check operators") {
-    // Spark Filter               | Expected terms
     assertConverts(IsNull("name"),    "name", "null")
     assertConverts(IsNotNull("name"), "name", "null")
   }
 
   // Logical operator tests
   test("convert logical operators") {
-    // Spark Filter                                                 | Expected operators
     assertContainsOperator(
       And(EqualTo("id", 5), GreaterThan("age", 18)),                "and", "id", "age")
 
@@ -104,7 +100,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Unsupported filter tests
   test("unsupported filters return None") {
-    // Spark Filter                            | Expected result
     assertReturnsNone(StringStartsWith("name", "A"))    // StringStartsWith
     assertReturnsNone(StringEndsWith("name", "Z"))      // StringEndsWith
     assertReturnsNone(StringContains("name", "foo"))    // StringContains
@@ -172,7 +167,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Type conversion tests
   test("convert with different numeric types") {
-    // Spark Filter                               | Type tested
     assertConverts(EqualTo("count", 42),            "count")      // int
     assertConverts(EqualTo("bigCount", 1234567890123L), "bigCount") // long
     assertConverts(GreaterThan("price", 19.99),     "price")      // double
