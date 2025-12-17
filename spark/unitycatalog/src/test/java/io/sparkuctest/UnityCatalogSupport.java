@@ -16,6 +16,7 @@
 
 package io.sparkuctest;
 
+import com.google.common.base.Preconditions;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.api.CatalogsApi;
 import io.unitycatalog.client.api.SchemasApi;
@@ -23,6 +24,7 @@ import io.unitycatalog.client.model.CreateCatalog;
 import io.unitycatalog.client.model.CreateSchema;
 import io.unitycatalog.server.UnityCatalogServer;
 import io.unitycatalog.server.utils.ServerProperties;
+import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
 import org.apache.spark.SparkConf;
 import org.junit.jupiter.api.AfterAll;
@@ -37,15 +39,13 @@ import java.util.Properties;
 
 /**
  * Abstract base class that provides Unity Catalog server integration for Delta tests.
- *
- * This class automatically:
- * - Starts a local Unity Catalog server before all tests
- * - Configures Spark to connect to the UC server
- * - Stops the server and cleans up after all tests
- *
- * The UC server runs with Unity Catalog dependencies to provide catalog functionality
- * for integration testing.
- *
+ * <p>
+ * This class automatically: - Starts a local Unity Catalog server before all tests - Configures
+ * Spark to connect to the UC server - Stops the server and cleans up after all tests
+ * <p>
+ * The UC server runs with Unity Catalog dependencies to provide catalog functionality for
+ * integration testing.
+ * <p>
  * Usage:
  * <pre>
  * public class MyUCTest extends UnityCatalogSupport {
@@ -68,6 +68,55 @@ import java.util.Properties;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class UnityCatalogSupport {
 
+  protected static class UCatalogInfo {
+
+    private String serverUri;
+    private String catalogName;
+    private String serverToken;
+
+    public UCatalogInfo(String serverUri, String catalogName, String serverToken) {
+      this.serverUri = serverUri;
+      this.catalogName = catalogName;
+      this.serverToken = serverToken;
+    }
+
+    public String serverUri() {
+      return serverUri;
+    }
+
+    public String catalogName() {
+      return catalogName;
+    }
+
+    public String serverToken() {
+      return serverToken;
+    }
+  }
+
+  public static final String UC_REMOTE_ENABLED = "UC_REMOTE_ENABLED";
+  public static final String UC_URI = "UC_URI";
+  public static final String UC_TOKEN = "UC_TOKEN";
+  public static final String UC_CATALOG_NAME = "UC_CATALOG_NAME";
+  public static final String UC_SCHEMA_NAME = "UC_SCHEMA_NAME";
+  public static final String UC_BASE_LOCATION = "UC_BASE_LOCATION";
+
+  private static boolean isUCRemoteEnabled() {
+    String ucRemoteEnabled = System.getenv(UC_REMOTE_ENABLED);
+    return ucRemoteEnabled != null && ucRemoteEnabled.equalsIgnoreCase("true");
+  }
+
+  protected UCatalogInfo catalogInfo() {
+    if (isUCRemoteEnabled()) {
+      String serverUri = System.getenv(UC_URI);
+      String catalogName = System.getenv(UC_CATALOG_NAME);
+      String serverToken = System.getenv(UC_TOKEN);
+      return new UCatalogInfo(serverUri, catalogName, serverToken);
+    } else {
+      Preconditions.checkNotNull(ucServer, "Unity Catalog Server not configured");
+      return new UCatalogInfo(ucServer.)
+    }
+  }
+
   private static final Logger logger = Logger.getLogger(UnityCatalogSupport.class);
 
   /**
@@ -86,24 +135,23 @@ public abstract class UnityCatalogSupport {
   private File ucTempDir;
 
   /**
-   * The name of the Unity Catalog in Spark's catalog registry.
-   * Subclasses can override this if they need a different catalog name.
+   * The name of the Unity Catalog in Spark's catalog registry. Subclasses can override this if they
+   * need a different catalog name.
    */
   protected String getCatalogName() {
     return "unity";
   }
 
   /**
-   * The URI of the Unity Catalog server.
-   * Available after setupServer() is called.
+   * The URI of the Unity Catalog server. Available after setupServer() is called.
    */
   protected String getServerUri() {
     return "http://localhost:" + ucPort;
   }
 
   /**
-   * The authentication token for the Unity Catalog server.
-   * Currently using a test token; in production scenarios this would be more secure.
+   * The authentication token for the Unity Catalog server. Currently using a test token; in
+   * production scenarios this would be more secure.
    */
   protected String getServerToken() {
     return "not-a-token";
@@ -130,12 +178,15 @@ public abstract class UnityCatalogSupport {
   }
 
   /**
-   * Starts the Unity Catalog server before all tests.
-   * IMPORTANT: Starts the server BEFORE calling other setup to ensure
-   * the server is running when SharedSparkSession creates the SparkSession.
+   * Starts the Unity Catalog server before all tests. IMPORTANT: Starts the server BEFORE calling
+   * other setup to ensure the server is running when SharedSparkSession creates the SparkSession.
    */
   @BeforeAll
   public void setupServer() throws Exception {
+    if (isUCRemoteEnabled()) {
+      return;
+    }
+
     // Create temporary directory for UC server data
     ucTempDir = Files.createTempDirectory("unity-catalog-test-").toFile();
     ucTempDir.deleteOnExit();
@@ -215,7 +266,11 @@ public abstract class UnityCatalogSupport {
    * Stops the Unity Catalog server after all tests.
    */
   @AfterAll
-  public void tearDownServer() throws Exception {
+  public void tearDownServer() {
+    if (isUCRemoteEnabled()) {
+      return;
+    }
+
     if (ucServer != null) {
       ucServer.stop();
       logger.info("Unity Catalog server stopped");
@@ -230,7 +285,7 @@ public abstract class UnityCatalogSupport {
 
   /**
    * Configures a SparkConf with Unity Catalog settings.
-   *
+   * <p>
    * This method should be called in the test's sparkConf override:
    * <pre>
    * {@literal @}Override
@@ -254,15 +309,7 @@ public abstract class UnityCatalogSupport {
    * Recursively deletes a directory and all its contents.
    */
   private void deleteRecursively(File file) {
-    if (file.isDirectory()) {
-      File[] files = file.listFiles();
-      if (files != null) {
-        for (File child : files) {
-          deleteRecursively(child);
-        }
-      }
-    }
-    file.delete();
+    FileUtils.deleteQuietly(file);
   }
 }
 
