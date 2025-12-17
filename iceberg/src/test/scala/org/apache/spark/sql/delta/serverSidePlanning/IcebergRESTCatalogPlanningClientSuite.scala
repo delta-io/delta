@@ -29,6 +29,7 @@ import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.SharedSparkSession
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
+import shadedForDelta.org.apache.iceberg.expressions.Binder
 import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
 import shadedForDelta.org.apache.iceberg.types.Types
 
@@ -281,10 +282,12 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           assert(capturedFilter != null,
             s"[$description] Server should have captured filter")
 
-          // Compare captured expression with expected expression
-          assert(capturedFilter.toString == expectedExpr.get.toString,
-            s"[$description] Expected expression: ${expectedExpr.get}, " +
-              s"got: $capturedFilter")
+          // Bind both expressions to schema and compare using isEquivalentTo()
+          val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
+          val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
+
+          assert(boundCaptured.isEquivalentTo(boundExpected),
+            s"[$description] Expected expression: $boundExpected, got: $boundCaptured")
         }
       } finally {
         client.close()
