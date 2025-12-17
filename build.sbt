@@ -1098,6 +1098,31 @@ lazy val iceberg = (project in file("iceberg"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentModuleName(sparkVersion),
+    // TODO: upgrade to Spark 4.1?
+    Compile / compile := runTaskOnlyOnSparkDefault(
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-iceberg",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkDefault(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-iceberg",
+      emptyValue = ()
+    ).value,
+    publish := runTaskOnlyOnSparkDefault(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-iceberg",
+      emptyValue = ()
+    ).value,
+    publishM2 := runTaskOnlyOnSparkDefault(
+      task = publishM2,
+      taskName = "publishM2",
+      projectName = "delta-iceberg",
+      emptyValue = ()
+    ).value,
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
