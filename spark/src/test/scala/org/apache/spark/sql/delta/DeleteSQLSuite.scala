@@ -87,7 +87,7 @@ trait DeleteSQLTests extends DeleteSQLMixin {
     }
   }
 
-  test("DELETE: simple correlated IN subquery allowed via temp view") {
+  test("simple correlated IN subquery allowed via temp view") {
     withTable("target") {
       withTable("sourceTable") {
         withTempView("t") {
@@ -110,7 +110,7 @@ trait DeleteSQLTests extends DeleteSQLMixin {
     }
   }
 
-  test("DELETE: EXISTS subquery with correlation allowed via temp view") {
+  test("exists subquery with correlation allowed via temp view") {
     withTable("target") {
       withTable("sourceTable") {
         withTempView("t") {
@@ -134,7 +134,7 @@ trait DeleteSQLTests extends DeleteSQLMixin {
     }
   }
 
-  test("DELETE: Scalar subquery in condition allowed via temp view") {
+  test("scalar subquery in condition allowed via temp view") {
     withTable("target") {
       withTable("source") {
         withTempView("t") {
@@ -159,7 +159,7 @@ trait DeleteSQLTests extends DeleteSQLMixin {
     }
   }
 
-  test("DELETE: Simple NOT IN subquery allowed via temp view") {
+  test("simple NOT IN subquery allowed via temp view") {
     withTable("target") {
       withTable("source") {
         withTempView("t") {
@@ -184,7 +184,7 @@ trait DeleteSQLTests extends DeleteSQLMixin {
     }
   }
 
-  test("DELETE: Nested subquery should fail via temp view") {
+  test("nested subquery should fail via temp view") {
     withTable("target") {
       withTable("source1") {
         withTable("source2") {

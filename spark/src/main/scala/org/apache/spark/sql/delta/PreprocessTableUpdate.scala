@@ -41,7 +41,7 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: DeltaUpdateTable if u.resolved =>
       u.condition.foreach { cond =>
-        if (SubqueryExpression.hasSubquery(cond) && isAllowedSubqueryPattern(cond)) {
+        if (SubqueryExpression.hasSubquery(cond) && !isAllowedSubqueryPattern(cond)) {
           throw DeltaErrors.subqueryNotSupportedException("UPDATE", cond)
         }
       }

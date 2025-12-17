@@ -33,7 +33,7 @@ case class PreprocessTableDelete(sqlConf: SQLConf) extends Rule[LogicalPlan] {
     plan.resolveOperators {
       case d: DeltaDelete if d.resolved =>
         d.condition.foreach { cond =>
-          if (SubqueryExpression.hasSubquery(cond) && isAllowedSubqueryPattern(cond)) {
+          if (SubqueryExpression.hasSubquery(cond) && !isAllowedSubqueryPattern(cond)) {
             throw DeltaErrors.subqueryNotSupportedException("DELETE", cond)
           }
         }
