@@ -34,7 +34,7 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-connect-server{suffix}_2.13-{version}.jar",
     "delta-sharing-spark{suffix}_2.13-{version}.jar",
     "delta-contribs{suffix}_2.13-{version}.jar",
-    # "delta-iceberg{suffix}_2.13-{version}.jar" TODO add back after fixing build
+    "delta-iceberg{suffix}_2.13-{version}.jar",  # Re-enabled for Spark 4.0
 ]
 
 # Non-spark-related modules (built once, same for all Spark versions)

@@ -1053,8 +1053,6 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     TestParallelization.settings
   ).configureUnidoc()
 
-/*
-TODO: readd delta-iceberg on Spark 4.0+
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(defaultSparkVersion)
  s"iceberg-spark-runtime-$expMaj.$expMin"
@@ -1104,8 +1102,9 @@ lazy val iceberg = (project in file("iceberg"))
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
-      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
+      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
+      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
+      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
@@ -1210,7 +1209,6 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / assemblyMergeStrategy := updateMergeStrategy((assembly / assemblyMergeStrategy).value),
     assemblyPackageScala / assembleArtifact := false,
   )
-*/
 
 lazy val hudi = (project in file("hudi"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -1345,7 +1343,6 @@ lazy val sparkGroup = project
     publish / skip := false,
   )
 
-/*
 lazy val icebergGroup = project
   .aggregate(iceberg, testDeltaIcebergJar)
   .settings(
@@ -1354,7 +1351,6 @@ lazy val icebergGroup = project
     publishArtifact := false,
     publish / skip := false,
   )
-*/
 
 lazy val kernelGroup = project
   .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
@@ -1409,17 +1405,17 @@ lazy val releaseSettings = Seq(
   // TODO: This isn't working yet ...
   sonatypeProfileName := "io.delta", // sonatype account domain name prefix / group ID
   credentials += Credentials(
-    "Sonatype Nexus Repository Manager",
-    "oss.sonatype.org",
+    "OSSRH Staging API Service",
+    "ossrh-staging-api.central.sonatype.com",
     sys.env.getOrElse("SONATYPE_USERNAME", ""),
     sys.env.getOrElse("SONATYPE_PASSWORD", "")
   ),
   publishTo := {
-    val nexus = "https://oss.sonatype.org/"
+    val ossrhBase = "https://ossrh-staging-api.central.sonatype.com/"
     if (isSnapshot.value) {
-      Some("snapshots" at nexus + "content/repositories/snapshots")
+      Some("snapshots" at ossrhBase + "content/repositories/snapshots")
     } else {
-      Some("releases"  at nexus + "service/local/staging/deploy/maven2")
+      Some("releases"  at ossrhBase + "service/local/staging/deploy/maven2")
     }
   },
   licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0")),
@@ -1481,7 +1477,7 @@ lazy val releaseSettings = Seq(
 // Looks like some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
 publish / skip := true
-publishTo := Some("snapshots" at "https://oss.sonatype.org/content/repositories/snapshots")
+publishTo := Some("snapshots" at "https://ossrh-staging-api.central.sonatype.com/content/repositories/snapshots")
 releaseCrossBuild := false  // Don't use sbt-release's cross facility
 releaseProcess := Seq[ReleaseStep](
   checkSnapshotDependencies,
