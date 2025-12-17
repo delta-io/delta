@@ -215,27 +215,23 @@ public class StructField {
         && Objects.equals(typeChanges, that.typeChanges);
   }
 
-  /** @return whether the struct fields are equal, ignoring collations */
-  public boolean equivalentIgnoreCollations(StructField other) {
+  /**
+   * Checks whether the given {@code other} is compatible as an input for this {@code StructField}.
+   * The collations may be different.
+   */
+  public boolean isInputCompatible(StructField other) {
     if (this == other) {
       return true;
     }
     if (other == null) {
       return false;
     }
-    // Compare metadata while ignoring collation metadata differences
-    FieldMetadata metadataWithoutCollations =
-        new FieldMetadata.Builder().fromMetadata(metadata).remove(COLLATIONS_METADATA_KEY).build();
-    FieldMetadata otherMetadataWithoutCollations =
-        new FieldMetadata.Builder()
-            .fromMetadata(other.metadata)
-            .remove(COLLATIONS_METADATA_KEY)
-            .build();
 
     return nullable == other.nullable
         && name.equals(other.name)
-        && dataType.equivalentIgnoreCollations(other.dataType)
-        && metadataWithoutCollations.equals(otherMetadataWithoutCollations)
+        && dataType.isInputCompatible(other.dataType)
+        // Compare metadata while ignoring collation metadata differences
+        && metadata.equalsIgnoreKeys(other.metadata, Collections.singleton(COLLATIONS_METADATA_KEY))
         && Objects.equals(typeChanges, other.typeChanges);
   }
 
