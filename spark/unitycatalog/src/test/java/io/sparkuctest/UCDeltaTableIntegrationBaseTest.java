@@ -17,11 +17,14 @@
 package io.sparkuctest;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -39,7 +42,6 @@ import org.junit.jupiter.api.BeforeAll;
  * <p>Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
-
   /**
    * Provides all table types for parameterized tests. Tests can use this as a @MethodSource to test
    * different table types.
@@ -52,7 +54,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /** Create the SparkSession before all tests. */
   @BeforeAll
-  public void setUpSpark() {
+  public void setUpSpark() throws IOException {
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
 
@@ -123,27 +125,23 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     getSqlExecutor().checkWithSQL("SELECT * FROM " + tableName + " ORDER BY 1", expected);
   }
 
-  /** Helper method to run code with a temporary directory that gets cleaned up. */
+  /**
+   * Helper method to run code with a temporary directory that gets cleaned up. For local mode, uses
+   * local filesystem. For remote mode, uses cloud storage.
+   */
   protected void withTempDir(TempDirCode code) throws Exception {
-    File tempDir = Files.createTempDirectory("spark-test-").toFile();
-    try {
-      code.run(tempDir);
-    } finally {
-      deleteRecursively(tempDir);
-    }
-  }
+    UcCatalogInfo ucCatalog = catalogInfo();
+    Path tempDir;
 
-  /** Recursively delete a directory. */
-  private void deleteRecursively(File file) {
-    if (file.isDirectory()) {
-      File[] files = file.listFiles();
-      if (files != null) {
-        for (File child : files) {
-          deleteRecursively(child);
-        }
-      }
+    if (ucCatalog.baseLocation() != null) {
+      tempDir = new Path(ucCatalog.baseLocation(), "temp-" + UUID.randomUUID());
+    } else {
+      // Local mode: use local filesystem
+      File localTempDir = Files.createTempDirectory("spark-test-").toFile();
+      tempDir = new Path(localTempDir.getAbsolutePath());
     }
-    file.delete();
+
+    code.run(tempDir);
   }
 
   /** Table types for parameterized testing. */
@@ -163,16 +161,17 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   protected void withNewTable(
       String tableName, String tableSchema, TableType tableType, TestCode testCode)
       throws Exception {
-    String fullTableName = getCatalogName() + ".default." + tableName;
+    UcCatalogInfo ucCatalog = catalogInfo();
+    String fullTableName = ucCatalog.catalogName() + "." + ucCatalog.schemaName() + "." + tableName;
 
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location
       withTempDir(
-          (File dir) -> {
-            File tablePath = new File(dir, tableName);
+          (Path dir) -> {
+            Path tablePath = new Path(dir, tableName);
             sql(
                 "CREATE TABLE %s (%s) USING DELTA LOCATION '%s'",
-                fullTableName, tableSchema, tablePath.getAbsolutePath());
+                fullTableName, tableSchema, tablePath.toString());
 
             try {
               testCode.run(fullTableName);
@@ -199,7 +198,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Functional interface for test code that takes a temporary directory. */
   @FunctionalInterface
   protected interface TempDirCode {
-    void run(File dir) throws Exception;
+    void run(Path dir) throws Exception;
   }
 
   /** Functional interface for test code that takes a table name parameter. */
