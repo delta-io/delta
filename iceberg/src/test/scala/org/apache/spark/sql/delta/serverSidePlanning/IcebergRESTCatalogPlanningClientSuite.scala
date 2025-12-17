@@ -241,25 +241,37 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           (20, 'eve')
       """)
 
+      // Spark schema matching the table schema for filter conversion
+      import org.apache.spark.sql.types._
+      val sparkSchema = StructType(Seq(
+        StructField("id", LongType, nullable = false),
+        StructField("name", StringType, nullable = false)
+      ))
+
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
-        // Test cases: (filter, description, expectedInFilterString)
+        // Test cases: (filter, description)
         val testCases = Seq(
-          (EqualTo("id", 2L), "EqualTo numeric", Seq("id", "2")),
-          (EqualTo("name", "bob"), "EqualTo string", Seq("name", "bob")),
-          (LessThan("id", 10L), "LessThan", Seq("id", "10")),
-          (GreaterThan("id", 5L), "GreaterThan", Seq("id", "5")),
-          (LessThanOrEqual("id", 3L), "LessThanOrEqual", Seq("id", "3")),
-          (GreaterThanOrEqual("id", 2L), "GreaterThanOrEqual", Seq("id", "2")),
-          (IsNull("name"), "IsNull", Seq("name", "null")),
-          (IsNotNull("name"), "IsNotNull", Seq("name", "null")),
-          (And(EqualTo("id", 2L), EqualTo("name", "bob")), "And", Seq("id", "2", "name", "bob")),
-          (Or(EqualTo("id", 1L), EqualTo("id", 3L)), "Or", Seq("id", "1", "3"))
+          (EqualTo("id", 2L), "EqualTo numeric"),
+          (EqualTo("name", "bob"), "EqualTo string"),
+          (LessThan("id", 10L), "LessThan"),
+          (GreaterThan("id", 5L), "GreaterThan"),
+          (LessThanOrEqual("id", 3L), "LessThanOrEqual"),
+          (GreaterThanOrEqual("id", 2L), "GreaterThanOrEqual"),
+          (IsNull("name"), "IsNull"),
+          (IsNotNull("name"), "IsNotNull"),
+          (And(EqualTo("id", 2L), EqualTo("name", "bob")), "And"),
+          (Or(EqualTo("id", 1L), EqualTo("id", 3L)), "Or")
         )
 
-        testCases.foreach { case (filter, description, expectedStrings) =>
+        testCases.foreach { case (filter, description) =>
           // Clear previous captured filter
           server.clearCaptured()
+
+          // Convert Spark filter to expected Iceberg expression
+          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter, sparkSchema)
+          assert(expectedExpr.isDefined,
+            s"[$description] Filter conversion should succeed for: $filter")
 
           // Call client with filter
           client.planScan(defaultNamespace.toString, "filterTest", filter = Some(filter))
@@ -269,12 +281,10 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           assert(capturedFilter != null,
             s"[$description] Server should have captured filter")
 
-          // Verify the filter string contains expected components
-          val filterStr = capturedFilter.toString.toLowerCase
-          expectedStrings.foreach { expected =>
-            assert(filterStr.contains(expected.toLowerCase),
-              s"[$description] Expected filter to contain '$expected', got: $capturedFilter")
-          }
+          // Compare captured expression with expected expression
+          assert(capturedFilter.toString == expectedExpr.get.toString,
+            s"[$description] Expected expression: ${expectedExpr.get}, " +
+              s"got: $capturedFilter")
         }
       } finally {
         client.close()
