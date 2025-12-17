@@ -16,12 +16,6 @@
 
 package io.sparkuctest;
 
-import java.io.File;
-import java.nio.file.Files;
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -29,20 +23,27 @@ import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
+import java.io.File;
+import java.nio.file.Files;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
 /**
  * Abstract base class for Unity Catalog + Delta Table integration tests.
  *
- * <p>This class provides a pluggable SQL execution framework via the SQLExecutor interface,
- * allowing tests to be written once and executed via different execution engines (e.g., Spark SQL,
- * JDBC, REST API, etc.).
+ * This class provides a pluggable SQL execution framework via the SQLExecutor interface,
+ * allowing tests to be written once and executed via different execution engines
+ * (e.g., Spark SQL, JDBC, REST API, etc.).
  *
- * <p>Subclasses must provide an executor by implementing the getSqlExecutor method.
+ * Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
 
   /**
-   * Provides all table types for parameterized tests. Tests can use this as a @MethodSource to test
-   * different table types.
+   * Provides all table types for parameterized tests.
+   * Tests can use this as a @MethodSource to test different table types.
    */
   protected static Stream<TableType> allTableTypes() {
     return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
@@ -50,26 +51,25 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   private SparkSession sparkSession;
 
-  /** Create the SparkSession before all tests. */
+  /**
+   * Create the SparkSession before all tests.
+   */
   @BeforeAll
   public void setUpSpark() {
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
-
-    SparkConf conf =
-        new SparkConf()
-            .setAppName("UnityCatalog Integration Tests")
-            .setMaster("local[2]")
-            .set("spark.ui.enabled", "false")
-            // Delta Lake required configurations
-            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .set(
-                "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog");
-
+    
+    SparkConf conf = new SparkConf()
+        .setAppName("UnityCatalog Integration Tests")
+        .setMaster("local[2]")
+        .set("spark.ui.enabled", "false")
+        // Delta Lake required configurations
+        .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog");
+    
     // Configure with Unity Catalog
     conf = configureSparkWithUnityCatalog(conf);
-
+    
     sparkSession = SparkSession.builder().config(conf).getOrCreate();
 
     // Enable testing so that catalogManaged UC tables can be created.
@@ -78,7 +78,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     System.setProperty("spark.testing", "true");
   }
 
-  /** Stop the SparkSession after all tests. */
+  /**
+   * Stop the SparkSession after all tests.
+   */
   @AfterAll
   public void tearDownSpark() {
     if (sparkSession != null) {
@@ -88,28 +90,27 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // UC server is stopped by UnityCatalogSupport.tearDownServer()
   }
 
-  /** Get the SQL executor. Private to force subclasses to use sql() and check() methods. */
+  /**
+   * Get the SQL executor. Private to force subclasses to use sql() and check() methods.
+   */
   private SQLExecutor getSqlExecutor() {
     return new SparkSQLExecutor(sparkSession);
   }
 
   /**
    * Execute SQL through the SQL executor and return results.
-   *
-   * <p>When called with arguments, formats the SQL query using String.format:
-   *
+   * 
+   * When called with arguments, formats the SQL query using String.format:
    * <pre>
    * sql("INSERT INTO %s VALUES (%d, '%s')", tableName, 1, "value")
    * </pre>
-   *
+   * 
    * When called without arguments, executes the SQL as-is:
-   *
    * <pre>
    * sql("CREATE TABLE test (id INT)")
    * </pre>
-   *
-   * @param sqlQuery SQL query with optional format specifiers (e.g., "SELECT * FROM %s WHERE id =
-   *     %d")
+   * 
+   * @param sqlQuery SQL query with optional format specifiers (e.g., "SELECT * FROM %s WHERE id = %d")
    * @param args Arguments to be formatted into the SQL query
    * @return List of result rows, each row is a list of string values
    */
@@ -120,7 +121,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /**
    * Verify table contents by selecting all rows ordered by the first column.
-   *
+   * 
    * @param tableName The fully qualified table name
    * @param expected The expected results as a list of rows
    */
@@ -128,7 +129,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     getSqlExecutor().checkWithSQL("SELECT * FROM " + tableName + " ORDER BY 1", expected);
   }
 
-  /** Helper method to run code with a temporary directory that gets cleaned up. */
+  /**
+   * Helper method to run code with a temporary directory that gets cleaned up.
+   */
   protected void withTempDir(TempDirCode code) throws Exception {
     File tempDir = Files.createTempDirectory("spark-test-").toFile();
     try {
@@ -138,7 +141,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     }
   }
 
-  /** Recursively delete a directory. */
+  /**
+   * Recursively delete a directory.
+   */
   private void deleteRecursively(File file) {
     if (file.isDirectory()) {
       File[] files = file.listFiles();
@@ -151,10 +156,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     file.delete();
   }
 
-  /** Table types for parameterized testing. */
+  /**
+   * Table types for parameterized testing.
+   */
   public enum TableType {
-    EXTERNAL, // Requires LOCATION clause
-    MANAGED // No LOCATION clause (Spark manages the data)
+    EXTERNAL,  // Requires LOCATION clause
+    MANAGED    // No LOCATION clause (Spark manages the data)
   }
 
   /**
@@ -165,32 +172,27 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * @param tableType The type of table (EXTERNAL or MANAGED)
    * @param testCode The test function that receives the full table name
    */
-  protected void withNewTable(
-      String tableName, String tableSchema, TableType tableType, TestCode testCode)
-      throws Exception {
+  protected void withNewTable(String tableName, String tableSchema, TableType tableType, TestCode testCode) throws Exception {
     String fullTableName = getCatalogName() + ".default." + tableName;
 
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location
-      withTempDir(
-          (File dir) -> {
-            File tablePath = new File(dir, tableName);
-            sql(
-                "CREATE TABLE %s (%s) USING DELTA LOCATION '%s'",
-                fullTableName, tableSchema, tablePath.getAbsolutePath());
+      withTempDir((File dir) -> {
+        File tablePath = new File(dir, tableName);
+        sql("CREATE TABLE %s (%s) USING DELTA LOCATION '%s'", 
+            fullTableName, tableSchema, tablePath.getAbsolutePath());
 
-            try {
-              testCode.run(fullTableName);
-            } finally {
-              sql("DROP TABLE IF EXISTS %s", fullTableName);
-            }
-          });
+        try {
+          testCode.run(fullTableName);
+        } finally {
+          sql("DROP TABLE IF EXISTS %s", fullTableName);
+        }
+      });
     } else {
       // Managed table - Spark manages the location
       // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
-      sql(
-          "CREATE TABLE %s (%s) USING DELTA "
-              + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+      sql("CREATE TABLE %s (%s) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')", 
           fullTableName, tableSchema);
 
       try {
@@ -201,13 +203,17 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     }
   }
 
-  /** Functional interface for test code that takes a temporary directory. */
+  /**
+   * Functional interface for test code that takes a temporary directory.
+   */
   @FunctionalInterface
   protected interface TempDirCode {
     void run(File dir) throws Exception;
   }
 
-  /** Functional interface for test code that takes a table name parameter. */
+  /**
+   * Functional interface for test code that takes a table name parameter.
+   */
   @FunctionalInterface
   protected interface TestCode {
     void run(String tableName) throws Exception;
@@ -216,8 +222,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /**
    * Interface defining the interface for executing SQL and verifying results.
    *
-   * <p>This abstraction allows tests to be independent of the execution engine, making it easy to
-   * test the same logic via different interfaces (Spark SQL, JDBC, etc.).
+   * This abstraction allows tests to be independent of the execution engine,
+   * making it easy to test the same logic via different interfaces (Spark SQL, JDBC, etc.).
    */
   public interface SQLExecutor {
     /**
@@ -240,8 +246,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /**
    * Default SQL executor implementation using SparkSession.
    *
-   * <p>This executor runs all SQL queries through Spark SQL and converts results to string lists
-   * for easy comparison.
+   * This executor runs all SQL queries through Spark SQL and converts
+   * results to string lists for easy comparison.
    */
   public static class SparkSQLExecutor implements SQLExecutor {
     private final SparkSession spark;
@@ -255,14 +261,13 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       Dataset<Row> df = spark.sql(sql);
       Row[] rows = (Row[]) df.collect();
       return Arrays.stream(rows)
-          .map(
-              row -> {
-                List<String> cells = new java.util.ArrayList<>();
-                for (int i = 0; i < row.length(); i++) {
-                  cells.add(row.isNullAt(i) ? "null" : row.get(i).toString());
-                }
-                return cells;
-              })
+          .map(row -> {
+            List<String> cells = new java.util.ArrayList<>();
+            for (int i = 0; i < row.length(); i++) {
+              cells.add(row.isNullAt(i) ? "null" : row.get(i).toString());
+            }
+            return cells;
+          })
           .collect(Collectors.toList());
     }
 
@@ -271,16 +276,13 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       List<List<String>> actual = runSQL(sql);
       if (!actual.equals(expected)) {
         throw new AssertionError(
-            "Query results do not match.\n"
-                + "SQL: "
-                + sql
-                + "\n"
-                + "Expected: "
-                + expected
-                + "\n"
-                + "Actual: "
-                + actual);
+            "Query results do not match.\n" +
+            "SQL: " + sql + "\n" +
+            "Expected: " + expected + "\n" +
+            "Actual: " + actual);
       }
     }
+
   }
 }
+

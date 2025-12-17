@@ -23,28 +23,30 @@ import io.unitycatalog.client.model.CreateCatalog;
 import io.unitycatalog.client.model.CreateSchema;
 import io.unitycatalog.server.UnityCatalogServer;
 import io.unitycatalog.server.utils.ServerProperties;
-import java.io.File;
-import java.io.IOException;
-import java.net.ServerSocket;
-import java.nio.file.Files;
-import java.util.Properties;
 import org.apache.log4j.Logger;
 import org.apache.spark.SparkConf;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
 
+import java.io.File;
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.nio.file.Files;
+import java.util.Properties;
+
 /**
  * Abstract base class that provides Unity Catalog server integration for Delta tests.
  *
- * <p>This class automatically: - Starts a local Unity Catalog server before all tests - Configures
- * Spark to connect to the UC server - Stops the server and cleans up after all tests
+ * This class automatically:
+ * - Starts a local Unity Catalog server before all tests
+ * - Configures Spark to connect to the UC server
+ * - Stops the server and cleans up after all tests
  *
- * <p>The UC server runs with Unity Catalog dependencies to provide catalog functionality for
- * integration testing.
+ * The UC server runs with Unity Catalog dependencies to provide catalog functionality
+ * for integration testing.
  *
- * <p>Usage:
- *
+ * Usage:
  * <pre>
  * public class MyUCTest extends UnityCatalogSupport {
  *
@@ -68,37 +70,48 @@ public abstract class UnityCatalogSupport {
 
   private static final Logger logger = Logger.getLogger(UnityCatalogSupport.class);
 
-  /** The Unity Catalog server instance. */
+  /**
+   * The Unity Catalog server instance.
+   */
   private UnityCatalogServer ucServer;
 
-  /** The port on which the UC server is running. */
+  /**
+   * The port on which the UC server is running.
+   */
   private int ucPort;
 
-  /** The temporary directory for UC server data. */
+  /**
+   * The temporary directory for UC server data.
+   */
   private File ucTempDir;
 
   /**
-   * The name of the Unity Catalog in Spark's catalog registry. Subclasses can override this if they
-   * need a different catalog name.
+   * The name of the Unity Catalog in Spark's catalog registry.
+   * Subclasses can override this if they need a different catalog name.
    */
   protected String getCatalogName() {
     return "unity";
   }
 
-  /** The URI of the Unity Catalog server. Available after setupServer() is called. */
+  /**
+   * The URI of the Unity Catalog server.
+   * Available after setupServer() is called.
+   */
   protected String getServerUri() {
     return "http://localhost:" + ucPort;
   }
 
   /**
-   * The authentication token for the Unity Catalog server. Currently using a test token; in
-   * production scenarios this would be more secure.
+   * The authentication token for the Unity Catalog server.
+   * Currently using a test token; in production scenarios this would be more secure.
    */
   protected String getServerToken() {
     return "not-a-token";
   }
 
-  /** Creates a Unity Catalog API client configured for this server. */
+  /**
+   * Creates a Unity Catalog API client configured for this server.
+   */
   protected ApiClient createClient() {
     ApiClient client = new ApiClient();
     client.setScheme("http");
@@ -107,7 +120,9 @@ public abstract class UnityCatalogSupport {
     return client;
   }
 
-  /** Finds an available port for the UC server. */
+  /**
+   * Finds an available port for the UC server.
+   */
   private int findAvailablePort() throws IOException {
     try (ServerSocket socket = new ServerSocket(0)) {
       return socket.getLocalPort();
@@ -115,8 +130,9 @@ public abstract class UnityCatalogSupport {
   }
 
   /**
-   * Starts the Unity Catalog server before all tests. IMPORTANT: Starts the server BEFORE calling
-   * other setup to ensure the server is running when SharedSparkSession creates the SparkSession.
+   * Starts the Unity Catalog server before all tests.
+   * IMPORTANT: Starts the server BEFORE calling other setup to ensure
+   * the server is running when SharedSparkSession creates the SparkSession.
    */
   @BeforeAll
   public void setupServer() throws Exception {
@@ -137,8 +153,10 @@ public abstract class UnityCatalogSupport {
     // Start UC server with configuration
     ServerProperties initServerProperties = new ServerProperties(serverProps);
 
-    UnityCatalogServer server =
-        UnityCatalogServer.builder().port(ucPort).serverProperties(initServerProperties).build();
+    UnityCatalogServer server = UnityCatalogServer.builder()
+        .port(ucPort)
+        .serverProperties(initServerProperties)
+        .build();
 
     server.start();
     ucServer = server;
@@ -179,16 +197,23 @@ public abstract class UnityCatalogSupport {
     catalogsApi.createCatalog(
         new CreateCatalog()
             .name(getCatalogName())
-            .comment("Test catalog for Delta Lake integration"));
+            .comment("Test catalog for Delta Lake integration")
+    );
 
     // Create default schema
-    schemasApi.createSchema(new CreateSchema().name("default").catalogName(getCatalogName()));
+    schemasApi.createSchema(
+        new CreateSchema()
+            .name("default")
+            .catalogName(getCatalogName())
+    );
 
     logger.info("Unity Catalog server started and ready at " + getServerUri());
     logger.info("Created catalog '" + getCatalogName() + "' with schema 'default'");
   }
 
-  /** Stops the Unity Catalog server after all tests. */
+  /**
+   * Stops the Unity Catalog server after all tests.
+   */
   @AfterAll
   public void tearDownServer() throws Exception {
     if (ucServer != null) {
@@ -206,8 +231,7 @@ public abstract class UnityCatalogSupport {
   /**
    * Configures a SparkConf with Unity Catalog settings.
    *
-   * <p>This method should be called in the test's sparkConf override:
-   *
+   * This method should be called in the test's sparkConf override:
    * <pre>
    * {@literal @}Override
    * protected SparkConf sparkConf() {
@@ -220,12 +244,15 @@ public abstract class UnityCatalogSupport {
    */
   protected SparkConf configureSparkWithUnityCatalog(SparkConf conf) {
     String catalogName = getCatalogName();
-    return conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
+    return conf
+        .set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
         .set("spark.sql.catalog." + catalogName + ".uri", getServerUri())
         .set("spark.sql.catalog." + catalogName + ".token", getServerToken());
   }
 
-  /** Recursively deletes a directory and all its contents. */
+  /**
+   * Recursively deletes a directory and all its contents.
+   */
   private void deleteRecursively(File file) {
     if (file.isDirectory()) {
       File[] files = file.listFiles();
@@ -238,3 +265,4 @@ public abstract class UnityCatalogSupport {
     file.delete();
   }
 }
+
