@@ -241,6 +241,7 @@ object SparkVersionSpec {
 
   // TODO: 4.2.0-SNAPSHOT (actual master)
 
+  // TODO: Once Spark 4.1 is officially out update DEFAULT = spark41
   /** Default Spark version */
   val DEFAULT = spark40
 

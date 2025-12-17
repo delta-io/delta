@@ -168,6 +168,29 @@ def runTaskOnlyOnSparkMaster[T](
   }
 }
 
+/**
+ * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
+ *       setting macro.
+ */
+def runTaskOnlyOnSparkDefault[T](
+  task: sbt.TaskKey[T],
+  taskName: String,
+  projectName: String,
+  emptyValue: => T): Def.Initialize[Task[T]] = {
+  if (CrossSparkVersions.getSparkVersionSpec().isDefault) {
+    Def.task(task.value)
+  } else {
+    Def.task {
+      // scalastyle:off println
+      val defaultVersion = SparkVersionSpec.DEFAULT.fullVersion
+      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
+        s"${CrossSparkVersions.getSparkVersion()} does not equal $defaultVersion.")
+      // scalastyle:on println
+      emptyValue
+    }
+  }
+}
+
 lazy val connectCommon = (project in file("spark-connect/common"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
@@ -1197,12 +1220,37 @@ lazy val hudi = (project in file("hudi"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    Compile / compile := runTaskOnlyOnSparkDefault(
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-hudi",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkDefault(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-hudi",
+      emptyValue = ()
+    ).value,
+    publish := runTaskOnlyOnSparkDefault(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-hudi",
+      emptyValue = ()
+    ).value,
+    publishM2 := runTaskOnlyOnSparkDefault(
+      task = publishM2,
+      taskName = "publishM2",
+      projectName = "delta-hudi",
+      emptyValue = ()
+    ).value,
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
         ExclusionRule(organization = "org.apache.hadoop"),
         ExclusionRule(organization = "org.apache.zookeeper"),
       ),
-      "org.apache.spark" %% "spark-avro" % defaultSparkVersion % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+      "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
       "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
     ),
     assembly / assemblyJarName := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
