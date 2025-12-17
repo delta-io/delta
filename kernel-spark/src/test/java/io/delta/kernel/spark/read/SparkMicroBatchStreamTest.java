@@ -1176,23 +1176,28 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
     ReadLimit readLimit = limitConfig.toReadLimit();
 
-    // dsv1
+    // dsv1 source
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    // Enable availableNow
     deltaSource.prepareForTriggerAvailableNow();
+    // Advance through multiple batches using dsv1, collecting offset after each batch
     List<Offset> dsv1Offsets =
         advanceOffsetSequenceDsv1(deltaSource, startOffset, numIterations, readLimit);
 
-    // dsv2
+    // dsv2 source
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
         new SparkMicroBatchStream(
             snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+    // Enable availableNow
     stream.prepareForTriggerAvailableNow();
+    // Advance through multiple batches using dsv2, collecting offset after each batch
     List<Offset> dsv2Offsets =
         advanceOffsetSequenceDsv2(stream, startOffset, numIterations, readLimit);
 
+    // Ensure dsv1 and dsv2 produce identical offset sequences
     compareOffsetSequence(dsv1Offsets, dsv2Offsets, testDescription);
   }
 
@@ -1201,7 +1206,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     long END_INDEX = DeltaSourceOffset.END_INDEX();
 
     return Stream.of(
-        // No limits
+        // No limits respects availableNow
         Arguments.of(
             /* startVersion= */ 0L,
             /* startIndex= */ BASE_INDEX,
@@ -1221,7 +1226,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             /* numIterations= */ 3,
             "NoLimits3"),
 
-        // Max files
+        // Max files respects availableNow
         Arguments.of(
             /* startVersion= */ 0L,
             /* startIndex= */ BASE_INDEX,
@@ -1247,7 +1252,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             /* numIterations= */ 3,
             "MaxFiles4"),
 
-        // Max bytes
+        // Max bytes respects availableNow
         Arguments.of(
             /* startVersion= */ 0L,
             /* startIndex= */ BASE_INDEX,

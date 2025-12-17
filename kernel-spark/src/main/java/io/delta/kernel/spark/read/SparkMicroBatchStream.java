@@ -221,6 +221,10 @@ public class SparkMicroBatchStream
     return endOffset;
   }
 
+  /**
+   * Internal implementation of latestOffset using DeltaSourceOffset directly, without null checks
+   * and state management.
+   */
   private Optional<DeltaSourceOffset> latestOffsetInternal(
       DeltaSourceOffset deltaStartOffset, ReadLimit limit) {
     Optional<DeltaSource.AdmissionLimits> limits =
