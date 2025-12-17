@@ -201,7 +201,7 @@ public interface Transaction {
           }
 
           ColumnarBatch data = filteredBatch.getData();
-          if (!data.getSchema().equivalentIgnoreCollations(tableSchema)) {
+          if (!data.getSchema().isInputCompatible(tableSchema)) {
             throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
           }
           for (String partitionColName : partitionColNames) {

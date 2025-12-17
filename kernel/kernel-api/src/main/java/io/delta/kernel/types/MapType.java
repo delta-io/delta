@@ -15,8 +15,11 @@
  */
 package io.delta.kernel.types;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.annotation.Evolving;
 import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * Data type representing a {@code map} type.
@@ -33,11 +36,13 @@ public class MapType extends DataType {
   public static final String MAP_VALUE_NAME = "value";
 
   public MapType(DataType keyType, DataType valueType, boolean valueContainsNull) {
+    checkKeyType(keyType);
     this.keyField = new StructField(MAP_KEY_NAME, keyType, false);
     this.valueField = new StructField(MAP_VALUE_NAME, valueType, valueContainsNull);
   }
 
   public MapType(StructField keyField, StructField valueField) {
+    checkKeyType(keyField.getDataType());
     this.keyField = keyField;
     this.valueField = valueField;
   }
@@ -71,13 +76,15 @@ public class MapType extends DataType {
   }
 
   /**
-   * Are the data types same? The collations could be different.
+   * Is `dataType` compatible input type for this type? The collations could be different.
+   *
+   * <p>Should be used for schema comparisons when checking input type compatibility.
    *
    * @param dataType
    * @return
    */
   @Override
-  public boolean equivalentIgnoreCollations(DataType dataType) {
+  public boolean isInputCompatible(DataType dataType) {
     if (this == dataType) {
       return true;
     }
@@ -86,9 +93,9 @@ public class MapType extends DataType {
     }
     MapType mapType = (MapType) dataType;
     return ((keyField == null && mapType.keyField == null)
-            || (keyField != null && keyField.equivalentIgnoreCollations(mapType.keyField)))
+            || (keyField != null && keyField.isInputCompatible(mapType.keyField)))
         && ((valueField == null && mapType.valueField == null)
-            || (valueField != null && valueField.equivalentIgnoreCollations(mapType.valueField)));
+            || (valueField != null && valueField.isInputCompatible(mapType.valueField)));
   }
 
   @Override
@@ -110,6 +117,13 @@ public class MapType extends DataType {
   }
 
   @Override
+  public boolean existsRecursively(Predicate<DataType> predicate) {
+    return super.existsRecursively(predicate)
+        || getKeyType().existsRecursively(predicate)
+        || getValueType().existsRecursively(predicate);
+  }
+
+  @Override
   public int hashCode() {
     return Objects.hash(keyField, valueField);
   }
@@ -117,5 +131,22 @@ public class MapType extends DataType {
   @Override
   public String toString() {
     return String.format("map[%s, %s]", getKeyType(), getValueType());
+  }
+
+  /**
+   * Checks whether the given {@code keyType} is valid for a map's key type. Currently, only
+   * disallowing is {@code StringType} with non-default collation.
+   */
+  private void checkKeyType(DataType keyType) {
+    checkArgument(
+        !keyType.existsRecursively(
+            dataType -> {
+              if (dataType instanceof StringType) {
+                StringType stringType = (StringType) dataType;
+                return !stringType.getCollationIdentifier().isSparkUTF8BinaryCollation();
+              }
+              return false;
+            }),
+        "Map key type cannot contain StringType with non-default collation");
   }
 }

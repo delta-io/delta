@@ -508,7 +508,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       expSchema: StructType,
       expData: Seq[TestRow]): Unit = {
     val actSchema = tableSchema(path)
-    assert(actSchema.equivalentIgnoreCollations(expSchema))
+    assert(expSchema.isInputCompatible(actSchema))
 
     // verify data using Kernel reader
     checkTable(path, expData)

@@ -20,6 +20,7 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -176,13 +177,15 @@ public final class StructType extends DataType {
   }
 
   /**
-   * Are the data types same? The collations could be different.
+   * Is `dataType` compatible input type for this type? The collations could be different.
+   *
+   * <p>Should be used for schema comparisons when checking input type compatibility.
    *
    * @param dataType
    * @return
    */
   @Override
-  public boolean equivalentIgnoreCollations(DataType dataType) {
+  public boolean isInputCompatible(DataType dataType) {
     if (this == dataType) {
       return true;
     }
@@ -193,13 +196,26 @@ public final class StructType extends DataType {
     return this.length() == structType.length()
         && fieldNames.equals(structType.fieldNames)
         && IntStream.range(0, this.length())
-            .mapToObj(i -> this.at(i).equivalentIgnoreCollations(structType.at(i)))
+            .mapToObj(i -> this.at(i).isInputCompatible(structType.at(i)))
             .allMatch(result -> result);
   }
 
   @Override
   public boolean isNested() {
     return true;
+  }
+
+  @Override
+  public boolean existsRecursively(Predicate<DataType> predicate) {
+    if (super.existsRecursively(predicate)) {
+      return true;
+    }
+    for (StructField field : fields) {
+      if (field.getDataType().existsRecursively(predicate)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override

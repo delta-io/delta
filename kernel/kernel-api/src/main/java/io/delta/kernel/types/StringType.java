@@ -63,13 +63,15 @@ public class StringType extends BasePrimitiveType {
   }
 
   /**
-   * Are the data types same? The collations could be different.
+   * Is `dataType` compatible input type for this type? The collations could be different.
+   *
+   * <p>Should be used for schema comparisons when checking input type compatibility.
    *
    * @param dataType
    * @return
    */
   @Override
-  public boolean equivalentIgnoreCollations(DataType dataType) {
+  public boolean isInputCompatible(DataType dataType) {
     return dataType instanceof StringType;
   }
 

@@ -441,7 +441,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
           fieldMetadataForArrayColumn(2, "arr", "arr", 3))
         .add(
           "map",
-          new MapType(new StringType(utf8Lcase), new StringType(utf8Lcase), false),
+          new MapType(StringType.STRING, new StringType(utf8Lcase), false),
           true,
           fieldMetadataForMapColumn(4, "map", "map", 5, 6))
 
