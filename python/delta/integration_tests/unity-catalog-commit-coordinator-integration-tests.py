@@ -221,9 +221,8 @@ class UnityCatalogManagedTableTestSuite(unittest.TestCase):
             f"DESCRIBE formatted {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}").collect()[5].data_type
         try:
             single_col_df.write.format("delta").save(mode="append", path=tbl_path)
-        except Exception as error:
-            assert("Forbidden (Service: Amazon S3; Status Code: 403; "
-                   "Error Code: 403 Forbidden;" in str(error))
+        except py4j.protocol.Py4JJavaError as error:
+            assert("Unable to load credentials" in str(error))
         updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
