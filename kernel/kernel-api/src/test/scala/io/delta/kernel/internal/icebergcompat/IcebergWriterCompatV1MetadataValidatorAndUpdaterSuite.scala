@@ -357,16 +357,24 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  Seq("collations", "defaultColumns").foreach { unsupportedIncompatibleFeature =>
-    test(s"cannot enable with incompatible UNSUPPORTED feature $unsupportedIncompatibleFeature") {
-      // We add this test here so that it will fail when we add Kernel support for these features
-      // When this happens -> add the feature to the test above
+  Seq("collations", "collations-preview").foreach { unsupportedIncompatibleFeature =>
+    test(s"$unsupportedIncompatibleFeature is incompatible with icebergWriterCompatV1") {
       checkUnsupportedOrIncompatibleFeature(
         unsupportedIncompatibleFeature,
-        "Unsupported Delta table feature: table requires feature " +
-          s""""$unsupportedIncompatibleFeature" which is unsupported by this version of """ +
-          "Delta Kernel")
+        s"Table features [$unsupportedIncompatibleFeature] are incompatible with" +
+          " icebergWriterCompatV1.")
     }
+  }
+
+  test(s"cannot enable with incompatible UNSUPPORTED feature defaultColumns") {
+    val featureName = "defaultColumns"
+    // We add this test here so that it will fail when we add Kernel support this feature
+    // When this happens -> add the feature to the test above
+    checkUnsupportedOrIncompatibleFeature(
+      featureName,
+      "Unsupported Delta table feature: table requires feature " +
+        s""""$featureName" which is unsupported by this version of """ +
+        "Delta Kernel")
   }
 
   private def testIncompatibleActiveLegacyFeature(
