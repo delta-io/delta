@@ -164,101 +164,83 @@ trait UpdateSQLTests extends UpdateSQLMixin {
     }
   }
 
-  test("Simple IN subquery allowed via temp view") {
+  test("simple IN subquery allowed via temp view") {
     withTable("target") {
       withTable("source") {
-        withTempView("t") {
           Seq((1, "a"), (2, "b")).toDF("key", "val")
             .write.format("delta").saveAsTable("target")
           Seq((2)).toDF("key").write.format("delta").saveAsTable("source")
-          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
-          sql("UPDATE t SET val = 'update' WHERE key IN (SELECT key FROM source)")
+          sql("UPDATE target SET val = 'update' WHERE key IN (SELECT key FROM source)")
           checkAnswer(sql("SELECT * FROM target ORDER BY key"),
             Seq(Row(1, "a"), Row(2, "update")))
-        }
       }
     }
   }
 
-  test("Simple IN correlated subquery allowed via temp view") {
+  test("simple IN correlated subquery allowed via temp view") {
     withTable("target") {
       withTable("source") {
-        withTempView("t") {
           Seq((1, "a"), (2, "b"), (3, "c")).toDF("key", "val")
             .write.format("delta").saveAsTable("target")
           Seq(2, 3).toDF("key").write.format("delta").saveAsTable("source")
-          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
-          sql("UPDATE t SET val = 'update' WHERE key IN" +
-            " (SELECT key FROM source where t.key = source.key)")
+          sql("UPDATE target SET val = 'update' WHERE key IN" +
+            " (SELECT key FROM source where target.key = source.key)")
           checkAnswer(sql("SELECT * FROM target ORDER BY key"),
             Seq(Row(1, "a"), Row(2, "update"), Row(3, "update")))
-        }
       }
     }
   }
 
-  test("EXISTS subquery with correlated allowed via temp view") {
+  test("exists subquery with correlated allowed via temp view") {
     withTable("target") {
       withTable("source") {
-        withTempView("t") {
           Seq((1, 10, "a"), (2, 20, "b"), (3, 30, "c")).toDF("key", "val_i", "val")
             .write.format("delta").saveAsTable("target")
           Seq(2, 1).toDF("key").write.format("delta").saveAsTable("source")
-          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
-          sql("UPDATE t SET val = 'update' WHERE EXISTS (" +
-            "SELECT 1 FROM source WHERE t.key = source.key)")
+          sql("UPDATE target SET val = 'update' WHERE EXISTS (" +
+            "SELECT 1 FROM source WHERE target.key = source.key)")
           checkAnswer(sql("SELECT * FROM target ORDER BY key"),
             Seq(Row(1, 10, "update"), Row(2, 20, "update"), Row(3, 30, "c")))
-        }
       }
     }
   }
 
-  test("Scalar subquery in condition allowed via temp view") {
+  test("scalar subquery in condition allowed via temp view") {
     withTable("target") {
       withTable("source") {
-        withTempView("t") {
           Seq((1, "a"), (2, "b")).toDF("key", "val").write.format("delta").saveAsTable("target")
           Seq(2, 3).toDF("key").write.format("delta").saveAsTable("source")
-          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
-          sql("UPDATE t SET val = 'update' WHERE key < (SELECT min(key) FROM source)")
+          sql("UPDATE target SET val = 'update' WHERE key < (SELECT min(key) FROM source)")
           checkAnswer(sql("SELECT * FROM target ORDER BY key"),
             Seq(Row(1, "update"), Row(2, "b")))
-        }
       }
     }
   }
 
-  test("Simple NOT IN subquery allowed via temp view") {
+  test("simple NOT IN subquery allowed via temp view") {
     withTable("target") {
       withTable("source") {
-        withTempView("t") {
           Seq(("X"), ("Y"), ("Z")).toDF("category").write.format("delta").saveAsTable("target")
           Seq(("Y")).toDF("category").write.format("delta").saveAsTable("source")
-          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
-          sql("UPDATE t SET category = 'unset' WHERE category NOT IN (SELECT category FROM source)")
+          sql("UPDATE target SET category = 'unset' WHERE category NOT IN (SELECT category FROM source)")
           checkAnswer(sql("SELECT * FROM target ORDER BY category"),
             Seq(Row("Y"), Row("unset"), Row("unset")))
-        }
       }
     }
   }
 
-  test("Nested subquery should fail via temp view") {
+  test("nested subquery should fail via temp view") {
     withTable("target") {
       withTable("source") {
         withTable("source2") {
-          withTempView("t") {
             Seq((1, "a"), (2, "b")).toDF("key", "col").write.format("delta").saveAsTable("target")
             Seq((2)).toDF("key").write.format("delta").saveAsTable("source")
             Seq((3)).toDF("id").write.format("delta").saveAsTable("source2")
-            sql("CREATE TEMP VIEW t AS SELECT * FROM target")
             val e = intercept[AnalysisException] {
-              sql("UPDATE t SET col = 'C' WHERE key" +
+              sql("UPDATE target SET col = 'C' WHERE key" +
                 " IN (SELECT key FROM source WHERE key IN (SELECT id FROM source2))")
             }
             assert(e.getMessage.contains("Subqueries are not supported in the UPDATE"))
-          }
         }
       }
     }

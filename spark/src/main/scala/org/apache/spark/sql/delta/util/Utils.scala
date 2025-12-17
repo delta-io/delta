@@ -89,12 +89,9 @@ object Utils {
     functions.try_element_at(mapColumn, functions.lit(key))
   }
 
-  /**
-   * Subquery allowed patterns identifier helper methods
-   */
 
   /**
-   * Check for the allowed subquery pattern for UPDATE command
+   * Check for the allowed subquery pattern for UPDATE and DELETE commands
    */
   def isAllowedSubqueryPattern(expr: Expression): Boolean = expr match {
     case exists: Exists =>
@@ -105,6 +102,10 @@ object Utils {
 
     case InSubquery(_, ListQuery(plan, _, _, _, _, _)) =>
       !hasNestedSubquery(plan)
+
+    case binary: BinaryExpression =>
+      isAllowedSubqueryPattern(binary.left) ||
+        isAllowedSubqueryPattern(binary.right)
 
     case Not(InSubquery(_, ListQuery(plan, _, _, _, _, _))) =>
       !hasNestedSubquery(plan)
