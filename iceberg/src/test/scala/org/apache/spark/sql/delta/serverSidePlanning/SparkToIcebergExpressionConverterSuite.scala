@@ -56,10 +56,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // EqualTo tests
   test("convert EqualTo with various types") {
-    assertConverts(EqualTo("id", 5),           "id", "5")              // integer
-    assertConverts(EqualTo("name", "Alice"),   "name")                 // string
-    assertConverts(EqualTo("id", 1234567890L), "id")                   // long
-    assertConverts(EqualTo("active", true),    "active")               // boolean
+    assertConverts(EqualTo("id", 5), "id", "5")  // integer
+    assertConverts(EqualTo("name", "Alice"), "name")  // string
+    assertConverts(EqualTo("id", 1234567890L), "id")  // long
+    assertConverts(EqualTo("active", true), "active")  // boolean
 
     // EqualTo with null becomes IsNull
     val nullResult = SparkToIcebergExpressionConverter.convert(EqualTo("name", null), testSchema)
@@ -69,22 +69,22 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Comparison operator tests
   test("convert comparison operators") {
-    assertConverts(LessThan("age", 30),                    "age", "30")
-    assertConverts(GreaterThan("age", 18),                 "age", "18")
-    assertConverts(LessThanOrEqual("price", 99.99),        "price")
+    assertConverts(LessThan("age", 30), "age", "30")
+    assertConverts(GreaterThan("age", 18), "age", "18")
+    assertConverts(LessThanOrEqual("price", 99.99), "price")
     assertConverts(GreaterThanOrEqual("timestamp", 1234567890L), "timestamp")
   }
 
   // Null check tests
   test("convert null check operators") {
-    assertConverts(IsNull("name"),    "name", "null")
+    assertConverts(IsNull("name"), "name", "null")
     assertConverts(IsNotNull("name"), "name", "null")
   }
 
   // Logical operator tests
   test("convert logical operators") {
     assertContainsOperator(
-      And(EqualTo("id", 5), GreaterThan("age", 18)),                "and", "id", "age")
+      And(EqualTo("id", 5), GreaterThan("age", 18)), "and", "id", "age")
 
     assertContainsOperator(
       Or(EqualTo("status", "active"), EqualTo("status", "pending")), "or")
@@ -100,11 +100,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Unsupported filter tests
   test("unsupported filters return None") {
-    assertReturnsNone(StringStartsWith("name", "A"))    // StringStartsWith
-    assertReturnsNone(StringEndsWith("name", "Z"))      // StringEndsWith
-    assertReturnsNone(StringContains("name", "foo"))    // StringContains
-    assertReturnsNone(In("id", Array(1, 2, 3)))         // In
-    assertReturnsNone(Not(EqualTo("id", 5)))            // Not
+    assertReturnsNone(StringStartsWith("name", "A"))  // StringStartsWith
+    assertReturnsNone(StringEndsWith("name", "Z"))  // StringEndsWith
+    assertReturnsNone(StringContains("name", "foo"))  // StringContains
+    assertReturnsNone(In("id", Array(1, 2, 3)))  // In
+    assertReturnsNone(Not(EqualTo("id", 5)))  // Not
   }
 
   // convertFilters (array) tests
@@ -167,9 +167,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Type conversion tests
   test("convert with different numeric types") {
-    assertConverts(EqualTo("count", 42),            "count")      // int
-    assertConverts(EqualTo("bigCount", 1234567890123L), "bigCount") // long
-    assertConverts(GreaterThan("price", 19.99),     "price")      // double
-    assertConverts(LessThan("rating", 4.5f),        "rating")     // float
+    assertConverts(EqualTo("count", 42), "count")  // int
+    assertConverts(EqualTo("bigCount", 1234567890123L), "bigCount")  // long
+    assertConverts(GreaterThan("price", 19.99), "price")  // double
+    assertConverts(LessThan("rating", 4.5f), "rating")  // float
   }
 }
