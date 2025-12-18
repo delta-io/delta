@@ -16,20 +16,9 @@
 
 package io.delta.sql
 
-import scala.jdk.CollectionConverters._
-
-import io.delta.kernel.spark.catalog.SparkTable
-import io.delta.kernel.spark.utils.{CatalogTableUtils, ScalaUtils}
-
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
-import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
-import org.apache.spark.sql.execution.streaming.StreamingRelation
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
