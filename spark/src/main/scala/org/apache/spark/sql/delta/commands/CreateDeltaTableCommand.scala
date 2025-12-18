@@ -74,6 +74,7 @@ case class CreateDeltaTableCommand(
     override val tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
+    allowCatalogOwned: Boolean = false,
     createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
@@ -118,7 +119,8 @@ case class CreateDeltaTableCommand(
     // It gets bypassed in UTs to allow tests that use InMemoryCommitCoordinator to create tables
     val tableFeatures = TableFeatureProtocolUtils.
       getSupportedFeaturesFromTableConfigs(table.properties)
-    if (!Utils.isTesting && (tableFeatures.contains(CatalogOwnedTableFeature) ||
+    if (!Utils.isTesting && !allowCatalogOwned &&
+      (tableFeatures.contains(CatalogOwnedTableFeature) ||
       CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
       throw DeltaErrors.deltaCannotCreateCatalogOwnedTable()
     }
