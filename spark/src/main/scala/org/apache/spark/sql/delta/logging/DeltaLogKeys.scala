@@ -38,7 +38,7 @@
 
 package org.apache.spark.sql.delta.logging
 
-// DeltaLogKey is provided by LogKeyShims (see scala-spark-*/shims/LogKeyShims.scala)
+// DeltaLogKey is provided by LogKeyShims (see scala-shims/<SparkShortVersion>/LogKeyShims.scala)
 // to handle the difference between Spark versions:
 // - Spark 4.0: LogKey is a Scala trait with a default `name` implementation
 // - Spark 4.1: LogKey is a Java interface requiring explicit `name()` implementation
