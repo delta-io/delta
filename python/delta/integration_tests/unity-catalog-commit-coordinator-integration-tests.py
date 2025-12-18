@@ -304,11 +304,7 @@ class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
         try:
             single_col_df.write.format("delta").save(mode="append", path=tbl_path)
         except py4j.protocol.Py4JJavaError as error:
-<<<<<<< HEAD
-            assert("Unable to load credentials" in str(error))
-=======
             assert("AccessDeniedException" in str(error))
->>>>>>> 07f66361a ([Spark] Add more Unity Catalog integration tests (#4626))
         updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
