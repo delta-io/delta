@@ -521,7 +521,6 @@ public class Protocol implements Serializable {
   public boolean supportsFeature(TableFeature feature) {
     if (feature.isReaderWriterFeature()) {
       if (supportsReaderFeatures) {
-        // Note: a RW feature should also be in writerFeatures
         return readerFeatures.contains(feature.featureName());
       } else {
         return feature.minReaderVersion() <= minReaderVersion;
