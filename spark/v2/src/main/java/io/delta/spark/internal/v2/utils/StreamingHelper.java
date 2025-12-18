@@ -98,10 +98,7 @@ public class StreamingHelper {
     return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();
   }
 
-
-  /**
-   * Get Metadata action from a batch at the specified row, if present.
-   */
+  /** Get Metadata action from a batch at the specified row, if present. */
   public static Optional<Metadata> getMetadata(ColumnarBatch batch, int rowId) {
     int metadataIdx = getFieldIndex(batch, "metaData");
     ColumnVector metadataVector = batch.getColumnVector(metadataIdx);
