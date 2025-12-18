@@ -59,7 +59,8 @@ import org.slf4j.LoggerFactory;
 import scala.collection.JavaConverters;
 import scala.collection.Seq;
 
-public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissionControl {
+public class SparkMicroBatchStream
+    implements MicroBatchStream, SupportsAdmissionControl, SupportsTriggerAvailableNow {
 
   private static final Logger logger = LoggerFactory.getLogger(SparkMicroBatchStream.class);
 
@@ -92,6 +93,17 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
    * false - Subsequent batches: latestOffset(Offset, ReadLimit)
    */
   private boolean isFirstBatch = false;
+
+  /**
+   * When AvailableNow is used, this offset will be the upper bound where this run of the query will
+   * process up. We may run multiple micro batches, but the query will stop itself when it reaches
+   * this offset.
+   */
+  private Optional<DeltaSourceOffset> lastOffsetForTriggerAvailableNow = Optional.empty();
+
+  private boolean isLastOffsetForTriggerAvailableNowInitialized = false;
+
+  private boolean isTriggerAvailableNow = false;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -127,6 +139,32 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     this.tableId = ((SnapshotImpl) snapshotAtSourceInit).getMetadata().getId();
     this.shouldValidateOffsets =
         (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
+  }
+
+  @Override
+  public void prepareForTriggerAvailableNow() {
+    logger.info("The streaming query reports to use Trigger.AvailableNow.");
+    isTriggerAvailableNow = true;
+  }
+
+  /**
+   * initialize the internal states for AvailableNow if this method is called first time after
+   * prepareForTriggerAvailableNow.
+   */
+  private void initForTriggerAvailableNowIfNeeded(DeltaSourceOffset startOffsetOpt) {
+    if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
+      isLastOffsetForTriggerAvailableNowInitialized = true;
+      initLastOffsetForTriggerAvailableNow(startOffsetOpt);
+    }
+  }
+
+  private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
+    lastOffsetForTriggerAvailableNow =
+        latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
+
+    lastOffsetForTriggerAvailableNow.ifPresent(
+        lastOffset ->
+            logger.info("lastOffset for Trigger.AvailableNow has set to " + lastOffset.json()));
   }
 
   ////////////
@@ -175,21 +213,30 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
     Objects.requireNonNull(startOffset, "startOffset should not be null for MicroBatchStream");
     Objects.requireNonNull(limit, "limit should not be null for MicroBatchStream");
 
-    // TODO(#5318): init trigger available now support
-
     DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
+    initForTriggerAvailableNowIfNeeded(deltaStartOffset);
+    // Return null when no data is available for this batch.
+    DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
+    isFirstBatch = false;
+    return endOffset;
+  }
+
+  /**
+   * Internal implementation of latestOffset using DeltaSourceOffset directly, without null checks
+   * and state management.
+   */
+  private Optional<DeltaSourceOffset> latestOffsetInternal(
+      DeltaSourceOffset deltaStartOffset, ReadLimit limit) {
     Optional<DeltaSource.AdmissionLimits> limits =
         ScalaUtils.toJavaOptional(DeltaSource.AdmissionLimits$.MODULE$.apply(options, limit));
     Optional<DeltaSourceOffset> endOffset =
         getNextOffsetFromPreviousOffset(deltaStartOffset, limits, isFirstBatch);
-    isFirstBatch = false;
 
     if (shouldValidateOffsets && endOffset.isPresent()) {
       DeltaSourceOffset.validateOffsets(deltaStartOffset, endOffset.get());
     }
 
-    // Return null when no data is available for this batch.
-    return endOffset.orElse(null);
+    return endOffset;
   }
 
   @Override
@@ -469,9 +516,16 @@ public class SparkMicroBatchStream implements MicroBatchStream, SupportsAdmissio
                 file.getVersion() > fromVersion
                     || (file.getVersion() == fromVersion && file.getIndex() > fromIndex));
 
+    // If endOffset is provided, we are getting a batch on a constructed range so we should use
+    // the endOffset as the limit.
+    // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
+    // Trigger.availableNow() as limit. We know endOffset <= lastOffsetForTriggerAvailableNow.
+    Optional<DeltaSourceOffset> lastOffsetForThisScan =
+        endOffset.or(() -> lastOffsetForTriggerAvailableNow);
+
     // Check end boundary (inclusive)
-    if (endOffset.isPresent()) {
-      DeltaSourceOffset bound = endOffset.get();
+    if (lastOffsetForThisScan.isPresent()) {
+      DeltaSourceOffset bound = lastOffsetForThisScan.get();
       result =
           result.takeWhile(
               file ->
