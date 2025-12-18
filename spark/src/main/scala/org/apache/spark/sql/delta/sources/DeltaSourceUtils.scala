@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.sources
 
 import java.util.Locale
+
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions
 import org.apache.spark.sql.catalyst.expressions.Expression
