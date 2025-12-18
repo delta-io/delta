@@ -176,7 +176,7 @@ public class ConflictChecker {
     }
 
     Optional<CRCInfo> updatedCrcInfo =
-        ChecksumReader.getCRCInfo(
+        ChecksumReader.tryReadChecksumFile(
             engine,
             FileStatus.of(checksumFile(transaction.getLogPath(), lastWinningVersion).toString()));
 
@@ -413,8 +413,8 @@ public class ConflictChecker {
         || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshotOpt.get().getMetadata())) {
       return lastWinningTxn.getModificationTime();
     } else {
-      return CommitInfo.getRequiredInCommitTimestamp(
-          winningCommitInfoOpt, String.valueOf(lastWinningVersion), transaction.getDataPath());
+      return CommitInfo.extractRequiredIctFromCommitInfoOpt(
+          winningCommitInfoOpt, lastWinningVersion, transaction.getDataPath());
     }
   }
 

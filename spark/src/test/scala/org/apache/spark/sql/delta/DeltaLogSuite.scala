@@ -779,7 +779,7 @@ class DeltaLogSuite extends QueryTest
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
       val log = DeltaLog.forTable(spark, new Path(path))
       val result = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
-        spark, log, startVersion = 1, endVersion = 3)
+        spark, log, startVersion = 1, endVersion = 3, catalogTableOpt = None)
       assert(result.map(FileNames.getFileVersion) === Seq(1, 2, 3))
       val filesAreUnbackfilledArray = result.map(FileNames.isUnbackfilledDeltaFile)
 

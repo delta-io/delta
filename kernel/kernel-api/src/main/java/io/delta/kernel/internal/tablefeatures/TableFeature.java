@@ -156,6 +156,15 @@ public abstract class TableFeature {
     return true;
   }
 
+  /**
+   * Gets the key that turns on support for the respective table feature.
+   *
+   * @return the feature support key for the respective feature.
+   */
+  public String getTableFeatureSupportKey() {
+    return TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + featureName();
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Define the {@link TableFeature}s traits that define behavior/attributes.  ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -175,7 +184,7 @@ public abstract class TableFeature {
   public abstract static class LegacyWriterFeature extends TableFeature
       implements LegacyFeatureType {
     public LegacyWriterFeature(String featureName, int minWriterVersion) {
-      super(featureName, /* minReaderVersion = */ 0, minWriterVersion);
+      super(featureName, /* minReaderVersion= */ 0, minWriterVersion);
     }
 
     @Override
@@ -196,7 +205,7 @@ public abstract class TableFeature {
   /** A base class for all non-legacy table writer features. */
   public abstract static class WriterFeature extends TableFeature {
     public WriterFeature(String featureName, int minWriterVersion) {
-      super(featureName, /* minReaderVersion = */ 0, minWriterVersion);
+      super(featureName, /* minReaderVersion= */ 0, minWriterVersion);
     }
 
     @Override

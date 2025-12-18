@@ -42,6 +42,7 @@ class RowTrackingConflictResolutionSuite extends QueryTest
 
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
+    .set(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key, "true")
 
   private val testTableName = "test_table"
 
@@ -346,22 +347,23 @@ class RowTrackingConflictResolutionSuite extends QueryTest
     txn.commit(Nil, ManualUpdate, tags)
   }
 
-  test("RowTrackingEnablementOnly metadata update does not fail transactions "
-      + "that don't do metadata update") {
+  test("RowTrackingEnablementOnly metadata update does not fail txns that don't update metadata") {
     withTestTable {
-      val txn = deltaLog.startTransaction()
-      activateRowTracking()
-      enableRowTrackingOnlyMetadataUpdate()
+      withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key -> "false") {
+        val txn = deltaLog.startTransaction()
+        activateRowTracking()
+        enableRowTrackingOnlyMetadataUpdate()
 
-      val rowTrackingPreserved = rowTrackingMarkedAsPreservedForCommit(deltaLog) {
-        txn.commit(Seq(addFile(path = "file_path")), DeltaOperations.ManualUpdate)
-      }
+        val rowTrackingPreserved = rowTrackingMarkedAsPreservedForCommit(deltaLog) {
+          txn.commit(Seq(addFile(path = "file_path")), DeltaOperations.ManualUpdate)
+        }
 
-      assert(!rowTrackingPreserved, "Commits conflicting with a metadata update " +
+        assert(!rowTrackingPreserved, "Commits conflicting with a metadata update " +
           "that enables row tracking only should have row tracking marked as not preserved.")
 
-      assertRowIdsAreValid(deltaLog)
-      assert(RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
+        assertRowIdsAreValid(deltaLog)
+        assert(RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
+      }
     }
   }
 

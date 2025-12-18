@@ -20,12 +20,12 @@ import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.ImplicitDMLCastingSuiteShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
 
 import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -148,8 +148,11 @@ abstract class ImplicitDMLCastingSuite extends QueryTest
         assert(failureCause.toString.contains(testConfig.exceptionAnsiCast))
 
         val sparkThrowable = failureCause.asInstanceOf[SparkThrowable]
-        assert(Seq("CAST_OVERFLOW", NUMERIC_VALUE_OUT_OF_RANGE_ERROR_MSG, "CAST_INVALID_INPUT")
-          .contains(sparkThrowable.getErrorClass))
+        assert(Seq(
+          "CAST_OVERFLOW",
+          "NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION",
+          "CAST_INVALID_INPUT"
+        ).contains(sparkThrowable.getErrorClass))
       case Some(failureCause) if !sqlConfig.followAnsiEnabled =>
         assert(sqlConfig.storeAssignmentPolicy === SQLConf.StoreAssignmentPolicy.ANSI)
 
@@ -237,6 +240,41 @@ class ImplicitUpdateCastingSuite extends ImplicitDMLCastingSuite {
 
             validateException(exception, sqlConfig, testConfig)
           }
+        }
+      }
+    }
+  }
+
+  for (preserveNullSourceStructs <- BOOLEAN_DOMAIN) {
+    test(s"Implicit cast with NULL struct, preserveNullSourceStructs=$preserveNullSourceStructs") {
+      withSQLConf(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS.key
+          -> preserveNullSourceStructs.toString) {
+        val tableName = "struct_null_expansion_test"
+        withTable(tableName) {
+          sql(
+            s"""CREATE TABLE $tableName (
+               |  col1 STRUCT<x: INT>,
+               |  col2 STRUCT<x:INT, y: INT>
+               |) USING DELTA""".stripMargin)
+          sql(s"INSERT INTO $tableName VALUES (NULL, NULL)")
+
+          // col1: cast col1.x from INT to LONG
+          // col2: reorder col2.x and col2.y
+          sql(
+            s"""UPDATE $tableName SET
+               |  col1 = CAST(NULL AS STRUCT<x: LONG>),
+               |  col2 = CAST(NULL AS STRUCT<y: INT, x: INT>)
+               |""".stripMargin)
+
+          val expectedRow = if (preserveNullSourceStructs) {
+            // The entire structs should be null
+            Row(null, null)
+          } else {
+            // Results are structs with null fields
+            Row(Row(null), Row(null, null))
+          }
+
+          checkAnswer(spark.table(tableName), Seq(expectedRow))
         }
       }
     }

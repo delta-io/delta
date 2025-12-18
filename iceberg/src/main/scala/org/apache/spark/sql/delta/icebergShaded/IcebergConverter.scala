@@ -24,7 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.Breaks._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, DeltaOperations, IcebergConstants, Snapshot, SnapshotDescriptor, UniversalFormat, UniversalFormatConverter}
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, DeltaOperations, IcebergCompat, IcebergConstants, Snapshot, SnapshotDescriptor, UniversalFormat, UniversalFormatConverter}
 import org.apache.spark.sql.delta.DeltaOperations.OPTIMIZE_OPERATION_NAME
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
@@ -307,11 +307,11 @@ class IcebergConverter(spark: SparkSession)
       .getLastConvertedDeltaVersion(lastConvertedIcebergTable)
     val maxCommitsToConvert =
       spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_COMMITS_TO_CONVERT)
-
     // Conversion is up-to-date
     if (lastDeltaVersionConverted.contains(snapshotToConvert.version)) {
       return None
     }
+    val conversionStartTime = System.currentTimeMillis()
 
     val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
       // The provided Snapshot is the last converted Snapshot
@@ -353,7 +353,8 @@ class IcebergConverter(spark: SparkSession)
           spark = spark,
           deltaLog = log,
           startVersion = prevSnapshot.version + 1,
-          endVersion = snapshotToConvert.version)
+          endVersion = snapshotToConvert.version,
+          catalogTableOpt = Some(catalogTable))
 
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
@@ -424,6 +425,18 @@ class IcebergConverter(spark: SparkSession)
 
     icebergTxn.commit()
     validateIcebergCommit(snapshotToConvert, cleanedCatalogTable)
+
+    recordDeltaEvent(
+      snapshotToConvert.deltaLog,
+      "delta.iceberg.conversion",
+      data = Map(
+        "deltaVersion" -> snapshotToConvert.version,
+        "compatVersion" -> IcebergCompat.getEnabledVersion(snapshotToConvert.metadata)
+          .getOrElse(0),
+        "elapsedTimeMs" -> (System.currentTimeMillis() - conversionStartTime)
+      )
+    )
+
     Some(snapshotToConvert.version, snapshotToConvert.timestamp)
   }
 
@@ -444,10 +457,12 @@ class IcebergConverter(spark: SparkSession)
       table.properties().getOrDefault(
         TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
 
-    if (snapshotToConvert.path.toString == writeMetadataLocation) {
+    val shouldKeepPhysicalFiles =
       // Don't attempt any file cleanup in the edge-case configuration
       // that the data location (in Uniform the table root location)
       // is the same as the Iceberg metadata location
+      (snapshotToConvert.path.toString == writeMetadataLocation)
+    if (shouldKeepPhysicalFiles) {
       expireSnapshotHelper.cleanExpiredFiles(false)
     } else {
       expireSnapshotHelper.deleteWith(path => {
@@ -603,7 +618,10 @@ class IcebergConverter(spark: SparkSession)
           case file: FileAction =>
             addBuffer ++= Option(file.wrap.add)
             removeBuffer ++= Option(file.wrap.remove)
-            dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
+            if (file.wrap.add != null || file.wrap.remove != null) {
+              // We only care about data changes in add and remove actions
+              dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
+            }
             hasDv |= file.deletionVector != null
           case c: CommitInfo =>
             commitInfo = Some(c)
@@ -646,6 +664,14 @@ class IcebergConverter(spark: SparkSession)
                 "hasDv" -> hasDv.toString
               )
             )
+            logError(
+              s"""Unsupported combination of actions for incremental conversion. Context:
+                 |version -> ${targetSnapshot.version},
+                 |commitInfo -> ${commitInfo.map(_.operation).getOrElse("")},
+                 |hasAdd -> ${addFiles.nonEmpty.toString},
+                 |hasRemove -> ${removeFiles.nonEmpty.toString},
+                 |dataChange -> ${dataChange.toString},
+                 |hasDv -> ${hasDv.toString}""".stripMargin)
             throw new UnsupportedOperationException(
               "Unsupported combination of actions for incremental conversion.")
         }

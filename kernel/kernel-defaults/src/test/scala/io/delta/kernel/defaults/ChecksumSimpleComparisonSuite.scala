@@ -21,7 +21,7 @@ import java.util
 import java.util.Optional
 
 import scala.collection.immutable.Seq
-import scala.jdk.CollectionConverters.setAsJavaSetConverter
+import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
@@ -60,10 +60,9 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
       val sparkTablePath = tablePath + "spark"
       val kernelTablePath = tablePath + "kernel"
 
-      createTxn(
+      getCreateTxn(
         engine,
         kernelTablePath,
-        isNewTable = true,
         schema = new StructType().add("id", LONG),
         partCols = Seq.empty).commit(engine, emptyIterable())
         .getPostCommitHooks
@@ -84,10 +83,9 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
       val sparkTablePath = tablePath + "spark"
       val kernelTablePath = tablePath + "kernel"
 
-      createTxn(
+      getCreateTxn(
         engine,
         kernelTablePath,
-        isNewTable = true,
         schema = new StructType().add("id", LONG).add(PARTITION_COLUMN, LONG),
         partCols = Seq(PARTITION_COLUMN)).commit(engine, emptyIterable())
         .getPostCommitHooks
@@ -113,6 +111,7 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
         metadata.getName,
         metadata.getDescription,
         metadata.getFormat,
+        metadata.getSchemaString,
         metadata.getSchema,
         metadata.getPartitionColumns,
         Optional.empty(),
@@ -156,7 +155,7 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
 
   private def readCrcInfo(engine: Engine, path: String, version: Long): CRCInfo = {
     ChecksumReader
-      .getCRCInfo(
+      .tryReadChecksumFile(
         engine,
         FileStatus.of(checksumFile(new Path(f"$path/_delta_log/"), version).toString))
       .orElseThrow(() => new IllegalStateException(s"CRC info not found for version $version"))
@@ -169,10 +168,7 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
       sparkTablePath: String,
       versionToConvert: Long): Unit = {
 
-    val txn = Table.forPath(engine, path)
-      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
-      .withLogCompactionInverval(0) // disable compaction
-      .build(engine)
+    val txn = getUpdateTxn(engine, path, logCompactionInterval = 0) // disable compaction
 
     val tableChange = Table.forPath(engine, sparkTablePath).asInstanceOf[TableImpl].getChanges(
       engine,

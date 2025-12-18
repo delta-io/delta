@@ -22,7 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
@@ -38,11 +38,17 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
 import org.scalatest.prop.Tables
 
+class DeltaTableSchemaEvolutionTransactionBuilderV1Suite extends DeltaTableSchemaEvolutionSuiteBase
+    with WriteUtils {}
+
+class DeltaTableSchemaEvolutionTransactionBuilderV2Suite extends DeltaTableSchemaEvolutionSuiteBase
+    with WriteUtilsWithV2Builders {}
+
 /**
  * ToDo: Clean this up by moving some common schemas to fixtures and abstracting
  * the setup/run schema evolution/assert loop
  */
-class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
+trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteUtils
     with ColumnMappingSuiteBase {
 
   test("Add nullable column succeeds and correctly updates maxFieldId") {
@@ -1324,6 +1330,156 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
         false)
 
       verifyClusteringDomainMetadata(snapshot.asInstanceOf[SnapshotImpl], expectedDomainMetadata)
+    }
+  }
+
+  test("Cannot move field from nested struct to top-level") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val nestedSchema = new StructType()
+        .add("nestedCol1", StringType.STRING, fieldMetadataForColumn(1, "col-1"))
+        .add("nestedCol2", StringType.STRING, fieldMetadataForColumn(2, "col-2"))
+      val initialSchema = new StructType()
+        .add("topCol1", nestedSchema, fieldMetadataForColumn(3, "col-3"))
+        .add("topCol2", IntegerType.INTEGER, fieldMetadataForColumn(4, "col-4"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val newNestedSchema = new StructType()
+        .add("nestedCol1", StringType.STRING, fieldMetadataForColumn(1, "col-1"))
+      val newSchema = new StructType()
+        .add("topCol1", newNestedSchema, fieldMetadataForColumn(3, "col-3"))
+        .add("topCol2", IntegerType.INTEGER, fieldMetadataForColumn(4, "col-4"))
+        .add("nestedCol2", StringType.STRING, fieldMetadataForColumn(2, "col-2"))
+
+      assertSchemaEvolutionFails[KernelException](
+        table,
+        engine,
+        newSchema,
+        "Cannot move fields between different levels of nesting")
+    }
+  }
+
+  test("Cannot move field between sibling structs") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val struct1 = new StructType()
+        .add("field1", StringType.STRING, fieldMetadataForColumn(1, "col-1"))
+        .add("field2", IntegerType.INTEGER, fieldMetadataForColumn(2, "col-2"))
+      val struct2 = new StructType()
+        .add("field3", StringType.STRING, fieldMetadataForColumn(3, "col-3"))
+      val initialSchema = new StructType()
+        .add("struct1", struct1, fieldMetadataForColumn(4, "col-4"))
+        .add("struct2", struct2, fieldMetadataForColumn(5, "col-5"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val newStruct1 = new StructType()
+        .add("field2", IntegerType.INTEGER, fieldMetadataForColumn(2, "col-2"))
+      val newStruct2 = new StructType()
+        .add("field1", StringType.STRING, fieldMetadataForColumn(1, "col-1"))
+        .add("field3", StringType.STRING, fieldMetadataForColumn(3, "col-3"))
+      val newSchema = new StructType()
+        .add("struct1", newStruct1, fieldMetadataForColumn(4, "col-4"))
+        .add("struct2", newStruct2, fieldMetadataForColumn(5, "col-5"))
+
+      assertSchemaEvolutionFails[KernelException](
+        table,
+        engine,
+        newSchema,
+        "Cannot move fields between different levels of nesting")
+    }
+  }
+
+  test("Cannot move field from array element to top-level") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val arrayElementStruct = new StructType()
+        .add("elemField1", IntegerType.INTEGER, fieldMetadataForColumn(1, "col-1"))
+        .add("elemField2", StringType.STRING, fieldMetadataForColumn(2, "col-2"))
+      val initialSchema = new StructType()
+        .add(
+          "arrayCol",
+          new ArrayType(arrayElementStruct, true),
+          fieldMetadataForColumn(3, "col-3"))
+        .add("topField", IntegerType.INTEGER, fieldMetadataForColumn(4, "col-4"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val newArrayElementStruct = new StructType()
+        .add("elemField2", StringType.STRING, fieldMetadataForColumn(2, "col-2"))
+      val newSchema = new StructType()
+        .add(
+          "arrayCol",
+          new ArrayType(newArrayElementStruct, true),
+          fieldMetadataForColumn(3, "col-3"))
+        .add("topField", IntegerType.INTEGER, fieldMetadataForColumn(4, "col-4"))
+        .add("elemField1", IntegerType.INTEGER, fieldMetadataForColumn(1, "col-1"))
+
+      assertSchemaEvolutionFails[KernelException](
+        table,
+        engine,
+        newSchema,
+        "Cannot move fields between different levels of nesting")
+    }
+  }
+
+  test("Cannot move field from map value to map key") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val mapKeyStruct = new StructType()
+        .add("keyField1", StringType.STRING, fieldMetadataForColumn(1, "col-1"))
+      val mapValueStruct = new StructType()
+        .add("valueField1", IntegerType.INTEGER, fieldMetadataForColumn(2, "col-2"))
+        .add("valueField2", StringType.STRING, fieldMetadataForColumn(3, "col-3"))
+      val initialSchema = new StructType()
+        .add(
+          "mapCol",
+          new MapType(mapKeyStruct, mapValueStruct, true),
+          fieldMetadataForColumn(4, "col-4"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val newMapKeyStruct = new StructType()
+        .add("keyField1", StringType.STRING, fieldMetadataForColumn(1, "col-1"))
+        .add("valueField1", IntegerType.INTEGER, fieldMetadataForColumn(2, "col-2"))
+      val newMapValueStruct = new StructType()
+        .add("valueField2", StringType.STRING, fieldMetadataForColumn(3, "col-3"))
+      val newSchema = new StructType()
+        .add(
+          "mapCol",
+          new MapType(newMapKeyStruct, newMapValueStruct, true),
+          fieldMetadataForColumn(4, "col-4"))
+
+      assertSchemaEvolutionFails[KernelException](
+        table,
+        engine,
+        newSchema,
+        "Cannot move fields between different levels of nesting")
     }
   }
 

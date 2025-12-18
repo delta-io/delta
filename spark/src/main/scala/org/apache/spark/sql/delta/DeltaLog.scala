@@ -162,6 +162,9 @@ class DeltaLog private(
   /** The unique identifier for this table. */
   def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
 
+  /** Returns the truncated table ID for logging purposes. */
+  private[delta] def truncatedTableId: String = tableId.split("-").head
+
   def getInitialCatalogTable: Option[CatalogTable] = initialCatalogTable
   /**
    * Combines the tableId with the path of the table to ensure uniqueness. Normally `tableId`
@@ -300,8 +303,10 @@ class DeltaLog private(
    */
   def getChanges(
       startVersion: Long,
+      catalogTableOpt: Option[CatalogTable] = None,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(startVersion, failOnDataLoss).map { case (version, status) =>
+    getChangeLogFiles(
+        startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
       (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
     }
   }
@@ -309,8 +314,13 @@ class DeltaLog private(
   private[sql] def getChanges(
       startVersion: Long,
       endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
       failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(startVersion, endVersion, failOnDataLoss).map { case (version, status) =>
+    getChangeLogFiles(
+        startVersion,
+        endVersion,
+        catalogTableOpt,
+        failOnDataLoss).map { case (version, status) =>
       (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
     }
   }
@@ -318,6 +328,7 @@ class DeltaLog private(
   private[sql] def getChangeLogFiles(
       startVersion: Long,
       endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
       failOnDataLoss: Boolean): Iterator[(Long, FileStatus)] = {
     implicit class IteratorWithStopAtHelper[T](underlying: Iterator[T]) {
       // This method is used to stop the iterator when the condition is met.
@@ -334,7 +345,7 @@ class DeltaLog private(
       }
     }
 
-    getChangeLogFiles(startVersion, failOnDataLoss)
+    getChangeLogFiles(startVersion, catalogTableOpt, failOnDataLoss)
       // takeWhile always looks at one extra item, which can trigger unnecessary work. Instead, we
       // stop if we've seen the item we believe should be the last interesting item, without
       // examining the one that follows.
@@ -351,8 +362,10 @@ class DeltaLog private(
    */
   def getChangeLogFiles(
       startVersion: Long,
+      catalogTableOpt: Option[CatalogTable] = None,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltasWithVersion = CoordinatedCommitsUtils.commitFilesIterator(this, startVersion)
+    val deltasWithVersion = CoordinatedCommitsUtils.commitFilesIterator(
+      this, catalogTableOpt, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltasWithVersion.map { case (status, version) =>

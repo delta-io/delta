@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.Path
@@ -36,15 +36,16 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class LogReplaySuite extends AnyFunSuite with TestUtils {
+class LogReplaySuite extends AbstractLogReplaySuite with TestUtilsWithTableManagerAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
 
-  override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
-    {
-      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-      set("delta.kernel.default.parquet.reader.batch-size", "2");
-      set("delta.kernel.default.json.reader.batch-size", "2");
-    }
-  })
+class LegacyLogReplaySuite extends AbstractLogReplaySuite with TestUtilsWithLegacyKernelAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
+
+trait AbstractLogReplaySuite extends AnyFunSuite {
+  self: AbstractTestUtils =>
 
   test("simple end to end with inserts and deletes and checkpoint") {
     val expectedValues = (0L until 5L) ++ (10L until 15L) ++ (20L until 25L) ++
@@ -287,14 +288,10 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
 
   test("get the last transaction version for appID") {
     val unresolvedPath = goldenTablePath("deltalog-getChanges")
-    val table = Table.forPath(defaultEngine, unresolvedPath)
-
-    val snapshot = table.getLatestSnapshot(defaultEngine)
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, unresolvedPath)
     assert(snapshot.isInstanceOf[SnapshotImpl])
-    val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
-
-    assert(snapshotImpl.getLatestTransactionVersion(defaultEngine, "fakeAppId") === Optional.of(3L))
-    assert(!snapshotImpl.getLatestTransactionVersion(defaultEngine, "nonExistentAppId").isPresent)
+    assert(snapshot.getLatestTransactionVersion(defaultEngine, "fakeAppId") === Optional.of(3L))
+    assert(!snapshot.getLatestTransactionVersion(defaultEngine, "nonExistentAppId").isPresent)
   }
 
   test("current checksum read => snapshot provides crc info") {
@@ -305,8 +302,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
           s"SELECT 0L as id")
       spark.sql(
         s"INSERT INTO delta.`$tablePath` SELECT 1L as id")
-      val table = Table.forPath(defaultEngine, tablePath)
-      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
       assert(snapshot.getCurrentCrcInfo.isPresent)
       val crcInfo = snapshot.getCurrentCrcInfo.get()
       assert(crcInfo.getVersion == 1)
@@ -324,9 +320,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       spark.sql(
         s"INSERT INTO delta.`$tablePath` SELECT 1L as id")
       deleteChecksumFileForTable(tablePath, versions = Seq(1))
-
-      val table = Table.forPath(defaultEngine, tablePath)
-      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
       assert(!snapshot.getCurrentCrcInfo.isPresent)
     }
   }
@@ -340,9 +334,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       spark.sql(
         s"INSERT INTO delta.`$tablePath` SELECT 1L as id")
       deleteChecksumFileForTable(tablePath, versions = Seq(0, 1))
-
-      val table = Table.forPath(defaultEngine, tablePath)
-      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
       assert(!snapshot.getCurrentCrcInfo.isPresent)
     }
   }

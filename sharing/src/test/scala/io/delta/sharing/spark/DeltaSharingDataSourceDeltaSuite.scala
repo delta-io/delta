@@ -21,7 +21,7 @@ package io.delta.sharing.spark
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.DeltaExcludedBySparkVersionTestMixinShims
+import org.apache.spark.sql.delta.{DeltaConfigs, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -43,8 +43,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     extends QueryTest
     with DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
-    with DeltaSharingDataSourceDeltaTestUtils
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    with DeltaSharingDataSourceDeltaTestUtils {
 
   override def beforeEach(): Unit = {
     spark.sessionState.conf.setConfString(
@@ -1514,45 +1513,97 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
-  Seq(true, false).foreach { addGATableFeature =>
-    testSparkMasterOnly(s"basic variant test - GA feature enabled: $addGATableFeature") {
+  Seq(
+    VariantTypePreviewTableFeature,
+    VariantTypeTableFeature,
+    VariantShreddingPreviewTableFeature
+  ).foreach { feature =>
+    test(s"basic variant test - table feature: $feature") {
       withTempDir { tempDir =>
-        val deltaTableName = "variant_table"
-        withTable(deltaTableName) {
-          spark.range(0, 10)
-            .selectExpr("parse_json(cast(id as string)) v")
-            .write
-            .format("delta")
-            .mode("overwrite")
-            .saveAsTable(deltaTableName)
+        val extraConfs = feature match {
+          case VariantShreddingPreviewTableFeature => Map(
+            "spark.sql.variant.writeShredding.enabled" -> "true",
+            "spark.sql.variant.allowReadingShredded" -> "true",
+            "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
+          )
+          case _ => Map.empty
+        }
+        withSQLConf(extraConfs.toSeq: _*) {
+          val deltaTableName = s"variant_table_${feature.name.replaceAll("-", "_")}"
+          withTable(deltaTableName) {
+            if (feature == VariantShreddingPreviewTableFeature) {
+              spark.sql(s"CREATE TABLE $deltaTableName(v variant) USING DELTA " +
+                s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+            } else {
+              spark.sql(s"CREATE TABLE $deltaTableName(v variant) USING DELTA " +
+                s"TBLPROPERTIES('delta.feature.${feature.name}' = 'supported')")
+            }
 
-          if (addGATableFeature) {
-            spark.sql(
-              s"ALTER TABLE $deltaTableName " +
-              s"SET TBLPROPERTIES('delta.feature.variantType' = 'supported')"
-            )
+            spark.range(0, 10000, 1, 1)
+              .selectExpr("""parse_json(format_string('{"a": %d}', id)) v""")
+              .write
+              .format("delta")
+              .mode("append")
+              .insertInto(deltaTableName)
+
+            val sharedTableName = s"shared_table_variant_${feature.name.replaceAll("-", "_")}"
+            prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+            prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+            val expectedSchemaString = "StructType(StructField(v,VariantType,true))"
+            val expected = spark.read.format("delta").table(deltaTableName)
+
+            def test(tablePath: String): Unit = {
+              val sharedDf = spark.read
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .load(tablePath)
+              assert(expectedSchemaString == sharedDf.schema.toString)
+              checkAnswer(sharedDf, expected)
+            }
+
+            withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+              val profileFile = prepareProfileFile(tempDir)
+              test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+            }
           }
+        }
+      }
+    }
+  }
 
-          val sharedTableName = "shared_table_variant"
-          prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
-          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+  test("DeltaSharingDataSource able to read data with inline credentials") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_inline_creds"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
 
-          val expectedSchemaString = "StructType(StructField(v,VariantType,true))"
+        val sharedTableName = "shared_table_inline_creds"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        val map = Map(
+          "shareCredentialsVersion" -> "1",
+          "bearerToken" -> "xxx",
+          "endpoint" -> "https://xxx/delta-sharing/",
+          "expirationTime" -> "2099-01-01T00:00:00.000Z"
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val expectedSchema: StructType = new StructType()
+            .add("c1", IntegerType)
+            .add("c2", StringType)
+
+          val df = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .options(map)
+            .load(s"share1.default.$sharedTableName")
+
+          assert(expectedSchema == df.schema)
           val expected = spark.read.format("delta").table(deltaTableName)
-
-          def test(tablePath: String): Unit = {
-            val sharedDf = spark.read
-              .format("deltaSharing")
-              .option("responseFormat", "delta")
-              .load(tablePath)
-            assert(expectedSchemaString == sharedDf.schema.toString)
-            checkAnswer(sharedDf, expected)
-          }
-
-          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
-            val profileFile = prepareProfileFile(tempDir)
-            test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
-          }
+          checkAnswer(df, expected)
         }
       }
     }

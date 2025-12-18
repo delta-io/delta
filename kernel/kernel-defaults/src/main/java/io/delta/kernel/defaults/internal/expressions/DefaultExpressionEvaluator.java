@@ -346,6 +346,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
+    @Override
+    ExpressionTransformResult visitIn(In in) {
+      ExpressionTransformResult visitedValue = visit(in.getValueExpression());
+      List<ExpressionTransformResult> visitedInList =
+          in.getInListElements().stream().map(this::visit).collect(toList());
+      In transformedExpression =
+          InExpressionEvaluator.validateAndTransform(
+              in,
+              visitedValue.expression,
+              visitedValue.outputType,
+              visitedInList.stream().map(e -> e.expression).collect(toList()),
+              visitedInList.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
     private Predicate validateIsPredicate(
         Expression baseExpression, ExpressionTransformResult result) {
       checkArgument(
@@ -362,6 +377,20 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
+
+      if (predicate.getCollationIdentifier().isPresent()) {
+        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
+        checkIsUTF8BinaryCollation(predicate, collationIdentifier);
+
+        for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
+          checkIsStringType(
+              dataType,
+              predicate,
+              format("Predicate %s expects STRING type inputs", predicate.getName()));
+        }
+        return new Predicate(predicate.getName(), left, right, collationIdentifier);
+      }
+
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
         if (canCastTo(leftResult.outputType, rightResult.outputType)) {
           left = new ImplicitCastExpression(left, rightResult.outputType);
@@ -710,6 +739,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ColumnVector visitStartsWith(Predicate startsWith) {
       return StartsWithExpressionEvaluator.eval(
           startsWith.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitIn(In in) {
+      return InExpressionEvaluator.eval(
+          in.getChildren().stream().map(this::visit).collect(toList()));
     }
 
     /**

@@ -160,7 +160,9 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
 
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
-    return Stream.concat(Stream.of(createUnsupportedFeaturesCheck(this)), COMMON_CHECKS.stream())
+    return Stream.concat(
+            Stream.of(createUnsupportedFeaturesCheck(this), ROW_TRACKING_INACTIVE_CHECK),
+            COMMON_CHECKS.stream())
         .collect(toList());
   }
 }

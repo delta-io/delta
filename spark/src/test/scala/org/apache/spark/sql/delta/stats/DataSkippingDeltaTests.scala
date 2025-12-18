@@ -44,7 +44,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShims
+trait DataSkippingDeltaTestsBase extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DataSkippingDeltaTestsUtils
@@ -725,7 +725,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "TRUE",
       "FALSE",     // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-      "NOT a <=> 1"
+      "NOT a <=> 1",
+      "(a > 1) IS NULL", // This pushes down the IS NULL to both sides of GreaterThan.
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
     ),
     misses = Seq(
       // stats tell us a is always NULL, so any predicate that requires non-NULL a should skip
@@ -736,8 +739,40 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "a > 1",
       "a < 1",
       "a <> 1",
-      "a <=> 1"
+      "a <=> 1",
+      "NOT ((a > 1) IS NULL)"
     )
+  )
+
+  testSkipping(
+    "nulls - only non-null in file",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(),
+    misses = Seq(
+      "(a > 0 AND b > 1) IS NULL",
+      "(a > 0 OR b > 1) IS NULL"
+    )
+  )
+
+  testSkipping(
+    "nulls - only non-null in file with enhanced pushdown disabled",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(
+      "(a > 0 AND b > 1) IS NULL",
+      "(a > 0 OR b > 1) IS NULL"
+    ),
+    misses = Seq.empty,
+    sqlConfs = Seq((DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED.key, "false"))
   )
 
   testSkipping(
@@ -759,7 +794,12 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "TRUE",
       "FALSE",    // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-      "NOT a <=> 1"
+      "NOT a <=> 1",
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL", // Pushdown of IS NULL on OR.
+      "NOT ((a > 0) IS NULL)"
     ),
     misses = Seq(
       "a <> 1",
@@ -767,6 +807,73 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "a < 1",
       "NOT a = 1"
     )
+  )
+
+  testSkipping(
+    "nulls - IsNull pushdown on complex expressions",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(
+      "(a > 0 OR a == -1 OR a == -2 OR b == -1 OR b == -2 OR b > 10 OR b == 7) IS NULL"
+    ),
+    misses = Seq(
+      "(a > 0 OR b > 1) IS NULL"
+    ),
+    sqlConfs = Seq((DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH.key -> "1"))
+  )
+
+  testSkipping(
+    "nulls - non-nulls only in file",
+    """
+      {"a": 1 }
+    """,
+    schema = new StructType().add(new StructField("a", IntegerType)),
+    hits = Seq(
+      "NOT ((a > 0) IS NULL)"
+    ),
+    misses = Seq(
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    )
+  )
+
+  testSkipping(
+    "nulls - non-nulls only in file with partial column stats",
+    """
+      {"a": 1, "b": 2}
+    """,
+    hits = Seq(
+      "NOT ((a > 0) IS NULL)",
+      "(b > 0) IS NULL",
+      "(b < 0) IS NULL",
+      "(b > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(b > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    ),
+    misses = Seq(
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    ),
+    indexedCols = 1
+  )
+
+  testSkipping(
+    "nulls - non-strict null-intolerant predicate returns hits for IS NULL",
+    """
+      {"a": [3, 4]}
+    """,
+    hits = Seq(
+      "NOT (element_at(a, 3) IS NULL)",
+      "element_at(a, 3) IS NULL"
+    ),
+    misses = Seq.empty
   )
 
   test("data skipping with missing stats") {
@@ -1350,7 +1457,8 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         // b and c should have NULL_COUNT stats, but currently they're not SkippingEligibleColumn
         // (since they're not AtomicType), we couldn't skip for them
         "isnull(b)",
-        "c is null"
+        "c is null",
+        "ELEMENT_AT(c, 10) IS NULL" // Out-of-bounds access returns null.
       )
       val misses = Seq(
         // a has NULL_COUNT stats since it's missing from DataFrame schema
@@ -1704,7 +1812,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 
-  testSparkMasterOnly("data skipping by stats - variant type") {
+  test("data skipping by stats - variant type") {
     withTable("tbl") {
       sql("""CREATE TABLE tbl(v VARIANT,
               v_struct STRUCT<v: VARIANT>,
@@ -1997,6 +2105,29 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         .collect()
         .length
       assert(distinctPartitions == 10)
+    }
+  }
+
+  test("Data skipping handles aliasing for _metadata fields") {
+    withTable("t") {
+      // Create table with BIGINT file_name column
+      sql("create or replace table t(file_name BIGINT) using delta")
+      sql("insert into t values (1), (2), (3)")
+      sql("insert into t values (4), (5), (6)")
+      val (fileName, fileCount) = {
+        val dataFilesDF = sql("select distinct _metadata.file_name from t")
+        (dataFilesDF.first().getString(0), dataFilesDF.count())
+      }
+      // Filter rows by _metadata.file_name
+      val df = sql(s"select * from t where _metadata.file_name = '$fileName'")
+      // Verify the predicate is not used for data skipping
+      val predicates = df.queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+        .filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty,
+        "Expected predicate to be ineligible for data skipping")
     }
   }
 

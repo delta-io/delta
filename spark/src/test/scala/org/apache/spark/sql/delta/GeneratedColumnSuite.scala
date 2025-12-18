@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off typedlit
 import java.sql.{Date, Timestamp}
+import java.util.UUID
 
 import scala.collection.JavaConverters._
 
@@ -27,7 +28,9 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.GeneratedColumnValidateOnWriteMode
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -39,8 +42,7 @@ import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.{ArrayType, DataType, DateType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampType}
 
 trait GeneratedColumnSuiteBase
-    extends GeneratedColumnTest
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    extends GeneratedColumnTest {
 
   import GeneratedColumn._
   import testImplicits._

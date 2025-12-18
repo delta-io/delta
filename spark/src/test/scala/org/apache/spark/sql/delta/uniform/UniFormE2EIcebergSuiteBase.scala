@@ -115,6 +115,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.columnMapping.mode' = 'name',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
         write(s"INSERT INTO `$testTableName` VALUES (123, 'p1'), (456, 'p2'), (789, 'p1')")
         readAndVerify(testTableName, "id, part", "id",

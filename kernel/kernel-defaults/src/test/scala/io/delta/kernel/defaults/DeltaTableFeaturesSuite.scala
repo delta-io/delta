@@ -22,7 +22,7 @@ import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.Operation.CREATE_TABLE
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
 import io.delta.kernel.expressions.Literal
@@ -39,10 +39,16 @@ import org.apache.spark.sql.delta.actions.Protocol
 
 import org.scalatest.funsuite.AnyFunSuite
 
+class DeltaTableFeaturesTransactionBuilderV1Suite extends DeltaTableFeaturesSuiteBase
+    with WriteUtils {}
+
+class DeltaTableFeaturesTransactionBuilderV2Suite extends DeltaTableFeaturesSuiteBase
+    with WriteUtilsWithV2Builders {}
+
 /**
  * Integration test suite for Delta table features.
  */
-class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
+trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
 
   ///////////////////////////////////////////////////////////////////////////
   // Tests for deletionVector, v2Checkpoint table features
@@ -145,24 +151,19 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
       case (isTimestampNtzEnabled, expectedProtocol) =>
         test(s"Create table with timestampNtz enabled: $isTimestampNtzEnabled") {
           withTempDirAndEngine { (tablePath, engine) =>
-            val table = Table.forPath(engine, tablePath)
-            val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
             val schema = if (isTimestampNtzEnabled) {
               new StructType().add("tz", TimestampNTZType.TIMESTAMP_NTZ)
             } else {
               new StructType().add("id", INTEGER)
             }
-            val txn = txnBuilder
-              .withSchema(engine, schema)
-              .build(engine)
+            val txn = getCreateTxn(engine, tablePath, schema)
 
             assert(txn.getSchema(engine) === schema)
             assert(txn.getPartitionColumns(engine).isEmpty)
             val txnResult = commitTransaction(txn, engine, emptyIterable())
 
             assert(txnResult.getVersion === 0)
-            val protocolRow = getProtocolActionFromCommit(engine, table, 0)
+            val protocolRow = getProtocolActionFromCommit(engine, tablePath, 0)
             assert(protocolRow.isDefined)
             val protocol = KernelProtocol.fromRow(protocolRow.get)
             assert(protocol.getMinReaderVersion === expectedProtocol.getMinReaderVersion)
@@ -176,10 +177,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
   test("schema evolution from Spark to add TIMESTAMP_NTZ type on a table created with kernel") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
       val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
@@ -215,9 +213,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
   test("withDomainMetadata adds corresponding feature option") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn =
-        txnBuilder.withDomainMetadataSupported().withSchema(engine, testSchema).build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema, withDomainMetadataSupported = true)
       commitTransaction(txn, engine, emptyIterable())
       assert(latestSnapshot(table, engine).getProtocol.getExplicitlySupportedFeatures.contains(
         TableFeatures.DOMAIN_METADATA_W_FEATURE))
@@ -232,7 +228,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
       assert(latestSnapshot(table, engine).getMetadata.getConfiguration.isEmpty)
 
       // Update table with the same feature override set.
-      val updateTxn = createTxn(engine, tablePath, tableProperties = properties)
+      val updateTxn = getUpdateTxn(engine, tablePath, tableProperties = properties)
 
       commitTransaction(updateTxn, engine, emptyIterable())
 
@@ -296,7 +292,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
       createEmptyTable(engine, tablePath, testSchema)
 
       intercept[InvalidConfigurationValueException] {
-        createTxn(
+        getUpdateTxn(
           engine,
           tablePath,
           tableProperties = Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg"))
@@ -329,6 +325,21 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
       }
       assert(ex.getMessage.contains(
         "feature \"testReaderWriter\" which is unsupported by this version of Delta Kernel"))
+    }
+  }
+
+  test("read succeeds with unrecognized writer-only feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+      // Add an unknown writer feature to the protocol
+      // When DELTA_TESTING=1 (set in build.sbt) this test writer feature is allowed
+      spark.sql(
+        "ALTER TABLE delta.`" + tablePath +
+          "` SET TBLPROPERTIES ('delta.feature.testWriter' = 'supported')")
+
+      // Read should succeed - writer-only features don't affect readers
+      getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      assert(getProtocol(engine, tablePath).getWriterFeatures().contains("testWriter"))
     }
   }
 

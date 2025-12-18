@@ -19,8 +19,8 @@ import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
-import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
+import io.delta.kernel.internal.util.IntervalParserUtils;
 import java.util.*;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -30,6 +30,10 @@ import java.util.function.Predicate;
  * table metadata.
  */
 public class TableConfig<T> {
+
+  public static final String MIN_PROTOCOL_READER_VERSION_KEY = "delta.minReaderVersion";
+
+  public static final String MIN_PROTOCOL_WRITER_VERSION_KEY = "delta.minWriterVersion";
 
   //////////////////
   // TableConfigs //
@@ -274,6 +278,37 @@ public class TableConfig<T> {
           true);
 
   /**
+   * IMPORTANT: This table property is recognized but is not yet validated, enforced, or implemented
+   * by Kernel.
+   *
+   * <p>The names of specific columns to collect stats on for data skipping. If present, it takes
+   * precedence over {@link #DATA_SKIPPING_NUM_INDEXED_COLS}, and the system will only collect stats
+   * for columns that exactly match those specified. If a nested column is specified, the system
+   * will collect stats for all leaf fields of that column. If a non-existent column is specified,
+   * it will be ignored. Updating this config does not trigger stats re-collection, but redefines
+   * the stats schema of the table, i.e., it will change the behavior of future stats collection
+   * (e.g., in append and OPTIMIZE) as well as data skipping (e.g., the column stats not mentioned
+   * by this config will be ignored even if they exist).
+   *
+   * <p>The value is a comma-separated list of case-insensitive column identifiers. Each column
+   * identifier can consist of letters, digits, and underscores. If a column identifier includes
+   * special characters, the column name should be enclosed in backticks (`) to escape the special
+   * characters.
+   *
+   * <p>A column identifier can refer to one of the following: the name of a non-struct column, the
+   * leaf field's name of a struct column, or the name of a struct column. When a struct column's
+   * name is specified, statistics for all its leaf fields will be collected.
+   */
+  public static final TableConfig<Optional<String>> DATA_SKIPPING_STATS_COLUMNS =
+      new TableConfig<>(
+          "delta.dataSkippingStatsColumns",
+          null,
+          v -> Optional.ofNullable(v),
+          value -> true,
+          "needs to be a comma-separated list of column identifiers.",
+          true);
+
+  /**
    * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
    * Compatibility V1 ({@code icebergCompatWriterV1}) protocol.
    */
@@ -393,6 +428,10 @@ public class TableConfig<T> {
               addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);
               addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
               addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
+              addConfig(this, VARIANT_SHREDDING_ENABLED);
+
+              // The below configs do not yet have their behavior correctly implemented in Kernel.
+              addConfig(this, DATA_SKIPPING_STATS_COLUMNS);
             }
           });
 

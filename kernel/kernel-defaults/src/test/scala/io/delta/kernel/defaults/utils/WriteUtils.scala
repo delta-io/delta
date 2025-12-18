@@ -50,11 +50,22 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-/** Default write utilities that use the V1 transaction builders. */
+/** Default write utilities that use the V1 transaction builders and legacy Table Snapshot APIs */
 trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
+    with TestUtilsWithLegacyKernelAPIs
 
-/** Write utilities that use the V2 transaction builders to create transactions */
+/**
+ * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
+ * "default" WriteUtils which happens to use the legacy Kernel APIs
+ */
+trait WriteUtilsWithV1Builders extends WriteUtils
+
+/**
+ * Write utilities that use the V2 transaction builders to create transactions and TableManager
+ * snapshot APIs
+ */
 trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilderV2Support
+    with TestUtilsWithTableManagerAPIs
 
 /**
  * Common utility methods for write test suites. For now, this includes mostly concrete
@@ -68,9 +79,11 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   val testEngineInfo = "test-engine"
 
   /** Test table schemas and test */
-  val testSchema = new StructType().add("id", INTEGER)
-  val dataBatches1 = generateData(testSchema, Seq.empty, Map.empty, 200, 3)
-  val dataBatches2 = generateData(testSchema, Seq.empty, Map.empty, 400, 5)
+  lazy val testSchema = new StructType().add("id", INTEGER)
+  lazy val dataBatches1 = generateData(testSchema, Seq.empty, Map.empty, 200, 3)
+  lazy val dataBatches2 = generateData(testSchema, Seq.empty, Map.empty, 400, 5)
+  lazy val seqOfUnpartitionedDataBatch1 = Seq(Map.empty[String, Literal] -> dataBatches1)
+  lazy val seqOfUnpartitionedDataBatch2 = Seq(Map.empty[String, Literal] -> dataBatches2)
 
   val testPartitionColumns = Seq("part1", "part2")
   val testPartitionSchema = new StructType()
@@ -207,13 +220,11 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   }
 
   def getMetadata(engine: Engine, tablePath: String): Metadata = {
-    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl].getMetadata
+    getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getMetadata
   }
 
   def getProtocol(engine: Engine, tablePath: String): Protocol = {
-    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl].getProtocol
+    getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getProtocol
   }
 
   /**
@@ -244,10 +255,10 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
    *  null, otherwise return null.
    *  TODO: get rid of this and use getProtocol instead
    */
-  def getProtocolActionFromCommit(engine: Engine, table: Table, version: Long): Option[Row] = {
+  def getProtocolActionFromCommit(engine: Engine, tablePath: String, version: Long): Option[Row] = {
     readCommitFile(
       engine,
-      table.getPath(engine),
+      tablePath,
       version,
       (row) => {
         val ord = row.getSchema.indexOf("protocol")
@@ -316,13 +327,15 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       engine: Engine,
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata],
-      useInternalApi: Boolean = false): Transaction = {
+      useInternalApi: Boolean = false,
+      enableDomainMetadata: Boolean = true): Transaction = {
 
-    val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
-    if (domainMetadatas.nonEmpty && !useInternalApi) {
-      txnBuilder.withDomainMetadataSupported()
+    val txn = if (domainMetadatas.nonEmpty && !useInternalApi) {
+      getUpdateTxn(engine, tablePath, withDomainMetadataSupported = enableDomainMetadata)
+        .asInstanceOf[TransactionImpl]
+    } else {
+      getUpdateTxn(engine, tablePath).asInstanceOf[TransactionImpl]
     }
-    val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
 
     domainMetadatas.foreach { dm =>
       if (dm.isRemoved) {
@@ -420,15 +433,24 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       tableProperties: Map[String, String] = null,
       clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
 
-    val txn = createTxn(
-      engine,
-      tablePath,
-      isNewTable,
-      schema,
-      partCols,
-      tableProperties,
-      clock,
-      clusteringColsOpt = clusteringColsOpt)
+    val txn = if (isNewTable) {
+      getCreateTxn(
+        engine,
+        tablePath,
+        schema,
+        partCols,
+        tableProperties,
+        clock,
+        clusteringColsOpt = clusteringColsOpt)
+    } else {
+      getUpdateTxn(
+        engine,
+        tablePath,
+        schema,
+        tableProperties,
+        clock,
+        clusteringColsOpt = clusteringColsOpt)
+    }
     commitAppendData(engine, txn, data)
   }
 
@@ -460,18 +482,24 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       expectedValue: Any,
       clock: Clock = () => System.currentTimeMillis): Unit = {
 
-    val table = Table.forPath(engine, tablePath)
+    val txn = if (isNewTable) {
+      getCreateTxn(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map(key.getKey -> value),
+        clock = clock)
+    } else {
+      getUpdateTxn(
+        engine,
+        tablePath,
+        schema = if (isNewTable) testSchema else null,
+        tableProperties = Map(key.getKey -> value),
+        clock = clock)
+    }
+    commitTransaction(txn, engine, emptyIterable())
 
-    createTxn(
-      engine,
-      tablePath,
-      isNewTable,
-      schema = if (isNewTable) testSchema else null,
-      tableProperties = Map(key.getKey -> value),
-      clock = clock)
-      .commit(engine, emptyIterable())
-
-    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
     assertMetadataProp(snapshot, key, expectedValue)
   }
 
@@ -562,7 +590,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   }
 
   def collectStatsFromAddFiles(engine: Engine, path: String): Seq[String] = {
-    val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, path)
     val scan = snapshot.getScanBuilder.build()
     val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
 
@@ -614,5 +642,41 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
     assert(
       actualClusteringCols === expectedClusteringCols,
       s"Expected clustering columns: $expectedClusteringCols, but got: $actualClusteringCols")
+  }
+
+  /**
+   * A very particular utility that is used in both InCommitTimestampSuite and
+   * DeltaReplaceTableSuite.
+   */
+  protected def createTableThenEnableIctAndVerify(
+      engine: Engine,
+      tablePath: String): SnapshotImpl = {
+    // Create table without ICT. Note that this does not add ICT enablement tracking properties.
+    val txn1 = getCreateTxn(engine, tablePath, testSchema)
+    commitTransaction(txn1, engine, emptyIterable())
+
+    // Enable ICT. This should add enablement tracking properties.
+    setTablePropAndVerify(
+      engine = engine,
+      tablePath = tablePath,
+      isNewTable = false,
+      key = TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED,
+      value = "true",
+      expectedValue = true)
+
+    val snapshotV1 = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+
+    // Verify enablement properties are present
+    assertMetadataProp(snapshotV1, TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED, true)
+    assertMetadataProp(
+      snapshotV1,
+      TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
+      Optional.of(snapshotV1.getTimestamp(engine)))
+    assertMetadataProp(
+      snapshotV1,
+      TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+      Optional.of(1L))
+
+    snapshotV1
   }
 }

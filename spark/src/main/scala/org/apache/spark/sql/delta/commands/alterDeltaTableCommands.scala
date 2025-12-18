@@ -420,7 +420,7 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      val startSnapshotOpt = status.lastCommitVersionOpt.map(deltaLog.getSnapshotAt(_))
+      val startSnapshotOpt = status.lastCommitVersionOpt.map(table.getSnapshotAt(_))
       val txn = table.startTransaction(snapshotOpt = startSnapshotOpt)
       val snapshot = txn.snapshot
 
@@ -428,6 +428,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
       if (!removableFeature.validateDropInvariants(table, snapshot)) {
+        TransactionExecutionObserver.getObserver.transactionAborted()
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
 
@@ -533,7 +534,7 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      val startSnapshotOpt = status.lastCommitVersionOpt.map(deltaLog.getSnapshotAt(_))
+      val startSnapshotOpt = status.lastCommitVersionOpt.map(table.getSnapshotAt(_))
       val txn = table.startTransaction(snapshotOpt = startSnapshotOpt)
       val snapshot = txn.snapshot
 
@@ -541,6 +542,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
       if (!removableFeature.validateDropInvariants(table, snapshot)) {
+        TransactionExecutionObserver.getObserver.transactionAborted()
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
       val metadataWithNewConfiguration = DropTableFeatureUtils
@@ -881,6 +883,9 @@ case class AlterTableChangeColumnDeltaCommand(
 
       val transformedSchema = columnChanges.foldLeft(oldSchema)(transformSchemaOnce)
 
+      // Validate clustering columns remain in stats schema after column reordering
+      validateClusteringColumnsAfterReordering(sparkSession, txn, columnChanges)
+
       val newSchemaWithTypeWideningMetadata =
         TypeWideningMetadata.addTypeWideningMetadata(
           txn,
@@ -989,6 +994,40 @@ case class AlterTableChangeColumnDeltaCommand(
           filtered.slice(endIndex + 1, filtered.length)
     }
     newFieldList.toSeq
+  }
+
+  /**
+   * Validates that clustering columns remain in the stats schema after column reordering.
+   *
+   * This validation ensures that when a user executes `ALTER TABLE ALTER COLUMN col1 AFTER col2`,
+   * all clustering columns that were in the stats schema before the reordering remain in the
+   * stats schema after the operation. When DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK
+   * is enabled, the validation runs and throws an error if any clustering column would lose
+   * stats collection due to position-based indexing. When disabled (default), no validation
+   * is performed and stats collection may follow position-based indexing rules.
+   *
+   * @param spark The SparkSession
+   * @param txn The transaction
+   * @param columnChanges The column changes being applied
+   */
+  private def validateClusteringColumnsAfterReordering(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      columnChanges: Seq[DeltaChangeColumnSpec]): Unit = {
+    if (!spark.conf.get(
+      DeltaSQLConf.DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK)) {
+      return
+    }
+    // Only validate if table supports clustering and check is enabled
+    if (ClusteredTableUtils.isSupported(txn.snapshot.protocol) &&
+        columnChanges.exists(_.colPosition.isDefined)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+      if (clusteringColumns.nonEmpty) {
+        // Validate that prior stats schema is preserved (clustering columns remain in stats)
+        ClusteredTableUtils.validateClusteringColumnsInStatsSchema(
+          txn.snapshot, clusteringColumns)
+      }
+    }
   }
 
   /**
@@ -1288,6 +1327,13 @@ case class AlterTableAddConstraintDeltaCommand(
           // Strip out the context of the DataFrame that was used to analyze the expression.
           throw a.copy(context = Array.empty)
       }
+
+      Constraints.validateCheckConstraints(
+        sparkSession,
+        Seq(Constraints.Check(name, unresolvedExpr)),
+        deltaLog,
+        txn.metadata.schema
+      )
 
       logInfo(log"Checking that ${MDC(DeltaLogKeys.EXPR, exprText)} " +
         log"is satisfied for existing data. This will require a full table scan.")

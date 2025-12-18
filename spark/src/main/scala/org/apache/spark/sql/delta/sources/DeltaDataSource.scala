@@ -22,18 +22,21 @@ import scala.util.{Failure, Success, Try}
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.DatabricksLogging
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.PartitionUtils
+import org.apache.spark.sql.delta.util.{PartitionUtils, Utils}
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
 import org.json4s.jackson.Serialization
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -42,8 +45,7 @@ import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.streaming.OutputMode
-import org.apache.spark.sql.types.{DataType, VariantShims}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{DataType, StructType, VariantType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 
@@ -52,10 +54,43 @@ class DeltaDataSource
   extends RelationProvider
   with StreamSourceProvider
   with StreamSinkProvider
-  with CreatableRelationProviderShim
+  with CreatableRelationProvider
   with DataSourceRegister
   with TableProvider
   with DeltaLogging {
+
+  /**
+   * WARNING: This field has complex initialization timing.
+   *
+   * This field is not initialized in the constructor because the DataSource V1 API does not allow
+   * for passing a catalog table. As a work around, we set this field immediately after the
+   * `DeltaDataSource` is constructed in `DataSource::providingInstance()`.
+   */
+  private var catalogTableOpt: Option[CatalogTable] = None
+
+  /**
+   * Internal method used only by `DataSource.providingInstance()` right after `DeltaDataSource`
+   * construction to plumb the catalog table. This is intended to be set once per instance;
+   * subsequent sets are ignored by a guard.
+   */
+  def setCatalogTableOpt(newCatalogTableOpt: Option[CatalogTable]): Unit = {
+    if (catalogTableOpt.isEmpty) {
+      catalogTableOpt = newCatalogTableOpt
+    }
+  }
+
+  /**
+   * Construct a snapshot from either the catalog table or a path.
+   *
+   * If catalogTableOpt is defined, use it to construct the snapshot; otherwise, fall back to use
+   * path-based snapshot construction.
+   */
+  private def getSnapshotFromTableOrPath(sparkSession: SparkSession, path: Path): Snapshot = {
+    catalogTableOpt
+      .map(catalogTable => DeltaLog.forTableWithSnapshot(
+        sparkSession, catalogTable, options = Map.empty[String, String]))
+      .getOrElse(DeltaLog.forTableWithSnapshot(sparkSession, path))._2
+  }
 
   def inferSchema: StructType = new StructType() // empty
 
@@ -88,7 +123,7 @@ class DeltaDataSource
     }
 
     val snapshot =
-      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))._2
+      getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path))
     // This is the analyzed schema for Delta streaming
     val readSchema = {
       // Check if we would like to merge consecutive schema changes, this would allow customers
@@ -101,16 +136,13 @@ class DeltaDataSource
       // process would create a new entry in the schema log such that when the schema log is
       // looked up again in the execution phase, we would use the correct schema.
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
-          sqlContext.sparkSession, snapshot, parameters,
+          sqlContext.sparkSession, snapshot, catalogTableOpt, parameters,
           mergeConsecutiveSchemaChanges = shouldMergeConsecutiveSchemas)
         .flatMap(_.getCurrentTrackedMetadata.map(_.dataSchema))
         .getOrElse(snapshot.schema)
     }
 
-    if (schema.nonEmpty && schema.get.nonEmpty &&
-      !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
-      throw DeltaErrors.specifySchemaAtReadTimeException
-    }
+    DeltaDataSource.verifyReadSchemaMatchesTheTableSchema(schema, readSchema)
 
     val schemaToUse = DeltaTableUtils.removeInternalDeltaMetadata(
       sqlContext.sparkSession,
@@ -133,24 +165,31 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): Source = {
-    if (schema.nonEmpty && schema.get.nonEmpty) {
-      throw DeltaErrors.specifySchemaAtReadTimeException
-    }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
     val snapshot =
-      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))._2
+      getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path))
     val schemaTrackingLogOpt =
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
-        sqlContext.sparkSession, snapshot, parameters,
+        sqlContext.sparkSession, snapshot, catalogTableOpt, parameters,
         // Pass in the metadata path opt so we can use it for validation
         sourceMetadataPathOpt = Some(metadataPath))
 
-    val readSchema = schemaTrackingLogOpt
-      .flatMap(_.getCurrentTrackedMetadata.map(_.dataSchema))
-      .getOrElse(snapshot.schema)
+    val readSchema = schemaTrackingLogOpt.flatMap(_.getCurrentTrackedMetadata).map { metadata =>
+      logInfo(log"Delta source schema fetched from tracking log version " +
+        log"${MDC(DeltaLogKeys.VERSION2, schemaTrackingLogOpt.get.getCurrentTrackedSeqNum)}" +
+        log" with Delta commit version " +
+        log"${MDC(DeltaLogKeys.VERSION2, metadata.deltaCommitVersion)}")
+      metadata.dataSchema
+    }.getOrElse {
+      logInfo(log"Delta source schema fetched from Delta snapshot version " +
+        log"${MDC(DeltaLogKeys.VERSION2, snapshot.version)}")
+      snapshot.schema
+    }
+
+    DeltaDataSource.verifyReadSchemaMatchesTheTableSchema(schema, readSchema)
 
     if (readSchema.isEmpty) {
       throw DeltaErrors.schemaNotSetException
@@ -158,6 +197,7 @@ class DeltaDataSource
     DeltaSource(
       sqlContext.sparkSession,
       snapshot.deltaLog,
+      catalogTableOpt,
       options,
       snapshot,
       metadataPath,
@@ -194,7 +234,8 @@ class DeltaDataSource
       .map(DeltaDataSource.decodePartitioningColumns)
       .getOrElse(Nil)
 
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, new Path(path), parameters)
+    val deltaLog = Utils.getDeltaLogFromTableOrPath(
+      sqlContext.sparkSession, catalogTableOpt, new Path(path), parameters)
     WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,
@@ -208,7 +249,7 @@ class DeltaDataSource
       catalogTableOpt = None
       ).run(sqlContext.sparkSession)
 
-    deltaLog.createRelation()
+    deltaLog.createRelation(catalogTableOpt = catalogTableOpt)
   }
 
   override def createRelation(
@@ -262,10 +303,9 @@ class DeltaDataSource
 
   /**
    * Extend the default `supportsDataType` to allow VariantType.
-   * Implemented by `CreatableRelationProviderShim`.
    */
   override def supportsDataType(dt: DataType): Boolean = {
-    VariantShims.isVariantType(dt) || super.supportsDataType(dt)
+    dt.isInstanceOf[VariantType] || super.supportsDataType(dt)
   }
 
   override def shortName(): String = {
@@ -439,6 +479,7 @@ object DeltaDataSource extends DatabricksLogging {
   def getMetadataTrackingLogForDeltaSource(
       spark: SparkSession,
       sourceSnapshot: SnapshotDescriptor,
+      catalogTableOpt: Option[CatalogTable],
       parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceMetadataTrackingLog] = {
@@ -452,11 +493,23 @@ object DeltaDataSource extends DatabricksLogging {
         }
 
         DeltaSourceMetadataTrackingLog.create(
-          spark, schemaTrackingLocation, sourceSnapshot,
+          spark,
+          schemaTrackingLocation,
+          sourceSnapshot,
+          catalogTableOpt,
           parameters,
           sourceMetadataPathOpt,
           mergeConsecutiveSchemaChanges
         )
       }
+  }
+
+  private def verifyReadSchemaMatchesTheTableSchema(
+                                                     schema: Option[StructType],
+                                                     readSchema: StructType): Unit = {
+    if (schema.nonEmpty && schema.get.nonEmpty &&
+      !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
+      throw DeltaErrors.readSourceSchemaConflictException
+    }
   }
 }

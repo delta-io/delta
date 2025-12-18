@@ -149,7 +149,7 @@ trait DeltaErrorsSuiteBase
     val lastResponse = (1 to MAX_URL_ACCESS_RETRIES).map { attempt =>
       if (attempt > 1) Thread.sleep(1000)
       val response = try {
-        Process("curl -I " + url).!!
+        Process("curl -I -L " + url).!!
       } catch {
         case e: RuntimeException =>
           val sw = new StringWriter
@@ -1520,6 +1520,19 @@ trait DeltaErrorsSuiteBase
         "maximumTimestamp" -> "2022-02-28 10:00:00"))
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+        throw DeltaErrors.TimestampEarlierThanCommitRetentionException(
+          new Timestamp(sdf.parse("2022-02-28 10:00:00").getTime),
+          new Timestamp(sdf.parse("2022-02-28 11:00:00").getTime),
+          "2022-02-28 11:00:00")
+      }
+      checkError(e, "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION", "42816", Map(
+        "userTimestamp" -> "2022-02-28 10:00:00.0",
+        "commitTs" -> "2022-02-28 11:00:00.0",
+        "timestampString" -> "2022-02-28 11:00:00"))
+    }
+    {
       val expr = "1".expr
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.timestampInvalid(expr)
@@ -1532,6 +1545,18 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.versionInvalid(version)
       }
       checkError(e, "DELTA_VERSION_INVALID", "42815", Map("version" -> version))
+    }
+    {
+      val version = 2
+      val earliest = 0
+      val latest = 1
+      val e = intercept[DeltaAnalysisException] {
+        throw VersionNotFoundException(version, earliest, latest)
+      }
+      checkError(e, "DELTA_VERSION_NOT_FOUND", "22003", Map(
+        "userVersion" -> version.toString,
+        "earliest" -> earliest.toString,
+        "latest" -> latest.toString))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -1751,6 +1776,14 @@ trait DeltaErrorsSuiteBase
         "rowTrackingColumn" -> "Row Commit Version",
         "tableName" -> "table_name"
       ))
+    }
+    {
+      val path = new Path("a/b")
+      val e = intercept[DeltaIllegalStateException] {
+        throw DeltaErrors.catalogManagedTablePathBasedAccessNotAllowed(path)
+      }
+      checkError(e, "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED", "KD00G",
+        Map("path" -> path.toString))
     }
   }
 
@@ -2142,6 +2175,12 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.specifySchemaAtReadTimeException
       }
       checkError(e, "DELTA_UNSUPPORTED_SCHEMA_DURING_READ", "0AKDC", Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.readSourceSchemaConflictException
+      }
+      checkError(e, "DELTA_READ_SOURCE_SCHEMA_CONFLICT", "42K07", Map.empty[String, String])
     }
     {
       val e = intercept[DeltaAnalysisException] {

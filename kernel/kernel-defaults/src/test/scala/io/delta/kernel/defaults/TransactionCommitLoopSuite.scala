@@ -24,7 +24,7 @@ import io.delta.kernel.Table
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtilsWithV1Builders, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.JsonHandler
 import io.delta.kernel.exceptions.{CommitStateUnknownException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.expressions.Literal
@@ -34,20 +34,22 @@ import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
+class TransactionCommitLoopTransactionBuilderV1Suite extends AbstractTransactionCommitLoopSuite
+    with WriteUtilsWithV1Builders {}
 
-  // TODO: Refactor this test suite to use both Table.forPath().getLatestSnapshot() and
-  //       TableManager.loadSnapshot()
+class TransactionCommitLoopTransactionBuilderV2Suite extends AbstractTransactionCommitLoopSuite
+    with WriteUtilsWithV2Builders {}
+
+trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWriteUtils =>
 
   private val fileIO = new HadoopFileIO(new Configuration())
 
   test("Txn attempts to commit *next* version on CFE(isRetryable=true, isConflict=true)") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
+      val initialTxn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
 
-      val kernelTxn = createWriteTxnBuilder(table).withMaxRetries(5).build(engine)
+      val kernelTxn = getUpdateTxn(engine, tablePath, maxRetries = 5)
 
       // Create 001.json. This will make the engine throw a FileAlreadyExistsException when trying
       // to write 001.json. The default committer will turn this into a
@@ -63,8 +65,7 @@ class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
 
   test("Txn attempts to commit *same* version on CFE(isRetryable=true, isConflict=false)") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
+      val initialTxn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
 
       var attemptCount = 0 // Will be incremented when actual writeJson attempt occurs
@@ -92,7 +93,7 @@ class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
       }
 
       val transientErrorEngine = new CustomEngine()
-      val txn = createWriteTxnBuilder(table).build(transientErrorEngine)
+      val txn = getUpdateTxn(transientErrorEngine, tablePath)
       val result = commitTransaction(txn, transientErrorEngine, emptyIterable())
 
       assert(result.getVersion == 1)
@@ -105,8 +106,7 @@ class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
 
   test("Txn throws MaxCommitRetryLimitReachedException on too many retries") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
+      val initialTxn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
 
       class CustomJsonHandler extends DefaultJsonHandler(fileIO) {
@@ -125,7 +125,7 @@ class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
       }
 
       val alwaysFailingEngine = new AlwaysFailingEngine()
-      val txn = createWriteTxnBuilder(table).withMaxRetries(10).build(alwaysFailingEngine)
+      val txn = getUpdateTxn(alwaysFailingEngine, tablePath, maxRetries = 10)
 
       val exMsg = intercept[MaxCommitRetryLimitReachedException] {
         commitTransaction(txn, alwaysFailingEngine, emptyIterable())
@@ -138,8 +138,7 @@ class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
 
   test("Txn throws CommitStateUnknownException if it sees CFE(true,false) then CFE(true,true)") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
+      val initialTxn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
 
       // This tests the case of:
@@ -174,7 +173,7 @@ class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
       }
 
       val transientErrorEngine = new CustomEngine()
-      val txn = createWriteTxnBuilder(table).build(transientErrorEngine)
+      val txn = getUpdateTxn(transientErrorEngine, tablePath)
 
       val exMsg = intercept[CommitStateUnknownException] {
         commitTransaction(txn, transientErrorEngine, emptyIterable())
@@ -191,8 +190,7 @@ class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
 
   test("Txn will *not* retry on non-IOException RuntimeException") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
+      val initialTxn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
 
       class CustomJsonHandler extends DefaultJsonHandler(fileIO) {
@@ -212,7 +210,7 @@ class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
 
       val alwaysFailingEngine = new CustomEngine()
 
-      val txn = createWriteTxnBuilder(table).build(alwaysFailingEngine)
+      val txn = getUpdateTxn(alwaysFailingEngine, tablePath)
 
       val ex = intercept[RuntimeException] {
         commitTransaction(txn, alwaysFailingEngine, emptyIterable())

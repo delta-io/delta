@@ -42,15 +42,21 @@ import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.*;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Implementation of {@link Scan} */
 public class ScanImpl implements Scan {
+
+  private static final Logger logger = LoggerFactory.getLogger(ScanImpl.class);
+
   /**
    * Schema of the snapshot from the Delta log being scanned in this scan. It is a logical schema
    * with metadata properties to derive the physical schema.
@@ -139,9 +145,14 @@ public class ScanImpl implements Scan {
     accessedScanFiles = true;
 
     // Generate data skipping filter and decide if we should read the stats column
+    logger.info(
+        "Trying to generate data skipping filter for data filter = {} and data schema = {}",
+        getDataFilters(),
+        metadata.getDataSchema());
     Optional<DataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter();
     boolean hasDataSkippingFilter = dataSkippingFilter.isPresent();
     boolean shouldReadStats = hasDataSkippingFilter || includeStats;
+    logger.info("Generated data skipping filter = {}", dataSkippingFilter);
 
     Timer.Timed planningDuration = scanMetrics.totalPlanningTimer.start();
     // ScanReportReporter stores the current context and can be invoked (in the future) with
@@ -251,10 +262,10 @@ public class ScanImpl implements Scan {
 
     if (protocol.getReaderFeatures().contains("deletionVectors")
         && physicalFields.stream()
-            .map(StructField::getName)
-            .noneMatch(name -> name.equals(StructField.METADATA_ROW_INDEX_COLUMN_NAME))) {
+            .map(StructField::getMetadataColumnSpec)
+            .noneMatch(MetadataColumnSpec.ROW_INDEX::equals)) {
       // If the row index column is not already present, add it to the physical read schema
-      physicalFields.add(SchemaUtils.createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
+      physicalFields.add(SchemaUtils.asInternalColumn(StructField.DEFAULT_ROW_INDEX_COLUMN));
     }
 
     return new StructType(physicalFields);
@@ -365,7 +376,9 @@ public class ScanImpl implements Scan {
     // pruning it after is much simpler
     StructType prunedStatsSchema =
         DataSkippingUtils.pruneStatsSchema(
-            getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
+            getStatsSchema(metadata.getDataSchema(), dataSkippingFilter.getReferencedCollations()),
+            dataSkippingFilter.getReferencedCols());
+    logger.info("For stats JSON parsing: prunedStatsSchema={}", prunedStatsSchema);
 
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A

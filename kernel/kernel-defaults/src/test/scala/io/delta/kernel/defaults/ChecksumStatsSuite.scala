@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import java.util.{Collections, Optional}
 
-import scala.jdk.CollectionConverters.{asJavaIteratorConverter, mapAsJavaMapConverter, seqAsJavaListConverter, setAsJavaSetConverter}
+import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
@@ -94,7 +94,7 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
       expectedTableSize: Long,
       expectedFileSizeHistogram: FileSizeHistogram): Unit = {
     def verifyCrcExistsAndCorrect(): Unit = {
-      val crcInfo = ChecksumReader.getCRCInfo(
+      val crcInfo = ChecksumReader.tryReadChecksumFile(
         engine,
         FileStatus.of(checksumFile(
           new Path(tablePath + "/_delta_log"),
@@ -125,7 +125,7 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
       filesToAdd: Map[String, Long],
       histogram: FileSizeHistogram): Unit = {
 
-    val txn = createTxn(engine, tablePath, maxRetries = 0)
+    val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
 
     val actionsToCommit = filesToAdd.map { case (path, size) =>
       histogram.insert(size)
@@ -157,7 +157,7 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
       filesToRemove: Map[String, Long],
       histogram: FileSizeHistogram): Unit = {
 
-    val txn = createTxn(engine, tablePath, maxRetries = 0)
+    val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
 
     val actionsToCommit = filesToRemove.map { case (path, size) =>
       histogram.remove(size)

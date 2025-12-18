@@ -211,7 +211,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       // Generated columns cannot be variant types because the writer must be able to enforce that
       // the <variant value> <=> <generated expression>. Variants are currently not comprable so
       // this condition is impossible to enforce.
-      if (VariantShims.isVariantType(c.dataType)) {
+      if (c.dataType.isInstanceOf[VariantType]) {
         throw DeltaErrors.generatedColumnsUnsupportedType(c.dataType)
       }
     }
@@ -250,6 +250,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           throw e
         }
     }
+
     // Check whether the generation expressions are valid
     dfWithExprs.queryExecution.analyzed.transformAllExpressions {
       case expr: Alias =>
@@ -267,7 +268,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         throw DeltaErrors.generatedColumnsNonDeterministicExpression(expr)
       case expr if expr.isInstanceOf[AggregateExpression] =>
         throw DeltaErrors.generatedColumnsAggregateExpression(expr)
-      case expr if !SupportedGenerationExpressions.expressions.contains(expr.getClass) =>
+      case expr if !AllowedUserProvidedExpressions.expressions.contains(expr.getClass) =>
         throw DeltaErrors.generatedColumnsUnsupportedExpression(expr)
     }
     // Compare the columns types defined in the schema and the expression types.

@@ -77,6 +77,7 @@ trait RowTrackingBackfillConflictsTestBase extends RowIdTestUtils
 
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
+    .set(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key, "true")
 
   protected val usePersistentDeletionVectors = false
 
@@ -678,7 +679,7 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
   }
 
   testAllScenarios("OPTIMIZE") { () =>
-    sql(s"OPTIMIZE $testTableName WHERE $partitionColumnName < ($numFiles / 2)").collect()
+    sql(s"OPTIMIZE $testTableName WHERE $partitionColumnName < ($numFiles / 4)").collect()
   } { () =>
     tableCreationDF
   }

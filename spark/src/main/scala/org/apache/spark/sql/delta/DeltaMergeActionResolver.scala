@@ -87,7 +87,12 @@ trait DeltaMergeActionResolverBase {
         s"columns $colsAsSQLText"
     val resolvedNameParts =
       DeltaUpdateTable.getTargetColNameParts(resolvedKey, resolutionErrorMsg)
-    DeltaMergeAction(resolvedNameParts, resolvedRHSExpr, targetColNameResolved = true)
+    DeltaMergeAction(
+      targetColNameParts = resolvedNameParts,
+      expr = resolvedRHSExpr,
+      // Explicit column assignments overwrite target-only struct fields with null.
+      targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.NULLIFY,
+      targetColNameResolved = true)
   }
 
   /**
@@ -115,12 +120,12 @@ class IndividualDeltaMergeActionResolver(
       shouldTryUnresolvedTargetExprOnSource: Boolean,
       deltaMergeActions: Seq[DeltaMergeAction]): Seq[DeltaMergeAction] = {
     deltaMergeActions.map {
-      case d @ DeltaMergeAction(colNameParts, expr, _) if !d.resolved =>
-        val unresolvedAttrib = UnresolvedAttribute(colNameParts)
+      case d: DeltaMergeAction if !d.resolved =>
+        val unresolvedAttrib = UnresolvedAttribute(d.targetColNameParts)
         val resolvedKey = resolveSingleTargetColumn(
           unresolvedAttrib, mergeClauseTypeStr, shouldTryUnresolvedTargetExprOnSource)
         val resolvedExpr =
-          resolveExprsFn(Seq(expr), plansToResolveAction).head
+          resolveExprsFn(Seq(d.expr), plansToResolveAction).head
         ResolveDeltaMergeInto.throwIfNotResolved(
           resolvedExpr,
           plansToResolveAction,

@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, OptimisticTransaction, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -47,6 +47,39 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   /** The default catalog name only used for testing. */
   val DEFAULT_CATALOG_NAME_FOR_TESTING: String = "spark_catalog"
 
+  /**
+   * Sets or removes CatalogOwnedTableFeature from a transaction's protocol.
+   *
+   * This helper method is used to control whether a transaction should use CC.
+   *
+   * @param txn The OptimisticTransaction to modify protocol and metadata on
+   * @param withCatalogOwnedTableFeature If true, adds CatalogOwnedTableFeature to the protocol
+   *                                      and ensures ICT enablement. If false, removes it.
+   *
+   * @note When adding CatalogOwnedTableFeature, this method also forces a metadata update
+   *       to ensure ICT (In-Commit Timestamp) is properly enabled. See the below comment
+   *       for details.
+   */
+  def setTxnProtocol(txn: OptimisticTransaction, withCatalogOwnedTableFeature: Boolean): Unit = {
+    if (withCatalogOwnedTableFeature) {
+      val p = txn.protocol.withFeature(feature = CatalogOwnedTableFeature)
+      txn.updateProtocol(protocol = p)
+      // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.
+      // CatalogOwnedTableFeature requires ICT to be enabled in the metadata, but
+      // updateMetadataAndProtocolWithRequiredFeatures in prepareCommit only runs
+      // when there's an explicit metadata change (metadataChanges.headOption is non-empty).
+      // Since we're only updating the protocol here without changing metadata content,
+      // we need to explicitly call updateMetadata to ensure metadataChanges is non-empty
+      // during prepareCommit, which will then enable ICT in the metadata.
+      // Without this, generateInCommitTimestampForFirstCommitAttempt would return None,
+      // causing UCCommitCoordinatorClient to fail with DELTA_MISSING_COMMIT_TIMESTAMP.
+      txn.updateMetadata(proposedNewMetadata = txn.metadata)
+    } else {
+      val p = txn.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+      txn.updateProtocol(protocol = p)
+    }
+  }
+
   // Populate table commit coordinator using table identifier inside CatalogTable.
   def populateTableCommitCoordinatorFromCatalog(
       spark: SparkSession,
@@ -57,14 +90,18 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     }
     catalogTableOpt.map { catalogTable =>
       // Resolve commit coordinator name by contacting catalog.
-      val cc = getCommitCoordinator(spark, catalogTable.identifier).getOrElse {
+      val cc = getCommitCoordinator(
+          spark,
+          catalogTable.identifier).getOrElse {
         throw new IllegalStateException(
           "Couldn't locate commit coordinator for: " + catalogTable.identifier)
       }
+      val tableConf =
+        snapshot.metadata.configuration
       TableCommitCoordinatorClient(
         commitCoordinatorClient = cc,
         logPath = snapshot.deltaLog.logPath,
-        tableConf = snapshot.metadata.configuration,
+        tableConf = tableConf,
         hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
         logStore = snapshot.deltaLog.store
       )
@@ -93,23 +130,14 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       // that the caller is accessing this table by path-based or the calling code path is missing
       // the CatalogTable.
       // TODO: Better error message with proper error code.
-      recordCommitCoordinatorPopulationUsageLog(
-        deltaLog = snapshot.deltaLog,
-        opType = CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
-        snapshot = snapshot,
-        catalogTableOpt,
-        commitCoordinatorOpt = None,
-        includeStackTrace = true,
-        includeAdditionalDiagnostics = true
-      )
-      throw new IllegalStateException(
-        "Path based access is not supported for Catalog-Owned table: " + snapshot.path)
+      logAndThrowPathBasedAccessNotAllowed(snapshot)
     }
   }
 
   // Directly returns the commit coordinator client for the given catalog table.
   def getCommitCoordinator(
-      spark: SparkSession, identifier: CatalystTableIdentifier): Option[CommitCoordinatorClient] = {
+      spark: SparkSession,
+      identifier: CatalystTableIdentifier): Option[CommitCoordinatorClient] = {
     identifier.nameParts match {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
         CatalogOwnedCommitCoordinatorProvider.getBuilder(catalog.name)
@@ -131,7 +159,9 @@ object CatalogOwnedTableUtils extends DeltaLogging {
    * Returns the catalog name from the given catalog table identifier.
    * If the catalog table is not present, returns None.
    */
-  def getCatalogName(spark: SparkSession, identifier: CatalystTableIdentifier): Option[String] = {
+  def getCatalogName(
+      spark: SparkSession,
+      identifier: CatalystTableIdentifier): Option[String] = {
     identifier.nameParts match {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
         if (catalog.getClass.getName == UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
@@ -163,7 +193,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     ICT_TABLE_PROPERTY_KEYS.foreach { key =>
       if (propKeys.contains(key)) {
         throw new DeltaIllegalArgumentException(
-          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
           messageParameters = Array.empty)
       }
     }
@@ -238,24 +268,6 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   }
 
   /**
-   * Filters out [[CatalogOwnedTableFeature]] from the provided protocol.
-   * This is used to ensure that the CatalogOwnedTableFeature is not included in the protocol
-   * for specific DDL commands, e.g., `CREATE CLONE`, `REPLACE CLONE`, `CREATE LIKE`.
-   *
-   * @param protocol The protocol to filter.
-   */
-  def filterOutCatalogOwnedTableFeature(protocol: Protocol): Protocol = {
-    /** Helper function to filter out CatalogOwnedTableFeature from the provided table features. */
-    def filterImpl(tableFeatures: Option[Set[String]]): Option[Set[String]] = {
-      tableFeatures.map(_.filter(_ != CatalogOwnedTableFeature.name))
-    }
-    protocol.copy(
-      readerFeatures = filterImpl(tableFeatures = protocol.readerFeatures),
-      writerFeatures = filterImpl(tableFeatures = protocol.writerFeatures)
-    )
-  }
-
-  /**
    * Validates that the UC table ID is not present in the provided property (overrides).
    * Errors out if it is present.
    *
@@ -278,6 +290,24 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     spark.conf
       .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
       .contains("supported")
+  }
+
+  /**
+   * Helper function to log invalid path-based access and throw the appropriate error.
+   *
+   * @param snapshot The snapshot being processed
+   */
+  private def logAndThrowPathBasedAccessNotAllowed(snapshot: Snapshot): Nothing = {
+    recordCommitCoordinatorPopulationUsageLog(
+      snapshot.deltaLog,
+      opType = CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
+      snapshot,
+      catalogTableOpt = None,
+      commitCoordinatorOpt = None,
+      includeStackTrace = true,
+      includeAdditionalDiagnostics = true
+    )
+    throw DeltaErrors.catalogManagedTablePathBasedAccessNotAllowed(snapshot.path)
   }
 
   /**
@@ -405,6 +435,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def commitFilesIterator(
       deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
       startVersion: Long): Iterator[(FileStatus, Long)] = {
 
     def listDeltas(startVersion: Long, endVersion: Option[Long]): Iterator[(FileStatus, Long)] = {
@@ -433,7 +464,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         return Iterator.empty
       }
 
-      val endSnapshot = deltaLog.update()
+      val endSnapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
       // No need to worry if we already reached the end
       if (maxVersionSeen >= endSnapshot.version) {
         return Iterator.empty

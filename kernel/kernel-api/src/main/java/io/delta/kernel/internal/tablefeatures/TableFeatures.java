@@ -50,6 +50,14 @@ public class TableFeatures {
    */
   public static String SET_TABLE_FEATURE_SUPPORTED_PREFIX = "delta.feature.";
 
+  /**
+   * Configuration value to turn on support for a table feature when used with {@link
+   * #SET_TABLE_FEATURE_SUPPORTED_PREFIX}.
+   *
+   * <p>Example: {@code "delta.feature.myFeature" -> "supported"}
+   */
+  public static String SET_TABLE_FEATURE_SUPPORTED_VALUE = "supported";
+
   /////////////////////////////////////////////////////////////////////////////////
   /// START: Define the {@link TableFeature}s                                   ///
   /// If feature instance variable ends with                                    ///
@@ -74,20 +82,12 @@ public class TableFeatures {
     }
   }
 
-  // TODO: [delta-io/delta#4763] Support `catalogManaged` when the RFC is formally accepted into the
-  //       protocol.
-
-  public static final TableFeature CATALOG_MANAGED_R_W_FEATURE_PREVIEW =
-      new CatalogManagedFeatureBase("catalogOwned-preview");
+  public static final TableFeature CATALOG_MANAGED_RW_FEATURE =
+      new CatalogManagedFeatureBase("catalogManaged");
 
   private static class CatalogManagedFeatureBase extends TableFeature.ReaderWriterFeature {
     CatalogManagedFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
-    }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false;
     }
 
     @Override
@@ -214,11 +214,6 @@ public class TableFeatures {
     VariantTypeTableFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
     }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
-    }
   }
 
   private static class VariantTypeTableFeature extends VariantTypeTableFeatureBase
@@ -259,8 +254,8 @@ public class TableFeatures {
     }
 
     @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
+    public Set<TableFeature> requiredFeatures() {
+      return new HashSet<>(Arrays.asList(TableFeatures.VARIANT_RW_FEATURE));
     }
   }
   /* ---- End: variantShredding-preview ---- */
@@ -454,6 +449,19 @@ public class TableFeatures {
     }
   }
 
+  /**
+   * Support reading / metadata writes on tables with the feature. Don't support writing new data
+   * rows with default values. Don't allow updating the types of columns with default values.
+   */
+  public static final TableFeature ALLOW_COLUMN_DEFAULTS_W_FEATURE =
+      new AllowColumnDefaultsTableFeature();
+
+  private static class AllowColumnDefaultsTableFeature extends TableFeature.WriterFeature {
+    AllowColumnDefaultsTableFeature() {
+      super("allowColumnDefaults", /* minWriterVersion = */ 7);
+    }
+  }
+
   public static final TableFeature ICEBERG_WRITER_COMPAT_V1 = new IcebergWriterCompatV1();
 
   private static class IcebergWriterCompatV1 extends TableFeature.WriterFeature
@@ -506,8 +514,9 @@ public class TableFeatures {
   public static final List<TableFeature> TABLE_FEATURES =
       Collections.unmodifiableList(
           Arrays.asList(
+              ALLOW_COLUMN_DEFAULTS_W_FEATURE,
               APPEND_ONLY_W_FEATURE,
-              CATALOG_MANAGED_R_W_FEATURE_PREVIEW,
+              CATALOG_MANAGED_RW_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
               CLUSTERING_W_FEATURE,
@@ -613,6 +622,17 @@ public class TableFeatures {
   }
 
   /**
+   * Checks if a table feature is being manually supported through user property {@code
+   * delta.feature.<featureName>=supported}.
+   */
+  public static boolean isPropertiesManuallySupportingTableFeature(
+      Map<String, String> userProperties, TableFeature tableFeature) {
+    final String featurePropKey = SET_TABLE_FEATURE_SUPPORTED_PREFIX + tableFeature.featureName();
+    final String propertyValue = userProperties.get(featurePropKey); // will be null if not found
+    return SET_TABLE_FEATURE_SUPPORTED_VALUE.equals(propertyValue);
+  }
+
+  /**
    * Extracts features overrides from Metadata properties and returns an updated metadata if any
    * overrides are present.
    *
@@ -636,7 +656,7 @@ public class TableFeatures {
 
         TableFeature feature = getTableFeature(featureName);
         features.add(feature);
-        if (!entry.getValue().equals("supported")) {
+        if (!entry.getValue().equals(SET_TABLE_FEATURE_SUPPORTED_VALUE)) {
           throw DeltaErrors.invalidConfigurationValueException(
               entry.getKey(),
               entry.getValue(),
@@ -703,7 +723,7 @@ public class TableFeatures {
   /////////////////////////////
 
   public static boolean isCatalogManagedSupported(Protocol protocol) {
-    return protocol.supportsFeature(CATALOG_MANAGED_R_W_FEATURE_PREVIEW);
+    return protocol.supportsFeature(CATALOG_MANAGED_RW_FEATURE);
   }
 
   public static boolean isRowTrackingSupported(Protocol protocol) {

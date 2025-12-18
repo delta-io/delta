@@ -85,4 +85,28 @@ public interface FileSystemClient {
    * @throws IOException for any IO error.
    */
   boolean delete(String path) throws IOException;
+
+  /**
+   * Get the metadata of the file at the given path.
+   *
+   * @param path Fully qualified path to the file.
+   * @return Metadata of the file.
+   * @throws IOException for any IO error.
+   */
+  FileStatus getFileStatus(String path) throws IOException;
+
+  /**
+   * Atomically copy a file from source path to destination path. The copy operation should be
+   * atomic to ensure that the destination file is either fully copied or not present at all.
+   *
+   * @param srcPath Fully qualified path to the source file to copy
+   * @param destPath Fully qualified path to the destination where the file will be copied
+   * @param overwrite If true, overwrite the destination file if it already exists. If false, throw
+   *     an exception if the destination exists.
+   * @throws java.nio.file.FileAlreadyExistsException if the destination file already exists and
+   *     {@code overwrite} is false.
+   * @throws FileNotFoundException if the source file does not exist
+   * @throws IOException for any other IO error
+   */
+  void copyFileAtomically(String srcPath, String destPath, boolean overwrite) throws IOException;
 }

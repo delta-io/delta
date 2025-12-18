@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -423,20 +424,23 @@ class CDCReaderSuite
         // commit 0: 2 inserts
         spark.range(start = 0, end = 2, step = 1, numPartitions = 1)
           .write.format("delta").save(dir.getAbsolutePath)
-        var df = CDCReader.changesToBatchDF(log, 0, 1, spark, useCoarseGrainedCDC = true)
+        var df = CDCReader.changesToBatchDF(
+          log, 0, 1, spark, catalogTableOpt = None, useCoarseGrainedCDC = true)
         checkAnswer(df.drop(CDC_COMMIT_TIMESTAMP),
           createCDFDF(start = 0, end = 2, commitVersion = 0, changeType = "insert"))
 
         // commit 1: 2 inserts
         spark.range(start = 2, end = 4)
           .write.mode("append").format("delta").save(dir.getAbsolutePath)
-        df = CDCReader.changesToBatchDF(log, 1, 2, spark, useCoarseGrainedCDC = true)
+        df = CDCReader.changesToBatchDF(
+          log, 1, 2, spark, catalogTableOpt = None, useCoarseGrainedCDC = true)
         checkAnswer(df.drop(CDC_COMMIT_TIMESTAMP),
           createCDFDF(start = 2, end = 4, commitVersion = 1, changeType = "insert"))
 
         // commit 2
         sql(s"DELETE FROM delta.`$dir` WHERE id = 0")
-        df = CDCReader.changesToBatchDF(log, 2, 3, spark, useCoarseGrainedCDC = true)
+        df = CDCReader.changesToBatchDF(
+          log, 2, 3, spark, catalogTableOpt = None, useCoarseGrainedCDC = true)
           .drop(CDC_COMMIT_TIMESTAMP)
 
         // Using only Add and RemoveFiles should generate 2 deletes and 1 insert. Even when CDF

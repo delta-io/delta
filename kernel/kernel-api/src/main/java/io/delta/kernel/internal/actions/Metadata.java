@@ -26,10 +26,15 @@ import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
+import java.io.InvalidObjectException;
+import java.io.ObjectInputStream;
+import java.io.Serializable;
 import java.util.*;
 import java.util.stream.Collectors;
+import javax.annotation.Nullable;
 
-public class Metadata {
+public class Metadata implements Serializable {
+  private static final long serialVersionUID = 1L;
 
   public static Metadata fromRow(Row row) {
     requireNonNull(row);
@@ -54,6 +59,7 @@ public class Metadata {
         Optional.ofNullable(
             vector.getChild(2).isNullAt(rowId) ? null : vector.getChild(2).getString(rowId)),
         Format.fromColumnVector(requireNonNull(vector.getChild(3), rowId, "format"), rowId),
+        schemaJson,
         schema,
         vector.getChild(5).getArray(rowId),
         Optional.ofNullable(
@@ -82,6 +88,7 @@ public class Metadata {
   private final Optional<String> name;
   private final Optional<String> description;
   private final Format format;
+  private final String schemaString;
   private final StructType schema;
   private final ArrayValue partitionColumns;
   private final Optional<Long> createdTime;
@@ -97,15 +104,19 @@ public class Metadata {
       Optional<String> name,
       Optional<String> description,
       Format format,
+      String schemaString,
       StructType schema,
       ArrayValue partitionColumns,
       Optional<Long> createdTime,
       MapValue configurationMapValue) {
+    ensureNoMetadataColumns(schema);
+
     this.id = requireNonNull(id, "id is null");
     this.name = name;
     this.description = requireNonNull(description, "description is null");
     this.format = requireNonNull(format, "format is null");
-    this.schema = requireNonNull(schema, "schema is null");
+    this.schemaString = requireNonNull(schemaString, "schemaString is null");
+    this.schema = schema;
     this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
     this.createdTime = createdTime;
     this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
@@ -156,6 +167,7 @@ public class Metadata {
         this.name,
         this.description,
         this.format,
+        this.schemaString,
         this.schema,
         this.partitionColumns,
         this.createdTime,
@@ -168,6 +180,7 @@ public class Metadata {
         this.name,
         this.description,
         this.format,
+        schema.toJson(),
         schema,
         this.partitionColumns,
         this.createdTime,
@@ -197,7 +210,7 @@ public class Metadata {
         + ", format="
         + format
         + ", schemaString='"
-        + schema.toJson()
+        + schemaString
         + '\''
         + ", partitionColumns="
         + sb
@@ -206,6 +219,10 @@ public class Metadata {
         + ", configuration="
         + configuration.get()
         + '}';
+  }
+
+  public String getSchemaString() {
+    return schemaString;
   }
 
   public StructType getSchema() {
@@ -293,7 +310,7 @@ public class Metadata {
     metadataMap.put(1, name.orElse(null));
     metadataMap.put(2, description.orElse(null));
     metadataMap.put(3, format.toRow());
-    metadataMap.put(4, schema.toJson());
+    metadataMap.put(4, schemaString);
     metadataMap.put(5, partitionColumns);
     metadataMap.put(6, createdTime.orElse(null));
     metadataMap.put(7, configurationMapValue);
@@ -304,7 +321,14 @@ public class Metadata {
   @Override
   public int hashCode() {
     return Objects.hash(
-        id, name, description, format, schema, partitionColNames, createdTime, configuration);
+        id,
+        name,
+        description,
+        format,
+        schema,
+        partitionColNames.get(),
+        createdTime,
+        configuration.get());
   }
 
   @Override
@@ -337,5 +361,78 @@ public class Metadata {
       partitionColumnNames.add(partitionColName.toLowerCase(Locale.ROOT));
     }
     return Collections.unmodifiableSet(partitionColumnNames);
+  }
+
+  /** Helper method to ensure that a table schema never contains metadata columns. */
+  private void ensureNoMetadataColumns(StructType schema) {
+    for (StructField field : schema.fields()) {
+      if (field.isMetadataColumn()) {
+        throw new IllegalArgumentException(
+            "Table schema cannot contain metadata columns: " + field.getName());
+      }
+    }
+  }
+
+  /**
+   * Serializable representation of Metadata. Converts complex Kernel types (ArrayValue, MapValue)
+   * to simple Java types (List, Map) that are serializable.
+   */
+  private static class SerializableMetadata implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    private final String id;
+    @Nullable private final String name;
+    @Nullable private final String description;
+    private final String formatProvider;
+    private final Map<String, String> formatOptions;
+    private final String schemaString;
+    private final List<String> partitionColumnsList;
+    @Nullable private final Long createdTime;
+    private final Map<String, String> configuration;
+
+    SerializableMetadata(Metadata metadata) {
+      this.id = metadata.id;
+      this.name = metadata.name.orElse(null);
+      this.description = metadata.description.orElse(null);
+      this.formatProvider = metadata.format.getProvider();
+      this.formatOptions = metadata.format.getOptions();
+      this.schemaString = metadata.schemaString;
+      this.partitionColumnsList = VectorUtils.toJavaList(metadata.partitionColumns);
+      this.createdTime = metadata.createdTime.orElse(null);
+      this.configuration = VectorUtils.toJavaMap(metadata.configurationMapValue);
+    }
+
+    // Reconstruct Metadata from serialized data
+    private Object readResolve() {
+      Format format = new Format(formatProvider, formatOptions);
+      StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaString);
+      ArrayValue partitionColumns =
+          VectorUtils.buildArrayValue(partitionColumnsList, StringType.STRING);
+      MapValue configurationMapValue = VectorUtils.stringStringMapValue(configuration);
+
+      return new Metadata(
+          id,
+          Optional.ofNullable(name),
+          Optional.ofNullable(description),
+          format,
+          schemaString,
+          schema,
+          partitionColumns,
+          Optional.ofNullable(createdTime),
+          configurationMapValue);
+    }
+  }
+
+  /**
+   * Replace this Metadata with SerializableMetadata during serialization. This is the standard Java
+   * serialization proxy pattern for immutable objects with complex fields.
+   */
+  private Object writeReplace() {
+    return new SerializableMetadata(this);
+  }
+
+  /** Prevent direct deserialization of Metadata (must use SerializableMetadata). */
+  private void readObject(ObjectInputStream stream) throws InvalidObjectException {
+    throw new InvalidObjectException("Use SerializableMetadata");
   }
 }

@@ -90,16 +90,14 @@ object RowTracking {
       metadata: Metadata,
       nullableConstantFields: Boolean,
       nullableGeneratedFields: Boolean): Iterable[StructField] = {
-    val needSetRowTrackingFieldIdForUniform =
-      IcebergCompat.isGeqEnabled(metadata, requiredVersion = 3)
-
+    val shouldSetIcebergReservedFieldId = false
     RowId.createRowIdField(
-      protocol, metadata, nullableGeneratedFields, needSetRowTrackingFieldIdForUniform) ++
+      protocol, metadata, nullableGeneratedFields, shouldSetIcebergReservedFieldId) ++
       RowId.createBaseRowIdField(protocol, metadata, nullableConstantFields) ++
       DefaultRowCommitVersion.createDefaultRowCommitVersionField(
         protocol, metadata, nullableConstantFields) ++
       RowCommitVersion.createMetadataStructField(
-        protocol, metadata, nullableGeneratedFields, needSetRowTrackingFieldIdForUniform)
+        protocol, metadata, nullableGeneratedFields, shouldSetIcebergReservedFieldId)
   }
 
   /**
@@ -132,7 +130,7 @@ object RowTracking {
   /**
    * Returns a copy of the CommitInfo passed in with the PreservedRowTrackingTag tag set to false.
    */
-  private def addRowTrackingNotPreservedTag(commitInfo: CommitInfo): CommitInfo = {
+  private[delta] def addRowTrackingNotPreservedTag(commitInfo: CommitInfo): CommitInfo = {
     val tagsMap = commitInfo.tags.getOrElse(Map.empty[String, String])
     val newCommitInfoTags = addPreservedRowTrackingTag(tagsMap, preserved = false)
     commitInfo.copy(tags = Some(newCommitInfoTags))

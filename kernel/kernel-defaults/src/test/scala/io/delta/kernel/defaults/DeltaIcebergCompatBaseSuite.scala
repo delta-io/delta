@@ -19,7 +19,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 import scala.reflect.ClassTag
 
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.AbstractWriteUtils
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
@@ -32,7 +32,7 @@ import org.scalatest.funsuite.AnyFunSuite
  * Base suite containing common test cases for Delta Iceberg compatibility features.
  * This includes tests that apply to both V2 and V3 compatibility modes.
  */
-trait DeltaIcebergCompatBaseSuite extends AnyFunSuite with WriteUtils
+trait DeltaIcebergCompatBaseSuite extends AnyFunSuite with AbstractWriteUtils
     with ColumnMappingSuiteBase {
 
   /** The name of the iceberg compatibility version for display in test names */

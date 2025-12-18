@@ -33,18 +33,13 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
- * Test suite covering adding and removing the type widening table feature. Dropping the table
- * feature also includes rewriting data files with the old type and removing type widening metadata.
+ * Test suite covering feature enablement and configuration tests.
  */
-class TypeWideningTableFeatureSuite
-  extends QueryTest
+class TypeWideningTableFeatureEnablementSuite extends TypeWideningTableFeatureEnablementTests
     with TypeWideningTestMixin
     with TypeWideningDropFeatureTestMixin
-    with TypeWideningTableFeatureTests
 
-trait TypeWideningTableFeatureTests
-  extends RowTrackingTestUtils
-    with DeltaExcludedBySparkVersionTestMixinShims
+trait TypeWideningTableFeatureEnablementTests extends QueryTest
     with TypeWideningTestCases {
   self: QueryTest
     with TypeWideningTestMixin
@@ -147,6 +142,26 @@ trait TypeWideningTableFeatureTests
     enableTypeWidening(tempPath, enabled = false)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
   }
+}
+
+/**
+ * Test suite covering feature removal, rewriting data files with the old type and removing type
+ * widening metadata.
+ */
+class TypeWideningTableFeatureDropSuite
+  extends QueryTest
+    with TypeWideningTestMixin
+    with TypeWideningDropFeatureTestMixin
+    with TypeWideningTableFeatureDropTests
+
+trait TypeWideningTableFeatureDropTests
+  extends RowTrackingTestUtils
+    with TypeWideningTestCases {
+  self: QueryTest
+    with TypeWideningTestMixin
+    with TypeWideningDropFeatureTestMixin =>
+
+  import testImplicits._
 
   test("drop unused table feature on empty table") {
     sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
@@ -355,6 +370,23 @@ trait TypeWideningTableFeatureTests
       }
     }
   }
+}
+
+/**
+ * Additional tests covering e.g. unsupported type change check, CLONE, RESTORE.
+ */
+class TypeWideningTableFeatureAdvancedSuite
+  extends TypeWideningTableFeatureAdvancedTests
+    with TypeWideningTestMixin
+    with TypeWideningDropFeatureTestMixin
+
+trait TypeWideningTableFeatureAdvancedTests extends QueryTest
+    with TypeWideningTestCases {
+  self: QueryTest
+    with TypeWideningTestMixin
+    with TypeWideningDropFeatureTestMixin =>
+
+  import testImplicits._
 
   for {
     testCase <- supportedTestCases
@@ -506,42 +538,6 @@ trait TypeWideningTableFeatureTests
     readDeltaTable(tempPath).collect()
   }
 
-  testSparkLatestOnly(
-    "helpful error when reading type changes not supported yet during preview") {
-    sql(s"CREATE TABLE delta.`$tempDir` (a int) USING DELTA")
-    val metadata = new MetadataBuilder()
-      .putMetadataArray("delta.typeChanges", Array(
-        new MetadataBuilder()
-          .putString("toType", "long")
-          .putString("fromType", "int")
-          .build()
-      )).build()
-
-    // Delta 3.2/3.3 doesn't support changing type from int->long, we manually commit that type
-    // change to simulate what Delta 4.0 could do.
-    deltaLog.withNewTransaction { txn =>
-      txn.commit(
-        Seq(txn.snapshot.metadata.copy(
-          schemaString = new StructType()
-            .add("a", LongType, nullable = true, metadata).json
-        )),
-        ManualUpdate)
-    }
-
-    checkError(
-      exception = intercept[DeltaUnsupportedOperationException] {
-        readDeltaTable(tempPath).collect()
-      },
-      "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW",
-      parameters = Map(
-        "fieldPath" -> "a",
-        "fromType" -> "INT",
-        "toType" -> "BIGINT",
-        "typeWideningFeatureName" -> "typeWidening"
-      )
-    )
-  }
-
   test("type widening rewrite metrics") {
     sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
     addSingleFile(Seq(1, 2, 3), ByteType)
@@ -647,6 +643,23 @@ trait TypeWideningTableFeatureTests
       assert(ex.getMessage.contains("Cannot seek after EOF"))
     }
   }
+}
+
+/**
+ * Test suite covering preview vs stable feature interactions.
+ */
+class TypeWideningTableFeaturePreviewSuite
+  extends TypeWideningTableFeatureVersionTests
+    with TypeWideningTestMixin
+    with TypeWideningDropFeatureTestMixin
+
+trait TypeWideningTableFeatureVersionTests extends QueryTest
+    with TypeWideningTestCases {
+  self: QueryTest
+    with TypeWideningTestMixin
+    with TypeWideningDropFeatureTestMixin =>
+
+  import testImplicits._
 
   /**
    * Directly add the preview/stable type widening table feature without using the type widening

@@ -90,8 +90,9 @@ case class DeltaInvariantCheckerExec(
     val newInvariantsPlan = optimizer.ComputeCurrentTime(invariantsFakePlan)
     val constraintsWithFixedTime = newInvariantsPlan.expressions.toArray
 
+    val childOutput = child.output
     child.execute().mapPartitionsInternal { rows =>
-      val assertions = UnsafeProjection.create(constraintsWithFixedTime, child.output)
+      val assertions = UnsafeProjection.create(constraintsWithFixedTime, childOutput)
       rows.map { row =>
         assertions(row)
         row
@@ -118,10 +119,13 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
   }
 
   // Specialized optimizer to run necessary rules so that the check expressions can be evaluated.
-  object DeltaInvariantCheckerOptimizer
-      extends RuleExecutor[LogicalPlan]
-      with DeltaInvariantCheckerOptimizerShims {
-    final override protected def batches = DELTA_INVARIANT_CHECKER_OPTIMIZER_BATCHES
+  object DeltaInvariantCheckerOptimizer extends RuleExecutor[LogicalPlan] {
+    import org.apache.spark.sql.catalyst.optimizer.{ReplaceExpressions, RewriteWithExpression}
+
+    final override protected def batches = Seq(
+      Batch("Finish Analysis", Once, ReplaceExpressions),
+      Batch("Rewrite With expression", Once, RewriteWithExpression)
+    )
   }
 
   /** Build the extractor for a particular column. */

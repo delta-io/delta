@@ -21,32 +21,518 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.Table
-import io.delta.kernel.data.ColumnarBatch
+import io.delta.kernel.{Table, TableManager}
+import io.delta.kernel.CommitRangeBuilder.CommitBoundary
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
-import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.{CommitRangeNotFoundException, KernelException, TableNotFoundException, UnsupportedProtocolVersionException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.types.{DataType, LongType, StructField}
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile, SetTransaction => SparkSetTransaction}
-import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.{Path => HadoopPath}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
+class LegacyTableChangesSuite extends TableChangesSuite {
+
+  override def getChanges(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long,
+      actionSet: Set[DeltaAction]): Seq[ColumnarBatch] = {
+    Table.forPath(defaultEngine, tablePath)
+      .asInstanceOf[TableImpl]
+      .getChanges(defaultEngine, startVersion, endVersion, actionSet.asJava)
+      .toSeq
+  }
+}
+
+class CommitRangeTableChangesSuite extends TableChangesSuite {
+
+  override def getChanges(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long,
+      actionSet: Set[DeltaAction]): Seq[ColumnarBatch] = {
+    val commitRange =
+      TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(startVersion))
+        .withEndBoundary(CommitBoundary.atVersion(endVersion))
+        .build(defaultEngine)
+    commitRange.getActions(
+      defaultEngine,
+      getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, startVersion),
+      actionSet.asJava).toSeq
+  }
+
+  test("Must provide startSnapshot with the correct version") {
+    withTempDir { tempDir =>
+      (0 to 4).foreach { _ =>
+        spark.range(10).write.format("delta").mode("append").save(tempDir.getCanonicalPath)
+      }
+      val commitRange =
+        TableManager.loadCommitRange(tempDir.getCanonicalPath, CommitBoundary.atVersion(0))
+          .withEndBoundary(CommitBoundary.atVersion(4))
+          .build(defaultEngine)
+      val e = intercept[IllegalArgumentException] {
+        commitRange.getActions(
+          defaultEngine,
+          getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tempDir.getCanonicalPath, 2),
+          FULL_ACTION_SET.asJava).toSeq
+      }
+      assert(e.getMessage.contains("startSnapshot must have version = startVersion"))
+    }
+  }
+
+  test("No end boundary provided defaults to latest") {
+    withTempDir { tempDir =>
+      (0 to 4).foreach { _ =>
+        spark.range(10).write.format("delta").mode("append").save(tempDir.getCanonicalPath)
+      }
+      val commitRange =
+        TableManager.loadCommitRange(tempDir.getCanonicalPath, CommitBoundary.atVersion(0))
+          .build(defaultEngine)
+      assert(commitRange.getStartVersion == 0 && commitRange.getEndVersion == 4)
+      // Just double check the changes are correct
+      testGetChangesVsSpark(tempDir.getCanonicalPath, 0, 4, FULL_ACTION_SET)
+    }
+  }
+
+  test("Basic timestamp resolution") {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+
+      // Setup part 1 of 2: create log files
+      (0 to 2).foreach { i =>
+        spark.range(10).write.format("delta").mode("append").save(tablePath)
+      }
+
+      // Setup part 2 of 2: edit lastModified times
+      val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+
+      val delta0 = new File(FileNames.deltaFile(logPath, 0))
+      val delta1 = new File(FileNames.deltaFile(logPath, 1))
+      val delta2 = new File(FileNames.deltaFile(logPath, 2))
+      delta0.setLastModified(1000)
+      delta1.setLastModified(2000)
+      delta2.setLastModified(3000)
+
+      val latestSnapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
+      def checkStartBoundary(timestamp: Long, expectedVersion: Long): Unit = {
+        assert(TableManager.loadCommitRange(
+          tablePath,
+          CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine)
+          .getStartVersion == expectedVersion)
+      }
+      def checkEndBoundary(timestamp: Long, expectedVersion: Long): Unit = {
+        assert(TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+          .withEndBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine)
+          .getEndVersion == expectedVersion)
+      }
+
+      // startTimestamp is before the earliest available version
+      checkStartBoundary(500, 0)
+      // endTimestamp is before the earliest available version
+      intercept[KernelException] {
+        checkEndBoundary(500, -1)
+      }
+
+      // startTimestamp is at first commit
+      checkStartBoundary(1000, 0)
+      // endTimestamp is at first commit
+      checkEndBoundary(1000, 0)
+
+      // startTimestamp is between two normal commits
+      checkStartBoundary(1500, 1)
+      // endTimestamp is between two normal commits
+      checkEndBoundary(1500, 0)
+
+      // startTimestamp is at last commit
+      checkStartBoundary(3000, 2)
+
+      // endTimestamp is at last commit
+      checkEndBoundary(3000, 2)
+
+      // startTimestamp is after the last commit
+      intercept[KernelException] {
+        checkStartBoundary(4000, -1)
+      }
+      // endTimestamp is after the last commit
+      checkEndBoundary(4000, 2)
+    }
+  }
+
+  test("ICT timestamp resolution") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a table with ICT enabled from the start and commits with specific custom-set ICTs
+      val startTime = 1000L
+      val clock = new ManualClock(startTime)
+
+      // Version 0 has ICT=1000L, but modificationTime=approx current time (1757368326512+)
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock,
+        tableProperties = Map("delta.enableInCommitTimestamps" -> "true"))
+
+      // Version 1 has ICT=2000L
+      clock.setTime(startTime + 1000)
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2)),
+        clock = clock)
+
+      // Version 2 has ICT=3000L
+      clock.setTime(startTime + 2000)
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock)
+
+      val latestSnapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
+
+      def checkStartBoundary(timestamp: Long, expectedVersion: Long): Unit = {
+        assert(TableManager.loadCommitRange(
+          tablePath,
+          CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine)
+          .getStartVersion == expectedVersion)
+      }
+      def checkEndBoundary(timestamp: Long, expectedVersion: Long): Unit = {
+        assert(TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+          .withEndBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine)
+          .getEndVersion == expectedVersion)
+      }
+
+      // Test that timestamp resolution is done using ICT. Since the file modification times for
+      // this table should all be approx the current time, if we are able to correctly resolve
+      // TS-to-version for the timestamp-range we custom set (~1000L-3000L), we know we are
+      // correctly resolving with ICT.
+
+      // startTimestamp is before the earliest available version
+      checkStartBoundary(startTime - 500, 0)
+      // endTimestamp is before the earliest available version
+      intercept[KernelException] {
+        checkEndBoundary(startTime - 500, -1)
+      }
+
+      // startTimestamp is at first commit (ICT enabled)
+      checkStartBoundary(startTime, 0)
+      // endTimestamp is at first commit
+      checkEndBoundary(startTime, 0)
+
+      // startTimestamp is between first and second commit
+      checkStartBoundary(startTime + 500, 1)
+      // endTimestamp is between first and second commit
+      checkEndBoundary(startTime + 500, 0)
+
+      // startTimestamp is at second commit
+      checkStartBoundary(startTime + 1000, 1)
+      // endTimestamp is at second commit
+      checkEndBoundary(startTime + 1000, 1)
+
+      // startTimestamp is between second and third commit
+      checkStartBoundary(startTime + 1500, 2)
+      // endTimestamp is between second and third commit
+      checkEndBoundary(startTime + 1500, 1)
+
+      // startTimestamp is at third commit
+      checkStartBoundary(startTime + 2000, 2)
+      // endTimestamp is at third commit
+      checkEndBoundary(startTime + 2000, 2)
+
+      // startTimestamp is after the last commit
+      intercept[KernelException] {
+        checkStartBoundary(startTime + 3000, -1)
+      }
+      // endTimestamp is after the last commit
+      checkEndBoundary(startTime + 3000, 2)
+
+      // Verify that the changes are correctly retrieved using ICT timestamps
+      testGetChangesVsSpark(tablePath, 0, 2, FULL_ACTION_SET)
+    }
+  }
+
+  test("getCommitActions returns CommitActions with correct version and timestamp") {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+
+      // Create commits with known modification times
+      (0 to 2).foreach { i =>
+        spark.range(10).write.format("delta").mode("append").save(tablePath)
+      }
+
+      // Set custom modification times on delta files
+      val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+      val delta0 = new File(FileNames.deltaFile(logPath, 0))
+      val delta1 = new File(FileNames.deltaFile(logPath, 1))
+      val delta2 = new File(FileNames.deltaFile(logPath, 2))
+      delta0.setLastModified(1000)
+      delta1.setLastModified(2000)
+      delta2.setLastModified(3000)
+
+      val commitRange = TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(2))
+        .build(defaultEngine)
+
+      val actionSet = Set(
+        DeltaAction.ADD,
+        DeltaAction.REMOVE,
+        DeltaAction.METADATA,
+        DeltaAction.PROTOCOL,
+        DeltaAction.CDC)
+
+      val commitsIter = commitRange.getCommitActions(
+        defaultEngine,
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
+        actionSet.asJava)
+
+      val commits = commitsIter.toSeq
+      assert(commits.size == 3)
+
+      // Verify versions
+      assert(commits(0).getVersion == 0)
+      assert(commits(1).getVersion == 1)
+      assert(commits(2).getVersion == 2)
+
+      // Verify timestamps match file modification times (no ICT in this table)
+      assert(commits(0).getTimestamp == 1000)
+      assert(commits(1).getTimestamp == 2000)
+      assert(commits(2).getTimestamp == 3000)
+
+      // Get Spark's results for comparison
+      val sparkChanges = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+
+      // Compare actions with Spark using the new compareCommitActions method
+      compareCommitActions(commits, pruneSparkActionsByActionSet(sparkChanges, actionSet))
+
+      commitsIter.close()
+    }
+  }
+
+  test("getCommitActions with ICT returns timestamp from inCommitTimestamp") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val startTime = 5000L
+      val clock = new ManualClock(startTime)
+
+      // Version 0 with ICT=5000L
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock,
+        tableProperties = Map("delta.enableInCommitTimestamps" -> "true"))
+
+      // Version 1 with ICT=6000L
+      clock.setTime(startTime + 1000)
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2)),
+        clock = clock)
+
+      // Version 2 with ICT=7000L
+      clock.setTime(startTime + 2000)
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock)
+
+      val commitRange = TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(2))
+        .build(defaultEngine)
+
+      val actionSet = Set(
+        DeltaAction.ADD,
+        DeltaAction.REMOVE,
+        DeltaAction.METADATA,
+        DeltaAction.PROTOCOL,
+        DeltaAction.CDC)
+
+      val commitsIter = commitRange.getCommitActions(
+        engine,
+        getTableManagerAdapter.getSnapshotAtVersion(engine, tablePath, 0),
+        actionSet.asJava)
+
+      val commits = commitsIter.toSeq
+      assert(commits.size == 3)
+
+      // Verify versions
+      assert(commits(0).getVersion == 0)
+      assert(commits(1).getVersion == 1)
+      assert(commits(2).getVersion == 2)
+
+      // Verify timestamps come from ICT, not file modification times
+      // The file modification times would be much larger (current epoch time)
+      // but our ICT values are in the 5000-7000 range
+      assert(commits(0).getTimestamp == 5000)
+      assert(commits(1).getTimestamp == 6000)
+      assert(commits(2).getTimestamp == 7000)
+
+      // Get Spark's results for comparison
+      val sparkChanges = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+      compareCommitActions(commits, pruneSparkActionsByActionSet(sparkChanges, actionSet))
+      commitsIter.close()
+    }
+  }
+
+  test("getCommitActions can be called multiple times and returns same results") {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+
+      // Create some commits
+      (0 to 2).foreach { i =>
+        spark.range(10).write.format("delta").mode("append").save(tablePath)
+      }
+
+      val commitRange = TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(2))
+        .build(defaultEngine)
+
+      val actionSet = Set(
+        DeltaAction.ADD,
+        DeltaAction.REMOVE,
+        DeltaAction.METADATA,
+        DeltaAction.PROTOCOL,
+        DeltaAction.CDC)
+
+      // Call getCommitActions multiple times
+      val commits1 = commitRange.getCommitActions(
+        defaultEngine,
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
+        actionSet.asJava).toSeq
+
+      val commits2 = commitRange.getCommitActions(
+        defaultEngine,
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
+        actionSet.asJava).toSeq
+
+      val commits3 = commitRange.getCommitActions(
+        defaultEngine,
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0),
+        actionSet.asJava).toSeq
+
+      // Verify all calls return the same number of commits
+      assert(commits1.size == 3)
+      assert(commits2.size == 3)
+      assert(commits3.size == 3)
+
+      // Verify each call returns the same actions by comparing with Spark
+      val sparkChanges = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+        .filter(_._1 <= 2)
+      compareCommitActions(commits1, pruneSparkActionsByActionSet(sparkChanges, actionSet))
+
+      // For commits2 and commits3, we need fresh Spark iterators
+      val sparkChanges2 = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+        .filter(_._1 <= 2)
+      compareCommitActions(commits2, pruneSparkActionsByActionSet(sparkChanges2, actionSet))
+
+      val sparkChanges3 = DeltaLog.forTable(spark, tablePath)
+        .getChanges(0)
+        .filter(_._1 <= 2)
+      compareCommitActions(commits3, pruneSparkActionsByActionSet(sparkChanges3, actionSet))
+
+      // Also verify that calling getActions on each CommitActions multiple times works
+      commits1.foreach { commit =>
+        val actions1 = commit.getActions.toSeq
+        val actions2 = commit.getActions.toSeq
+        assert(actions1.size == actions2.size)
+        // Verify the schemas are the same
+        actions1.zip(actions2).foreach { case (batch1, batch2) =>
+          assert(batch1.getSchema.equals(batch2.getSchema))
+          assert(batch1.getSize == batch2.getSize)
+        }
+      }
+    }
+  }
+
+  test("getCommitActions with empty commit file") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a table with an initial commit
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1))
+
+      // Create an empty commit file at version 1 using commitUnsafe with no actions
+      import org.apache.spark.sql.delta.DeltaLog
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val txn = deltaLog.startTransaction()
+      txn.commitUnsafe(tablePath, 1)
+
+      val commitRange = TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(1))
+        .build(defaultEngine)
+
+      val actionSet = Set(
+        DeltaAction.ADD,
+        DeltaAction.REMOVE,
+        DeltaAction.METADATA,
+        DeltaAction.PROTOCOL,
+        DeltaAction.CDC)
+
+      val commitsIter = commitRange.getCommitActions(
+        engine,
+        getTableManagerAdapter.getSnapshotAtVersion(engine, tablePath, 0),
+        actionSet.asJava)
+
+      val commits = commitsIter.toSeq
+      assert(commits.size == 2) // Version 0 and version 1
+
+      // Version 0 should have actions (normal commit)
+      val v0Actions = commits(0).getActions.toSeq
+      assert(v0Actions.nonEmpty)
+
+      // Version 1 (empty commit) should return empty actions
+      val v1Actions = commits(1).getActions.toSeq
+      val totalRows = v1Actions.map(_.getSize).sum
+      assert(totalRows == 0, s"Empty commit file should have no actions, but got $totalRows rows")
+
+      // Can call getActions multiple times on empty commit
+      val v1ActionsTwice = commits(1).getActions.toSeq
+      assert(v1ActionsTwice.map(_.getSize).sum == 0)
+    }
+  }
+}
+
+abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
 
   /* actionSet including all currently supported actions */
   val FULL_ACTION_SET: Set[DeltaAction] = DeltaAction.values().toSet
+
+  def getChanges(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long,
+      actionSet: Set[DeltaAction]): Seq[ColumnarBatch]
 
   //////////////////////////////////////////////////////////////////////////////////
   // TableImpl.getChangesByVersion tests
@@ -66,10 +552,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
       .getChanges(startVersion)
       .filter(_._1 <= endVersion) // Spark API does not have endVersion
 
-    val kernelChanges = Table.forPath(defaultEngine, tablePath)
-      .asInstanceOf[TableImpl]
-      .getChanges(defaultEngine, startVersion, endVersion, actionSet.asJava)
-      .toSeq
+    val kernelChanges = getChanges(tablePath, startVersion, endVersion, actionSet)
 
     // Check schema is as expected (version + timestamp column + the actions requested)
     kernelChanges.foreach { batch =>
@@ -100,7 +583,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
 
         val add1 = SparkAddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
         val txn1 = log.startTransaction()
-        txn1.commitManually(metadata :: add1 :: Nil: _*)
+        txn1.commitManuallyWithValidation(metadata, add1)
 
         val addCDC2 = SparkAddCDCFile(
           "fake/path/2",
@@ -109,12 +592,12 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
           Map("tag_foo" -> "tag_bar"))
         val remove2 = SparkRemoveFile("fake/path/1", Some(100), dataChange = true)
         val txn2 = log.startTransaction()
-        txn2.commitManually(addCDC2 :: remove2 :: Nil: _*)
+        txn2.commitManuallyWithValidation(addCDC2, remove2)
 
         val setTransaction3 = SparkSetTransaction("fakeAppId", 3L, Some(200))
         val txn3 = log.startTransaction()
         val latestTableProtocol = log.snapshot.protocol
-        txn3.commitManually(latestTableProtocol :: setTransaction3 :: Nil: _*)
+        txn3.commitManuallyWithValidation(latestTableProtocol, setTransaction3)
 
         // request subset of actions
         testGetChangesVsSpark(
@@ -193,10 +676,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
           2L -> (start + 40 * minuteInMilliseconds))
 
         // Check the timestamps are returned correctly
-        Table.forPath(defaultEngine, tempDir)
-          .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 2, Set(DeltaAction.ADD).asJava)
-          .toSeq
+        getChanges(tempDir, 0, 2, Set(DeltaAction.ADD))
           .flatMap(_.getRows.toSeq)
           .foreach { row =>
             val version = row.getLong(0)
@@ -221,9 +701,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
     withTempDir { tempDir =>
       new File(tempDir, "delta_log").mkdirs()
       intercept[TableNotFoundException] {
-        Table.forPath(defaultEngine, tempDir.getCanonicalPath)
-          .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+        getChanges(tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
       }
     }
   }
@@ -231,9 +709,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
   test("getChanges - empty folder no _delta_log dir") {
     withTempDir { tempDir =>
       intercept[TableNotFoundException] {
-        Table.forPath(defaultEngine, tempDir.getCanonicalPath)
-          .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+        getChanges(tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
       }
     }
   }
@@ -242,18 +718,14 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
     withTempDir { tempDir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(tempDir.getCanonicalPath)
       intercept[TableNotFoundException] {
-        Table.forPath(defaultEngine, tempDir.getCanonicalPath)
-          .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+        getChanges(tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
       }
     }
   }
 
   test("getChanges - directory does not exist") {
     intercept[TableNotFoundException] {
-      Table.forPath(defaultEngine, "/fake/table/path")
-        .asInstanceOf[TableImpl]
-        .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+      getChanges("/fake/table/path", 0, 2, FULL_ACTION_SET)
     }
   }
 
@@ -261,14 +733,12 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
     withGoldenTable("deltalog-getChanges") { tablePath =>
       def getChangesByVersion(
           startVersion: Long,
-          endVersion: Long): CloseableIterator[ColumnarBatch] = {
-        Table.forPath(defaultEngine, tablePath)
-          .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, startVersion, endVersion, FULL_ACTION_SET.asJava)
+          endVersion: Long): Seq[ColumnarBatch] = {
+        getChanges(tablePath, startVersion, endVersion, FULL_ACTION_SET)
       }
 
       // startVersion after latest available version
-      assert(intercept[KernelException] {
+      assert(intercept[CommitRangeNotFoundException] {
         getChangesByVersion(3, 8)
       }.getMessage.contains("no log files found in the requested version range"))
 
@@ -278,14 +748,14 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
       }.getMessage.contains("no log file found for version 8"))
 
       // invalid start version
-      assert(intercept[KernelException] {
+      assert(intercept[IllegalArgumentException] {
         getChangesByVersion(-1, 2)
-      }.getMessage.contains("Invalid version range"))
+      }.getMessage.contains("must be >= 0"))
 
       // invalid end version
-      assert(intercept[KernelException] {
+      assert(intercept[IllegalArgumentException] {
         getChangesByVersion(2, 1)
-      }.getMessage.contains("Invalid version range"))
+      }.getMessage.contains("startVersion must be <= endVersion"))
     }
   }
 
@@ -323,17 +793,13 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
 
       // TEST ERRORS
       // endVersion before earliest available version
-      assert(intercept[KernelException] {
-        Table.forPath(defaultEngine, tablePath)
-          .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 9, FULL_ACTION_SET.asJava)
+      assert(intercept[CommitRangeNotFoundException] {
+        getChanges(tablePath, 0, 9, FULL_ACTION_SET)
       }.getMessage.contains("no log files found in the requested version range"))
 
       // startVersion less than the earliest available version
       assert(intercept[KernelException] {
-        Table.forPath(defaultEngine, tablePath)
-          .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 5, 11, FULL_ACTION_SET.asJava)
+        getChanges(tablePath, 5, 11, FULL_ACTION_SET)
       }.getMessage.contains("no log file found for version 5"))
 
       // TEST VALID CASES
@@ -406,17 +872,13 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
     // Existing tests suffice to check if the protocol column is present/dropped correctly
     // We test our protocol checks for table features in TableFeaturesSuite
     // Min reader version is too high
-    assert(intercept[KernelException] {
+    assert(intercept[UnsupportedProtocolVersionException] {
       // Use toSeq because we need to consume the iterator to force the exception
-      Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
-        .asInstanceOf[TableImpl]
-        .getChanges(defaultEngine, 0, 0, FULL_ACTION_SET.asJava).toSeq
+      getChanges(goldenTablePath("deltalog-invalid-protocol-version"), 0, 0, FULL_ACTION_SET)
     }.getMessage.contains("Unsupported Delta protocol reader version"))
     // We still get an error if we don't request the protocol file action
-    assert(intercept[KernelException] {
-      Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
-        .asInstanceOf[TableImpl]
-        .getChanges(defaultEngine, 0, 0, Set(DeltaAction.ADD).asJava).toSeq
+    assert(intercept[UnsupportedProtocolVersionException] {
+      getChanges(goldenTablePath("deltalog-invalid-protocol-version"), 0, 0, Set(DeltaAction.ADD))
     }.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
@@ -472,8 +934,8 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
       size: Long,
       tags: Map[String, String]) extends StandardAction
 
-  def standardizeKernelAction(row: Row): Option[StandardAction] = {
-    val actionIdx = (2 until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
+  def standardizeKernelAction(row: Row, startIdx: Int = 2): Option[StandardAction] = {
+    val actionIdx = (startIdx until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
       return None)
 
     row.getSchema.at(actionIdx).getName match {
@@ -508,7 +970,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
           metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")),
           metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("schemaString")),
           VectorUtils.toJavaList(
-            metadataRow.getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))).asScala,
+            metadataRow.getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))).asScala.toSeq,
           VectorUtils.toJavaMap[String, String](
             metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))).asScala.toMap))
 
@@ -623,6 +1085,36 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
           case _ => false
         })
     }
+  }
+
+  /**
+   * Compare actions from CommitActions objects directly with Spark actions.
+   * This automatically extracts version from each commit and standardizes the batches.
+   */
+  def compareCommitActions(
+      commits: Seq[io.delta.kernel.CommitActions],
+      sparkActions: Iterator[(Long, Seq[SparkAction])]): Unit = {
+    // Directly convert CommitActions to StandardActions without adding columns
+    val standardKernelActions: Seq[(Long, StandardAction)] = commits.flatMap { commit =>
+      val version = commit.getVersion
+      commit.getActions.toSeq.flatMap { batch =>
+        batch.getRows.toSeq
+          .map(row => (version, standardizeKernelAction(row, startIdx = 0)))
+          .filter(_._2.nonEmpty)
+          .map(t => (t._1, t._2.get))
+      }
+    }
+
+    val standardSparkActions: Seq[(Long, StandardAction)] =
+      sparkActions.flatMap { case (version, actions) =>
+        actions.map(standardizeSparkAction(_)).flatten.map((version, _))
+      }.toSeq
+
+    assert(
+      standardKernelActions.sameElements(standardSparkActions),
+      s"Kernel actions did not match Spark actions.\n" +
+        s"Kernel actions: ${standardKernelActions.take(5)}\n" +
+        s"Spark actions: ${standardSparkActions.take(5)}")
   }
 
   def compareActions(

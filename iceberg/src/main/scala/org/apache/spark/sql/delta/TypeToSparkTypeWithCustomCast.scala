@@ -20,13 +20,13 @@ import java.util
 
 import scala.collection.JavaConverters._
 
-import org.apache.iceberg.MetadataColumns
-import org.apache.iceberg.Schema
-import org.apache.iceberg.relocated.com.google.common.collect.Lists
-import org.apache.iceberg.types.Type
-import org.apache.iceberg.types.Type.TypeID._
-import org.apache.iceberg.types.Types
-import org.apache.iceberg.types.TypeUtil
+import shadedForDelta.org.apache.iceberg.MetadataColumns
+import shadedForDelta.org.apache.iceberg.Schema
+import shadedForDelta.org.apache.iceberg.relocated.com.google.common.collect.Lists
+import shadedForDelta.org.apache.iceberg.types.Type
+import shadedForDelta.org.apache.iceberg.types.Type.TypeID._
+import shadedForDelta.org.apache.iceberg.types.Types
+import shadedForDelta.org.apache.iceberg.types.TypeUtil
 
 import org.apache.spark.sql.types.ArrayType
 import org.apache.spark.sql.types.BinaryType
@@ -51,9 +51,9 @@ import org.apache.spark.sql.types.TimestampType
  * This class is copied from [[org.apache.iceberg.spark.TypeToSparkType]] to
  * add custom type casting. Currently, it supports the following casting
  * * Iceberg TIME -> Spark Long
- *
  */
-class TypeToSparkTypeWithCustomCast extends TypeUtil.SchemaVisitor[DataType] {
+class TypeToSparkTypeWithCustomCast(castTimeType: Boolean)
+  extends TypeUtil.SchemaVisitor[DataType] {
 
   val METADATA_COL_ATTR_KEY = "__metadata_col";
 
@@ -93,9 +93,14 @@ class TypeToSparkTypeWithCustomCast extends TypeUtil.SchemaVisitor[DataType] {
       case FLOAT => FloatType
       case DOUBLE => DoubleType
       case DATE => DateType
-      // This line is changed to allow casting TIME to Spark Long.
+      // Changed to allow casting TIME to Spark Long.
       // The result is microseconds since midnight.
-      case TIME => LongType
+      case TIME =>
+        if (castTimeType) {
+          LongType
+        } else {
+          throw new UnsupportedOperationException("Spark does not support time fields")
+        }
       case TIMESTAMP =>
         val ts = primitive.asInstanceOf[Types.TimestampType]
         if (ts.shouldAdjustToUTC()) {

@@ -23,12 +23,13 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, IdMapping, SerializableFileStatus, Snapshot}
 import org.apache.spark.sql.delta.DeltaErrors.{cloneFromIcebergSourceWithoutSpecs, cloneFromIcebergSourceWithPartitionEvolution}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.iceberg.{PartitionSpec, Schema, Snapshot => IcebergSnapshot, Table, TableProperties}
-import org.apache.iceberg.hadoop.HadoopTables
-import org.apache.iceberg.io.FileIO
-import org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
-import org.apache.iceberg.util.PropertyUtil
+import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Snapshot => IcebergSnapshot, Table, TableProperties}
+import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
+import shadedForDelta.org.apache.iceberg.io.FileIO
+import shadedForDelta.org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
+import shadedForDelta.org.apache.iceberg.util.PropertyUtil
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
@@ -80,12 +81,6 @@ class IcebergTable(
     icebergTable: IcebergTableLike,
     deltaSnapshot: Option[Snapshot],
     convertStats: Boolean) extends ConvertTargetTable {
-  def this(
-      spark: SparkSession,
-      table: Table,
-      deltaSnapshot: Option[Snapshot],
-      convertStats: Boolean) =
-    this(spark, DelegatingIcebergTable(table), deltaSnapshot, convertStats)
 
   def this(spark: SparkSession, basePath: String, deltaTable: Option[Snapshot],
            convertStats: Boolean = true) =
@@ -147,9 +142,13 @@ class IcebergTable(
     } else {
       None
     }
+    val timestampNtz = if (SchemaUtils.checkForTimestampNTZColumnsRecursively(convertedSchema)) {
+      Some("delta.feature.timestampNtz" -> "supported")
+    } else None
     icebergTable.properties().asScala.toMap + (DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id") +
     (DeltaConfigs.LOG_RETENTION.key -> s"$maxSnapshotAgeMs millisecond") ++
       castTimeTypeConf ++
+      timestampNtz ++
       bucketPartitionToNonPartition
   }
 
@@ -179,7 +178,10 @@ class IcebergTable(
     // Reuse physical names of existing columns.
     val mergedPartitionSchema = DeltaColumnMapping.setPhysicalNames(
       StructType(
-        IcebergPartitionUtil.getPartitionFields(tablePartitionSpec, icebergTable.schema())),
+        IcebergPartitionUtil.getPartitionFields(
+          tablePartitionSpec, icebergTable.schema(), castTimeType
+        )
+      ),
       fieldPathToPhysicalName)
 
     // Assign physical names to new partition columns.

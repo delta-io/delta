@@ -363,7 +363,9 @@ public class DataTypeJsonSerDe {
       JsonNode value = entry.getValue();
       String key = entry.getKey();
 
-      if (value.isNull()) {
+      if (key.equals(StructField.METADATA_SPEC_KEY)) {
+        builder.putMetadataColumnSpec(key, MetadataColumnSpec.fromString(value.textValue()));
+      } else if (value.isNull()) {
         builder.putNull(key);
       } else if (value.isIntegralNumber()) { // covers both int and long
         builder.putLong(key, value.longValue());
@@ -562,6 +564,8 @@ public class DataTypeJsonSerDe {
         gen.writeBoolean((Boolean) value);
       } else if (value instanceof String) {
         gen.writeString((String) value);
+      } else if (value instanceof MetadataColumnSpec) {
+        gen.writeString(value.toString());
       } else if (value instanceof FieldMetadata) {
         writeFieldMetadata(gen, (FieldMetadata) value);
       } else if (value instanceof Long[]) {

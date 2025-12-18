@@ -16,12 +16,14 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
+import static io.delta.kernel.internal.util.ExpressionUtils.createPredicate;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.CollationIdentifier;
 import io.delta.kernel.types.DataType;
 import java.util.List;
 
@@ -46,7 +48,13 @@ public class StartsWithExpressionEvaluator {
         childrenExpressions.get(1),
         startsWith,
         "'STARTS_WITH' expects literal as the second input");
-    return new Predicate(startsWith.getName(), childrenExpressions);
+
+    if (startsWith.getCollationIdentifier().isPresent()) {
+      CollationIdentifier collationIdentifier = startsWith.getCollationIdentifier().get();
+      checkIsUTF8BinaryCollation(startsWith, collationIdentifier);
+    }
+    return createPredicate(
+        startsWith.getName(), startsWith.getChildren(), startsWith.getCollationIdentifier());
   }
 
   static ColumnVector eval(List<ColumnVector> childrenVectors) {

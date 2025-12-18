@@ -92,13 +92,21 @@ class SuitesWriter(val outputDir: Path) {
   protected val allFiles: ListBuffer[Path] = ListBuffer.empty[Path]
 
   def writeGeneratedSuitesOfGroup(suites: List[TestSuite], testGroup: TestGroup): Unit = {
-    val src = SRC_HEADERS +
-      source"""package $PACKAGE_NAME
-               import ..${testGroup.imports}
-               ..${suites.map(_.classDefinition)}"""
-    val srcFile = outputDir.resolve(testGroup.name + ".scala")
-    val formattedSrc = Scalafmt.format(src, SCALAFMT_CONFIG).get
-    writeFile(srcFile, formattedSrc)
+    suites
+      // Group by parent class: first item of the extends clause (last item of class def)
+      .groupBy(suite => suite.classDefinition.children.last.children.head.text)
+      .foreach { case (baseSuite, suites) =>
+        val src = SRC_HEADERS + "// scalastyle:off line.size.limit\n" +
+          source"""package $PACKAGE_NAME
+                   import ..${testGroup.imports}
+                   ..${suites.sortBy(_.name).map(_.classDefinition)}"""
+        val srcFile = outputDir.resolve(s"${testGroup.name}$baseSuite.scala")
+        val formattedSrc = Scalafmt.format(src, SCALAFMT_CONFIG).get
+        writeFile(srcFile, formattedSrc)
+      }
+    // scalastyle:off println
+    println(s"Wrote ${suites.size} generated suites from ${testGroup.name} group.")
+    // scalastyle:on println
   }
 
   protected def writeFile(file: Path, content: String): Unit = {

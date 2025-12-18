@@ -22,13 +22,15 @@ import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
+import io.delta.kernel.utils.MetadataColumnTestUtils
 
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.LoggerFactory
 
 class ParquetFileReaderSuite extends AnyFunSuite
-    with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
+    with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils
+    with MetadataColumnTestUtils {
   private val logger = LoggerFactory.getLogger(classOf[ParquetFileReaderSuite])
 
   test("decimals encoded using dictionary encoding ") {
@@ -310,7 +312,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
   test("request row indices") {
     val readSchema = new StructType()
       .add("id", LongType.LONG)
-      .add(StructField.METADATA_ROW_INDEX_COLUMN)
+      .add(ROW_INDEX)
 
     val path = getTestResourceFilePath("parquet-basic-row-indexes")
     val actResult1 = readParquetFilesUsingKernel(path, readSchema)

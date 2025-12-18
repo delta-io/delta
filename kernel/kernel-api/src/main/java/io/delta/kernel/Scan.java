@@ -32,6 +32,7 @@ import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -98,9 +99,10 @@ public interface Scan {
    *             <li>Description: Absolute path of the table location. The path is a URI as
    *                 specified by RFC 2396 URI Generic Syntax, which needs to be decoded to get the
    *                 data file path. NOTE: this is temporary. Will be removed in the future.
-   * @see <a href=https://github.com/delta-io/delta/issues/2089></a>
-   *     </ul>
+   *           </ul>
    *     </ol>
+   *
+   * @see <a href=https://github.com/delta-io/delta/issues/2089></a>
    */
   CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
 
@@ -148,6 +150,8 @@ public interface Scan {
 
       // initialized as part of init()
       StructType logicalSchema = null;
+      Map<String, String> configuration = null;
+      ColumnMappingMode columnMappingMode = null;
       String tablePath = null;
 
       RoaringBitmapArray currBitmap = null;
@@ -158,7 +162,8 @@ public interface Scan {
           return;
         }
         logicalSchema = ScanStateRow.getLogicalSchema(scanState);
-
+        configuration = ScanStateRow.getConfiguration(scanState);
+        columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
         tablePath = ScanStateRow.getTableRoot(scanState).toString();
         inited = true;
       }
@@ -181,11 +186,10 @@ public interface Scan {
 
         // Step 1: If row tracking is enabled, check for physical row tracking columns in the data
         // batch and transform them to logical row tracking columns as needed
-        Map<String, String> configuration = ScanStateRow.getConfiguration(scanState);
         if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(configuration)) {
           nextDataBatch =
               MaterializedRowTrackingColumn.transformPhysicalData(
-                  nextDataBatch, scanFile, configuration, engine);
+                  nextDataBatch, scanFile, logicalSchema, configuration, engine);
         }
 
         // Step 2: Get the selectionVector if DV is present
@@ -195,8 +199,7 @@ public interface Scan {
         if (dv == null) {
           selectionVector = Optional.empty();
         } else {
-          int rowIndexOrdinal =
-              nextDataBatch.getSchema().indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
+          int rowIndexOrdinal = nextDataBatch.getSchema().indexOf(MetadataColumnSpec.ROW_INDEX);
           if (rowIndexOrdinal == -1) {
             throw new IllegalArgumentException(
                 "Row index column is not present in the data read from the Parquet file.");
@@ -235,7 +238,6 @@ public interface Scan {
                 engine.getExpressionHandler());
 
         // Step 5: Transform column names back to logical names if column mapping is enabled
-        ColumnMappingMode columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
         switch (columnMappingMode) {
           case NAME: // fall through
           case ID:

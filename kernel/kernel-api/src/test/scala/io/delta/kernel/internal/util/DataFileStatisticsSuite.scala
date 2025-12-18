@@ -46,6 +46,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     val nestedStructType = new StructType()
       .add("aa", StringType.STRING)
       .add("ac", new StructType().add("aca", IntegerType.INTEGER))
+      .add("nested_variant", VariantType.VARIANT)
 
     val schema = new StructType()
       .add("ByteType", ByteType.BYTE)
@@ -61,6 +62,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       .add("TimestampNTZType", TimestampNTZType.TIMESTAMP_NTZ)
       .add("BinaryType", BinaryType.BINARY)
       .add("NestedStruct", nestedStructType)
+      .add("VariantType", VariantType.VARIANT)
 
     val minValues = Map(
       new Column("ByteType") -> Literal.ofByte(1.toByte),
@@ -76,7 +78,11 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       new Column("TimestampNTZType") -> Literal.ofTimestampNtz(1L),
       new Column("BinaryType") -> Literal.ofBinary("a".getBytes),
       new Column(Array("NestedStruct", "aa")) -> Literal.ofString("a"),
-      new Column(Array("NestedStruct", "ac", "aca")) -> Literal.ofInt(1)).asJava
+      new Column(Array("NestedStruct", "ac", "aca")) -> Literal.ofInt(1),
+      new Column("VariantType") -> Literal.ofString(
+        "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu"),
+      new Column(Array("NestedStruct", "nested_variant")) -> Literal.ofString(
+        "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu")).asJava
 
     val maxValues = Map(
       new Column("ByteType") -> Literal.ofByte(10.toByte),
@@ -92,7 +98,11 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       new Column("TimestampNTZType") -> Literal.ofTimestampNtz(10L),
       new Column("BinaryType") -> Literal.ofBinary("z".getBytes),
       new Column(Array("NestedStruct", "aa")) -> Literal.ofString("z"),
-      new Column(Array("NestedStruct", "ac", "aca")) -> Literal.ofInt(10)).asJava
+      new Column(Array("NestedStruct", "ac", "aca")) -> Literal.ofInt(10),
+      new Column("VariantType") -> Literal.ofString(
+        "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K"),
+      new Column(Array("NestedStruct", "nested_variant")) -> Literal.ofString(
+        "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K")).asJava
 
     val nullCount = Map(
       new Column("ByteType") -> 1L,
@@ -108,7 +118,9 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       new Column("TimestampNTZType") -> 1L,
       new Column("BinaryType") -> 1L,
       new Column(Array("NestedStruct", "aa")) -> 1L,
-      new Column(Array("NestedStruct", "ac", "aca")) -> 1L)
+      new Column(Array("NestedStruct", "ac", "aca")) -> 1L,
+      new Column("VariantType") -> 1L,
+      new Column(Array("NestedStruct", "nested_variant")) -> 1L)
 
     val tightBounds = false
 
@@ -139,8 +151,10 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      "aa": "a",
         |      "ac": {
         |        "aca": 1
-        |      }
-        |    }
+        |      },
+        |      "nested_variant": "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu"
+        |    },
+        |    "VariantType": "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu"
         |  },
         |  "maxValues": {
         |    "ByteType": 10,
@@ -159,8 +173,10 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      "aa": "z",
         |      "ac": {
         |        "aca": 10
-        |      }
-        |    }
+        |      },
+        |      "nested_variant": "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K"
+        |    },
+        |    "VariantType": "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K"
         |  },
         |  "nullCount": {
         |    "ByteType": 1,
@@ -179,8 +195,10 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      "aa": 1,
         |      "ac": {
         |        "aca": 1
-        |      }
-        |    }
+        |      },
+        |      "nested_variant": 1
+        |    },
+        |    "VariantType": 1
         |},
         |"tightBounds": false
         |}""".stripMargin
@@ -489,6 +507,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       .add("TimestampNTZType", TimestampNTZType.TIMESTAMP_NTZ)
       .add("BinaryType", BinaryType.BINARY)
       .add("BooleanType", BooleanType.BOOLEAN)
+      .add("VariantType", VariantType.VARIANT)
 
     val json =
       """{
@@ -506,7 +525,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "TimestampType": "1970-01-01T00:00:00.001Z",
         |    "TimestampNTZType": "1970-01-01T00:00:00.001",
         |    "BinaryType": "a",
-        |    "BooleanType": true
+        |    "BooleanType": true,
+        |    "VariantType": "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu"
         |  },
         |  "maxValues": {
         |    "ByteType": 10,
@@ -521,7 +541,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "TimestampType": "1970-01-01T00:00:00.010Z",
         |    "TimestampNTZType": "1970-01-01T00:00:00.010",
         |    "BinaryType": "z",
-        |    "BooleanType": false
+        |    "BooleanType": false,
+        |    "VariantType": "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K"
         |  },
         |  "nullCount": {
         |    "ByteType": 1,
@@ -544,11 +565,15 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     assert(minValues.get(new Column("FloatType")).getValue == 0.1f)
     assert(minValues.get(new Column("StringType")).getValue == "a")
     assert(minValues.get(new Column("BooleanType")).getValue == true)
+    assert(minValues.get(new Column("VariantType")).getValue ==
+      "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu")
 
     val maxValues = stats.getMaxValues
     assert(maxValues.get(new Column("LongType")).getValue == 10L)
     assert(maxValues.get(new Column("DoubleType")).getValue == 10.1)
     assert(maxValues.get(new Column("BooleanType")).getValue == false)
+    assert(maxValues.get(new Column("VariantType")).getValue ==
+      "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K")
 
     val nullCount = stats.getNullCount
     assert(nullCount.get(new Column("ByteType")) == 1L)
@@ -958,4 +983,48 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     assert(resultFromEmpty.getTightBounds.isPresent &&
       !resultFromEmpty.getTightBounds.get)
   }
+
+  test("deserializing invalid variant stats throws KernelException") {
+    val schema = new StructType().add("VariantType", VariantType.VARIANT);
+    val invalidVariantStats =
+      """|{
+         |  "numRecords": 100,
+         |  "minValues": {
+         |    "VariantType": 1234
+         |  },
+         |  "maxValues": {
+         |    "VariantType": 5678
+         |  }
+         |}""".stripMargin
+
+    val exception = intercept[KernelException] {
+      DataFileStatistics.deserializeFromJson(invalidVariantStats, schema)
+    }
+
+    assert(exception.getMessage.contains("Expected variant as string value"))
+  }
+
+  test("serializeAsJson throws exception when literal type for variant is not string") {
+    val schema = new StructType()
+      .add("variant", VariantType.VARIANT)
+
+    val minValues = Map[Column, Literal](
+      new Column("variant") -> Literal.ofInt(1)).asJava
+
+    val stats = new DataFileStatistics(
+      100,
+      minValues,
+      Collections.emptyMap[Column, Literal](),
+      Collections.emptyMap[Column, java.lang.Long](),
+      Optional.empty())
+
+    val exception = intercept[KernelException] {
+      stats.serializeAsJson(schema)
+    }
+
+    val expectedMessage = "Type mismatch for field 'variant' when writing statistics" +
+      ": expected string, but found integer"
+    assert(exception.getMessage === expectedMessage)
+  }
+
 }

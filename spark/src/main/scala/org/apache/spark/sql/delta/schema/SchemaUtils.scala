@@ -42,7 +42,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Exp
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumnsUtils}
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
-import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -140,19 +140,22 @@ object SchemaUtils extends DeltaLogging {
             Some(generateSelectExpr(f, nameStack :+ sf.name))
           }
         }
-        struct(nested: _*).alias(sf.name)
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
+        when(col(colName).isNull, null)
+          .otherwise(struct(nested: _*))
+          .alias(sf.name)
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "NullType"))
       case _ =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         col(colName).alias(sf.name)
     }
 
@@ -1499,7 +1502,7 @@ def normalizeColumnNamesInDataType(
    * Returns 'true' if any VariantType exists in the table schema.
    */
   def checkForVariantTypeColumnsRecursively(schema: StructType): Boolean = {
-    SchemaUtils.typeExistsRecursively(schema)(VariantShims.isVariantType(_))
+    SchemaUtils.typeExistsRecursively(schema)(_.isInstanceOf[VariantType])
   }
 
   /**
@@ -1534,7 +1537,7 @@ def normalizeColumnNamesInDataType(
     case DateType =>
     case TimestampType =>
     case TimestampNTZType =>
-    case dt if VariantShims.isVariantType(dt) =>
+    case dt if dt.isInstanceOf[VariantType] =>
     case BinaryType =>
     case _: DecimalType =>
     case a: ArrayType =>
@@ -1684,7 +1687,13 @@ def normalizeColumnNamesInDataType(
             attributeNameParts
           }
         }
-        .map(columnParts => UnresolvedAttribute(columnParts).name)
+        .map(columnParts =>
+          if (SparkSession.active.conf.get(DeltaSQLConf.DELTA_RENAME_COLUMN_ESCAPE_NAME)) {
+            UnresolvedAttribute(columnParts).sql
+          } else {
+            UnresolvedAttribute(columnParts).name
+          }
+        )
       Map(deltaConfig -> deltaColumnsPath.mkString(","))
     }.getOrElse(Map.empty[String, String])
   }

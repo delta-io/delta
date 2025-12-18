@@ -62,7 +62,8 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
     val legacyPostDeserializationCommitInfo =
       JsonUtils.mapper.readValue[ActionWrapper](commitInfoSerialized).commitInfo
     val legacyOperationParametersActual =
-      roundTrippedCommitInfo.getLegacyPostDeserializationOperationParameters
+      CommitInfo.getLegacyPostDeserializationOperationParameters(
+        roundTrippedCommitInfo.operationParameters)
     assert(
       legacyOperationParametersActual == legacyPostDeserializationCommitInfo.operationParameters)
   }
@@ -237,6 +238,7 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
         s"${allOperations -- ignoredOperationClasses -- trackedOperationClasses.keySet}"
     )
   }
+
 }
 
 /**

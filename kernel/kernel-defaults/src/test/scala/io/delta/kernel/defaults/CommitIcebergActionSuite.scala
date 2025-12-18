@@ -23,7 +23,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Table, Transaction}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtilsWithV1Builders, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.{TableConfig, TableImpl}
@@ -40,7 +40,13 @@ import org.apache.spark.sql.delta.DeltaLog
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
+class CommitIcebergActionTransactionBuilderV1Suite extends AbstractCommitIcebergActionSuite
+    with WriteUtilsWithV1Builders {}
+
+class CommitIcebergActionTransactionBuilderV2Suite extends AbstractCommitIcebergActionSuite
+    with WriteUtilsWithV2Builders {}
+
+trait AbstractCommitIcebergActionSuite extends AnyFunSuite { self: AbstractWriteUtils =>
 
   private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
@@ -109,10 +115,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         val properties = if (version == "V1") tblPropertiesIcebergWriterCompatV1Enabled
         else tblPropertiesIcebergWriterCompatV3Enabled
 
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testSchema)
-          .withTableProperties(engine, properties.asJava)
-          .build(engine)
+        val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = properties)
         intercept[UnsupportedOperationException] {
           createIcebergCompatAction(
             "ADD",
@@ -136,10 +139,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
     test(s"$version: requires that icebergWriterCompat${version} enabled") {
       withTempDirAndEngine { (tablePath, engine) =>
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testSchema)
-          .withMaxRetries(0)
-          .build(engine)
+        val txn = getCreateTxn(engine, tablePath, testSchema, maxRetries = 0)
         intercept[UnsupportedOperationException] {
           createIcebergCompatAction(
             "ADD",
@@ -166,12 +166,13 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         val properties = if (version == "V1") tblPropertiesIcebergWriterCompatV1Enabled
         else tblPropertiesIcebergWriterCompatV3Enabled
 
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testPartitionSchema)
-          .withTableProperties(engine, properties.asJava)
-          .withMaxRetries(0)
-          .withPartitionColumns(engine, testPartitionColumns.asJava)
-          .build(engine)
+        val txn = getCreateTxn(
+          engine,
+          tablePath,
+          testPartitionSchema,
+          testPartitionColumns,
+          properties,
+          maxRetries = 0)
         intercept[UnsupportedOperationException] {
           createIcebergCompatAction(
             "ADD",
@@ -198,11 +199,8 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         val properties = if (version == "V1") tblPropertiesIcebergWriterCompatV1Enabled
         else tblPropertiesIcebergWriterCompatV3Enabled
 
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testSchema)
-          .withTableProperties(engine, properties.asJava)
-          .withMaxRetries(0)
-          .build(engine)
+        val txn =
+          getCreateTxn(engine, tablePath, testSchema, tableProperties = properties, maxRetries = 0)
         intercept[KernelException] {
           createIcebergCompatAction(
             "ADD",
@@ -339,7 +337,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Append 1 add with dataChange = true
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",
@@ -357,7 +355,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         // Append 1 add with dataChange = false (in theory this could involve updating stats but
         // once we support remove add a case that looks like optimize/compaction)
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",
@@ -417,7 +415,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Append 1 add with dataChange = true
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",
@@ -434,7 +432,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Re-arrange data by removing that Add and adding a new Add
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "REMOVE",
@@ -458,7 +456,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Remove that add so that the table is empty
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "REMOVE",
@@ -527,7 +525,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Append 1 add with dataChange = true
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",
@@ -545,7 +543,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         // Re-arrange data by removing that Add and adding a new Add
         // (can commit remove with dataChange=false)
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "REMOVE",
@@ -569,7 +567,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Cannot create remove with dataChange=true
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           intercept[KernelException] {
             createIcebergCompatAction(
               "REMOVE",
@@ -599,7 +597,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         val tags = Map("tag1" -> "abc", "tag2" -> "def")
 
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",

@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
-import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -114,6 +113,9 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         ignoreIfExists = false,
         validateLocation = false)
     }
+    if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
+      spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)
+    }
   }
 
   /** Clean up the information we pass on to store in the catalog. */
@@ -170,6 +172,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    */
   protected def isV1Writer: Boolean = {
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      Relocated.dataFrameWriterClassName + "."))
+      classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
   }
 }

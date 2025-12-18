@@ -176,6 +176,18 @@ public final class FileNames {
     return multiPartCheckpointPartAndNumParts(new Path(path));
   }
 
+  /////////////////////
+  // Directory paths //
+  /////////////////////
+
+  public static String stagedCommitDirectory(Path logPath) {
+    return new Path(logPath, STAGED_COMMIT_DIRECTORY).toString();
+  }
+
+  public static String sidecarDirectory(Path logPath) {
+    return new Path(logPath, SIDECAR_DIRECTORY).toString();
+  }
+
   ///////////////////////////////////
   // File path and prefix builders //
   ///////////////////////////////////

@@ -1,0 +1,16 @@
+{
+  "adds": [
+    {
+      "path": "part-00000-c9f44819-b06d-45dd-b33d-ae9aa1b96909-c000.snappy.parquet",
+      "size": 996,
+      "modification_time": 1712091396057,
+      "stats": "{\"numRecords\":3,\"minValues\":{\"letter\":\"a\",\"number\":1,\"a_float\":1.1},\"maxValues\":{\"letter\":\"c\",\"number\":3,\"a_float\":3.3},\"nullCount\":{\"letter\":0,\"number\":0,\"a_float\":0}}"
+    },
+    {
+      "path": "part-00000-a9daef62-5a40-43c5-ac63-3ad4a7d749ae-c000.snappy.parquet",
+      "size": 984,
+      "modification_time": 1712091404545,
+      "stats": "{\"numRecords\":2,\"minValues\":{\"letter\":\"d\",\"number\":4,\"a_float\":4.4},\"maxValues\":{\"letter\":\"e\",\"number\":5,\"a_float\":5.5},\"nullCount\":{\"letter\":0,\"number\":0,\"a_float\":0}}"
+    }
+  ]
+}

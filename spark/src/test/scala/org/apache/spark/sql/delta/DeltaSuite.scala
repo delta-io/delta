@@ -20,7 +20,6 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
@@ -202,6 +201,44 @@ class DeltaSuite extends QueryTest
     // append more
     Seq(4, 5, 6).toDF().write.format("delta").mode("append").save(tempDir.toString)
     checkAnswer(data.toDF(), Row(1) :: Row(2) :: Row(3) :: Row(4) :: Row(5) :: Row(6) :: Nil)
+  }
+
+  test("null struct with NullType field kept as null") {
+    withTempTable(createTable = false) { tableName =>
+      Seq(((null, 2), 1), (null, 2)).toDF("key", "value")
+        .write.format("delta").saveAsTable(tableName)
+
+      // Evolve the schema because tables with NullType columns cannot be read currently.
+      Seq(((10, 10), 10)).toDF("key", "value")
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .saveAsTable(tableName)
+
+      // Confirm struct value stays as null (fields are not set to null).
+      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"value" === 2)
+      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
+  }
+
+  test("null struct with NullType field, with backticks in the column name, kept as null") {
+    withTempTable(createTable = false) { tableName =>
+      Seq(((null, 2), 1), (null, 2)).toDF("key`", "val`ue")
+        .write.format("delta").saveAsTable(tableName)
+
+      // Evolve the schema because tables with NullType columns cannot be read currently.
+      Seq(((10, 10), 10)).toDF("key`", "val`ue")
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .saveAsTable(tableName)
+
+      // Confirm struct value stays as null (fields are not set to null).
+      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"`val``ue`" === 2)
+      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
   }
 
   test("partitioned append - nulls") {
@@ -1492,7 +1529,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().collect()
         }
-        assert(thrown.getMessage.contains(THROWS_ON_CORRUPTED_FILE_ERROR_MSG))
+        assert(thrown.getMessage.contains("[FAILED_READ_FILE.NO_HINT]"))
       }
     }
   }
@@ -1544,7 +1581,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().collect()
       }
-      assert(thrown.getMessage.contains(THROWS_ON_DELETED_FILE_ERROR_MSG))
+      assert(thrown.getMessage.contains("[FAILED_READ_FILE.FILE_NOT_EXIST]"))
     }
   }
 

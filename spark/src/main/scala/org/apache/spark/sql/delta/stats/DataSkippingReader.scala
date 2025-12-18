@@ -307,15 +307,50 @@ trait DataSkippingReaderBase
 
     // Main function for building data filters.
     def apply(dataFilter: Expression): Option[DataSkippingPredicate] =
-      constructDataFilters(dataFilter)
+      constructDataFilters(dataFilter, isNullExpansionDepth = 0)
+
+    /**
+     * Helper function to construct a [[DataSkippingPredicate]] for an IsNull predicate on
+     * null-intolerant expressions that are guaranteed to return non-null results for non-null
+     * inputs. This method is only valid *if and only if* the passed-in expression returns null
+     * for any null children. That is, if all children are non-null, the expression *must* return
+     * a non-null result.
+     * @param expr Expression to push down IsNull into.
+     * @return A [[DataSkippingPredicate]] that's the result of pushing IsNull down into expr's
+     *         children.
+     */
+    protected def constructIsNullFilterForNullIntolerant(
+        expr: Expression,
+        isNullExpansionDepth: Int): Option[DataSkippingPredicate] = {
+      val filters = expr.children.map {
+        // Resolve literal children directly. constructDataFilters does not support skipping on
+        // literal-only children.
+        case l: Literal =>
+          if (l.value == null) {
+            Some(DataSkippingPredicate(trueLiteral))
+          } else {
+            Some(DataSkippingPredicate(falseLiteral))
+          }
+        case c => constructDataFilters(IsNull(c), isNullExpansionDepth)
+      }
+      filters.reduceOption { (a, b) =>
+        (a, b) match {
+          case (Some(a), Some(b)) =>
+            Some(DataSkippingPredicate(a.expr || b.expr, a.referencedStats ++ b.referencedStats))
+          case _ => None
+        }
+      }.flatten
+    }
 
     // Helper method for expression types that represent an IN-list of literal values.
     //
     //
     // For excessively long IN-lists, we just test whether the file's min/max range overlaps the
     // range spanned by the list's smallest and largest elements.
-    private def constructLiteralInListDataFilters(a: Expression, possiblyNullValues: Seq[Any]):
-        Option[DataSkippingPredicate] = {
+    private def constructLiteralInListDataFilters(
+        a: Expression,
+        possiblyNullValues: Seq[Any],
+        isNullExpansionDepth: Int): Option[DataSkippingPredicate] = {
       // The Ordering we use for sorting cannot handle null values, and these can anyway
       // be safely ignored because they will never cause an IN-list predicate to return TRUE.
       val values = possiblyNullValues.filter(_ != null)
@@ -341,7 +376,8 @@ trait DataSkippingReaderBase
         // Emit filters for an imprecise range test that covers the entire entire list.
         val min = Literal(values.min(ordering), dt)
         val max = Literal(values.max(ordering), dt)
-        constructDataFilters(And(GreaterThanOrEqual(max, a), LessThanOrEqual(min, a)))
+        constructDataFilters(
+          And(GreaterThanOrEqual(max, a), LessThanOrEqual(min, a)), isNullExpansionDepth)
       }
     }
 
@@ -425,7 +461,8 @@ trait DataSkippingReaderBase
      * both NULL -- which indicates that all values in the file are NULL. Fortunately, most of the
      * operators we support data skipping for are NULL intolerant, and thus trivially satisfy this
      * requirement because they never return TRUE for NULL inputs. The only NULL tolerant operator
-     * we support -- IS [NOT] NULL -- is specifically NULL aware.
+     * we support -- IS [NOT] NULL -- is specifically NULL aware. AND and OR are also considered
+     * null tolerant, and have special-cased handling of null pushdowns.
      *
      * NOTE: The skipping predicate does *NOT* need to worry about missing stats columns (which also
      * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
@@ -435,8 +472,9 @@ trait DataSkippingReaderBase
      * that the dataFilter Expression is not eligible for data skipping, i.e. we cannot skip any
      * files.
      */
-    private[stats] def constructDataFilters(dataFilter: Expression):
-        Option[DataSkippingPredicate] = dataFilter match {
+    private[stats] def constructDataFilters(
+        dataFilter: Expression,
+        isNullExpansionDepth: Integer): Option[DataSkippingPredicate] = dataFilter match {
       // Expressions that contain only literals are not eligible for skipping.
       case cmp: Expression if cmp.children.forall(areAllLeavesLiteral) => None
 
@@ -456,8 +494,8 @@ trait DataSkippingReaderBase
       // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to TRUE,
       // even if we cannot construct a skipping filter for the other leg.
       case And(e1, e2) =>
-        val e1Filter = constructDataFilters(e1)
-        val e2Filter = constructDataFilters(e2)
+        val e1Filter = constructDataFilters(e1, isNullExpansionDepth)
+        val e2Filter = constructDataFilters(e2, isNullExpansionDepth)
         if (e1Filter.isDefined && e2Filter.isDefined) {
           Some(DataSkippingPredicate(
             e1Filter.get.expr && e2Filter.get.expr,
@@ -490,7 +528,7 @@ trait DataSkippingReaderBase
       // F N F T T
       // N N N N N
       case Not(And(e1, e2)) =>
-        constructDataFilters(Or(Not(e1), Not(e2)))
+        constructDataFilters(Or(Not(e1), Not(e2)), isNullExpansionDepth)
 
       // Push skipping predicate generation through OR (similar to AND case).
       //
@@ -505,8 +543,8 @@ trait DataSkippingReaderBase
       // Unlike AND, a single leg of an OR expression provides no filtering power -- we can only
       // reject a file if both legs evaluate to false.
       case Or(e1, e2) =>
-        val e1Filter = constructDataFilters(e1)
-        val e2Filter = constructDataFilters(e2)
+        val e1Filter = constructDataFilters(e1, isNullExpansionDepth)
+        val e2Filter = constructDataFilters(e2, isNullExpansionDepth)
         if (e1Filter.isDefined && e2Filter.isDefined) {
           Some(DataSkippingPredicate(
             e1Filter.get.expr || e2Filter.get.expr,
@@ -517,7 +555,7 @@ trait DataSkippingReaderBase
 
       // Similar to AND, we can (and want to) push the NOT past the OR using deMorgan's law.
       case Not(Or(e1, e2)) =>
-        constructDataFilters(And(Not(e1), Not(e2)))
+        constructDataFilters(And(Not(e1), Not(e2)), isNullExpansionDepth)
 
       // Match any file whose null count is larger than zero.
       // Note DVs might result in a redundant read of a file.
@@ -526,74 +564,121 @@ trait DataSkippingReaderBase
         statsProvider.getPredicateWithStatTypeIfExists(a, dt, NULL_COUNT) { nullCount =>
           nullCount > Literal(0L)
         }
+      // For these null-intolerant expressions, any null input resolves into a null output. In
+      // addition, these expressions are special in that a null output is only possible if one of
+      // the inputs was a NULL. Push down the IsNull operator to all children and return a
+      // DataSkippingPredicate that's the Or of all child expressions.
+      case IsNull(e @ (_: GreaterThan | _: GreaterThanOrEqual | _: LessThan | _: LessThanOrEqual |
+          _: EqualTo | _: Not | _: StartsWith)) if spark.conf.get(
+            DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED) =>
+        constructIsNullFilterForNullIntolerant(e, isNullExpansionDepth)
+      // And and Or necessitate custom pushdown logic for IsNull, as both expressions are not
+      // considered null intolerant. Note that since the child expressions are duplicated in the
+      // expanded expression, we need to track the depth of the expansion in this function's
+      // signature to avoid exponential growth of the expression tree if the child expressions are
+      // themselves And/Or expressions.
+      case IsNull(And(left, right)) if spark.conf.get(
+          DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED) && (isNullExpansionDepth <=
+            spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH)) =>
+        // The result of an AND is only Null if either operand is a Null, and the other operand is
+        // True.
+        constructDataFilters(
+          And(
+            Or(IsNull(left), IsNull(right)),
+            Not(
+              Or(
+                EqualNullSafe(left, FalseLiteral),
+                EqualNullSafe(right, FalseLiteral)
+              )
+            )
+          ),
+          isNullExpansionDepth = isNullExpansionDepth + 1
+        )
+      case IsNull(Or(left, right)) if spark.conf.get(
+          DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED) && (isNullExpansionDepth <=
+            spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH)) =>
+        // The result of an OR is only Null if either operand is a Null, _and_ neither operand is
+        // true.
+        constructDataFilters(
+          And(
+            Or(IsNull(left), IsNull(right)),
+            Not(
+              Or(
+                EqualNullSafe(left, TrueLiteral),
+                EqualNullSafe(right, TrueLiteral)
+              )
+            )
+          ),
+          isNullExpansionDepth = isNullExpansionDepth + 1
+        )
       case Not(IsNull(e)) =>
-        constructDataFilters(IsNotNull(e))
+        constructDataFilters(IsNotNull(e), isNullExpansionDepth)
 
       // Match any file whose null count is less than the row count.
       case IsNotNull(SkippingEligibleColumn(a, _)) =>
         constructNotNullFilter(statsProvider, a)
 
       case Not(IsNotNull(e)) =>
-        constructDataFilters(IsNull(e))
+        constructDataFilters(IsNull(e), isNullExpansionDepth)
 
       // Match any file whose min/max range contains the requested point.
       case EqualTo(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
         builder.equalTo(statsProvider, c, v)
       case EqualTo(v: Literal, a) =>
-        constructDataFilters(EqualTo(a, v))
+        constructDataFilters(EqualTo(a, v), isNullExpansionDepth)
 
       // Match any file whose min/max range contains anything other than the rejected point.
       case Not(EqualTo(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v))) =>
         builder.notEqualTo(statsProvider, c, v)
       case Not(EqualTo(v: Literal, a)) =>
-        constructDataFilters(Not(EqualTo(a, v)))
+        constructDataFilters(Not(EqualTo(a, v)), isNullExpansionDepth)
 
       // Rewrite `EqualNullSafe(a, NotNullLiteral)` as
       // `And(IsNotNull(a), EqualTo(a, NotNullLiteral))` and rewrite `EqualNullSafe(a, null)` as
       // `IsNull(a)` to let the existing logic handle it.
       case EqualNullSafe(a, v: Literal) =>
         val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
-        constructDataFilters(rewrittenExpr)
+        constructDataFilters(rewrittenExpr, isNullExpansionDepth)
       case EqualNullSafe(v: Literal, a) =>
-        constructDataFilters(EqualNullSafe(a, v))
+        constructDataFilters(EqualNullSafe(a, v), isNullExpansionDepth)
       case Not(EqualNullSafe(a, v: Literal)) =>
         val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
-        constructDataFilters(Not(rewrittenExpr))
+        constructDataFilters(Not(rewrittenExpr), isNullExpansionDepth)
       case Not(EqualNullSafe(v: Literal, a)) =>
-        constructDataFilters(Not(EqualNullSafe(a, v)))
+        constructDataFilters(Not(EqualNullSafe(a, v)), isNullExpansionDepth)
 
       // Match any file whose min is less than the requested upper bound.
       case LessThan(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
         builder.lessThan(statsProvider, c, v)
       case LessThan(v: Literal, a) =>
-        constructDataFilters(GreaterThan(a, v))
+        constructDataFilters(GreaterThan(a, v), isNullExpansionDepth)
       case Not(LessThan(a, b)) =>
-        constructDataFilters(GreaterThanOrEqual(a, b))
+        constructDataFilters(GreaterThanOrEqual(a, b), isNullExpansionDepth)
 
       // Match any file whose min is less than or equal to the requested upper bound
       case LessThanOrEqual(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
         builder.lessThanOrEqual(statsProvider, c, v)
       case LessThanOrEqual(v: Literal, a) =>
-        constructDataFilters(GreaterThanOrEqual(a, v))
+        constructDataFilters(GreaterThanOrEqual(a, v), isNullExpansionDepth)
       case Not(LessThanOrEqual(a, b)) =>
-        constructDataFilters(GreaterThan(a, b))
+        constructDataFilters(GreaterThan(a, b), isNullExpansionDepth)
 
       // Match any file whose max is larger than the requested lower bound.
       case GreaterThan(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
         builder.greaterThan(statsProvider, c, v)
       case GreaterThan(v: Literal, a) =>
-        constructDataFilters(LessThan(a, v))
+        constructDataFilters(LessThan(a, v), isNullExpansionDepth)
       case Not(GreaterThan(a, b)) =>
-        constructDataFilters(LessThanOrEqual(a, b))
+        constructDataFilters(LessThanOrEqual(a, b), isNullExpansionDepth)
 
       // Match any file whose max is larger than or equal to the requested lower bound.
       case GreaterThanOrEqual(
-          SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
         builder.greaterThanOrEqual(statsProvider, c, v)
       case GreaterThanOrEqual(v: Literal, a) =>
-        constructDataFilters(LessThanOrEqual(a, v))
+        constructDataFilters(LessThanOrEqual(a, v), isNullExpansionDepth)
       case Not(GreaterThanOrEqual(a, b)) =>
-        constructDataFilters(LessThan(a, b))
+        constructDataFilters(LessThan(a, b), isNullExpansionDepth)
 
       // Similar to an equality test, except comparing against a prefix of the min/max stats, and
       // neither commutative nor invertible.
@@ -605,22 +690,24 @@ trait DataSkippingReaderBase
 
       // We can only handle-IN lists whose values can all be statically evaluated to literals.
       case in @ In(a, values) if in.inSetConvertible =>
-        constructLiteralInListDataFilters(a, values.map(_.asInstanceOf[Literal].value))
+        constructLiteralInListDataFilters(
+          a, values.map(_.asInstanceOf[Literal].value), isNullExpansionDepth)
 
       // The optimizer automatically converts all but the shortest eligible IN-lists to InSet.
       case InSet(a, values) =>
-        constructLiteralInListDataFilters(a, values.toSeq)
+        constructLiteralInListDataFilters(a, values.toSeq, isNullExpansionDepth)
 
       // Treat IN(... subquery ...) as a normal IN-list, since the subquery already ran before now.
       case in: InSubqueryExec =>
         // At this point the subquery has been materialized, but values() can return None if
         // the subquery was bypassed at runtime.
-        in.values().flatMap(v => constructLiteralInListDataFilters(in.child, v.toSeq))
+        in.values().flatMap(v =>
+          constructLiteralInListDataFilters(in.child, v.toSeq, isNullExpansionDepth))
 
 
       // Remove redundant pairs of NOT
       case Not(Not(e)) =>
-        constructDataFilters(e)
+        constructDataFilters(e, isNullExpansionDepth)
 
       // WARNING: NOT is dangerous, because `Not(constructDataFilters(e))` is seldom equivalent to
       // `constructDataFilters(Not(e))`. We must special-case every `Not(e)` we wish to support.
@@ -659,8 +746,8 @@ trait DataSkippingReaderBase
      */
     private def shouldRewriteAsPartitionLike(expr: Expression): Boolean = expr match {
       // Expressions supported by traditional data skipping.
-      // Boolean operators. AND is explicitly handled by the caller.
-      case _: Not | _: Or => true
+      // Boolean operators.
+      case _: Not | _: Or | _: And => true
       // Comparison operators.
       case _: EqualNullSafe | _: EqualTo | _: GreaterThan | _: GreaterThanOrEqual | _: IsNull |
            _: IsNotNull | _: LessThan | _: LessThanOrEqual => true
@@ -799,20 +886,6 @@ trait DataSkippingReaderBase
               Some(InSet(rewrittenChildren, possiblyNullValues.toSet), referencedStats)
           }
         }
-      // Pushdown NOT through OR - we prefer AND to OR because AND can tolerate one branch not being
-      // rewriteable.
-      case Not(Or(e1, e2)) =>
-        rewriteDataFiltersAsPartitionLikeInternal(And(Not(e1), Not(e2)), clusteringColumnPaths)
-      // For AND expressions, we can tolerate one side not being eligible for partition-like
-      // data skipping - simply remove the ineligible side.
-      case And(left, right) =>
-        val leftResult = rewriteDataFiltersAsPartitionLikeInternal(left, clusteringColumnPaths)
-        val rightResult = rewriteDataFiltersAsPartitionLikeInternal(right, clusteringColumnPaths)
-        (leftResult, rightResult) match {
-          case (Some((newLeft, statsLeft)), Some((newRight, statsRight))) =>
-            Some((And(newLeft, newRight), statsLeft ++ statsRight))
-          case _ => leftResult.orElse(rightResult)
-        }
       // For all other eligible expressions, recursively rewrite the children.
       case other if shouldRewriteAsPartitionLike(other) =>
         val childResults = other.children.map(
@@ -886,14 +959,19 @@ trait DataSkippingReaderBase
           // min-max values or partial nulls on any of the referenced columns.
           val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
           val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
-          val statsCols = ArrayBuffer(numRecordsStatsCol)
-          val finalExpr = referencedStats.foldLeft(newExpr) {
-            case (oldExpr, resolvedReference) =>
-              val updatedExpr = Or(
-                oldExpr, fileMustBeScanned(resolvedReference, numRecordsColOpt))
-              statsCols ++= resolvedReference.referencedStatsCols
-              updatedExpr
-          }
+          val statsCols = referencedStats.flatMap(_.referencedStatsCols) + numRecordsStatsCol
+          val mustScanFileExpression = referencedStats.map { resolvedReference =>
+            fileMustBeScanned(resolvedReference, numRecordsColOpt)
+          }.toSeq.reduceLeftOption { (l, r) => Or(l, r) }.getOrElse(Literal(false))
+
+          // Only evaluate the rewritten expression if the file passes the validation expression,
+          // ensuring that any non-partition-like input (that might cause a filter evaluation
+          // exception) is skipped. Note that we cannot rely on short-circuiting here, since
+          // common subexpression elimination during codegen may move the evaluation of the
+          // condition before that of the file validation expression, so we need to explicitly use
+          // a conditional expression to guarantee the correct evaluation order.
+          val finalExpr = If(mustScanFileExpression, Literal(true), newExpr)
+
           // Create the final data skipping expression - read a file either if it's has nulls on any
           // referenced column, has mismatched stats on any referenced column, or the filter
           // expression evaluates to `true`.
@@ -901,10 +979,22 @@ trait DataSkippingReaderBase
       }
     }
 
-    private def areAllLeavesLiteral(e: Expression): Boolean = e match {
-      case _: Literal => true
-      case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
-      case _ => false
+    // We are doing the iterative approach because of stack depth concerns.
+    private[stats] def areAllLeavesLiteral(e: Expression): Boolean = {
+      val stack = scala.collection.mutable.Stack[Expression]()
+      def pushIfNonLiteral(e: Expression): Unit = e match {
+        case _: Literal =>
+        case _ => stack.push(e)
+      }
+      pushIfNonLiteral(e)
+      while (stack.nonEmpty) {
+        val children = stack.pop().children
+        if (children.isEmpty) {
+          return false
+        }
+        children.foreach(pushIfNonLiteral)
+      }
+      true
     }
   }
 
@@ -1243,8 +1333,12 @@ trait DataSkippingReaderBase
     // For data skipping, avoid using the filters that either:
     // 1. involve subqueries.
     // 2. are non-deterministic.
+    // 3. involve file metadata struct fields
     var (ineligibleFilters, eligibleFilters) = filters.partition {
-      case f => containsSubquery(f) || !f.deterministic
+      case f => containsSubquery(f) || !f.deterministic || f.exists {
+        case MetadataAttribute(_) => true
+        case _ => false
+      }
     }
 
 

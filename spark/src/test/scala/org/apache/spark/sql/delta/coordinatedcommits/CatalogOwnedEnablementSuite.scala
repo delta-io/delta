@@ -16,11 +16,11 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.io.File
 import java.util.UUID
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.DeltaOperations._
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -37,7 +37,7 @@ class CatalogOwnedEnablementSuite
   with DeltaTestUtilsBase
   with DeltaExceptionTestUtils {
 
-  override def beforeEach(): Unit = {
+  override protected def beforeEach(): Unit = {
     super.beforeEach()
     CatalogOwnedCommitCoordinatorProvider.clearBuilders()
     CatalogOwnedCommitCoordinatorProvider.registerBuilder(
@@ -59,7 +59,7 @@ class CatalogOwnedEnablementSuite
   private def validateCatalogOwnedCompleteEnablement(
       tableName: String,
       expectEnabled: Boolean): Unit = {
-    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+    val (_, snapshot) = getDeltaLogWithSnapshot(TableIdentifier(tableName))
     assert(snapshot.isCatalogOwned == expectEnabled)
     Seq(
       CatalogOwnedTableFeature,
@@ -76,6 +76,20 @@ class CatalogOwnedEnablementSuite
     }
   }
 
+  protected def commitCoordinatorName: String =
+    CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING
+
+  protected def createTable(
+      tableName: String,
+      properties: Map[String, String] = Map.empty): Unit = {
+    var stmt = s"CREATE TABLE $tableName (id INT) USING delta "
+    if (properties.nonEmpty) {
+      val kv = properties.map { case (k, v) => s"'$k' = '$v'" }.mkString(", ")
+      stmt += s"TBLPROPERTIES ($kv)"
+    }
+    sql(stmt)
+  }
+
   /**
    * Helper function to set up and validate the initial table to be tested
    * for Catalog Owned enablement.
@@ -88,10 +102,10 @@ class CatalogOwnedEnablementSuite
       tableName: String,
       createCatalogOwnedTableAtInit: Boolean): Unit = {
     if (createCatalogOwnedTableAtInit) {
-      spark.sql(s"CREATE TABLE $tableName (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      createTable(tableName, properties = Map(
+        s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported"))
     } else {
-      spark.sql(s"CREATE TABLE $tableName (id INT) USING delta")
+      createTable(tableName)
     }
     // Insert initial data to the table
     spark.sql(s"INSERT INTO $tableName VALUES 1") // commit 1
@@ -146,6 +160,11 @@ class CatalogOwnedEnablementSuite
         )
       } else if (field == "checksumOpt" || field == "properties") {
         // Validate a portion of the entire `checksumOpt` or `properties` map.
+        if (expectedValue == null) {
+          assert(usageLogBlob(field) == null,
+            s"Field '$field' should be null but was '${usageLogBlob(field)}'")
+          return
+        }
         val properties = expectedValue.asInstanceOf[Map[String, Any]]
         properties.foreach { case (key, value) =>
           assert(
@@ -161,6 +180,82 @@ class CatalogOwnedEnablementSuite
     }
   }
 
+  /**
+   * Helper function to validate usage log for commit coordinator population when path-based access
+   * is blocked.
+   */
+  private def validateInvalidPathBasedAccessUsageLog(
+      tempDir: File,
+      expectedVersion: String,
+      expectedChecksumOpt: Any,
+      sqlConf: Map[String, String] = Map.empty): Unit = {
+    val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+
+    val usageLog = Log4jUsageLogger.track {
+      val error = intercept[DeltaIllegalStateException] {
+        withSQLConf(sqlConf.toSeq: _*) {
+          sql(s"INSERT INTO TABLE delta.`$tempDir` VALUES (1), (2), (3)")
+        }
+      }
+      checkError(
+        error,
+        "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED",
+        sqlState = "KD00G",
+        parameters = Map("path" -> log.logPath.toString))
+    }.filter { log =>
+      log.metric == "tahoeEvent" &&
+        log.tags.getOrElse("opType", null) ==
+          CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS
+    }
+
+    assert(usageLog.nonEmpty, "Should have usage log for INVALID_PATH_BASED_ACCESS scenario")
+    val usageLogBlob = JsonUtils.fromJson[Map[String, Any]](usageLog.head.blob)
+
+    val logStore =
+      "org.apache.spark.sql.delta.storage.DelegatingLogStore"
+
+    validateUsageLogBlob(
+      usageLogBlob,
+      expectedPresentFields = Seq(
+        "path",
+        "version",
+        "stackTrace",
+        "latestCheckpointVersion",
+        "checksumOpt",
+        "properties",
+        "logStore"
+      ),
+      expectedAbsentFields = Seq(
+        "catalogTable.identifier",
+        "catalogTable.tableType",
+        "commitCoordinator.getClass"
+      ),
+      expectedValues = Map(
+        "path" -> log.logPath.toString,
+        "version" -> expectedVersion,
+        "stackTrace" ->
+          ("org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils$" +
+            ".recordCommitCoordinatorPopulationUsageLog"),
+        "latestCheckpointVersion" -> -1,
+        // Only check for certain fields of `checksumOpt` since the entire map
+        // is too large to validate.
+        "checksumOpt" -> expectedChecksumOpt,
+        "properties" -> Map(
+          "delta.minReaderVersion" -> "3",
+          "delta.minWriterVersion" -> "7",
+          "delta.feature.appendOnly" -> "supported",
+          "delta.feature.invariants" -> "supported",
+          // To avoid potential naming change in the future.
+          s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported",
+          "delta.feature.inCommitTimestamp" -> "supported",
+          "delta.feature.vacuumProtocolCheck" -> "supported",
+          "delta.enableInCommitTimestamps" -> "true"
+        ),
+        "logStore" -> logStore
+      )
+    )
+  }
+
   test("ALTER TABLE should be blocked if attempts to disable ICT") {
     withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
       val error = interceptWithUnwrapping[DeltaIllegalArgumentException] {
@@ -168,7 +263,7 @@ class CatalogOwnedEnablementSuite
       }
       checkError(
         error,
-        "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+        "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map[String, String]())
     }
@@ -181,7 +276,7 @@ class CatalogOwnedEnablementSuite
       }
       checkError(
         error,
-        "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+        "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map[String, String]())
     }
@@ -249,7 +344,7 @@ class CatalogOwnedEnablementSuite
       assert(commitStats.coordinatedCommitsInfo ===
         CoordinatedCommitsStats(
           coordinatedCommitsType = CoordinatedCommitType.CO_COMMIT.toString,
-          commitCoordinatorName = "spark_catalog",
+          commitCoordinatorName = commitCoordinatorName,
           commitCoordinatorConf = Map.empty))
     }
   }
@@ -258,8 +353,8 @@ class CatalogOwnedEnablementSuite
        "CatalogOwned table") {
     withTable("t1") {
       val usageLog = Log4jUsageLogger.track {
-        sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
-          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        createTable("t1", properties = Map(
+          s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported"))
       }
       val commitStatsUsageLog = filterUsageRecords(usageLog, "delta.commit.stats")
       val commitStats = JsonUtils.fromJson[CommitStats](commitStatsUsageLog.head.blob)
@@ -277,73 +372,20 @@ class CatalogOwnedEnablementSuite
     // populating the commit coordinator.
     clearBuilders()
     withTempDir { tempDir =>
-      val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
       // Create a path-based table so that we can simulate the scenario
       // where catalog table is not available.
-      sql(s"CREATE TABLE delta.`$tempDir` (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
-      val usageLog = Log4jUsageLogger.track {
-        val error = intercept[IllegalStateException] {
-          // Hence, we simply ignore the exception and focus on the usage log validation.
-          sql(s"INSERT INTO TABLE delta.`$tempDir` VALUES (1), (2), (3)")
-        }
-        assert(error.getMessage.contains(
-          "Path based access is not supported for Catalog-Owned table"))
-      }.filter { log =>
-        log.metric == "tahoeEvent" &&
-          log.tags.getOrElse("opType", null) ==
-            CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS
-      }
-
-      assert(usageLog.nonEmpty, "Should have usage log for INVALID_PATH_BASED_ACCESS scenario")
-      val usageLogBlob = JsonUtils.fromJson[Map[String, Any]](usageLog.head.blob)
-
-      val logStore =
-        "org.apache.spark.sql.delta.storage.DelegatingLogStore"
-
-      validateUsageLogBlob(
-        usageLogBlob,
-        expectedPresentFields = Seq(
-          "path",
-          "version",
-          "stackTrace",
-          "latestCheckpointVersion",
-          "checksumOpt",
-          "properties",
-          "logStore"
-        ),
-        expectedAbsentFields = Seq(
-          "catalogTable.identifier",
-          "catalogTable.tableType",
-          "commitCoordinator.getClass"
-        ),
-        expectedValues = Map(
-          "path" -> log.logPath.toString,
-          "version" -> "0",
-          "stackTrace" ->
-            ("org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils$" +
-             ".recordCommitCoordinatorPopulationUsageLog"),
-          "latestCheckpointVersion" -> -1,
-          // Only check for certain fields of `checksumOpt` since the entire map
-          // is too large to validate.
-          "checksumOpt" -> Map(
-            "tableSizeBytes" -> 0,
-            "numFiles" -> 0,
-            "numMetadata" -> 1,
-            "allFiles" -> List.empty
-          ),
-          "properties" -> Map(
-            "delta.minReaderVersion" -> "3",
-            "delta.minWriterVersion" -> "7",
-            "delta.feature.appendOnly" -> "supported",
-            "delta.feature.invariants" -> "supported",
-            // To avoid potential naming change in the future.
-            s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported",
-            "delta.feature.inCommitTimestamp" -> "supported",
-            "delta.feature.vacuumProtocolCheck" -> "supported",
-            "delta.enableInCommitTimestamps" -> "true"
-          ),
-          "logStore" -> logStore
+      createTable(s"delta.`$tempDir`", properties = Map(
+        s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported"))
+      validateInvalidPathBasedAccessUsageLog(
+        tempDir,
+        expectedVersion = "0",
+        // Only check for certain fields of `checksumOpt` since the entire map
+        // is too large to validate.
+        expectedChecksumOpt = Map(
+          "tableSizeBytes" -> 0,
+          "numFiles" -> 0,
+          "numMetadata" -> 1,
+          "allFiles" -> List.empty
         )
       )
     }

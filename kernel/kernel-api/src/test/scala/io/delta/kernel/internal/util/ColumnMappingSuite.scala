@@ -198,7 +198,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
     (Array("i"), new MapType(StringType.STRING, DoubleType.DOUBLE, false)),
     (Array("j"), new ArrayType(StringType.STRING, false))).foreach {
     case (columnName, expectedType) =>
-      test(s"get physical column name and dataType for $columnName") {
+      test(s"get physical column name and dataType for ${columnName.mkString(".")}") {
         // case 1: column mapping disabled
         val column = new Column(columnName)
         val resultTuple =
@@ -209,7 +209,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         assert(actualColumn == column)
         assert(actualType == expectedType)
 
-        // case 2: column mapping disabled
+        // case 2: column mapping enabled
         val metadata: Metadata = updateColumnMappingMetadataIfNeeded(
           testMetadata(testingSchema).withColumnMappingEnabled("id"),
           true).orElseGet(() => fail("Metadata should not be empty"))
@@ -221,6 +221,13 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         val actualPhysicalType = physicalResultTuple._2
         assert(actualPhysicalColumn.getNames.length == columnName.length)
         assert(actualPhysicalType == expectedType)
+
+        // case 3: round-trip test - physical back to logical
+        val logicalResultTuple = ColumnMapping.getLogicalColumnNameAndDataType(
+          metadata.getSchema,
+          actualPhysicalColumn)
+        assert(logicalResultTuple._1 == column)
+        assert(logicalResultTuple._2 == expectedType)
       }
   }
 
@@ -233,7 +240,8 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
     (Array("I"), Array("i"), new MapType(StringType.STRING, DoubleType.DOUBLE, false)),
     (Array("J"), Array("j"), new ArrayType(StringType.STRING, false))).foreach {
     case (inputColumnName, expectedColumnName, expectedType) =>
-      test(s"get physical column name should respect case of table schema, $inputColumnName") {
+      val inputColumnNameStr = inputColumnName.mkString(".")
+      test(s"get physical column name should respect case of table schema, $inputColumnNameStr") {
 
         val column = new Column(inputColumnName)
         val resultTuple =
@@ -268,6 +276,103 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         new Column(Array("Bbb", "d")))
     }
     assert(ex1.getMessage.contains("Column 'column(`Bbb`.`d`)' was not found in the table schema"))
+  }
+
+  test("getLogicalColumnNameAndDataType: without column mapping") {
+    val logicalTuple = ColumnMapping.getLogicalColumnNameAndDataType(
+      testingSchema,
+      new Column(Array("b", "c")))
+
+    assert(logicalTuple._1 === new Column(Array("b", "c")))
+    assert(logicalTuple._2 === DoubleType.DOUBLE)
+  }
+
+  test("getLogicalColumnNameAndDataType: with column mapping") {
+    val metadata = updateColumnMappingMetadataIfNeeded(
+      testMetadata(testingSchema).withColumnMappingEnabled("id"),
+      true).orElseGet(() => fail("Metadata should not be empty"))
+
+    // Test simple column lookup
+    {
+      val physicalTuple = ColumnMapping.getPhysicalColumnNameAndDataType(
+        metadata.getSchema,
+        new Column("a"))
+      val physicalColumn = physicalTuple._1
+
+      val logicalTuple = ColumnMapping.getLogicalColumnNameAndDataType(
+        metadata.getSchema,
+        physicalColumn)
+
+      assert(logicalTuple._1 === new Column("a"))
+      assert(logicalTuple._2 === StringType.STRING)
+    }
+
+    // Test nested column lookup
+    {
+      val physicalTuple = ColumnMapping.getPhysicalColumnNameAndDataType(
+        metadata.getSchema,
+        new Column(Array("b", "c")))
+      val physicalColumn = physicalTuple._1
+
+      val logicalTuple = ColumnMapping.getLogicalColumnNameAndDataType(
+        metadata.getSchema,
+        physicalColumn)
+
+      assert(logicalTuple._1 === new Column(Array("b", "c")))
+      assert(logicalTuple._2 === DoubleType.DOUBLE)
+    }
+  }
+
+  test("getLogicalColumnNameAndDataType: with column mapping + explicit physical schema") {
+    // Create a simple schema with explicit physical column names
+    val schemaWithPhysicalNames = new StructType()
+      .add(new StructField(
+        "logicalCol",
+        StringType.STRING,
+        true,
+        FieldMetadata.builder()
+          .putLong(COLUMN_MAPPING_ID_KEY, 1L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-uuid-123")
+          .build()))
+      .add(new StructField(
+        "nestedStruct",
+        new StructType()
+          .add(new StructField(
+            "innerCol",
+            IntegerType.INTEGER,
+            true,
+            FieldMetadata.builder()
+              .putLong(COLUMN_MAPPING_ID_KEY, 3L)
+              .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-uuid-456")
+              .build())),
+        true,
+        FieldMetadata.builder()
+          .putLong(COLUMN_MAPPING_ID_KEY, 2L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-uuid-789")
+          .build()))
+
+    // Test simple column lookup
+    val simpleResult = ColumnMapping.getLogicalColumnNameAndDataType(
+      schemaWithPhysicalNames,
+      new Column("col-uuid-123"))
+    assert(simpleResult._1 === new Column("logicalCol"))
+    assert(simpleResult._2 === StringType.STRING)
+
+    // Test nested column lookup
+    val nestedResult = ColumnMapping.getLogicalColumnNameAndDataType(
+      schemaWithPhysicalNames,
+      new Column(Array("col-uuid-789", "col-uuid-456")))
+    assert(nestedResult._1 === new Column(Array("nestedStruct", "innerCol")))
+    assert(nestedResult._2 === IntegerType.INTEGER)
+  }
+
+  test("getLogicalColumnNameAndDataType: exception when physical column not found") {
+    val ex = intercept[KernelException] {
+      ColumnMapping.getLogicalColumnNameAndDataType(
+        testingSchema,
+        new Column("foo"))
+    }
+    assert(ex.getMessage.contains("Column 'column(`foo`)' was not found in the table schema"))
   }
 
   Seq(true, false).foreach { isNewTable =>

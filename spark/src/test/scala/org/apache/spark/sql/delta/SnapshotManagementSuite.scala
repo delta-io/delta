@@ -24,7 +24,6 @@ import scala.collection.mutable
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
-import org.apache.spark.sql.delta.SnapshotManagementSuiteShims._
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -204,7 +203,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
           // Guava cache wraps the root cause
           assert(e.isInstanceOf[SparkException] &&
             e.getMessage.contains("0001.checkpoint") &&
-            e.getMessage.contains(SHOULD_NOT_RECOVER_CHECKPOINT_ERROR_MSG))
+            e.getMessage.contains("Encountered error while reading file"))
         }
       }
     }
@@ -261,7 +260,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         val e = intercept[SparkException] { staleLog.update() }
         val version = if (testEmptyCheckpoint) 0 else 1
         assert(e.getMessage.contains(f"$version%020d.checkpoint") &&
-          e.getMessage.contains(SHOULD_NOT_RECOVER_CHECKPOINT_ERROR_MSG))
+          e.getMessage.contains("Encountered error while reading file"))
       }
     }
   }
@@ -620,6 +619,24 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       deltaLog.snapshot.uncache()
 
       spark.read.format("delta").load(path).collect()
+    }
+  }
+
+  test("getUpdatedLogSegment without new files returns the original log segment") {
+    withTempDir { tempDir =>
+      // Create checkpoint 1 and 3
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+      val snapshot = deltaLog.update()
+      val (updatedLogSegment, _) = deltaLog.getUpdatedLogSegment(
+        snapshot.logSegment,
+        tableCommitCoordinatorClientOpt = None,
+        catalogTableOpt = None
+      )
+      assert(updatedLogSegment === snapshot.logSegment)
     }
   }
 }
