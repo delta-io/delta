@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
-import io.unitycatalog.client.model.ColumnTypeName;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.HashMap;
 import java.util.List;
@@ -45,11 +44,9 @@ public class UCManagedTableCreationTest extends UCDeltaTableIntegrationBaseTest 
           Map<String, String> properties = tableInfo.getProperties();
 
           assertThat(columns).isNotNull();
-          assertThat(columns.size()).isEqualTo(2);
-          assertThat(columns.get(0).getName()).isEqualTo("id");
-          assertThat(columns.get(0).getTypeName()).isEqualTo(ColumnTypeName.INT);
-          assertThat(columns.get(1).getName()).isEqualTo("active");
-          assertThat(columns.get(1).getTypeName()).isEqualTo(ColumnTypeName.BOOLEAN);
+          // At this point table schema can not be sent to server yet because it won't be updated
+          // later and that would cause problem.
+          assertThat(columns).isEmpty();
 
           final String SUPPORTED = "supported";
           HashMap<String, String> expectedProperties = new HashMap<>();
