@@ -22,7 +22,6 @@ import org.apache.spark.sql.delta.test.UCTableInjectingSessionCatalog
 
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
-import org.apache.spark.sql.execution.datasources.DataSource
 import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
@@ -38,17 +37,6 @@ class V2StreamingConversionSuite
   with DeltaSQLCommandTest {
   
   import testImplicits._
-
-  private def simulateUnityCatalogManaged(catalogTable: org.apache.spark.sql.catalyst.catalog.CatalogTable)
-    : org.apache.spark.sql.catalyst.catalog.CatalogTable = {
-    val updatedStorage = catalogTable.storage.copy(
-      properties = catalogTable.storage.properties ++ Map(
-        "test.simulateUC" -> "true",
-        "io.unitycatalog.tableId" -> "test-uc-table-id"
-      )
-    )
-    catalogTable.copy(storage = updatedStorage)
-  }
 
   /**
    * Helper to check if a DataFrame's logical plan uses StreamingRelationV2 (V2 path).
@@ -194,29 +182,36 @@ class V2StreamingConversionSuite
     }
   }
   
-  test("NONE mode: UC-managed table is not rewritten to V2 streaming") {
-    withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "NONE") {
-      withTable("uc_table") {
-        sql("CREATE TABLE uc_table (id INT) USING delta")
+  test("NONE mode: UC-managed table via test catalog is not rewritten to V2 streaming") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      sql("DROP TABLE IF EXISTS uc_table")
+      sql(s"CREATE TABLE uc_table (id INT) USING delta LOCATION '$path'")
+      sql("INSERT INTO uc_table VALUES (1)")
 
-        val baseCatalogTable =
-          spark.sessionState.catalog.getTableMetadata(TableIdentifier("uc_table"))
-        val catalogTable = simulateUnityCatalogManaged(baseCatalogTable)
-        assert(io.delta.kernel.spark.utils.CatalogTableUtils.isUnityCatalogManagedTable(catalogTable),
-          "UC simulation should mark the CatalogTable as Unity Catalog managed")
+      spark.sessionState.catalogManager.reset()
+      try {
+        withSQLConf(
+          "spark.sql.catalog.spark_catalog" -> classOf[UCTableInjectingSessionCatalog].getName,
+          DeltaSQLConfV2.V2_ENABLE_MODE.key -> "NONE") {
+          spark.sessionState.catalogManager.reset()
 
-        val v1DataSource = DataSource(
-          spark,
-          userSpecifiedSchema = None,
-          className = "delta",
-          options = Map("path" -> catalogTable.location.toString),
-          catalogTable = Some(catalogTable))
+          val df = spark.readStream.table("uc_table")
+          assert(usesV1Streaming(df),
+            "NONE mode should not rewrite to V2 streaming even for UC-managed tables")
 
-        val rewritten =
-          new io.delta.sql.ApplyV2Streaming(spark).apply(StreamingRelation(v1DataSource))
-
-        assert(rewritten.isInstanceOf[StreamingRelation],
-          "NONE mode should not rewrite to StreamingRelationV2 even for UC tables")
+          // Still validate the source executes as V1 streaming.
+          testStream(df)(
+            Execute { _ =>
+              sql("INSERT INTO uc_table VALUES (2)")
+            },
+            ProcessAllAvailable(),
+            CheckAnswer(1, 2)
+          )
+        }
+      } finally {
+        spark.sessionState.catalogManager.reset()
+        sql("DROP TABLE IF EXISTS uc_table")
       }
     }
   }

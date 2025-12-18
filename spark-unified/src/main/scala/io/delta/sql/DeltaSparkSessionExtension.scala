@@ -77,8 +77,8 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     // Register a post-hoc resolution rule that rewrites V1 StreamingRelation plans that
     // read Delta tables into V2 StreamingRelationV2 plans backed by SparkTable.
     //
-    // NOTE: The current implementation is a no-op placeholder to keep binary compatibility
-    // and provide an explicit hook for the upcoming V2 streaming application work.
+    // NOTE: This rule is functional (not a placeholder). Binary compatibility concerns are
+    // handled separately via the nested NoOpRule class below (kept for MiMa).
     extensions.injectResolutionRule { session =>
       new ApplyV2Streaming(session)
     }
