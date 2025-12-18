@@ -16,9 +16,6 @@
 
 package io.sparkuctest;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -42,6 +39,7 @@ import org.junit.jupiter.api.BeforeAll;
  * <p>Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
+
   /**
    * Provides all table types for parameterized tests. Tests can use this as a @MethodSource to test
    * different table types.
@@ -54,7 +52,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /** Create the SparkSession before all tests. */
   @BeforeAll
-  public void setUpSpark() throws IOException {
+  public void setUpSpark() {
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
 
@@ -73,6 +71,21 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     conf = configureSparkWithUnityCatalog(conf);
 
     sparkSession = SparkSession.builder().config(conf).getOrCreate();
+  }
+
+  private SparkConf configureSparkWithUnityCatalog(SparkConf conf) {
+    // Set the AWS S3 implementation for remote unity catalog server testing.
+    conf.set("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+
+    // TODO: Temporary workaround to enable remote UC integration tests; REMOVE it if not required.
+    conf.set("spark.databricks.delta.catalog.update.enabled", "true");
+
+    // Set the catalog specific configs.
+    UnityCatalogInfo catalogInfo = unityCatalogInfo();
+    String catalogName = catalogInfo.catalogName();
+    return conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
+        .set("spark.sql.catalog." + catalogName + ".uri", catalogInfo.serverUri())
+        .set("spark.sql.catalog." + catalogName + ".token", catalogInfo.serverToken());
   }
 
   /** Stop the SparkSession after all tests. */
@@ -99,7 +112,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * sql("INSERT INTO %s VALUES (%d, '%s')", tableName, 1, "value")
    * </pre>
    *
-   * When called without arguments, executes the SQL as-is:
+   * <p>When called without arguments, executes the SQL as-is:
    *
    * <pre>
    * sql("CREATE TABLE test (id INT)")
@@ -125,22 +138,11 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     getSqlExecutor().checkWithSQL("SELECT * FROM " + tableName + " ORDER BY 1", expected);
   }
 
-  /**
-   * Helper method to run code with a temporary directory that gets cleaned up. For local mode, uses
-   * local filesystem. For remote mode, uses cloud storage.
-   */
+  /** Helper method to run code with a temporary directory that gets cleaned up. */
   protected void withTempDir(TempDirCode code) throws Exception {
-    UcCatalogInfo ucCatalog = catalogInfo();
-    Path tempDir;
-
-    if (ucCatalog.baseLocation() != null) {
-      tempDir = new Path(ucCatalog.baseLocation(), "temp-" + UUID.randomUUID());
-    } else {
-      // Local mode: use local filesystem
-      File localTempDir = Files.createTempDirectory("spark-test-").toFile();
-      tempDir = new Path(localTempDir.getAbsolutePath());
-    }
-
+    UnityCatalogInfo catalogInfo = unityCatalogInfo();
+    Path tempDir = new Path(catalogInfo.baseTableLocation(), "temp-" + UUID.randomUUID());
+    ;
     code.run(tempDir);
   }
 
@@ -161,8 +163,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   protected void withNewTable(
       String tableName, String tableSchema, TableType tableType, TestCode testCode)
       throws Exception {
-    UcCatalogInfo ucCatalog = catalogInfo();
-    String fullTableName = ucCatalog.catalogName() + "." + ucCatalog.schemaName() + "." + tableName;
+    UnityCatalogInfo catalogInfo = unityCatalogInfo();
+    String fullTableName =
+        catalogInfo.catalogName() + "." + catalogInfo.schemaName() + "." + tableName;
 
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location
@@ -198,12 +201,14 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Functional interface for test code that takes a temporary directory. */
   @FunctionalInterface
   protected interface TempDirCode {
+
     void run(Path dir) throws Exception;
   }
 
   /** Functional interface for test code that takes a table name parameter. */
   @FunctionalInterface
   protected interface TestCode {
+
     void run(String tableName) throws Exception;
   }
 
@@ -214,6 +219,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * test the same logic via different interfaces (Spark SQL, JDBC, etc.).
    */
   public interface SQLExecutor {
+
     /**
      * Execute a SQL statement and return the results.
      *
@@ -238,6 +244,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * for easy comparison.
    */
   public static class SparkSQLExecutor implements SQLExecutor {
+
     private final SparkSession spark;
 
     public SparkSQLExecutor(SparkSession spark) {
@@ -265,15 +272,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       List<List<String>> actual = runSQL(sql);
       if (!actual.equals(expected)) {
         throw new AssertionError(
-            "Query results do not match.\n"
-                + "SQL: "
-                + sql
-                + "\n"
-                + "Expected: "
-                + expected
-                + "\n"
-                + "Actual: "
-                + actual);
+            String.format(
+                "Query results do not match.\nSQL: %s\n Expected: %s\nActual: %s",
+                sql, expected, actual));
       }
     }
   }
