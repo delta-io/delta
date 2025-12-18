@@ -275,3 +275,4 @@ object DeltaQueryTest extends Assertions {
     None
   }
 }
+
