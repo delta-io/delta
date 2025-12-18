@@ -31,13 +31,14 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
-import io.delta.kernel.spark.utils.SchemaUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.time.ZoneId;
@@ -727,12 +728,12 @@ public class SparkMicroBatchStream
       }
     }
     // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreDeletes (legacy)
-    // TODO(#5318): validate METADATA actions
 
     try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
       while (actionsIter.hasNext()) {
         ColumnarBatch batch = actionsIter.next();
         int numRows = batch.getSize();
+        Metadata metadataAction = null;
         for (int rowId = 0; rowId < numRows; rowId++) {
           // RULE 1: If commit has RemoveFile(dataChange=true), fail this stream.
           Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
@@ -740,6 +741,18 @@ public class SparkMicroBatchStream
             RemoveFile removeFile = removeOpt.get();
             throw (RuntimeException)
                 DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFile.getPath(), tablePath);
+          }
+
+          // RULE 2: If commit has Metadata, check read-incompatible schema changes.
+          Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+          if (metadataOpt.isPresent()) {
+            Metadata metadata = metadataOpt.get();
+            checkReadIncompatibleSchemaChanges(
+                metadata, version, /* validatedDuringStreamStart */ false);
+            Preconditions.checkArgument(
+                metadataAction == null,
+                "Should not encounter two metadata actions in the same commit");
+            metadataAction = metadata;
           }
         }
       }
