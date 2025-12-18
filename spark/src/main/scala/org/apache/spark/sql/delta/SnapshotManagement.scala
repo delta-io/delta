@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import com.fasterxml.jackson.annotation.JsonIgnore
+import io.delta.sharing.spark.DeltaSharingLogFileSystemConstants
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
@@ -1541,6 +1542,12 @@ trait SnapshotManagement { self: DeltaLog =>
     targetSnapshot: Snapshot, latestSnapshot: Snapshot): Unit = {
     if (!SparkSession.active.sessionState.conf.getConf(
       DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION)) {
+      return
+    }
+
+    // Skip enforcement for delta-sharing tables since they create a faked delta-log
+    // where the version timestamp may be set to 0.
+    if (logPath.toUri.getScheme == DeltaSharingLogFileSystemConstants.SCHEME) {
       return
     }
 
