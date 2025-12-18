@@ -121,8 +121,8 @@ public abstract class UnityCatalogSupport {
   public static final String UC_BASE_TABLE_LOCATION = "UC_BASE_TABLE_LOCATION";
 
   private static boolean isUCRemoteConfigured() {
-    String ucRemoteEnabled = System.getenv(UC_REMOTE);
-    return ucRemoteEnabled != null && ucRemoteEnabled.equalsIgnoreCase("true");
+    String ucRemote = System.getenv(UC_REMOTE);
+    return ucRemote != null && ucRemote.equalsIgnoreCase("true");
   }
 
   protected UnityCatalogInfo unityCatalogInfo() {
@@ -240,11 +240,7 @@ public abstract class UnityCatalogSupport {
 
     while (!serverReady && retries < maxRetries) {
       try {
-        ApiClient testClient = new ApiClient();
-        testClient.setScheme("http");
-        testClient.setHost("localhost");
-        testClient.setPort(ucPort);
-        CatalogsApi catalogsApi = new CatalogsApi(testClient);
+        CatalogsApi catalogsApi = new CatalogsApi(createClient());
         catalogsApi.listCatalogs(null, null); // This will throw if server is not ready
         serverReady = true;
       } catch (Exception e) {

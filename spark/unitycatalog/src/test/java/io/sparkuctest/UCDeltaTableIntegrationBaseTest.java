@@ -142,7 +142,6 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   protected void withTempDir(TempDirCode code) throws Exception {
     UnityCatalogInfo catalogInfo = unityCatalogInfo();
     Path tempDir = new Path(catalogInfo.baseTableLocation(), "temp-" + UUID.randomUUID());
-    ;
     code.run(tempDir);
   }
 
