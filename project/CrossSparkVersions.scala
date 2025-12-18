@@ -224,7 +224,7 @@ object SparkVersionSpec {
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
     targetJvm = "17",
-    additionalSourceDir = Some("scala-shims/4.0"),
+    additionalSourceDir = Some("scala-shims/spark-4.0"),
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
@@ -233,7 +233,7 @@ object SparkVersionSpec {
   private val spark41Snapshot = SparkVersionSpec(
     fullVersion = "4.1.0-SNAPSHOT",
     targetJvm = "17",
-    additionalSourceDir = Some("scala-shims/4.1"),
+    additionalSourceDir = Some("scala-shims/spark-4.1"),
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
