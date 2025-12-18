@@ -59,6 +59,11 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
     this.engine = requireNonNull(engine, "engine is null");
   }
 
+  /**
+   * Loads and returns the latest snapshot of the UC-managed Delta table.
+   *
+   * @return the latest snapshot of the table
+   */
   @Override
   public Snapshot loadLatestSnapshot() {
     return ucCatalogManagedClient.loadSnapshot(
@@ -80,6 +85,15 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    *
    * <p>For UC-managed tables, this loads the latest snapshot and uses {@link
    * DeltaHistoryManager#getActiveCommitAtTimestamp} to resolve the timestamp to a commit.
+   *
+   * @param timestampMillis the timestamp in milliseconds since epoch (UTC)
+   * @param canReturnLastCommit if true, returns the last commit if the timestamp is after all
+   *     commits; if false, throws an exception
+   * @param mustBeRecreatable if true, only considers commits that can be fully recreated from
+   *     available log files; if false, considers all commits
+   * @param canReturnEarliestCommit if true, returns the earliest commit if the timestamp is before
+   *     all commits; if false, throws an exception
+   * @return the commit that was active at the specified timestamp
    */
   @Override
   public DeltaHistoryManager.Commit getActiveCommitAtTime(
@@ -105,17 +119,26 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    *
    * <p>For UC-managed tables with catalogManaged, log files may be cleaned up, so we need to use
    * DeltaHistoryManager to find the earliest available version based on filesystem state.
+   *
+   * @param version the version to check
+   * @param mustBeRecreatable if true, requires that the version can be fully recreated from
+   *     available log files; if false, only requires that the version's log file exists
+   * @param allowOutOfRange if true, allows versions greater than the latest version without
+   *     throwing an exception; if false, throws exception for out-of-range versions
+   * @throws VersionNotFoundException if the version is not available or does not meet the specified
+   *     criteria
    */
   @Override
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
     // Load latest to get the current version bounds
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
-    long latestRatifiedVersion = snapshot.getVersion();
+    // Latest version visible in this UC-managed snapshot.
+    long latestSnapshotVersion = snapshot.getVersion();
 
     // Fast path: check upper bound before expensive filesystem operations
-    if ((version > latestRatifiedVersion) && !allowOutOfRange) {
-      throw new VersionNotFoundException(version, 0, latestRatifiedVersion);
+    if ((version > latestSnapshotVersion) && !allowOutOfRange) {
+      throw new VersionNotFoundException(version, 0 /* earliest */, latestSnapshotVersion);
     }
 
     // Compute earliestRatifiedCommitVersion from catalog commits
@@ -132,10 +155,18 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
                 engine, snapshot.getLogPath(), earliestRatifiedCommitVersion);
 
     if (version < earliestVersion) {
-      throw new VersionNotFoundException(version, earliestVersion, latestRatifiedVersion);
+      throw new VersionNotFoundException(version, earliestVersion, latestSnapshotVersion);
     }
   }
 
+  /**
+   * Gets a range of table changes (commits) between start and end versions.
+   *
+   * @param engine the engine implementation for executing operations
+   * @param startVersion the starting version (inclusive)
+   * @param endVersion optional ending version (inclusive); if not provided, extends to latest
+   * @return a CommitRange representing the specified range of commits
+   */
   @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
     return ucCatalogManagedClient.loadCommitRange(
