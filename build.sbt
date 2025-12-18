@@ -738,8 +738,6 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
       "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
 
       // Cloud storage support.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
