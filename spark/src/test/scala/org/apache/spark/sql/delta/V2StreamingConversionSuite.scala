@@ -31,11 +31,11 @@ import org.scalatest.exceptions.TestFailedException
  * Test suite for V2 streaming conversion logic via ApplyV2Streaming rule.
  * Tests the interaction between V2_ENABLE_MODE configuration and streaming queries.
  */
-class V2StreamingConversionSuite 
+class V2StreamingConversionSuite
   extends StreamTest
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
-  
+
   import testImplicits._
 
   /**
@@ -46,7 +46,7 @@ class V2StreamingConversionSuite
       case _: StreamingRelationV2 => true
     }.isDefined
   }
-  
+
   /**
    * Helper to check if a DataFrame's logical plan uses StreamingRelation (V1 path).
    */
@@ -59,7 +59,7 @@ class V2StreamingConversionSuite
   // ============================================================================
   // AUTO Mode Tests
   // ============================================================================
-  
+
   test("AUTO mode: UC-managed table via test catalog runs V2 streaming (expected to fail today)") {
     // TODO: Enable this as a passing end-to-end test once the kernel-backed streaming source
     // supports initialOffset with an initial snapshot (SparkMicroBatchStream limitation).
@@ -98,21 +98,21 @@ class V2StreamingConversionSuite
       }
     }
   }
-  
+
   test("AUTO mode: non-UC catalog table uses V1 streaming (DeltaLog)") {
     withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "AUTO") {
       withTable("regular_table") {
         // Create regular catalog table (no UC properties)
         sql("CREATE TABLE regular_table (id INT, value STRING) USING delta")
         sql("INSERT INTO regular_table VALUES (0, 'init')")
-        
+
         // Create streaming read
         val df = spark.readStream.table("regular_table")
-        
+
         // Verify V1 streaming is used (no UC table ID)
         assert(usesV1Streaming(df),
           "AUTO mode should use V1 streaming (StreamingRelation) for non-UC catalog tables")
-        
+
         // Verify streaming works correctly
         testStream(df)(
           Execute { _ =>
@@ -124,25 +124,25 @@ class V2StreamingConversionSuite
       }
     }
   }
-  
+
   test("AUTO mode: path-based table uses V1 streaming") {
     withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "AUTO") {
       withTempDir { dir =>
         val path = dir.getCanonicalPath
-        
+
         // Create path-based table
         spark.range(3).selectExpr("id", "CAST(id AS STRING) as value")
           .write.format("delta").save(path)
-        
+
         // Create streaming read from path
         val df = spark.readStream
           .format("delta")
           .load(path)
-        
+
         // Verify V1 streaming is used (no catalog table)
         assert(usesV1Streaming(df),
           "AUTO mode should use V1 streaming for path-based tables")
-        
+
         // Verify streaming works
         testStream(df)(
           Execute { _ =>
@@ -159,18 +159,18 @@ class V2StreamingConversionSuite
   // ============================================================================
   // NONE Mode Tests (Default behavior)
   // ============================================================================
-  
+
   test("NONE mode: all tables use V1 streaming") {
     withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "NONE") {
       withTable("test_table") {
         sql("CREATE TABLE test_table (id INT) USING delta")
         sql("INSERT INTO test_table VALUES (1)")
-        
+
         val df = spark.readStream.table("test_table")
-        
+
         assert(usesV1Streaming(df),
           "NONE mode should use V1 streaming for all tables")
-        
+
         testStream(df)(
           Execute { _ =>
             sql("INSERT INTO test_table VALUES (2)")
@@ -181,7 +181,7 @@ class V2StreamingConversionSuite
       }
     }
   }
-  
+
   test("NONE mode: UC-managed table via test catalog is not rewritten to V2 streaming") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
@@ -219,31 +219,31 @@ class V2StreamingConversionSuite
   // ============================================================================
   // Schema Bypass Logic Tests
   // ============================================================================
-  
+
   test("sourceSchema: AUTO mode without marker loads schema via DeltaLog") {
     withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "AUTO") {
       withTable("test_table") {
         sql("CREATE TABLE test_table (id INT, value STRING) USING delta")
-        
+
         val catalogTable = spark.sessionState.catalog.getTableMetadata(
           TableIdentifier("test_table"))
-        
+
         val dataSource = new DeltaDataSource()
         dataSource.setCatalogTableOpt(Some(catalogTable))
-        
+
         // Provide schema without V2 marker
         val providedSchema = StructType(Seq(
           StructField("id", IntegerType),
           StructField("value", StringType)
         ))
-        
+
         val (shortName, returnedSchema) = dataSource.sourceSchema(
           spark.sqlContext,
           Some(providedSchema),
           "delta",
           Map("path" -> catalogTable.location.toString) // No __v2StreamingSchemaSource marker
         )
-        
+
         // Without marker, AUTO mode should load via DeltaLog
         // The returned schema should match the actual table schema
         assert(returnedSchema.fieldNames.contains("id"))
@@ -251,23 +251,23 @@ class V2StreamingConversionSuite
       }
     }
   }
-  
+
   test("sourceSchema: AUTO mode with V2 marker uses provided schema") {
     withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "AUTO") {
       withTable("uc_table") {
         sql("CREATE TABLE uc_table (id INT, value STRING) USING delta")
-        
+
         val catalogTable = spark.sessionState.catalog.getTableMetadata(
           TableIdentifier("uc_table"))
-        
+
         val dataSource = new DeltaDataSource()
         dataSource.setCatalogTableOpt(Some(catalogTable))
-        
+
         val providedSchema = StructType(Seq(
           StructField("id", IntegerType),
           StructField("value", StringType)
         ))
-        
+
         // Call sourceSchema WITH the V2 marker
         val (shortName, returnedSchema) = dataSource.sourceSchema(
           spark.sqlContext,
@@ -277,7 +277,7 @@ class V2StreamingConversionSuite
             DeltaV2StreamingUtils.V2_STREAMING_SCHEMA_SOURCE_KEY ->
               DeltaV2StreamingUtils.V2_STREAMING_SCHEMA_SOURCE_SPARK_TABLE) // V2 marker present
         )
-        
+
         // With marker, AUTO mode should use provided schema
         assert(returnedSchema == providedSchema,
           "AUTO mode with V2 marker should use provided schema")
