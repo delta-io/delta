@@ -86,6 +86,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    * <p>For UC-managed tables, this loads the latest snapshot and uses {@link
    * DeltaHistoryManager#getActiveCommitAtTimestamp} to resolve the timestamp to a commit.
    *
+<<<<<<< HEAD
    * @param timestampMillis the timestamp to find the version for in milliseconds since the unix
    *     epoch
    * @param canReturnLastCommit whether we can return the latest version of the table if the
@@ -93,6 +94,15 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    * @param mustBeRecreatable whether the state at the returned commit should be recreatable
    * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
    *     provided timestamp is before the earliest commit
+=======
+   * @param timestampMillis the timestamp in milliseconds since epoch (UTC)
+   * @param canReturnLastCommit if true, returns the last commit if the timestamp is after all
+   *     commits; if false, throws an exception
+   * @param mustBeRecreatable if true, only considers commits that can be fully recreated from
+   *     available log files; if false, considers all commits
+   * @param canReturnEarliestCommit if true, returns the earliest commit if the timestamp is before
+   *     all commits; if false, throws an exception
+>>>>>>> 398b80792 (address comment about naming and docs)
    * @return the commit that was active at the specified timestamp
    */
   @Override
@@ -121,9 +131,16 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    * DeltaHistoryManager to find the earliest available version based on filesystem state.
    *
    * @param version the version to check
+<<<<<<< HEAD
    * @param mustBeRecreatable whether the state at this version should be recreatable
    * @param allowOutOfRange whether versions greater than the latest version are allowed without
    *     throwing an exception
+=======
+   * @param mustBeRecreatable if true, requires that the version can be fully recreated from
+   *     available log files; if false, only requires that the version's log file exists
+   * @param allowOutOfRange if true, allows versions greater than the latest version without
+   *     throwing an exception; if false, throws exception for out-of-range versions
+>>>>>>> 398b80792 (address comment about naming and docs)
    * @throws VersionNotFoundException if the version is not available or does not meet the specified
    *     criteria
    */
