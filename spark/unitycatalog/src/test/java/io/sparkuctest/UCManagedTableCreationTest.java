@@ -32,39 +32,46 @@ public class UCManagedTableCreationTest extends UCDeltaTableIntegrationBaseTest 
   @Test
   public void testCreateManagedTable() throws Exception {
     // TODO: make this a thorough test of managed table creation with different parameters.
-    withNewTable(
-        "managed_table",
-        "id INT, active BOOLEAN",
-        TableType.MANAGED,
-        tableName -> {
-          // Verify that properties are set on server. This can not be done by DESC EXTENDED.
-          TablesApi tablesApi = new TablesApi(createClient());
-          TableInfo tableInfo = tablesApi.getTable(tableName, false, false);
-          List<ColumnInfo> columns = tableInfo.getColumns();
-          Map<String, String> properties = tableInfo.getProperties();
+    String tableName = "test_managed_table";
+    String fullTableName = getCatalogName() + ".default." + tableName;
+    String tableSchema = "id INT, active BOOLEAN";
+    try {
+      sql(
+          "CREATE TABLE %s (%s) USING DELTA "
+              + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported', 'Foo'='Bar')",
+          fullTableName, tableSchema);
 
-          assertThat(columns).isNotNull();
-          // At this point table schema can not be sent to server yet because it won't be updated
-          // later and that would cause problem.
-          assertThat(columns).isEmpty();
+      // Verify that properties are set on server. This can not be done by DESC EXTENDED.
+      TablesApi tablesApi = new TablesApi(createClient());
+      TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
+      List<ColumnInfo> columns = tableInfo.getColumns();
+      Map<String, String> properties = tableInfo.getProperties();
 
-          final String SUPPORTED = "supported";
-          HashMap<String, String> expectedProperties = new HashMap<>();
-          expectedProperties.put("delta.enableInCommitTimestamps", "true");
-          expectedProperties.put("delta.feature.appendOnly", SUPPORTED);
-          expectedProperties.put("delta.feature.catalogManaged", SUPPORTED);
-          expectedProperties.put("delta.feature.inCommitTimestamp", SUPPORTED);
-          expectedProperties.put("delta.feature.invariants", SUPPORTED);
-          expectedProperties.put("delta.feature.vacuumProtocolCheck", SUPPORTED);
-          expectedProperties.put("delta.lastUpdateVersion", "0");
-          expectedProperties.put("delta.minReaderVersion", "3");
-          expectedProperties.put("delta.minWriterVersion", "7");
-          expectedProperties.put("io.unitycatalog.tableId", tableInfo.getTableId());
-          // Verify that all entries are present
-          expectedProperties.forEach(
-              (key, value) -> assertThat(properties).containsEntry(key, value));
-          // Lastly the timestamp value is always changing so skip checking its value
-          assertThat(properties).containsKey("delta.lastCommitTimestamp");
-        });
+      assertThat(columns).isNotNull();
+      // At this point table schema can not be sent to server yet because it won't be updated
+      // later and that would cause problem.
+      assertThat(columns).isEmpty();
+
+      final String SUPPORTED = "supported";
+      HashMap<String, String> expectedProperties = new HashMap<>();
+      expectedProperties.put("delta.enableInCommitTimestamps", "true");
+      expectedProperties.put("delta.feature.appendOnly", SUPPORTED);
+      expectedProperties.put("delta.feature.catalogManaged", SUPPORTED);
+      expectedProperties.put("delta.feature.inCommitTimestamp", SUPPORTED);
+      expectedProperties.put("delta.feature.invariants", SUPPORTED);
+      expectedProperties.put("delta.feature.vacuumProtocolCheck", SUPPORTED);
+      expectedProperties.put("delta.lastUpdateVersion", "0");
+      expectedProperties.put("delta.minReaderVersion", "3");
+      expectedProperties.put("delta.minWriterVersion", "7");
+      expectedProperties.put("io.unitycatalog.tableId", tableInfo.getTableId());
+      // User specified custom table property is also sent.
+      expectedProperties.put("Foo", "Bar");
+      // Verify that all entries are present
+      expectedProperties.forEach((key, value) -> assertThat(properties).containsEntry(key, value));
+      // Lastly the timestamp value is always changing so skip checking its value
+      assertThat(properties).containsKey("delta.lastCommitTimestamp");
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
   }
 }
