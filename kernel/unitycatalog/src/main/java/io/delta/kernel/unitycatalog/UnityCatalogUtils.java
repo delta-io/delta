@@ -26,10 +26,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class UnityCatalogUtils {
@@ -127,6 +124,6 @@ public class UnityCatalogUtils {
                 throw new RuntimeException("Failed to serialize clustering columns to JSON", ex);
               }
             })
-        .orElse(Map.of());
+        .orElse(Collections.emptyMap());
   }
 }
