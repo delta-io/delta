@@ -75,7 +75,7 @@ case class CreateDeltaTableCommand(
     override val tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
-    allowCatalogOwned: Boolean = false,
+    override val allowCatalogOwned: Boolean = false,
     createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand

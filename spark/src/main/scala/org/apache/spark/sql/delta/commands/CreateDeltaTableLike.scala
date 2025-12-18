@@ -48,6 +48,8 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   // TABLE IF NOT EXISTS`.
   val mode: SaveMode
 
+  val allowCatalogOwned: Boolean
+
   /**
    * Generates a `CatalogTable` with its `locationUri` set appropriately, depending on whether the
    * table already exists or is newly created.
@@ -152,9 +154,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         storage = storageProps,
         tracksPartitionsInCatalog = true)
     } else {
+      // Setting table properties is required for creating catalogOwned tables.
+      val properties: Map[String, String] =
+        if (allowCatalogOwned) UpdateCatalog.updatedProperties(snapshot) else Map.empty
       table.copy(
         schema = new StructType(),
-        properties = Map.empty,
+        properties = properties,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,
