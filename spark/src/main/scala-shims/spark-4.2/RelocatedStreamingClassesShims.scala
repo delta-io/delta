@@ -27,7 +27,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.execution.streaming.checkpointing.{
   CheckpointFileManager => CheckpointFileManagerShim,
   MetadataVersionUtil => MetadataVersionUtilShim,
-  OffsetSeqMetadata
+  OffsetSeqMetadataBase
 }
 import org.apache.spark.sql.execution.streaming.runtime.{
   IncrementalExecution => IncrementalExecutionShim,
@@ -51,8 +51,8 @@ object Relocated {
       queryId: UUID,
       runId: UUID,
       currentBatchId: Long,
-      prevOffsetSeqMetadata: Option[OffsetSeqMetadata],
-      offsetSeqMetadata: OffsetSeqMetadata,
+      prevOffsetSeqMetadata: Option[OffsetSeqMetadataBase],
+      offsetSeqMetadata: OffsetSeqMetadataBase,
       watermarkPropagator: WatermarkPropagator,
       isFirstBatch: Boolean): IncrementalExecution = {
     // scalastyle:on argcount
