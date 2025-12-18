@@ -30,6 +30,7 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
@@ -739,8 +740,8 @@ public class SparkMicroBatchStream
       }
     }
     int numRows = batch.getSize();
+    Metadata metadataAction = null;
     // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreDeletes (legacy)
-    // TODO(#5318): validate METADATA actions
     for (int rowId = 0; rowId < numRows; rowId++) {
       // RULE 1: If commit has RemoveFile(dataChange=true), fail this stream.
       Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
@@ -753,6 +754,17 @@ public class SparkMicroBatchStream
         } else {
           throw new RuntimeException(error);
         }
+      }
+
+      // RULE 2: If commit has Metadata, check read-incompatible schema changes.
+      Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+      if (metadataOpt.isPresent()) {
+        Metadata metadata = metadataOpt.get();
+        checkReadIncompatibleSchemaChanges(
+            metadata, version, /* validatedDuringStreamStart */ false);
+        Preconditions.checkArgument(
+            metadataAction == null, "Should not encounter two metadata actions in the same commit");
+        metadataAction = metadata;
       }
     }
   }
