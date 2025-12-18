@@ -129,3 +129,13 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 .terraform.rc
+
+# Local Netlify folder
+.netlify
+
+# Ignore kernel benchmark report
+kernel/kernel-benchmarks/benchmark_report.json
+
+# Unity Catalog test artifacts
+spark/unitycatalog/etc/
+.scala-build/
