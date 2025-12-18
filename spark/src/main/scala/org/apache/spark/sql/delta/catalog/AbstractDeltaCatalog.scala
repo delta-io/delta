@@ -218,7 +218,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       writer,
       operation,
       tableByPath = isByPath,
-      allowCatalogOwned = isUnityCatalog && tableType == CatalogTableType.MANAGED,
+      allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
       // respect third party catalogs. Note: only handle CREATE TABLE for now, we
       // should support CTAS later.

@@ -63,6 +63,7 @@ import org.apache.spark.util.Utils
  * @param tableByPath Whether the table is identified by path
  * @param output SQL output of the command
  * @param protocol This is used to create a table with specific protocol version
+ * @param allowCatalogManaged This is used to create UC managed table with catalogManaged feature
  * @param createTableFunc If specified, call this function to create the table, instead of
  *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
@@ -75,7 +76,7 @@ case class CreateDeltaTableCommand(
     override val tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
-    override val allowCatalogOwned: Boolean = false,
+    override val allowCatalogManaged: Boolean = false,
     createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
@@ -120,7 +121,7 @@ case class CreateDeltaTableCommand(
     // It gets bypassed in UTs to allow tests that use InMemoryCommitCoordinator to create tables
     val tableFeatures = TableFeatureProtocolUtils.
       getSupportedFeaturesFromTableConfigs(table.properties)
-    if (!Utils.isTesting && !allowCatalogOwned &&
+    if (!Utils.isTesting && !allowCatalogManaged &&
       (tableFeatures.contains(CatalogOwnedTableFeature) ||
       CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
       throw DeltaErrors.deltaCannotCreateCatalogManagedTable()
