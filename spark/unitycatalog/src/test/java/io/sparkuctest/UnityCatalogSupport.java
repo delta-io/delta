@@ -61,7 +61,6 @@ import org.junit.jupiter.api.TestInstance;
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class UnityCatalogSupport {
-
   private static final Logger LOG = Logger.getLogger(UnityCatalogSupport.class);
 
   protected static class UnityCatalogInfo {
