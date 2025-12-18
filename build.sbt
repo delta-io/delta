@@ -546,6 +546,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     commonSettings,
     skipReleaseSettings,
     crossSparkSettings(),
+    sparkVersion := getSparkVersion(),
 
     // This is a test-only module - no production sources
     Compile / sources := Seq.empty,
