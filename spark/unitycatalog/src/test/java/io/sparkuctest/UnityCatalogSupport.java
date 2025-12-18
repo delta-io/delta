@@ -31,7 +31,6 @@ import java.nio.file.Files;
 import java.util.Properties;
 import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
-import org.apache.spark.SparkConf;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
@@ -67,26 +66,27 @@ import org.junit.jupiter.api.TestInstance;
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class UnityCatalogSupport {
+  private static final Logger LOG = Logger.getLogger(UnityCatalogSupport.class);
 
-  protected static class UcCatalogInfo {
+  protected static class UnityCatalogInfo {
 
     private final String serverUri;
     private final String catalogName;
     private final String serverToken;
     private final String schemaName;
-    private final String baseLocation;
+    private final String baseTableLocation;
 
-    public UcCatalogInfo(
+    public UnityCatalogInfo(
         String serverUri,
         String catalogName,
         String serverToken,
         String schemaName,
-        String baseLocation) {
+        String baseTableLocation) {
       this.serverUri = serverUri;
       this.catalogName = catalogName;
       this.serverToken = serverToken;
       this.schemaName = schemaName;
-      this.baseLocation = baseLocation;
+      this.baseTableLocation = baseTableLocation;
     }
 
     public String serverUri() {
@@ -105,55 +105,55 @@ public abstract class UnityCatalogSupport {
       return schemaName;
     }
 
-    public String baseLocation() {
-      return baseLocation;
+    public String baseTableLocation() {
+      return baseTableLocation;
     }
   }
 
   public static final String UC_STATIC_TOKEN = "static-token";
 
-  public static final String UC_REMOTE_ENABLED = "UC_REMOTE_ENABLED";
+  // Environment variables for configuring access to remote unity catalog server.
+  public static final String UC_REMOTE = "UC_REMOTE";
   public static final String UC_URI = "UC_URI";
   public static final String UC_TOKEN = "UC_TOKEN";
   public static final String UC_CATALOG_NAME = "UC_CATALOG_NAME";
   public static final String UC_SCHEMA_NAME = "UC_SCHEMA_NAME";
-  public static final String UC_BASE_LOCATION = "UC_BASE_LOCATION";
+  public static final String UC_BASE_TABLE_LOCATION = "UC_BASE_TABLE_LOCATION";
 
-  private static boolean isUCRemoteEnabled() {
-    String ucRemoteEnabled = System.getenv(UC_REMOTE_ENABLED);
+  private static boolean isUCRemoteConfigured() {
+    String ucRemoteEnabled = System.getenv(UC_REMOTE);
     return ucRemoteEnabled != null && ucRemoteEnabled.equalsIgnoreCase("true");
   }
 
-  protected UcCatalogInfo catalogInfo() throws IOException {
-    if (isUCRemoteEnabled()) {
+  protected UnityCatalogInfo unityCatalogInfo() {
+    if (isUCRemoteConfigured()) {
       String serverUri = System.getenv(UC_URI);
       String catalogName = System.getenv(UC_CATALOG_NAME);
       String serverToken = System.getenv(UC_TOKEN);
       String schemaName = System.getenv(UC_SCHEMA_NAME);
-      String baseLocation = System.getenv(UC_BASE_LOCATION);
-      Preconditions.checkNotNull(serverUri, "UC_URI must be set when UC_REMOTE_ENABLED=true");
+      String baseTableLocation = System.getenv(UC_BASE_TABLE_LOCATION);
+      Preconditions.checkNotNull(serverUri, "%s must be set when UC_REMOTE=true", UC_URI);
       Preconditions.checkNotNull(
-          catalogName, "UC_CATALOG_NAME must be set when UC_REMOTE_ENABLED=true");
-      Preconditions.checkNotNull(serverToken, "UC_TOKEN must be set when UC_REMOTE_ENABLED=true");
+          catalogName, "%s must be set when UC_REMOTE=true", UC_CATALOG_NAME);
+      Preconditions.checkNotNull(serverToken, "%s must be set when UC_REMOTE=true", UC_TOKEN);
+      Preconditions.checkNotNull(schemaName, "%s must be set when UC_REMOTE=true", UC_SCHEMA_NAME);
       Preconditions.checkNotNull(
-          schemaName, "UC_SCHEMA_NAME must be set when UC_REMOTE_ENABLED=true");
-      Preconditions.checkNotNull(
-          baseLocation, "UC_BASE_LOCATION must be set when UC_REMOTE_ENABLED=true");
-      return new UcCatalogInfo(serverUri, catalogName, serverToken, schemaName, baseLocation);
+          baseTableLocation, "%s must be set when UC_REMOTE=true", UC_BASE_TABLE_LOCATION);
+      return new UnityCatalogInfo(
+          serverUri, catalogName, serverToken, schemaName, baseTableLocation);
     } else {
       Preconditions.checkNotNull(ucServer, "Local Unity Catalog Server is not configured");
+      Preconditions.checkNotNull(
+          ucBaseTableLocation, "Local Unity Catalog Temp Directory is not configured");
       // For local UC, use default schema and temp directory
-      return new UcCatalogInfo(
+      return new UnityCatalogInfo(
           String.format("http://localhost:" + ucPort),
           "unity",
           UC_STATIC_TOKEN,
           "default",
-          // TODO: Remember to clean this directory.
-          Files.createTempDirectory("spark-test-").toString()); // null baseLocation for local mode
+          ucBaseTableLocation.getAbsolutePath());
     }
   }
-
-  private static final Logger LOG = Logger.getLogger(UnityCatalogSupport.class);
 
   /** The Unity Catalog server instance. */
   private UnityCatalogServer ucServer;
@@ -162,7 +162,10 @@ public abstract class UnityCatalogSupport {
   private int ucPort;
 
   /** The temporary directory for UC server data. */
-  private File ucTempDir;
+  private File ucServerDir;
+
+  /** The temporary directory for external table location */
+  private File ucBaseTableLocation = null;
 
   /** Creates a Unity Catalog API client configured for this server. */
   private ApiClient createClient() {
@@ -186,24 +189,28 @@ public abstract class UnityCatalogSupport {
    */
   @BeforeAll
   public void setupServer() throws Exception {
-    if (isUCRemoteEnabled()) {
+    if (isUCRemoteConfigured()) {
       // For remote UC, log the configuration
-      UcCatalogInfo ucCatalog = catalogInfo();
-      LOG.info("Using remote Unity Catalog server at " + ucCatalog.serverUri());
-      LOG.info("Catalog: " + ucCatalog.catalogName() + ", Schema: " + ucCatalog.schemaName());
-      LOG.info("Base location: " + ucCatalog.baseLocation());
+      UnityCatalogInfo catalogInfo = unityCatalogInfo();
+      LOG.info("Using remote Unity Catalog server at " + catalogInfo.serverUri());
+      LOG.info("Catalog: " + catalogInfo.catalogName() + ", Schema: " + catalogInfo.schemaName());
+      LOG.info("Base location: " + catalogInfo.baseTableLocation());
       LOG.info(
           "Note: Schema '"
-              + ucCatalog.catalogName()
+              + catalogInfo.catalogName()
               + "."
-              + ucCatalog.schemaName()
+              + catalogInfo.schemaName()
               + "' must already exist in the remote UC server");
       return;
     }
 
     // Create temporary directory for UC server data
-    ucTempDir = Files.createTempDirectory("unity-catalog-test-").toFile();
-    ucTempDir.deleteOnExit();
+    ucServerDir = Files.createTempDirectory("unity-catalog-test-").toFile();
+    ucServerDir.deleteOnExit();
+
+    // Create temporary directory for external tables testing.
+    ucBaseTableLocation = Files.createTempDirectory("base-table-location-").toFile();
+    ucBaseTableLocation.deleteOnExit();
 
     // Find an available port
     ucPort = findAvailablePort();
@@ -213,7 +220,8 @@ public abstract class UnityCatalogSupport {
     serverProps.setProperty("server.env", "test");
     // Enable managed tables (experimental feature in Unity Catalog)
     serverProps.setProperty("server.managed-table.enabled", "true");
-    serverProps.setProperty("storage-root.tables", new File(ucTempDir, "ucroot").getAbsolutePath());
+    serverProps.setProperty(
+        "storage-root.tables", new File(ucServerDir, "ucroot").getAbsolutePath());
 
     // Start UC server with configuration
     ServerProperties initServerProperties = new ServerProperties(serverProps);
@@ -250,7 +258,7 @@ public abstract class UnityCatalogSupport {
           "Unity Catalog server did not become ready after " + (maxRetries * retryDelayMs) + "ms");
     }
 
-    UcCatalogInfo ucCatalog = catalogInfo();
+    UnityCatalogInfo catalogInfo = unityCatalogInfo();
 
     // Create the catalog and default schema in the UC server
     ApiClient client = createClient();
@@ -261,21 +269,21 @@ public abstract class UnityCatalogSupport {
     // Create catalog
     catalogsApi.createCatalog(
         new CreateCatalog()
-            .name(ucCatalog.catalogName())
+            .name(catalogInfo.catalogName())
             .comment("Test catalog for Delta Lake integration"));
 
     // Create default schema
     schemasApi.createSchema(
-        new CreateSchema().name("default").catalogName(ucCatalog.catalogName()));
+        new CreateSchema().name("default").catalogName(catalogInfo.catalogName()));
 
-    LOG.info("Unity Catalog server started and ready at " + ucCatalog.serverUri());
-    LOG.info("Created catalog '" + ucCatalog.catalogName() + "' with schema 'default'");
+    LOG.info("Unity Catalog server started and ready at " + catalogInfo.serverUri());
+    LOG.info("Created catalog '" + catalogInfo.catalogName() + "' with schema 'default'");
   }
 
   /** Stops the Unity Catalog server after all tests. */
   @AfterAll
   public void tearDownServer() {
-    if (isUCRemoteEnabled()) {
+    if (isUCRemoteConfigured()) {
       return;
     }
 
@@ -285,36 +293,15 @@ public abstract class UnityCatalogSupport {
       ucServer = null;
     }
 
-    // Clean up temporary directory
-    if (ucTempDir != null && ucTempDir.exists()) {
-      deleteRecursively(ucTempDir);
+    // Clean up uc server temporary directory
+    if (ucServerDir != null && ucServerDir.exists()) {
+      deleteRecursively(ucServerDir);
     }
-  }
 
-  /**
-   * Configures a SparkConf with Unity Catalog settings.
-   *
-   * <p>This method should be called in the test's sparkConf override:
-   *
-   * <pre>
-   * {@literal @}Override
-   * protected SparkConf sparkConf() {
-   *   return configureSparkWithUnityCatalog(super.sparkConf());
-   * }
-   * </pre>
-   *
-   * @param conf The base SparkConf to configure
-   * @return The configured SparkConf with Unity Catalog settings
-   */
-  protected SparkConf configureSparkWithUnityCatalog(SparkConf conf) throws IOException {
-    UcCatalogInfo ucCatalog = catalogInfo();
-    String catalogName = ucCatalog.catalogName();
-    conf.set("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
-    // TODO: REMOVE this, set it temporary for run the remote UC integration tests successfully.
-    conf.set("spark.databricks.delta.catalog.update.enabled", "true");
-    return conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
-        .set("spark.sql.catalog." + catalogName + ".uri", ucCatalog.serverUri())
-        .set("spark.sql.catalog." + catalogName + ".token", ucCatalog.serverToken());
+    // Clear up base table locations.
+    if (ucBaseTableLocation != null && ucBaseTableLocation.exists()) {
+      deleteRecursively(ucBaseTableLocation);
+    }
   }
 
   /** Recursively deletes a directory and all its contents. */
