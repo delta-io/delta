@@ -685,7 +685,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       lastKnownBackfilledVersion,
       disown,
       newMetadata,
-      newProtocol
+      newProtocol,
+      Collections::emptyMap /* committerProperties */
     );
   }
 
