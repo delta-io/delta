@@ -48,7 +48,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * not yet supported in this release.
    */
   protected static Stream<TableType> allTableTypes() {
-    return Stream.of(TableType.EXTERNAL);
+    return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
   }
 
   private SparkSession sparkSession;
