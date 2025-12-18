@@ -20,7 +20,7 @@ import org.apache.spark.SparkFunSuite
 
 /**
  * Shim for SparkFunSuite as gridTest doesn't exist in Spark 4.0 but we rely on it
- * in tests. In Spark 4.1 it exists so we don't need to do anything.
+ * in tests. In Spark 4.2 it exists (same as 4.1) so we don't need to do anything.
  */
 trait GridTestShim { self: SparkFunSuite =>
 }

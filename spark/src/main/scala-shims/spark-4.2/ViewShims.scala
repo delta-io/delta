@@ -20,18 +20,18 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Shim for View to handle API changes between Spark versions.
- * In Spark 4.1, View has an additional constructor parameter.
+ * In Spark 4.2, View has an additional constructor parameter (same as Spark 4.1).
  */
 object ViewShims {
 
   /**
    * Extractor that matches View(desc, true, child) pattern.
    * Used in DeltaViewHelper for matching temp views with a specific structure.
-   * In Spark 4.1, View has an additional parameter, so we use a wildcard to ignore it.
+   * In Spark 4.2, View has an additional parameter (same as 4.1), so we use a wildcard to ignore it.
    */
   object TempViewWithChild {
     def unapply(plan: LogicalPlan): Option[(CatalogTable, LogicalPlan)] = plan match {
-      // In Spark 4.1, View has an additional parameter, we use _ to match it
+      // In Spark 4.2, View has an additional parameter (same as 4.1), we use _ to match it
       case View(desc, isTempView, child, _) if isTempView => Some((desc, child))
       case _ => None
     }

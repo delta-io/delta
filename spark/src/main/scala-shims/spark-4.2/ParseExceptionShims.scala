@@ -23,7 +23,7 @@ import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.delta.DeltaThrowable
 
 /**
- * DeltaParseException for Spark 4.1.
+ * DeltaParseException for Spark 4.2 (same as Spark 4.1).
  * In this version, ParseException only takes a single origin parameter (stop was removed).
  */
 class DeltaParseException(
@@ -32,8 +32,8 @@ class DeltaParseException(
     messageParameters: Map[String, String] = Map.empty)
   extends ParseException(
       Option(ParserUtils.command(ctx)),
-      ParserUtils.position(ctx.getStart),  // In Spark 4.1, only start position is used
-      // No stop parameter in Spark 4.1
+      ParserUtils.position(ctx.getStart),  // In Spark 4.2, only start position is used (same as 4.1)
+      // No stop parameter in Spark 4.2 (same as 4.1)
       errorClass,
       messageParameters
     ) with DeltaThrowable {
@@ -42,21 +42,21 @@ class DeltaParseException(
 
 /**
  * Shim for ParseException to handle API changes between Spark versions.
- * In Spark 4.1, ParseException only has a single origin parameter (stop was removed).
+ * In Spark 4.2, ParseException only has a single origin parameter (same as Spark 4.1, stop was removed).
  */
 object ParseExceptionShims {
 
   /**
    * Create a ParseException with the appropriate constructor for this Spark version.
-   * In Spark 4.1, we only use the start Origin (stop parameter was removed).
+   * In Spark 4.2, we only use the start Origin (same as Spark 4.1, stop parameter was removed).
    */
   def createParseException(
       command: Option[String],
       start: Origin,
-      stop: Origin,  // This parameter is ignored in Spark 4.1
+      stop: Origin,  // This parameter is ignored in Spark 4.2 (same as 4.1)
       errorClass: String,
       messageParameters: Map[String, String]): ParseException = {
-    // In Spark 4.1, ParseException only takes a single origin parameter
+    // In Spark 4.2, ParseException only takes a single origin parameter (same as 4.1)
     new ParseException(command, start, errorClass, messageParameters)
   }
 }

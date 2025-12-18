@@ -18,7 +18,7 @@ package org.apache.spark.sql.catalyst.plans.logical
 import org.apache.spark.sql.connector.catalog.TableChange.AddColumn
 
 /**
- * In Spark 4.1 QualifiedColType stores `default` as a DefaultValueExpression
+ * In Spark 4.2 QualifiedColType stores `default` as a DefaultValueExpression (same as Spark 4.1)
  */
 object QualifiedColTypeShims {
 

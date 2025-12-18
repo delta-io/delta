@@ -22,7 +22,7 @@ import org.apache.spark.internal.LogKey
 
 /**
  * Shim for LogKey to handle API changes between Spark versions.
- * In Spark 4.1, LogKey is a Java interface requiring explicit implementation of `name()`.
+ * In Spark 4.2, LogKey is a Java interface requiring explicit implementation of `name()` (same as Spark 4.1).
  *
  * DeltaLogKey provides the implementation of name() that case objects can inherit.
  */

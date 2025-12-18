@@ -16,8 +16,8 @@
 package org.apache.spark.sql.catalyst.expressions
 
 /**
- * Shim for date/time expressions in Spark 4.1
- * Note: TimeAdd is removed in Spark 4.1
+ * Shim for date/time expressions in Spark 4.2 (same as Spark 4.1)
+ * Note: TimeAdd is removed in Spark 4.1+
  */
 object DateTimeExpressionShims {
   /**

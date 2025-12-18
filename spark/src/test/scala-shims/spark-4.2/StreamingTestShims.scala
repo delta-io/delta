@@ -17,8 +17,8 @@
 package org.apache.spark.sql.delta.test.shims
 
 /**
- * Test shims for streaming classes that were relocated in Spark 4.1.
- * In Spark 4.1, these classes moved to new package locations.
+ * Test shims for streaming classes that were relocated in Spark 4.1+.
+ * In Spark 4.2, these classes remain in the same package locations as Spark 4.1.
  */
 object StreamingTestShims {
   // MemoryStream - moved to runtime package

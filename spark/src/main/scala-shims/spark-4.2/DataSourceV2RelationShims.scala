@@ -24,7 +24,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Shim for DataSourceV2Relation to handle API changes between Spark versions.
- * In Spark 4.1, DataSourceV2Relation has 6 constructor parameters (added an extra parameter).
+ * In Spark 4.2, DataSourceV2Relation has 6 constructor parameters (same as Spark 4.1).
  */
 object DataSourceV2RelationShim {
 
