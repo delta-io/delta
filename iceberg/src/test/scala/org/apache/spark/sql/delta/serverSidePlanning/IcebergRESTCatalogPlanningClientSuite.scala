@@ -326,17 +326,25 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       // Test cases covering different projection scenarios
       val testCases = Seq(
-        ("single column", StructType(Seq(StructField("id", LongType))), Set("id")),
-        ("multiple columns", StructType(Seq(StructField("id", LongType), StructField("name", StringType))), Set("id", "name")),
-        ("all columns", StructType(Seq(StructField("id", LongType), StructField("name", StringType))), Set("id", "name")),
-        ("different order", StructType(Seq(StructField("name", StringType), StructField("id", LongType))), Set("name", "id"))
+        ("single column",
+          StructType(Seq(StructField("id", LongType))),
+          Set("id")),
+        ("multiple columns",
+          StructType(Seq(StructField("id", LongType), StructField("name", StringType))),
+          Set("id", "name")),
+        ("all columns",
+          StructType(Seq(StructField("id", LongType), StructField("name", StringType))),
+          Set("id", "name")),
+        ("different order",
+          StructType(Seq(StructField("name", StringType), StructField("id", LongType))),
+          Set("name", "id"))
       )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
         testCases.foreach { case (description, projection, expectedFields) =>
-          // Call planScan with projection
-          client.planScan(defaultNamespace.toString, "projectionTest", projection = Some(projection))
+          client.planScan(
+            defaultNamespace.toString, "projectionTest", projection = Some(projection))
 
           // Verify server captured the projection
           val capturedProjection = server.getCapturedProjection
