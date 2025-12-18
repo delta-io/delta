@@ -44,9 +44,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /**
    * Provides all table types for parameterized tests.
    * Tests can use this as a @MethodSource to test different table types.
+   * 
+   * Note: Only EXTERNAL tables are tested in branch-4.0 as the catalogManaged
+   * table feature is not yet supported in this release.
    */
   protected static Stream<TableType> allTableTypes() {
-    return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
+    return Stream.of(TableType.EXTERNAL);
   }
 
   private SparkSession sparkSession;
