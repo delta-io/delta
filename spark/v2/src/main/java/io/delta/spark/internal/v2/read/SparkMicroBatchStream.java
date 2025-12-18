@@ -120,6 +120,12 @@ public class SparkMicroBatchStream
   private DeltaStreamUtils.SchemaReadOptions schemaReadOptions;
 
   /**
+   * A global flag to mark whether we have done a per-stream start check for column mapping schema
+   * changes (rename / drop).
+   */
+  private volatile boolean hasCheckedReadIncompatibleSchemaChangesOnStreamStart = false;
+
+  /**
    * When AvailableNow is used, this offset will be the upper bound where this run of the query will
    * process up. We may run multiple micro batches, but the query will stop itself when it reaches
    * this offset.
@@ -406,7 +412,11 @@ public class SparkMicroBatchStream
       }
       return Optional.of(previousOffset);
     }
-    // TODO(#5318): Check read-incompatible schema changes during stream start
+    // Block latestOffset() from generating an invalid offset by proactively
+    // verifying incompatible schema changes under column mapping. See more details in the
+    // method java doc.
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+        previousOffset.reservoirVersion(), /* batchEndVersion= */ null);
     IndexedFile lastFile = lastFileChange.get();
     return Optional.of(
         DeltaSource.buildOffsetFromIndexedFile(
@@ -951,6 +961,187 @@ public class SparkMicroBatchStream
       if (!DeltaStreamUtils.SchemaCompatibilityResult$.MODULE$.isCompatible(checkResult)) {
         boolean isRetryable =
             DeltaStreamUtils.SchemaCompatibilityResult$.MODULE$.isRetryableIncompatible(
+                checkResult);
+        throw (RuntimeException)
+            DeltaErrors.schemaChangedException(
+                readSchemaAtSourceInit,
+                schemaChange,
+                isRetryable,
+                Some.apply(version),
+                options.containsStartingVersionOrTimestamp());
+      }
+    }
+  }
+
+  /**
+   * Check read-incompatible schema changes during stream (re)start so we could fail fast.
+   *
+   * <p>This is called ONCE during the first latestOffset call to catch edge cases that normal
+   * per-commit validation (checkReadIncompatibleSchemaChanges) misses.
+   *
+   * <p><b>Why needed?</b> Normal validation only checks commits with metadata actions. If a stream
+   * starts at version 1 (after a schema change at version 1), scanning only validates version 1's
+   * schema against itself (SAME, passes). But version 0 files may have an incompatible older schema
+   * that was never checked since version 0 has no metadata action.
+   *
+   * <p>This method explicitly loads and validates the snapshot in the scan range, regardless of
+   * whether it has a metadata action, catching such incompatibilities before planInputPartitions
+   *
+   * <p>Skipped if schema tracking log is already initialized.
+   *
+   * @param batchStartVersion Start version we want to verify read compatibility against
+   * @param batchEndVersion Optionally, if we are checking against an existing constructed batch
+   *     during streaming initialization, we would also like to verify all schema changes in between
+   *     as well before we can lazily initialize the schema log if needed.
+   */
+  private void checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+      long batchStartVersion, Long batchEndVersion) {
+    // TODO(#5319): skip if enable schema tracking log
+
+    if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return;
+
+    SnapshotImpl startVersionSnapshot = null;
+    Exception err = null;
+    try {
+      startVersionSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(batchStartVersion);
+    } catch (Exception e) {
+      err = e;
+    }
+
+    // Cannot perfectly verify column mapping schema changes if we cannot compute a start snapshot.
+    if (!schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()
+        && schemaReadOptions.isStreamingFromColumnMappingTable()
+        && (err != null)) {
+      throw (RuntimeException)
+          DeltaErrors.failedToGetSnapshotDuringColumnMappingStreamingReadCheck(err);
+    }
+
+    // Perform schema check if we need to, considering all escape flags.
+    if (!schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()
+        || schemaReadOptions.typeWideningEnabled()
+        || !schemaReadOptions
+            .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
+      if (startVersionSnapshot != null) {
+        checkReadIncompatibleSchemaChanges(
+            startVersionSnapshot.getMetadata(),
+            startVersionSnapshot.getVersion(),
+            batchStartVersion,
+            batchEndVersion,
+            /* validatedDuringStreamStart= */ true);
+        // If end version is defined (i.e. we have a pending batch), let's also eagerly check all
+        // intermediate schema changes against the stream read schema to capture corners cases such
+        // as rename and rename back.
+        if (batchEndVersion != null) {
+          for (Map.Entry<Long, Metadata> entry :
+              StreamingHelper.collectMetadataActionsFromRangeUnsafe(
+                      batchStartVersion,
+                      Optional.of(batchEndVersion),
+                      snapshotManager,
+                      engine,
+                      snapshotAtSourceInit.getPath())
+                  .entrySet()) {
+            long version = entry.getKey();
+            Metadata metadata = entry.getValue();
+            checkReadIncompatibleSchemaChanges(
+                metadata,
+                version,
+                batchStartVersion,
+                batchEndVersion,
+                /* validatedDuringStreamStart= */ true);
+          }
+        }
+      }
+    }
+
+    // Mark as checked
+    hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
+  }
+
+  /**
+   * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically: 1.
+   * Any column mapping related schema changes (rename / drop) columns 2. Standard
+   * read-compatibility changes including: a) No missing columns b) No data type changes c) No
+   * read-incompatible nullability changes If the check fails, we throw an exception to exit the
+   * stream. If lazy log initialization is required, we also run a one time scan to safely
+   * initialize the metadata tracking log upon any non-additive schema change failures.
+   *
+   * @param metadata Metadata that contains a potential schema change
+   * @param version Version for the metadata action
+   * @param validatedDuringStreamStart Whether this check is being done during stream start.
+   */
+  private void checkReadIncompatibleSchemaChanges(
+      Metadata metadata,
+      long version,
+      long batchStartVersion,
+      Long batchEndVersion,
+      boolean validatedDuringStreamStart) {
+    logger.info(
+        "checking read incompatibility with schema at version {}, inside batch[{}, {}].",
+        version,
+        batchStartVersion,
+        batchEndVersion != null ? batchEndVersion : "latest");
+
+    Metadata newMetadata, oldMetadata;
+    if (version < snapshotAtSourceInit.getVersion()) {
+      newMetadata = snapshotAtSourceInit.getMetadata();
+      oldMetadata = metadata;
+    } else {
+      newMetadata = metadata;
+      oldMetadata = snapshotAtSourceInit.getMetadata();
+    }
+
+    // Table ID has changed during streaming
+    if (!Objects.equals(newMetadata.getId(), oldMetadata.getId())) {
+      throw (RuntimeException)
+          DeltaErrors.differentDeltaTableReadByStreamingSource(
+              newMetadata.getId(), oldMetadata.getId());
+    }
+
+    // TODO(#5319): schema tracking for non-additive schema changes
+
+    // Other standard read compatibility changes
+    if (!validatedDuringStreamStart
+        || !schemaReadOptions
+            .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
+
+      StructType schemaChange = SchemaUtils.convertKernelSchemaToSparkSchema(metadata.getSchema());
+
+      // There is a schema change. All files after this commit will use `schemaChange`. Hence, we
+      // check whether we can use `schema` (the fixed source schema we use in the same run of the
+      // query) to read these new files safely.
+      boolean backfilling = version < snapshotAtSourceInit.getVersion();
+      // Partition column change will be ignored if user enable the unsafe flag
+      Seq<String> newPartitionColumns, oldPartitionColumns;
+      if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges()) {
+        newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
+        oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
+      } else {
+        newPartitionColumns =
+            CollectionConverters.asScala(
+                    VectorUtils.toJavaList(newMetadata.getPartitionColumns()).stream()
+                        .map(Object::toString)
+                        .collect(Collectors.toList()))
+                .toSeq();
+        oldPartitionColumns =
+            CollectionConverters.asScala(
+                    VectorUtils.toJavaList(oldMetadata.getPartitionColumns()).stream()
+                        .map(Object::toString)
+                        .collect(Collectors.toList()))
+                .toSeq();
+      }
+
+      DeltaSourceUtils.SchemaCompatibilityResult checkResult =
+          DeltaSourceUtils.validateBasicSchemaChanges(
+              schemaChange,
+              readSchemaAtSourceInit,
+              newPartitionColumns,
+              oldPartitionColumns,
+              backfilling,
+              schemaReadOptions);
+
+      if (!DeltaSourceUtils.SchemaCompatibilityResult$.MODULE$.isCompatible(checkResult)) {
+        boolean isRetryable =
+            DeltaSourceUtils.SchemaCompatibilityResult$.MODULE$.isRetryableIncompatible(
                 checkResult);
         throw (RuntimeException)
             DeltaErrors.schemaChangedException(
