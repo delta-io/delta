@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-public class RemoteUCTest extends UnityCatalogSupport {
+public class UCRemoteTest extends UnityCatalogSupport {
 
   private static final Map<String, String> ENV_VARS =
       ImmutableMap.of(
