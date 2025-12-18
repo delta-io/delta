@@ -545,7 +545,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     name := "delta-spark-unitycatalog",
     commonSettings,
     skipReleaseSettings,
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    crossSparkSettings(),
 
     // This is a test-only module - no production sources
     Compile / sources := Seq.empty,
