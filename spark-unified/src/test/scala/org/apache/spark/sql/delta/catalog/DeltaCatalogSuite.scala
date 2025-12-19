@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import io.delta.kernel.spark.catalog.SparkTable
+import io.delta.spark.internal.v2.catalog.SparkTable
 import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
