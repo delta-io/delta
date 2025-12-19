@@ -29,4 +29,3 @@ trait AbstractCommitInfo {
    */
   def getCommitTimestamp: Long
 }
-

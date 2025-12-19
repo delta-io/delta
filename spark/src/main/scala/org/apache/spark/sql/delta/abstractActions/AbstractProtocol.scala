@@ -41,4 +41,3 @@ trait AbstractProtocol {
    */
   def writerFeatures: Option[Set[String]]
 }
-

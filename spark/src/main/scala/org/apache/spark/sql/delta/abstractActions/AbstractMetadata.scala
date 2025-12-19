@@ -43,4 +43,3 @@ trait AbstractMetadata {
   /** The table properties/configuration defined on the table. */
   def configuration: Map[String, String]
 }
-
