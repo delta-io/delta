@@ -33,7 +33,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, Express
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, TimestampType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -192,7 +192,7 @@ case class TableChanges(
 
   /** Converts the table changes plan to a query over a Delta table */
   def toReadQuery: LogicalPlan = child.transformUp {
-    case DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+    case DataSourceV2RelationShim(d: DeltaTableV2, _, _, _, options) =>
       // withOptions empties the catalog table stats
       d.withOptions(options.asScala.toMap).toLogicalRelation
     case r: NamedRelation =>
