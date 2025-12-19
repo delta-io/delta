@@ -163,7 +163,13 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         val defaultValue: Expression =
           getDefaultValueExprOrNullLit(col, conf.useNullsForMissingDefaultColumnValues)
             .getOrElse(Literal(null, col.dataType))
-        DeltaMergeAction(Seq(col.name), defaultValue, targetColNameResolved = true)
+        DeltaMergeAction(
+          targetColNameParts = Seq(col.name),
+          expr = defaultValue,
+          // INSERT * operations set target-only struct fields to null, since there is no existing
+          // target row to preserve values from.
+          targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.NULLIFY,
+          targetColNameResolved = true)
       }
 
       val actions = m.resolvedActions ++ implicitActions
@@ -182,12 +188,14 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           conf.resolver(targetAttrib.name, a.targetColNameParts.head)
         }.map { a =>
           DeltaMergeAction(
-            Seq(targetAttrib.name),
-            castIfNeeded(
+            targetColNameParts = Seq(targetAttrib.name),
+            expr = castIfNeeded(
               a.expr,
               targetAttrib.dataType,
               castingBehavior = MergeOrUpdateCastingBehavior(withSchemaEvolution),
               targetAttrib.name),
+            // The action has been aligned/cast to the target schema.
+            targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.TARGET_ALIGNED,
             targetColNameResolved = true)
         }.getOrElse {
           // If a target table column was not found in the INSERT columns and expressions,
@@ -292,12 +300,26 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       resolvedActions.map(_.targetColNameParts))
     // Get the operations for columns that already exist...
     val existingUpdateOps = resolvedActions.map { a =>
-      UpdateOperation(a.targetColNameParts, a.expr)
+      UpdateOperation(
+        targetColNameParts = a.targetColNameParts,
+        updateExpr = a.expr,
+        targetOnlyStructFieldBehavior = a.targetOnlyStructFieldBehavior)
     }
 
-    // And construct operations for columns that the insert/update clauses will add.
     val newUpdateOps =
-      generateUpdateOpsForNewTargetFields(target, postEvolutionTargetSchema, resolvedActions)
+      if (UpdateExpressionsSupport.isWholeStructAssignmentPreserveNullSourceStructsEnabled(conf)) {
+        // We don't want to call `generateUpdateOpsForNewTargetFields` here because:
+        // 1. `generateUpdateExpressions` (below) already handles any fields in the evolved schema
+        // that don't have corresponding actions by assigning them default expressions (NULL for
+        // new fields or the existing target value for existing target fields).
+        // 2. `generateUpdateOpsForNewTargetFields` generates leaf-level operations for new target
+        // fields. If these fields are null structs in the source, they will be expanded to
+        // non-null structs with null fields in the target.
+        Seq.empty
+      } else {
+        // And construct operations for columns that the insert/update clauses will add.
+        generateUpdateOpsForNewTargetFields(target, postEvolutionTargetSchema, resolvedActions)
+      }
 
     // Use the helper methods in UpdateExpressionsSupport to generate expressions such that nested
     // fields can be updated (only for existing columns).
@@ -320,7 +342,12 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     alignedExprsWithGenerationExprs
       .zip(postEvolutionTargetSchema)
       .map { case (expr, field) =>
-        DeltaMergeAction(Seq(field.name), expr, targetColNameResolved = true)
+        DeltaMergeAction(
+          targetColNameParts = Seq(field.name),
+          expr = expr,
+          // The action has been aligned to target schema.
+          targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.TARGET_ALIGNED,
+          targetColNameResolved = true)
       }
   }
 
@@ -379,7 +406,12 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
     // Finally, generate an update operation for each remaining field to set it to null.
     leafFields(newTargetFieldsWithoutAssignment).map {
-      case (name, dataType) => UpdateOperation(name, Literal(null, dataType))
+      case (name, dataType) =>
+        UpdateOperation(
+          targetColNameParts = name,
+          updateExpr = Literal(null, dataType),
+          // Leaf-level operations are aligned with the target schema naturally.
+          targetOnlyStructFieldBehavior = TargetOnlyStructFieldBehavior.TARGET_ALIGNED)
     }
   }
 

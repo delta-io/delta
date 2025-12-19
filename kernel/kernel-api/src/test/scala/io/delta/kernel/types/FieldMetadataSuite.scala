@@ -139,4 +139,27 @@ class FieldMetadataSuite extends AnyFunSuite {
 
     assertThat(builder.getMetadata("fieldMetadataKey")).isEqualTo(innerMeta)
   }
+
+  test("toString handles empty metadata") {
+    val fieldMetadata = FieldMetadata.builder().build()
+    val result = fieldMetadata.toString
+
+    assertThat(result).isEqualTo("{}")
+  }
+
+  test("toString handles null values and arrays with null elements") {
+    val fieldMetadata = FieldMetadata.builder()
+      .putString("nullValueKey", null)
+      .putStringArray("arrayWithNulls", Array("a", null, "b"))
+      .putString("validValue", "test")
+      .putStringArray("validArray", Array("x", "y", "z"))
+      .build()
+
+    val result = fieldMetadata.toString
+
+    assertThat(result).contains("nullValueKey=null")
+    assertThat(result).contains("[a, null, b]")
+    assertThat(result).contains("validValue=test")
+    assertThat(result).contains("[x, y, z]")
+  }
 }

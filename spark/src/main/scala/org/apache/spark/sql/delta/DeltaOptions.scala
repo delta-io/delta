@@ -122,7 +122,7 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   /** Whether to only overwrite partitions that have data written into it at runtime. */
   def isDynamicPartitionOverwriteMode: Boolean = {
     val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
-      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
+      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE).toString)
     val modeIsDynamic = mode != null && mode.equalsIgnoreCase(PARTITION_OVERWRITE_MODE_DYNAMIC)
     if (!sqlConf.getConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED)) {
       // Raise an exception when DYNAMIC_PARTITION_OVERWRITE_ENABLED=false

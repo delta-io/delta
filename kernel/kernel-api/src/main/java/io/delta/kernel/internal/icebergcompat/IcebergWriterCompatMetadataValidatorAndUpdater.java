@@ -98,7 +98,7 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
               TYPE_WIDENING_RW_PREVIEW_FEATURE,
-              CATALOG_MANAGED_R_W_FEATURE_PREVIEW)
+              CATALOG_MANAGED_RW_FEATURE)
           .collect(toSet());
 
   protected static IcebergCompatCheck createUnsupportedFeaturesCheck(

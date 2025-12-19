@@ -90,6 +90,7 @@
   - [Generated Columns](#generated-columns)
   - [Default Columns](#default-columns)
   - [Identity Columns](#identity-columns)
+  - [Materialize Partition Columns](#materialize-partition-columns)
   - [Writer Version Requirements](#writer-version-requirements)
 - [Requirements for Readers](#requirements-for-readers)
   - [Reader Version Requirements](#reader-version-requirements)
@@ -151,17 +152,20 @@ The state of a table at a given version is called a _snapshot_ and is defined by
 ## File Types
 A Delta table is stored within a directory and is composed of the following different types of files.
 
-Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
+Here is an example of a Delta table with four entries in the commit log, stored in the directory `mytable`.
 ```
-/mytable/_delta_log/00000000000000000000.json
-/mytable/_delta_log/00000000000000000001.json
-/mytable/_delta_log/00000000000000000003.json
-/mytable/_delta_log/00000000000000000003.checkpoint.parquet
+/mytable/_delta_log/00000000000000000042.json
+/mytable/_delta_log/00000000000000000042.checkpoint.parquet
+/mytable/_delta_log/00000000000000000043.json
+/mytable/_delta_log/00000000000000000044.json
+/mytable/_delta_log/00000000000000000045.json
 /mytable/_delta_log/_last_checkpoint
 /mytable/_change_data/cdc-00000-924d9ac7-21a9-4121-b067-a0a6517aa8ed.c000.snappy.parquet
 /mytable/part-00000-3935a07c-416b-4344-ad97-2a38342ee2fc.c000.snappy.parquet
 /mytable/deletion_vector-0c6cbaaf-5e04-4c9d-8959-1088814f58ef.bin
 ```
+
+This example represents a table after [metadata cleanup](#metadata-cleanup) has removed older log entries. The checkpoint at version 42 contains the complete table state, while versions 43-45 are subsequent commits. Each file type is described in the sections below.
 
 ### Data Files
 Data files can be stored in the root directory of the table or in any non-hidden subdirectory (i.e., one whose name does not start with an `_`).
@@ -1957,6 +1961,21 @@ When `delta.identity.allowExplicitInsert` is false, writers should meet the foll
 - Overflow when calculating generated Identity values should be detected and such writes should not be allowed.
 - `delta.identity.highWaterMark` should be updated to the new highest value when the write operation commits.
 
+## Materialize Partition Columns
+
+When this feature is enabled, partition columns are physically written to Parquet files alongside the data columns. To support this feature:
+ - The table must be on Writer Version 7, and a feature name `materializePartitionColumns` must exist in the table `protocol`'s `writerFeatures`.
+
+When supported:
+ - When the writer feature `materializePartitionColumns` is supported in the protocol, writers must materialize partition columns into any newly created data file, placing them after the data columns in the parquet
+  schema. This mimics the same partition column materialization requirement from [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
+and
+[IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full
+  Iceberg compatibility.
+ - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
+
+This feature does not impose any requirements on readers. All Delta readers must be able to read the table regardless of whether partition columns are materialized in the data files. If partition values are present in both parquet and AddFile metadata, Delta readers should continue to read partition values from AddFile metadata.
+
 ## Writer Version Requirements
 
 The requirements of the writers according to the protocol versions are summarized in the table below. Each row inherits the requirements from the preceding row.
@@ -1997,6 +2016,7 @@ Feature | Name | Readers or Writers?
 [Change Data Feed](#add-cdc-file) | `changeDataFeed` | Writers only
 [Column Mapping](#column-mapping) | `columnMapping` | Readers and writers
 [Identity Columns](#identity-columns) | `identityColumns` | Writers only
+[Materialize Partition Columns](#materialize-partition-columns) | `materializePartitionColumns` | Writers only
 [Deletion Vectors](#deletion-vectors) | `deletionVectors` | Readers and writers
 [Row Tracking](#row-tracking) | `rowTracking` | Writers only
 [Timestamp without Timezone](#timestamp-without-timezone-timestampNtz) | `timestampNtz` | Readers and writers
@@ -2339,7 +2359,7 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |    |-- maxValues: struct
 |    |    |    |-- asset: string
 |    |    |    |-- quantity: double
-|    |    |-- nullCounts: struct
+|    |    |-- nullCount: struct
 |    |    |    |-- asset: long
 |    |    |    |-- quantity: long
 |-- remove: struct
@@ -2428,7 +2448,7 @@ Checkpoint schema (just the `add` column):
 |    |    |-- maxValues: struct
 |    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: string
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: double
-|    |    |-- nullCounts: struct
+|    |    |-- nullCount: struct
 |    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: long
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: long
 ```

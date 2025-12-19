@@ -174,7 +174,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
             .map(
                 props ->
                     TableFeatures.isPropertiesManuallySupportingTableFeature(
-                        props, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW))
+                        props, TableFeatures.CATALOG_MANAGED_RW_FEATURE))
             .orElse(false);
     if (isCatalogManaged) {
       // For catalog managed tables we assume the catalog has ensured the table loc is not already

@@ -134,5 +134,9 @@ override.tf.json
 .netlify
 
 # Ignore kernel benchmark report
-kernel/kernel-defaults/benchmark_report.json
+kernel/kernel-benchmarks/benchmark_report.json
+
+# Unity Catalog test artifacts
+spark/unitycatalog/etc/
+.scala-build/
 

@@ -32,7 +32,8 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
 
-  val catalogManagedFeaturePropMap = Map("delta.feature.catalogOwned-preview" -> "supported")
+  val catalogManagedFeaturePropMap = Map(
+    TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported")
   val validRequiredCatalogPropMap = Map(
     customCatalogCommitter.REQUIRED_PROPERTY_KEY -> customCatalogCommitter.REQUIRED_PROPERTY_VALUE)
   val invalidRequiredCatalogPropMap = Map(
@@ -65,7 +66,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
       testName = "ILLEGAL CREATE: set catalogManaged=supported and explicitly disable ICT => THROW",
       operationType = "CREATE",
       transactionProperties = Map(
-        "delta.feature.catalogOwned-preview" -> "supported",
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported",
         "delta.enableInCommitTimestamps" -> "false"),
       expectedSuccess = false,
       expectedExceptionMessage =
@@ -92,7 +93,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
       operationType = "UPDATE",
       initialTableProperties = Map.empty,
       transactionProperties = Map(
-        "delta.feature.catalogOwned-preview" -> "supported",
+        TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported",
         "delta.enableInCommitTimestamps" -> "false"),
       expectedSuccess = false,
       expectedExceptionMessage =
@@ -259,6 +260,11 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
             val updateBuilder = TableManager
               .loadSnapshot(tablePath)
               .withCommitter(customCatalogCommitter)
+              .withMaxCatalogVersionIfApplicable(
+                isCatalogManaged = TableFeatures.isPropertiesManuallySupportingTableFeature(
+                  testCase.initialTableProperties.asJava,
+                  TableFeatures.CATALOG_MANAGED_RW_FEATURE),
+                maxCatalogVersion = 0)
               .build(defaultEngine)
               .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
               .withTablePropertiesAdded(testCase.transactionProperties.asJava)
@@ -275,6 +281,11 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
             TableManager
               .loadSnapshot(tablePath)
               .withCommitter(customCatalogCommitter)
+              .withMaxCatalogVersionIfApplicable(
+                isCatalogManaged = TableFeatures.isPropertiesManuallySupportingTableFeature(
+                  testCase.initialTableProperties.asJava,
+                  TableFeatures.CATALOG_MANAGED_RW_FEATURE),
+                maxCatalogVersion = 0)
               .build(defaultEngine)
               .asInstanceOf[SnapshotImpl]
               .buildReplaceTableTransaction(replaceSchema, "engineInfo")
@@ -284,23 +295,24 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
 
         if (testCase.expectedSuccess) {
           // Transaction building should succeed
-          txnBuilder.build(defaultEngine).commit(defaultEngine, emptyIterable[Row])
+          val result = txnBuilder.build(defaultEngine).commit(defaultEngine, emptyIterable[Row])
 
-          // Verify the results
-          val snapshot = TableManager
-            .loadSnapshot(tablePath)
-            .build(defaultEngine)
+          val postCommitSnapshot = result
+            .getPostCommitSnapshot
+            .orElseThrow(() =>
+              new RuntimeException("Expected post-commit snapshot when no concurrent writes"))
             .asInstanceOf[SnapshotImpl]
 
-          val protocol = snapshot.getProtocol
+          // Verify the results
+          val protocol = postCommitSnapshot.getProtocol
 
           // Check if catalogManaged feature is supported
           val catalogManagedSupported = protocol
-            .supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)
+            .supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE)
           assert(catalogManagedSupported == testCase.expectedCatalogManagedSupported)
 
           // Check if ICT is enabled in metadata
-          val ictEnabled = snapshot.getMetadata.getConfiguration.asScala
+          val ictEnabled = postCommitSnapshot.getMetadata.getConfiguration.asScala
             .get("delta.enableInCommitTimestamps")
             .contains("true")
           assert(ictEnabled == testCase.expectedIctEnabled)
@@ -312,7 +324,7 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
             assert(
               customCatalogCommitter
                 .getRequiredTableProperties
-                .asScala.toSet.subsetOf(snapshot.getTableProperties.asScala.toSet))
+                .asScala.toSet.subsetOf(postCommitSnapshot.getTableProperties.asScala.toSet))
           }
         } else {
           // Transaction building should fail

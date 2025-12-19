@@ -43,10 +43,10 @@ public class Dsv2BasicTest {
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
-            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
             .set(
                 "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+                "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
             .setMaster("local[*]")
             .setAppName("Dsv2BasicTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
@@ -134,6 +134,33 @@ public class Dsv2BasicTest {
             RowFactory.create("value", "double", null));
 
     assertDatasetEquals(actual, expectedRows);
+  }
+
+  @Test
+  public void testColumnMappingRead(@TempDir File deltaTablePath) {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Create a Delta table with column mapping enabled using name mode
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id INT, user_name STRING, amount DOUBLE) "
+                + "USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+
+    // Insert test data
+    spark.sql(
+        String.format(
+            "INSERT INTO delta.`%s` VALUES (1, 'Alice', 100.0), (2, 'Bob', 200.0)", tablePath));
+
+    // Read through DSV2 and verify
+    Dataset<Row> result =
+        spark.sql(String.format("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath));
+
+    List<Row> expectedRows =
+        Arrays.asList(RowFactory.create(1, "Alice", 100.0), RowFactory.create(2, "Bob", 200.0));
+
+    assertDatasetEquals(result, expectedRows);
   }
 
   @Test

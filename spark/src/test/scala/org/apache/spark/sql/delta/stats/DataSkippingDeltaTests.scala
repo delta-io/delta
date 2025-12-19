@@ -44,7 +44,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShims
+trait DataSkippingDeltaTestsBase extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DataSkippingDeltaTestsUtils
@@ -807,6 +807,23 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "a < 1",
       "NOT a = 1"
     )
+  )
+
+  testSkipping(
+    "nulls - IsNull pushdown on complex expressions",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(
+      "(a > 0 OR a == -1 OR a == -2 OR b == -1 OR b == -2 OR b > 10 OR b == 7) IS NULL"
+    ),
+    misses = Seq(
+      "(a > 0 OR b > 1) IS NULL"
+    ),
+    sqlConfs = Seq((DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH.key -> "1"))
   )
 
   testSkipping(
@@ -1795,7 +1812,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 
-  testSparkMasterOnly("data skipping by stats - variant type") {
+  test("data skipping by stats - variant type") {
     withTable("tbl") {
       sql("""CREATE TABLE tbl(v VARIANT,
               v_struct STRUCT<v: VARIANT>,
