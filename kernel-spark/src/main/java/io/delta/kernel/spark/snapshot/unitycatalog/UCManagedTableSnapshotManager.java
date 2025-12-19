@@ -140,13 +140,12 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
       throw new VersionNotFoundException(version, 0 /* earliest */, latestSnapshotVersion);
     }
 
-    // Get the earliest version from catalog commits. If the catalog provides v0, we know it's
-    // available; otherwise we need to search the filesystem to find the earliest available version.
+    // Get the earliest version among catalog commits. This bounds the Kernel's filesystem search
+    // for the earliest available version (e.g., if catalog has v0, no filesystem search is needed).
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
     Optional<Long> earliestCatalogCommitVersion =
         catalogCommits.stream().map(ParsedCatalogCommitData::getVersion).min(Long::compare);
 
-    // Use DeltaHistoryManager to find earliest version based on filesystem state
     long earliestVersion =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(
