@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
@@ -41,7 +42,6 @@ import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
@@ -2679,8 +2679,9 @@ class DeltaSuite extends QueryTest
       spark.sessionState.conf.setConfString(
         "spark.databricks.delta.write.txnVersion", "someVersion")
     }
-    assert(e.getMessage == "spark.databricks.delta.write.txnVersion should be " +
-      "long, but was someVersion")
+    assert(e.getMessage ==
+      "spark.databricks.delta.write.txnVersion should be long, but was someVersion" ||
+      e.getMessage.contains("INVALID_CONF_VALUE.TYPE_MISMATCH"))
 
     // clean up
     spark.conf.unset("spark.databricks.delta.write.txnAppId")

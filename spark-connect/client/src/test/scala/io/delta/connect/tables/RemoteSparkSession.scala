@@ -85,8 +85,8 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     command += "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED"
     command += "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
     command += "--add-opens=java.base/java.io=ALL-UNNAMED"
-    command += "--add-opens=java.base/java.net=ALL-UNNAMED"
     command += "--add-opens=java.base/java.nio=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.net=ALL-UNNAMED"
     command += "--add-opens=java.base/java.util=ALL-UNNAMED"
     command += "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
     command += "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED"
@@ -112,6 +112,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
     val builder = new ProcessBuilder(command.result(): _*)
     builder.environment().put("SPARK_HOME", sparkHome)
+    builder.environment().put("SPARK_LOCAL_IP", "127.0.0.1")
     builder.directory(new File(sparkHome))
     builder.redirectError(ProcessBuilder.Redirect.INHERIT)
     builder.redirectOutput(ProcessBuilder.Redirect.INHERIT)
@@ -129,3 +130,4 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     super.afterAll()
   }
 }
+
