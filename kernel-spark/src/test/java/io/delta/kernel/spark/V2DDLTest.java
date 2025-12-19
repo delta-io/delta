@@ -30,11 +30,11 @@ public class V2DDLTest extends V2TestBase {
 
   @Test
   public void testCreateTable() {
-    spark.sql(str("CREATE TABLE dsv2.%s.create_table_test (id INT, name STRING, value DOUBLE)",
+    spark.sql(format("CREATE TABLE dsv2.%s.create_table_test (id INT, name STRING, value DOUBLE)",
         nameSpace));
 
     check(
-        str("DESCRIBE TABLE dsv2.%s.create_table_test", nameSpace),
+        format("DESCRIBE TABLE dsv2.%s.create_table_test", nameSpace),
         List.of(
             row("id", "int", null),
             row("name", "string", null),
@@ -46,7 +46,7 @@ public class V2DDLTest extends V2TestBase {
     AnalysisException e =
         assertThrows(
             AnalysisException.class,
-            () -> spark.sql(str("SELECT * FROM dsv2.%s.not_found_test", nameSpace)));
+            () -> spark.sql(format("SELECT * FROM dsv2.%s.not_found_test", nameSpace)));
     assertEquals(
         "TABLE_OR_VIEW_NOT_FOUND",
         e.getErrorClass(),
@@ -75,7 +75,7 @@ public class V2DDLTest extends V2TestBase {
     // TODO: [delta-io/delta#5001] change to select query after batch read is supported for V2
     // path.
     check(
-        str("DESCRIBE TABLE dsv2.delta.`%s`", tablePath),
+        format("DESCRIBE TABLE dsv2.delta.`%s`", tablePath),
         List.of(
             row("id", "int", null),
             row("name", "string", null),

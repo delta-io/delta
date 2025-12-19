@@ -66,9 +66,12 @@ public abstract class V2TestBase {
     }
   }
 
-  /** Shorthand for String.format(). */
-  protected static String str(String format, Object... args) {
-    return String.format(format, args);
+  /**
+   * Builds a formatted string by substituting placeholders with the provided arguments. Useful for
+   * constructing SQL queries and table identifiers.
+   */
+  protected static String format(String template, Object... args) {
+    return String.format(template, args);
   }
 
   /**

@@ -25,11 +25,11 @@ public class V2ReadTest extends V2TestBase {
 
   @Test
   public void testBatchRead() {
-    spark.sql(str("CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)",
+    spark.sql(format("CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)",
         nameSpace));
 
     // Select and validate the data (empty table)
-    check(str("SELECT * FROM dsv2.%s.batch_read_test", nameSpace), List.of());
+    check(format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace), List.of());
   }
 
   @Test
@@ -37,19 +37,19 @@ public class V2ReadTest extends V2TestBase {
     String tablePath = deltaTablePath.getAbsolutePath();
 
     // Create a Delta table with column mapping enabled using name mode
-    spark.sql(str(
+    spark.sql(format(
         "CREATE TABLE delta.`%s` (id INT, user_name STRING, amount DOUBLE) "
             + "USING delta "
             + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
         tablePath));
 
     // Insert test data
-    spark.sql(str("INSERT INTO delta.`%s` VALUES (1, 'Alice', 100.0), (2, 'Bob', 200.0)",
+    spark.sql(format("INSERT INTO delta.`%s` VALUES (1, 'Alice', 100.0), (2, 'Bob', 200.0)",
         tablePath));
 
     // Read through V2 and verify
     check(
-        str("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath),
+        format("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath),
         List.of(
             row(1, "Alice", 100.0),
             row(2, "Bob", 200.0)));
