@@ -44,7 +44,7 @@ import io.delta.storage.commit.actions.{
   AbstractMetadata => StorageAbstractMetadata,
   AbstractProtocol => StorageAbstractProtocol
 }
-import org.apache.spark.sql.delta.abstractActions.{
+import org.apache.spark.sql.delta.v2.interop.{
   AbstractCommitInfo => SparkAbstractCommitInfo,
   AbstractMetadata => SparkAbstractMetadata,
   AbstractProtocol => SparkAbstractProtocol

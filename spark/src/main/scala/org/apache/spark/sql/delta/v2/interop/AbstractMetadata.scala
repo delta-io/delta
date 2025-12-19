@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.abstractActions
+package org.apache.spark.sql.delta.v2.interop
 
 import org.apache.spark.sql.types.StructType
 
@@ -43,3 +43,4 @@ trait AbstractMetadata {
   /** The table properties/configuration defined on the table. */
   def configuration: Map[String, String]
 }
+

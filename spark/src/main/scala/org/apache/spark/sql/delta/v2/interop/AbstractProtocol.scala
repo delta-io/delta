@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.abstractActions
+package org.apache.spark.sql.delta.v2.interop
 
 /**
  * Abstract trait for protocol actions in Delta. This trait provides a common
@@ -41,3 +41,4 @@ trait AbstractProtocol {
    */
   def writerFeatures: Option[Set[String]]
 }
+
