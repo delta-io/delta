@@ -17,9 +17,12 @@
 package io.sparkuctest;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import io.unitycatalog.client.ApiClient;
+import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.api.CatalogsApi;
 import io.unitycatalog.client.api.SchemasApi;
+import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.model.CreateCatalog;
 import io.unitycatalog.client.model.CreateSchema;
 import io.unitycatalog.server.UnityCatalogServer;
@@ -108,6 +111,14 @@ public abstract class UnityCatalogSupport {
     public String baseTableLocation() {
       return baseTableLocation;
     }
+
+    public ApiClient createApiClient() {
+      return ApiClientBuilder.create()
+          .uri(serverUri)
+          .tokenProvider(
+              TokenProvider.create(ImmutableMap.of("type", "static", "token", serverToken)))
+          .build();
+    }
   }
 
   public static final String UC_STATIC_TOKEN = "static-token";
@@ -166,15 +177,6 @@ public abstract class UnityCatalogSupport {
 
   /** The temporary directory for external table location */
   private File ucBaseTableLocation = null;
-
-  /** Creates a Unity Catalog API client configured for this server. */
-  protected ApiClient createClient() {
-    ApiClient client = new ApiClient();
-    client.setScheme("http");
-    client.setHost("localhost");
-    client.setPort(ucPort);
-    return client;
-  }
 
   /** Finds an available port for the UC server. */
   private int findAvailablePort() throws IOException {
@@ -238,9 +240,10 @@ public abstract class UnityCatalogSupport {
     boolean serverReady = false;
     int retries = 0;
 
+    UnityCatalogInfo catalogInfo = unityCatalogInfo();
     while (!serverReady && retries < maxRetries) {
       try {
-        CatalogsApi catalogsApi = new CatalogsApi(createClient());
+        CatalogsApi catalogsApi = new CatalogsApi(catalogInfo.createApiClient());
         catalogsApi.listCatalogs(null, null); // This will throw if server is not ready
         serverReady = true;
       } catch (Exception e) {
@@ -254,10 +257,8 @@ public abstract class UnityCatalogSupport {
           "Unity Catalog server did not become ready after " + (maxRetries * retryDelayMs) + "ms");
     }
 
-    UnityCatalogInfo catalogInfo = unityCatalogInfo();
-
     // Create the catalog and default schema in the UC server
-    ApiClient client = createClient();
+    ApiClient client = catalogInfo.createApiClient();
 
     CatalogsApi catalogsApi = new CatalogsApi(client);
     SchemasApi schemasApi = new SchemasApi(client);

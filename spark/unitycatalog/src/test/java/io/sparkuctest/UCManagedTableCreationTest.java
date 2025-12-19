@@ -32,8 +32,9 @@ public class UCManagedTableCreationTest extends UCDeltaTableIntegrationBaseTest 
   @Test
   public void testCreateManagedTable() throws Exception {
     // TODO: make this a thorough test of managed table creation with different parameters.
+    UnityCatalogInfo catalogInfo = unityCatalogInfo();
     String tableName = "test_managed_table";
-    String fullTableName = unityCatalogInfo().catalogName() + ".default." + tableName;
+    String fullTableName = catalogInfo.catalogName() + ".default." + tableName;
     String tableSchema = "id INT, active BOOLEAN";
     try {
       sql(
@@ -42,7 +43,7 @@ public class UCManagedTableCreationTest extends UCDeltaTableIntegrationBaseTest 
           fullTableName, tableSchema);
 
       // Verify that properties are set on server. This can not be done by DESC EXTENDED.
-      TablesApi tablesApi = new TablesApi(createClient());
+      TablesApi tablesApi = new TablesApi(catalogInfo.createApiClient());
       TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
       List<ColumnInfo> columns = tableInfo.getColumns();
       Map<String, String> properties = tableInfo.getProperties();
