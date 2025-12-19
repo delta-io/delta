@@ -26,8 +26,8 @@ import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Tests for DSv2 streaming read operations. */
-public class Dsv2StreamingReadTest extends Dsv2TestBase {
+/** Tests for V2 streaming read operations. */
+public class V2StreamingReadTest extends V2TestBase {
 
   @Test
   public void testStreamingRead(@TempDir File deltaTablePath) {
@@ -44,8 +44,7 @@ public class Dsv2StreamingReadTest extends Dsv2TestBase {
     testData.write().format("delta").save(tablePath);
 
     // Test streaming read using path-based table
-    Dataset<Row> streamingDF =
-        spark.readStream().table(String.format("dsv2.delta.`%s`", tablePath));
+    Dataset<Row> streamingDF = spark.readStream().table(str("dsv2.delta.`%s`", tablePath));
 
     assertTrue(streamingDF.isStreaming(), "Dataset should be streaming");
     StreamingQueryException exception =
@@ -72,3 +71,4 @@ public class Dsv2StreamingReadTest extends Dsv2TestBase {
             + rootCause.getMessage());
   }
 }
+
