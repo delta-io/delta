@@ -130,6 +130,21 @@ public abstract class UnityCatalogSupport {
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
   }
 
+  /** The Unity Catalog info instance for subclasses access */
+  private volatile UnityCatalogInfo ucInfo = null;
+
+  /** The Unity Catalog server instance. */
+  private UnityCatalogServer ucServer;
+
+  /** The port on which the UC server is running. */
+  private int ucServerPort;
+
+  /** The temporary directory for UC server data. */
+  private File ucServerDir;
+
+  /** The temporary directory for external table location */
+  private File ucBaseTableLocation = null;
+
   /**
    * Returns the Unity Catalog configuration for use in tests.
    *
@@ -142,15 +157,14 @@ public abstract class UnityCatalogSupport {
    * @return the Unity Catalog configuration
    * @see UnityCatalogInfo
    */
-  protected UnityCatalogInfo unityCatalogInfo() {
-    if (isUCRemoteConfigured()) {
-      return remoteUnityCatalogInfo();
-    } else {
-      return localUnityCatalogInfo();
+  protected synchronized UnityCatalogInfo unityCatalogInfo() {
+    if (ucInfo == null) {
+      ucInfo = isUCRemoteConfigured() ? remoteUnityCatalogInfo() : localUnityCatalogInfo();
     }
+    return ucInfo;
   }
 
-  private UnityCatalogInfo remoteUnityCatalogInfo() {
+  private UnityCatalogSupport.UnityCatalogInfo remoteUnityCatalogInfo() {
     String serverUri = System.getenv(UC_URI);
     String catalogName = System.getenv(UC_CATALOG_NAME);
     String serverToken = System.getenv(UC_TOKEN);
@@ -177,18 +191,6 @@ public abstract class UnityCatalogSupport {
         "default",
         ucBaseTableLocation.getAbsolutePath());
   }
-
-  /** The Unity Catalog server instance. */
-  private UnityCatalogServer ucServer;
-
-  /** The port on which the UC server is running. */
-  private int ucServerPort;
-
-  /** The temporary directory for UC server data. */
-  private File ucServerDir;
-
-  /** The temporary directory for external table location */
-  private File ucBaseTableLocation = null;
 
   /** Finds an available port for the UC server. */
   private int findAvailablePort() throws IOException {
