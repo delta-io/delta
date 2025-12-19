@@ -196,7 +196,7 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       // catalogGamma config (should NOT be used)
       s"spark.sql.catalog.$catalogGamma" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogGamma.uri" -> ucUriGamma,
-      s"spark.sql.catalog.$catalogGamma.token" -> ucUriGamma,
+      s"spark.sql.catalog.$catalogGamma.token" -> ucTokenBeta,
       // catalogBeta config (should be used)
       s"spark.sql.catalog.$catalogBeta" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogBeta.uri" -> ucUriBeta,
