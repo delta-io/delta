@@ -189,9 +189,14 @@ public abstract class UnityCatalogSupport {
    */
   @BeforeAll
   public void setupServer() throws Exception {
+    System.out.println("========================================");
+    System.out.println("STARTING Unity Catalog Server Setup");
+    System.out.println("========================================");
+
     if (isUCRemoteConfigured()) {
       // For remote UC, log the configuration
       UnityCatalogInfo catalogInfo = unityCatalogInfo();
+      System.out.println("Using remote Unity Catalog server at " + catalogInfo.serverUri());
       LOG.info("Using remote Unity Catalog server at " + catalogInfo.serverUri());
       LOG.info("Catalog: " + catalogInfo.catalogName() + ", Schema: " + catalogInfo.schemaName());
       LOG.info("Base location: " + catalogInfo.baseTableLocation());
@@ -207,13 +212,17 @@ public abstract class UnityCatalogSupport {
     // Create temporary directory for UC server data
     ucServerDir = Files.createTempDirectory("unity-catalog-test-").toFile();
     ucServerDir.deleteOnExit();
+    System.out.println("Created UC server directory: " + ucServerDir.getAbsolutePath());
 
     // Create temporary directory for external tables testing.
     ucBaseTableLocation = Files.createTempDirectory("base-table-location-").toFile();
     ucBaseTableLocation.deleteOnExit();
+    System.out.println("Created base table location: " + ucBaseTableLocation.getAbsolutePath());
 
     // Find an available port
     ucPort = findAvailablePort();
+    System.out.println("Found available port: " + ucPort);
+    LOG.info("Found available port for Unity Catalog server: " + ucPort);
 
     // Set up server properties
     Properties serverProps = new Properties();
@@ -223,37 +232,89 @@ public abstract class UnityCatalogSupport {
     serverProps.setProperty(
         "storage-root.tables", new File(ucServerDir, "ucroot").getAbsolutePath());
 
+    System.out.println("Server properties configured:");
+    System.out.println("  - server.env: test");
+    System.out.println("  - server.managed-table.enabled: true");
+    System.out.println(
+        "  - storage-root.tables: " + new File(ucServerDir, "ucroot").getAbsolutePath());
+
     // Start UC server with configuration
     ServerProperties initServerProperties = new ServerProperties(serverProps);
 
+    System.out.println("Building Unity Catalog server...");
     UnityCatalogServer server =
         UnityCatalogServer.builder().port(ucPort).serverProperties(initServerProperties).build();
 
+    System.out.println(" ---> ucPort: " + ucPort);
+
+    System.out.println("Calling server.start()...");
+    LOG.info("Starting Unity Catalog server on port " + ucPort + "...");
     server.start();
     ucServer = server;
+    System.out.println("server.start() returned successfully");
+    LOG.info("Unity Catalog server.start() completed, now polling for readiness...");
 
     // Poll for server readiness by checking if we can create an API client and query catalogs
     int maxRetries = 30;
-    int retryDelayMs = 500;
+    int retryDelayMs = 50000;
     boolean serverReady = false;
     int retries = 0;
 
+    System.out.println(
+        "Starting readiness check (max "
+            + maxRetries
+            + " retries, "
+            + retryDelayMs
+            + "ms delay)...");
+
     while (!serverReady && retries < maxRetries) {
       try {
+        System.out.println(
+            "Attempt "
+                + (retries + 1)
+                + "/"
+                + maxRetries
+                + " connecting to http://localhost:"
+                + ucPort);
+        LOG.info(
+            "Attempt "
+                + (retries + 1)
+                + "/"
+                + maxRetries
+                + " to connect to Unity Catalog server at http://localhost:"
+                + ucPort);
         CatalogsApi catalogsApi = new CatalogsApi(createClient());
         catalogsApi.listCatalogs(null, null); // This will throw if server is not ready
         serverReady = true;
+        System.out.println("✓ Successfully connected to Unity Catalog server!");
+        LOG.info("Successfully connected to Unity Catalog server!");
       } catch (Exception e) {
+        System.err.println(
+            "✗ Connection attempt "
+                + (retries + 1)
+                + " failed: "
+                + e.getClass().getSimpleName()
+                + ": "
+                + e.getMessage());
+        if (retries % 5 == 0) {
+          LOG.warn("Connection attempt " + (retries + 1) + " failed: " + e.getMessage());
+          e.printStackTrace();
+        }
         Thread.sleep(retryDelayMs);
         retries++;
       }
     }
 
     if (!serverReady) {
+      System.err.println(
+          "✗✗✗ FAILED: Unity Catalog server did not become ready after "
+              + (maxRetries * retryDelayMs)
+              + "ms");
       throw new RuntimeException(
           "Unity Catalog server did not become ready after " + (maxRetries * retryDelayMs) + "ms");
     }
 
+    System.out.println("Unity Catalog server is ready!");
     UnityCatalogInfo catalogInfo = unityCatalogInfo();
 
     // Create the catalog and default schema in the UC server
