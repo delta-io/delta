@@ -78,11 +78,11 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     conf.set("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
 
     // Set the catalog specific configs.
-    UnityCatalogInfo catalogInfo = unityCatalogInfo();
-    String catalogName = catalogInfo.catalogName();
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String catalogName = uc.catalogName();
     return conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
-        .set("spark.sql.catalog." + catalogName + ".uri", catalogInfo.serverUri())
-        .set("spark.sql.catalog." + catalogName + ".token", catalogInfo.serverToken());
+        .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
+        .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
   }
 
   /** Stop the SparkSession after all tests. */
@@ -137,8 +137,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /** Helper method to run code with a temporary directory that gets cleaned up. */
   protected void withTempDir(TempDirCode code) throws Exception {
-    UnityCatalogInfo catalogInfo = unityCatalogInfo();
-    Path tempDir = new Path(catalogInfo.baseTableLocation(), "temp-" + UUID.randomUUID());
+    UnityCatalogInfo uc = unityCatalogInfo();
+    Path tempDir = new Path(uc.baseTableLocation(), "temp-" + UUID.randomUUID());
     code.run(tempDir);
   }
 
@@ -159,9 +159,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   protected void withNewTable(
       String tableName, String tableSchema, TableType tableType, TestCode testCode)
       throws Exception {
-    UnityCatalogInfo catalogInfo = unityCatalogInfo();
-    String fullTableName =
-        catalogInfo.catalogName() + "." + catalogInfo.schemaName() + "." + tableName;
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
 
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location

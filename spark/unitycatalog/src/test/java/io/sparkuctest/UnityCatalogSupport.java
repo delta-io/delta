@@ -61,6 +61,7 @@ import org.junit.jupiter.api.TestInstance;
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class UnityCatalogSupport {
+
   private static final Logger LOG = Logger.getLogger(UnityCatalogSupport.class);
 
   protected static class UnityCatalogInfo {
@@ -143,32 +144,38 @@ public abstract class UnityCatalogSupport {
    */
   protected UnityCatalogInfo unityCatalogInfo() {
     if (isUCRemoteConfigured()) {
-      String serverUri = System.getenv(UC_URI);
-      String catalogName = System.getenv(UC_CATALOG_NAME);
-      String serverToken = System.getenv(UC_TOKEN);
-      String schemaName = System.getenv(UC_SCHEMA_NAME);
-      String baseTableLocation = System.getenv(UC_BASE_TABLE_LOCATION);
-      Preconditions.checkNotNull(serverUri, "%s must be set when UC_REMOTE=true", UC_URI);
-      Preconditions.checkNotNull(
-          catalogName, "%s must be set when UC_REMOTE=true", UC_CATALOG_NAME);
-      Preconditions.checkNotNull(serverToken, "%s must be set when UC_REMOTE=true", UC_TOKEN);
-      Preconditions.checkNotNull(schemaName, "%s must be set when UC_REMOTE=true", UC_SCHEMA_NAME);
-      Preconditions.checkNotNull(
-          baseTableLocation, "%s must be set when UC_REMOTE=true", UC_BASE_TABLE_LOCATION);
-      return new UnityCatalogInfo(
-          serverUri, catalogName, serverToken, schemaName, baseTableLocation);
+      return remoteUnityCatalogInfo();
     } else {
-      Preconditions.checkNotNull(ucServer, "Local Unity Catalog Server is not configured");
-      Preconditions.checkNotNull(
-          ucBaseTableLocation, "Local Unity Catalog Temp Directory is not configured");
-      // For local UC, use default schema and temp directory
-      return new UnityCatalogInfo(
-          String.format("http://localhost:%s/", ucServerPort),
-          "unity",
-          UC_STATIC_TOKEN,
-          "default",
-          ucBaseTableLocation.getAbsolutePath());
+      return localUnityCatalogInfo();
     }
+  }
+
+  private UnityCatalogInfo remoteUnityCatalogInfo() {
+    String serverUri = System.getenv(UC_URI);
+    String catalogName = System.getenv(UC_CATALOG_NAME);
+    String serverToken = System.getenv(UC_TOKEN);
+    String schemaName = System.getenv(UC_SCHEMA_NAME);
+    String baseTableLocation = System.getenv(UC_BASE_TABLE_LOCATION);
+    Preconditions.checkNotNull(serverUri, "%s must be set when UC_REMOTE=true", UC_URI);
+    Preconditions.checkNotNull(catalogName, "%s must be set when UC_REMOTE=true", UC_CATALOG_NAME);
+    Preconditions.checkNotNull(serverToken, "%s must be set when UC_REMOTE=true", UC_TOKEN);
+    Preconditions.checkNotNull(schemaName, "%s must be set when UC_REMOTE=true", UC_SCHEMA_NAME);
+    Preconditions.checkNotNull(
+        baseTableLocation, "%s must be set when UC_REMOTE=true", UC_BASE_TABLE_LOCATION);
+    return new UnityCatalogInfo(serverUri, catalogName, serverToken, schemaName, baseTableLocation);
+  }
+
+  private UnityCatalogInfo localUnityCatalogInfo() {
+    Preconditions.checkNotNull(ucServer, "Local Unity Catalog Server is not configured");
+    Preconditions.checkNotNull(
+        ucBaseTableLocation, "Local Unity Catalog Temp Directory is not configured");
+    // For local UC, use default schema and temp directory
+    return new UnityCatalogInfo(
+        String.format("http://localhost:%s/", ucServerPort),
+        "unity",
+        UC_STATIC_TOKEN,
+        "default",
+        ucBaseTableLocation.getAbsolutePath());
   }
 
   /** The Unity Catalog server instance. */
@@ -197,20 +204,27 @@ public abstract class UnityCatalogSupport {
   @BeforeAll
   public void setupServer() throws Exception {
     if (isUCRemoteConfigured()) {
-      // For remote UC, log the configuration
-      UnityCatalogInfo catalogInfo = unityCatalogInfo();
-      LOG.info("Using remote Unity Catalog server at " + catalogInfo.serverUri());
-      LOG.info("Catalog: " + catalogInfo.catalogName() + ", Schema: " + catalogInfo.schemaName());
-      LOG.info("Base location: " + catalogInfo.baseTableLocation());
-      LOG.info(
-          "Note: Schema '"
-              + catalogInfo.catalogName()
-              + "."
-              + catalogInfo.schemaName()
-              + "' must already exist in the remote UC server");
-      return;
+      setUpRemoteServer();
+    } else {
+      setUpLocalServer();
     }
+  }
 
+  private void setUpRemoteServer() {
+    // For remote UC, log the configuration
+    UnityCatalogInfo uc = unityCatalogInfo();
+    LOG.info("Using remote Unity Catalog server at " + uc.serverUri());
+    LOG.info("Catalog: " + uc.catalogName() + ", Schema: " + uc.schemaName());
+    LOG.info("Base location: " + uc.baseTableLocation());
+    LOG.info(
+        "Note: Schema '"
+            + uc.catalogName()
+            + "."
+            + uc.schemaName()
+            + "' must already exist in the remote UC server");
+  }
+
+  private void setUpLocalServer() throws Exception {
     // Create temporary directory for UC server data
     ucServerDir = Files.createTempDirectory("unity-catalog-test-").toFile();
     ucServerDir.deleteOnExit();
@@ -248,10 +262,10 @@ public abstract class UnityCatalogSupport {
     boolean serverReady = false;
     int retries = 0;
 
-    UnityCatalogInfo catalogInfo = unityCatalogInfo();
+    UnityCatalogInfo uc = unityCatalogInfo();
     while (!serverReady && retries < maxRetries) {
       try {
-        CatalogsApi catalogsApi = new CatalogsApi(catalogInfo.createApiClient());
+        CatalogsApi catalogsApi = new CatalogsApi(uc.createApiClient());
         catalogsApi.listCatalogs(null, null); // This will throw if server is not ready
         serverReady = true;
       } catch (Exception e) {
@@ -266,7 +280,7 @@ public abstract class UnityCatalogSupport {
     }
 
     // Create the catalog and default schema in the UC server
-    ApiClient client = catalogInfo.createApiClient();
+    ApiClient client = uc.createApiClient();
 
     CatalogsApi catalogsApi = new CatalogsApi(client);
     SchemasApi schemasApi = new SchemasApi(client);
@@ -274,15 +288,14 @@ public abstract class UnityCatalogSupport {
     // Create catalog
     catalogsApi.createCatalog(
         new CreateCatalog()
-            .name(catalogInfo.catalogName())
+            .name(uc.catalogName())
             .comment("Test catalog for Delta Lake integration"));
 
     // Create default schema
-    schemasApi.createSchema(
-        new CreateSchema().name("default").catalogName(catalogInfo.catalogName()));
+    schemasApi.createSchema(new CreateSchema().name("default").catalogName(uc.catalogName()));
 
-    LOG.info("Unity Catalog server started and ready at " + catalogInfo.serverUri());
-    LOG.info("Created catalog '" + catalogInfo.catalogName() + "' with schema 'default'");
+    LOG.info("Unity Catalog server started and ready at " + uc.serverUri());
+    LOG.info("Created catalog '" + uc.catalogName() + "' with schema 'default'");
   }
 
   /** Stops the Unity Catalog server after all tests. */

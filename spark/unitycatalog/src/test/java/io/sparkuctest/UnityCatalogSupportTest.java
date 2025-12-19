@@ -56,13 +56,13 @@ public class UnityCatalogSupportTest {
             UC_BASE_TABLE_LOCATION,
             "s3://test-bucket/key"),
         () -> {
-          TestingUCSupport uc = new TestingUCSupport();
-          UnityCatalogInfo catalogInfo = uc.unityCatalogInfo();
-          assertThat(catalogInfo.catalogName()).isEqualTo("TestRemoteCatalog");
-          assertThat(catalogInfo.serverUri()).isEqualTo("http://localhost:8080");
-          assertThat(catalogInfo.serverToken()).isEqualTo("TestRemoteToken");
-          assertThat(catalogInfo.schemaName()).isEqualTo("TestRemoteSchema");
-          assertThat(catalogInfo.baseTableLocation()).isEqualTo("s3://test-bucket/key");
+          TestingUCSupport ucSupport = new TestingUCSupport();
+          UnityCatalogInfo uc = ucSupport.unityCatalogInfo();
+          assertThat(uc.catalogName()).isEqualTo("TestRemoteCatalog");
+          assertThat(uc.serverUri()).isEqualTo("http://localhost:8080");
+          assertThat(uc.serverToken()).isEqualTo("TestRemoteToken");
+          assertThat(uc.schemaName()).isEqualTo("TestRemoteSchema");
+          assertThat(uc.baseTableLocation()).isEqualTo("s3://test-bucket/key");
         });
   }
 
