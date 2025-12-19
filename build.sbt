@@ -714,11 +714,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     // Ensure Java sources are picked up
     Test / unmanagedSourceDirectories += baseDirectory.value / "src" / "test" / "java",
 
-    Test / javaOptions ++= Seq(
-      "-ea",
-      "-Dlog4j.configurationFile=log4j2.xml",
-      "-Dlog4j2.debug=true"
-    ),
+    Test / javaOptions ++= Seq("-ea"),
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
@@ -732,24 +728,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "com.fasterxml.jackson.module" %% "jackson-module-scala" % sparkUnityCatalogJacksonVersion,
       "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % sparkUnityCatalogJacksonVersion,
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion,
-      
-      // Force Netty 4.1.111.Final (Unity Catalog's version) to avoid Armeria 1.28.4 incompatibility
-      // Spark 4.0 uses 4.1.118.Final which has breaking API changes that Armeria 1.28.4 cannot handle
-      "io.netty" % "netty-all" % "4.1.111.Final",
-      "io.netty" % "netty-handler" % "4.1.111.Final",
-      "io.netty" % "netty-transport" % "4.1.111.Final",
-      "io.netty" % "netty-codec" % "4.1.111.Final",
-      "io.netty" % "netty-codec-http" % "4.1.111.Final",
-      "io.netty" % "netty-codec-http2" % "4.1.111.Final",
-      "io.netty" % "netty-common" % "4.1.111.Final",
-      "io.netty" % "netty-buffer" % "4.1.111.Final",
-      "io.netty" % "netty-resolver" % "4.1.111.Final",
-      "io.netty" % "netty-transport-classes-kqueue" % "4.1.111.Final",
-      "io.netty" % "netty-transport-native-kqueue" % "4.1.111.Final",
-      "io.netty" % "netty-transport-classes-epoll" % "4.1.111.Final",
-      "io.netty" % "netty-transport-native-epoll" % "4.1.111.Final",
-      "io.netty" % "netty-transport-native-unix-common" % "4.1.111.Final"
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
     ),
 
     libraryDependencies ++= Seq(
@@ -759,21 +738,9 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
       "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
-      
-      // Logging dependencies
-      "org.apache.logging.log4j" % "log4j-api" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
 
       // Cloud storage support.
-      // Exclude AWS SDK bundle which contains shaded/bundled Netty that conflicts with explicit Netty
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
-      
-      // Add individual AWS SDK v2 dependencies to replace the excluded bundle
-      // These will use our Netty 4.1.111.Final from dependencyOverrides
-      "software.amazon.awssdk" % "s3" % "2.24.6" % "test",
-      "software.amazon.awssdk" % "sts" % "2.24.6" % "test",
-      "software.amazon.awssdk" % "dynamodb" % "2.24.6" % "test",
 
       // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
       "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
@@ -783,7 +750,6 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
         ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
       ),
       "io.unitycatalog" % "unitycatalog-server" % unityCatalogVersion % "test" excludeAll(
-        ExclusionRule(organization = "io.netty"),
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),
         ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
