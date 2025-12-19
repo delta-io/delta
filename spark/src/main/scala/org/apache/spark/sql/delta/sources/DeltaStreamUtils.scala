@@ -21,11 +21,11 @@ import scala.collection.mutable
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.delta.DataFrameUtils
+import org.apache.spark.sql.delta.Relocated._
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, StreamExecution}
 
 object DeltaStreamUtils {
 
@@ -40,7 +40,7 @@ object DeltaStreamUtils {
       df: DataFrame,
       cols: Column*): DataFrame = {
     val newMicroBatch = df.select(cols: _*)
-    val newIncrementalExecution = new IncrementalExecution(
+    val newIncrementalExecution = createIncrementalExecution(
       newMicroBatch.sparkSession,
       newMicroBatch.queryExecution.logical,
       incrementalExecution.outputMode,
