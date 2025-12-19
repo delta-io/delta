@@ -32,8 +32,8 @@ class DeltaParseException(
     messageParameters: Map[String, String] = Map.empty)
   extends ParseException(
       Option(ParserUtils.command(ctx)),
-      ParserUtils.position(ctx.getStart),  // In Spark 4.2, only start position is used (same as 4.1)
-      // No stop parameter in Spark 4.2 (same as 4.1)
+      ParserUtils.position(ctx.getStart),  // In Spark 4.2, only start position is used
+      // No stop parameter in Spark 4.2
       errorClass,
       messageParameters
     ) with DeltaThrowable {
@@ -42,7 +42,8 @@ class DeltaParseException(
 
 /**
  * Shim for ParseException to handle API changes between Spark versions.
- * In Spark 4.2, ParseException only has a single origin parameter (same as Spark 4.1, stop was removed).
+ * In Spark 4.2, ParseException only has a single origin parameter (same as Spark 4.1,
+ * stop was removed).
  */
 object ParseExceptionShims {
 

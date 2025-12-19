@@ -27,7 +27,8 @@ object ViewShims {
   /**
    * Extractor that matches View(desc, true, child) pattern.
    * Used in DeltaViewHelper for matching temp views with a specific structure.
-   * In Spark 4.2, View has an additional parameter (same as 4.1), so we use a wildcard to ignore it.
+   * In Spark 4.2, View has an additional parameter (same as 4.1), so we use a wildcard to ignore
+   * it.
    */
   object TempViewWithChild {
     def unapply(plan: LogicalPlan): Option[(CatalogTable, LogicalPlan)] = plan match {
