@@ -70,7 +70,7 @@ public abstract class V2TestBase {
    * Builds a formatted string by substituting placeholders with the provided arguments. Useful for
    * constructing SQL queries and table identifiers.
    */
-  protected static String format(String template, Object... args) {
+  protected static String str(String template, Object... args) {
     return String.format(template, args);
   }
 
@@ -102,4 +102,3 @@ public abstract class V2TestBase {
     return Arrays.asList(values);
   }
 }
-

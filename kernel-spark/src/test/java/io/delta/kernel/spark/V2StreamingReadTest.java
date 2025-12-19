@@ -44,7 +44,7 @@ public class V2StreamingReadTest extends V2TestBase {
     testData.write().format("delta").save(tablePath);
 
     // Test streaming read using path-based table
-    Dataset<Row> streamingDF = spark.readStream().table(format("dsv2.delta.`%s`", tablePath));
+    Dataset<Row> streamingDF = spark.readStream().table(str("dsv2.delta.`%s`", tablePath));
 
     assertTrue(streamingDF.isStreaming(), "Dataset should be streaming");
     StreamingQueryException exception =
@@ -71,4 +71,3 @@ public class V2StreamingReadTest extends V2TestBase {
             + rootCause.getMessage());
   }
 }
-
