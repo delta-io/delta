@@ -34,7 +34,7 @@ import org.apache.hadoop.mapreduce.Job
 import org.apache.parquet.hadoop.ParquetOutputFormat
 import org.apache.parquet.hadoop.util.ContextUtil
 
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField
@@ -63,7 +63,7 @@ abstract class DeltaParquetFileFormatBase(
     protected val optimizationsEnabled: Boolean = true,
     protected val tablePath: Option[String] = None,
     protected val isCDCRead: Boolean = false)
-  extends ParquetFileFormat with LoggingShims {
+  extends ParquetFileFormat with Logging {
 
   // Validate either we have all arguments for DV enabled read or none of them.
   if (hasTablePath) {

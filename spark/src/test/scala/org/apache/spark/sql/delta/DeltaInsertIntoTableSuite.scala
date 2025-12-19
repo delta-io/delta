@@ -22,12 +22,12 @@ import java.util.TimeZone
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaInsertIntoTableSuiteShims._
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.InvalidDefaultValueErrorShims
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.{SparkConf, SparkContext, SparkException, SparkThrowable}
@@ -45,8 +45,7 @@ class DeltaInsertIntoSQLSuite
   extends DeltaInsertIntoTestsWithTempViews(
     supportsDynamicOverwrite = true,
     includeSQLOnlyTests = true)
-  with DeltaSQLCommandTest
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -59,7 +58,7 @@ class DeltaInsertIntoSQLSuite
     }
   }
 
-  testSparkMasterOnly("Variant type") {
+  test("Variant type") {
     withTable("t") {
       sql("CREATE TABLE t (id LONG, v VARIANT) USING delta")
       sql("INSERT INTO t (id, v) VALUES (1, parse_json('{\"a\": 1}'))")
@@ -692,12 +691,15 @@ abstract class DeltaInsertIntoTestsWithTempViews(
         } catch {
           case e: AnalysisException =>
             assert(
-              e.getMessage.contains(INSERT_INTO_TMP_VIEW_ERROR_MSG) ||
+              e.getMessage.contains("[EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE]") ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
               e.getMessage.contains("Table default.v not found") ||
               e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
               e.getMessage.contains("The table or view `default`.`v` cannot be found") ||
-              e.getMessage.contains("[UNSUPPORTED_INSERT.RDD_BASED] Can't insert into the target."))
+              e.getMessage.contains(
+                "[UNSUPPORTED_INSERT.RDD_BASED] Can't insert into the target.") ||
+              e.getMessage.contains(
+                "The table or view `spark_catalog`.`default`.`v` cannot be found"))
         }
       }
     }
@@ -872,7 +874,7 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
+        InvalidDefaultValueErrorShims.INVALID_DEFAULT_VALUE_ERROR_CODE,
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",

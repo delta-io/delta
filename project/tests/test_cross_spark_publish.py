@@ -34,16 +34,18 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-connect-server{suffix}_2.13-{version}.jar",
     "delta-sharing-spark{suffix}_2.13-{version}.jar",
     "delta-contribs{suffix}_2.13-{version}.jar",
-    "delta-iceberg{suffix}_2.13-{version}.jar"
+]
+
+# Spark-related modules that are only compiled with one Spark version 4.0
+# These modules will get a version suffix based on whether 4.0 is the default version.
+SPARK_4_0_ONLY_JAR_TEMPLATES = [
+    "delta-hudi_2.13-{version}.jar",
+    "delta-iceberg{suffix}_2.13-{version}.jar",
 ]
 
 # Non-spark-related modules (built once, same for all Spark versions)
 # Template format: {version} = Delta version (e.g., "3.4.0-SNAPSHOT")
 NON_SPARK_RELATED_JAR_TEMPLATES = [
-    # Scala modules
-    "delta-hudi_2.13-{version}.jar",
-    "delta-standalone_2.13-{version}.jar",
-
     # Java-only modules (no Scala version)
     "delta-storage-{version}.jar",
     "delta-kernel-api-{version}.jar",
@@ -66,23 +68,29 @@ class SparkVersionSpec:
             for jar in SPARK_RELATED_JAR_TEMPLATES
         ]
 
+        # Generate Spark-4.0-only JAR templates with the suffix
+        self.spark_4_0_only_jars = [
+            jar.format(suffix=self.suffix, version="{version}")
+            for jar in SPARK_4_0_ONLY_JAR_TEMPLATES
+        ]
+
         # Non-Spark-related JAR templates are the same for all Spark versions
         self.non_spark_related_jars = list(NON_SPARK_RELATED_JAR_TEMPLATES)
 
     @property
     def all_jars(self) -> List[str]:
         """All JAR templates for this Spark version (Spark-related + non-Spark-related)."""
-        return self.spark_related_jars + self.non_spark_related_jars
+        return self.spark_related_jars + self.non_spark_related_jars + self.spark_4_0_only_jars
 
 
 # Spark versions to test (key = full version string, value = spec with suffix)
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "3.5.7": SparkVersionSpec(""),      # Default Spark version without suffix
-    "4.0.2-SNAPSHOT": SparkVersionSpec("_4.0") # Other Spark versions with suffix
+    "4.0.1": SparkVersionSpec(""),      # Default Spark version without suffix
+    "4.1.0-SNAPSHOT": SparkVersionSpec("_4.1")
 }
 
 # The default Spark version (no suffix in artifact names)
-DEFAULT_SPARK = "3.5.7"
+DEFAULT_SPARK = "4.0.1"
 
 
 def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str]:
@@ -201,7 +209,7 @@ class CrossSparkPublishTest:
 
     def test_run_only_for_spark_modules(self) -> bool:
         """runOnlyForReleasableSparkModules should publish only Spark-dependent modules."""
-        spark_version = "4.0.2-SNAPSHOT"
+        spark_version = "4.0.1"
         spark_spec = SPARK_VERSIONS[spark_version]
 
         print("\n" + "="*70)
@@ -216,7 +224,9 @@ class CrossSparkPublishTest:
         ):
             return False
 
-        expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version)
+        expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version) | \
+            substitute_xversion(spark_spec.spark_4_0_only_jars, self.delta_version)
+
         return self.validate_jars(expected, "runOnlyForReleasableSparkModules")
 
     def test_cross_spark_workflow(self) -> bool:
@@ -252,6 +262,7 @@ class CrossSparkPublishTest:
         for spark_spec in SPARK_VERSIONS.values():
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
         expected.update(substitute_xversion(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.delta_version))
+        expected.update(substitute_xversion(SPARK_VERSIONS["4.0.1"].spark_4_0_only_jars, self.delta_version))
 
         return self.validate_jars(expected, "Cross-Spark Workflow")
 

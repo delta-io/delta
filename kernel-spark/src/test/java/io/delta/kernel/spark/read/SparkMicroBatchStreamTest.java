@@ -15,10 +15,7 @@
  */
 package io.delta.kernel.spark.read;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import io.delta.kernel.spark.snapshot.PathBasedSnapshotManager;
@@ -27,26 +24,43 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.connector.read.InputPartition;
+import org.apache.spark.sql.connector.read.PartitionReader;
+import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.connector.read.streaming.ReadLimit;
+import org.apache.spark.sql.delta.CheckpointInstance;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.util.JsonUtils;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
+import scala.collection.JavaConverters;
 import scala.collection.immutable.Map$;
+import scala.collection.immutable.Seq;
 
 public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
@@ -60,12 +74,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     createEmptyTestTable(tablePath, tableName);
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    return new SparkMicroBatchStream(
-        snapshotManager,
-        snapshotManager.loadLatestSnapshot(),
-        hadoopConf,
-        spark,
-        new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf()));
+    return createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+  }
+
+  private DeltaOptions emptyDeltaOptions() {
+    return new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
   }
 
   @Test
@@ -76,58 +89,164 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testPlanInputPartitions_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    Offset start = null;
-    Offset end = null;
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> microBatchStream.planInputPartitions(start, end));
-    assertEquals("planInputPartitions is not supported", exception.getMessage());
-  }
-
-  @Test
-  public void testCreateReaderFactory_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class, () -> microBatchStream.createReaderFactory());
-    assertEquals("createReaderFactory is not supported", exception.getMessage());
-  }
-
-  @Test
   public void testInitialOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
     SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
     UnsupportedOperationException exception =
         assertThrows(UnsupportedOperationException.class, () -> microBatchStream.initialOffset());
-    assertEquals("initialOffset is not supported", exception.getMessage());
+    assertEquals(
+        "initialOffset with initial snapshot is not supported yet", exception.getMessage());
   }
 
   @Test
-  public void testDeserializeOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class, () -> microBatchStream.deserializeOffset("{}"));
-    assertEquals("deserializeOffset is not supported", exception.getMessage());
+  public void testDeserializeOffset_ValidJson(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    String tableId = deltaLog.tableId();
+    DeltaSourceOffset expected = new DeltaSourceOffset(tableId, 5L, 10L, false);
+    String json = org.apache.spark.sql.delta.util.JsonUtils.mapper().writeValueAsString(expected);
+
+    Offset result = stream.deserializeOffset(json);
+    DeltaSourceOffset actual = (DeltaSourceOffset) result;
+
+    assertEquals(expected.reservoirId(), actual.reservoirId());
+    assertEquals(expected.reservoirVersion(), actual.reservoirVersion());
+    assertEquals(expected.index(), actual.index());
+    assertEquals(expected.isInitialSnapshot(), actual.isInitialSnapshot());
   }
 
   @Test
-  public void testCommit_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    Offset end = null;
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.commit(end));
-    assertEquals("commit is not supported", exception.getMessage());
+  public void testDeserializeOffset_MismatchedTableId(@TempDir File tempDir) throws Exception {
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+
+    // Create offset with wrong tableId
+    String wrongTableId = "wrong-table-id";
+    DeltaSourceOffset offset =
+        new DeltaSourceOffset(
+            wrongTableId,
+            /* reservoirVersion= */ 1L,
+            /* index= */ 0L,
+            /* isInitialSnapshot= */ false);
+    String json = JsonUtils.mapper().writeValueAsString(offset);
+    RuntimeException exception =
+        assertThrows(RuntimeException.class, () -> stream.deserializeOffset(json));
+
+    assertTrue(
+        exception
+            .getMessage()
+            .contains("streaming query was reading from an unexpected Delta table"));
   }
 
   @Test
-  public void testStop_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.stop());
-    assertEquals("stop is not supported", exception.getMessage());
+  public void testDeserializeOffset_InvalidJson(@TempDir File tempDir) {
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+    String invalidJson = "{this is not valid json}";
+    assertThrows(RuntimeException.class, () -> stream.deserializeOffset(invalidJson));
+  }
+
+  @Test
+  public void testDeserializeOffset_WithInitialSnapshot(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    String tableId = deltaLog.tableId();
+    long baseIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaSourceOffset expected =
+        new DeltaSourceOffset(
+            tableId, /* reservoirVersion= */ 0L, baseIndex, /* isInitialSnapshot= */ true);
+    String json = org.apache.spark.sql.delta.util.JsonUtils.mapper().writeValueAsString(expected);
+
+    Offset result = stream.deserializeOffset(json);
+    DeltaSourceOffset actual = (DeltaSourceOffset) result;
+
+    assertTrue(actual.isInitialSnapshot());
+    assertEquals(0L, actual.reservoirVersion());
+    assertEquals(baseIndex, actual.index());
+  }
+
+  @Test
+  public void testCommit_NoOp(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    String tableId = deltaLog.tableId();
+    DeltaSourceOffset offset = new DeltaSourceOffset(tableId, 1L, 0L, false);
+
+    assertDoesNotThrow(() -> stream.commit(offset));
+  }
+
+  @Test
+  public void testStop_NoOp(@TempDir File tempDir) {
+    SparkMicroBatchStream stream = createTestStream(tempDir);
+    assertDoesNotThrow(() -> stream.stop());
+  }
+
+  // ================================================================================================
+  // Tests for initialOffset parity between DSv1 and DSv2
+  // ================================================================================================
+
+  @ParameterizedTest
+  @MethodSource("initialOffsetParameters")
+  public void testInitialOffset_firstBatchParity(
+      String startingVersion,
+      ReadLimitConfig limitConfig,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_initial_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ false);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    ReadLimit readLimit = limitConfig.toReadLimit();
+    DeltaOptions options;
+    if (startingVersion == null) {
+      options = emptyDeltaOptions();
+    } else {
+      scala.collection.immutable.Map<String, String> scalaMap =
+          Map$.MODULE$.<String, String>empty().updated("startingVersion", startingVersion);
+      options = new DeltaOptions(scalaMap, spark.sessionState().conf());
+    }
+
+    // DSv1
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    // DSv1 sources don't have an initialOffset() method.
+    // Batch 0 is called with startOffset=null.
+    Offset dsv1Offset = deltaSource.latestOffset(/* startOffset= */ null, readLimit);
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    Offset initialOffset = stream.initialOffset();
+    Offset dsv2Offset = stream.latestOffset(initialOffset, readLimit);
+
+    compareOffsets(dsv1Offset, dsv2Offset, testDescription);
+  }
+
+  /** Provides test parameters for the initialOffset parity test. */
+  private static Stream<Arguments> initialOffsetParameters() {
+    return Stream.of(
+        Arguments.of("0", ReadLimitConfig.noLimit(), "NoLimit1"),
+        Arguments.of("1", ReadLimitConfig.noLimit(), "NoLimit2"),
+        Arguments.of("3", ReadLimitConfig.noLimit(), "NoLimit3"),
+        Arguments.of("latest", ReadLimitConfig.noLimit(), "LatestNoLimit"),
+        Arguments.of("latest", ReadLimitConfig.maxFiles(1000), "LatestMaxFiles"),
+        Arguments.of("latest", ReadLimitConfig.maxBytes(1000), "LatestMaxBytes"),
+        Arguments.of("0", ReadLimitConfig.maxFiles(5), "MaxFiles1"),
+        Arguments.of("1", ReadLimitConfig.maxFiles(10), "MaxFiles2"),
+        Arguments.of("0", ReadLimitConfig.maxBytes(1000), "MaxBytes1"),
+        Arguments.of("1", ReadLimitConfig.maxBytes(2000), "MaxBytes2"));
   }
 
   // ================================================================================================
@@ -197,8 +316,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     Optional<DeltaSourceOffset> endOffsetOption = ScalaUtils.toJavaOptional(scalaEndOffset);
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
@@ -293,7 +411,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
-    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    DeltaOptions options = emptyDeltaOptions();
 
     Optional<DeltaSource.AdmissionLimits> dsv1Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
@@ -315,8 +433,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
     Optional<DeltaSource.AdmissionLimits> dsv2Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
@@ -404,7 +521,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    */
   @ParameterizedTest
   @MethodSource("emptyVersionScenarios")
-  public void testGetFileChanges_EmptyVersions(
+  public void testGetFileChanges_emptyVersions(
       ScenarioSetup scenarioSetup,
       List<Long> expectedEmptyVersions,
       String testDescription,
@@ -442,8 +559,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(
             fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset))) {
@@ -491,7 +607,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    */
   @ParameterizedTest
   @MethodSource("removeFileScenarios")
-  public void testGetFileChanges_OnRemoveFile_throwError(
+  public void testGetFileChanges_onRemoveFile_throwError(
       ScenarioSetup scenarioSetup, String testDescription, @TempDir File tempDir) throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName =
@@ -536,8 +652,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
@@ -643,7 +758,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testGetFileChanges_StartingVersionAfterCheckpointAndLogCleanup(@TempDir File tempDir)
+  public void testGetFileChanges_startingVersionAfterCheckpointAndLogCleanup(@TempDir File tempDir)
       throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_checkpoint_cleanup_" + System.nanoTime();
@@ -666,13 +781,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     }
 
     // Now test with startingVersion=1
+    Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager,
-            snapshotManager.loadLatestSnapshot(),
-            spark.sessionState().newHadoopConf());
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
     // Get file changes from version 1 onwards
     try (CloseableIterator<IndexedFile> kernelChanges =
@@ -708,7 +821,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    */
   @ParameterizedTest
   @MethodSource("latestOffsetParameters")
-  public void testLatestOffset_NotInitialSnapshot(
+  public void testLatestOffset_notInitialSnapshot(
       Long startVersion,
       Long startIndex,
       ReadLimitConfig limitConfig,
@@ -740,8 +853,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     Offset v2EndOffset = stream.latestOffset(startOffset, readLimit);
 
     compareOffsets(v1EndOffset, v2EndOffset, testDescription);
@@ -825,7 +937,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    */
   @ParameterizedTest
   @MethodSource("sequentialBatchAdvancementParameters")
-  public void testLatestOffset_SequentialBatchAdvancement(
+  public void testLatestOffset_sequentialBatchAdvancement(
       long startVersion,
       long startIndex,
       ReadLimitConfig limitConfig,
@@ -860,8 +972,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<Offset> dsv2Offsets =
         advanceOffsetSequenceDsv2(stream, startOffset, numIterations, readLimit);
 
@@ -946,7 +1057,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    */
   @ParameterizedTest
   @MethodSource("noNewDataAtLatestVersionParameters")
-  public void testLatestOffset_NoNewDataAtLatestVersion(
+  public void testLatestOffset_noNewDataAtLatestVersion(
       long startIndex,
       Long expectedVersionOffset,
       Long expectedIndex,
@@ -987,8 +1098,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
-        new SparkMicroBatchStream(
-            snapshotManager, snapshotManager.loadLatestSnapshot(), hadoopConf);
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     Offset dsv2Offset = stream.latestOffset(startOffset, readLimit);
 
     compareOffsets(dsv1Offset, dsv2Offset, testDescription);
@@ -1034,6 +1144,593 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   // ================================================================================================
+  // Tests for availableNow parity between DSv1 and DSv2
+  // ================================================================================================
+
+  @ParameterizedTest
+  @MethodSource("availableNowParameters")
+  public void testAvailableNow_SequentialBatchAdvancement(
+      Long startVersion,
+      Long startIndex,
+      ReadLimitConfig limitConfig,
+      int numIterations,
+      String testDescription,
+      @TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_availableNow_sequential"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ true);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    String tableId = deltaLog.tableId();
+
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
+    ReadLimit readLimit = limitConfig.toReadLimit();
+
+    // dsv1 source
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    // Enable availableNow
+    deltaSource.prepareForTriggerAvailableNow();
+    // Advance through multiple batches using dsv1, collecting offset after each batch
+    List<Offset> dsv1Offsets =
+        advanceOffsetSequenceDsv1(deltaSource, startOffset, numIterations, readLimit);
+
+    // dsv2 source
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    // Enable availableNow
+    stream.prepareForTriggerAvailableNow();
+    // Advance through multiple batches using dsv2, collecting offset after each batch
+    List<Offset> dsv2Offsets =
+        advanceOffsetSequenceDsv2(stream, startOffset, numIterations, readLimit);
+
+    // Ensure dsv1 and dsv2 produce identical offset sequences
+    compareOffsetSequence(dsv1Offsets, dsv2Offsets, testDescription);
+  }
+
+  private static Stream<Arguments> availableNowParameters() {
+    long BASE_INDEX = DeltaSourceOffset.BASE_INDEX();
+    long END_INDEX = DeltaSourceOffset.END_INDEX();
+
+    return Stream.of(
+        // No limits respects availableNow
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits1"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits2"),
+        Arguments.of(
+            /* startVersion= */ 4L,
+            /* startIndex= */ END_INDEX,
+            ReadLimitConfig.noLimit(),
+            /* numIterations= */ 3,
+            "NoLimits3"),
+
+        // Max files respects availableNow
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(1),
+            /* numIterations= */ 10,
+            "MaxFiles1"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(1000),
+            /* numIterations= */ 3,
+            "MaxFiles2"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(2),
+            /* numIterations= */ 10,
+            "MaxFiles3"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxFiles(0),
+            /* numIterations= */ 3,
+            "MaxFiles4"),
+
+        // Max bytes respects availableNow
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1),
+            /* numIterations= */ 100,
+            "MaxBytes1"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1000000), // ensure larger than total file size
+            /* numIterations= */ 3,
+            "MaxBytes2"),
+        Arguments.of(
+            /* startVersion= */ 1L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(1000),
+            /* numIterations= */ 100,
+            "MaxBytes3"),
+        Arguments.of(
+            /* startVersion= */ 0L,
+            /* startIndex= */ BASE_INDEX,
+            ReadLimitConfig.maxBytes(0),
+            /* numIterations= */ 3,
+            "MaxBytes4"));
+  }
+
+  // ================================================================================================
+  // Tests for planInputPartitions
+  // ================================================================================================
+
+  @ParameterizedTest
+  @MethodSource("planInputPartitionsParameters")
+  public void testPlanInputPartitions_dataParity(
+      long fromVersion,
+      long toVersion,
+      Optional<Integer> maxFiles,
+      Optional<Long> maxBytes,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_plan_partitions_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ true);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(
+            deltaLog.tableId(),
+            fromVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false);
+    DeltaSourceOffset planPartitionsEndOffset =
+        new DeltaSourceOffset(
+            deltaLog.tableId(),
+            toVersion,
+            DeltaSourceOffset.END_INDEX(),
+            /* isInitialSnapshot= */ false);
+
+    // Ground truth: Read directly from Delta table
+    List<Row> expectedRows = new ArrayList<>();
+    Dataset<Row> toVersionData =
+        spark.read().format("delta").option("versionAsOf", toVersion).load(testTablePath);
+    if (fromVersion > 0) {
+      Dataset<Row> beforeFromVersionData =
+          spark.read().format("delta").option("versionAsOf", fromVersion - 1).load(testTablePath);
+      toVersionData = toVersionData.except(beforeFromVersionData);
+    }
+    expectedRows.addAll(toVersionData.collectAsList());
+
+    // DSv2: planInputPartitions + createReaderFactory
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
+    StructType dataSchema = deltaSnapshot.metadata().schema();
+    StructType partitionSchema = deltaSnapshot.metadata().partitionSchema();
+
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
+            spark.sessionState().newHadoopConf(),
+            spark,
+            emptyDeltaOptions(),
+            testTablePath,
+            dataSchema,
+            partitionSchema,
+            dataSchema,
+            new org.apache.spark.sql.sources.Filter[0],
+            Map$.MODULE$.empty());
+
+    InputPartition[] partitions = stream.planInputPartitions(startOffset, planPartitionsEndOffset);
+    PartitionReaderFactory readerFactory = stream.createReaderFactory();
+
+    // Simulates how Spark calls the reader factory and reads the data
+    List<Row> dsv2Rows = new ArrayList<>();
+    for (InputPartition partition : partitions) {
+      if (readerFactory.supportColumnarReads(partition)) {
+        PartitionReader<org.apache.spark.sql.vectorized.ColumnarBatch> reader =
+            readerFactory.createColumnarReader(partition);
+        while (reader.next()) {
+          org.apache.spark.sql.vectorized.ColumnarBatch batch = reader.get();
+          // Convert ColumnarBatch to Rows
+          org.apache.spark.sql.catalyst.expressions.UnsafeProjection projection =
+              org.apache.spark.sql.catalyst.expressions.UnsafeProjection.create(dataSchema);
+          for (int rowId = 0; rowId < batch.numRows(); rowId++) {
+            InternalRow internalRow = batch.getRow(rowId);
+            Row row = convertInternalRowToRow(internalRow, dataSchema);
+            dsv2Rows.add(row);
+          }
+        }
+        reader.close();
+      } else {
+        PartitionReader<InternalRow> reader = readerFactory.createReader(partition);
+        while (reader.next()) {
+          InternalRow internalRow = reader.get();
+          // Convert InternalRow to Row for comparison using the dataSchema we already have
+          Row row = convertInternalRowToRow(internalRow, dataSchema);
+          dsv2Rows.add(row);
+        }
+        reader.close();
+      }
+    }
+
+    // Compare results
+    compareDataResults(expectedRows, dsv2Rows, testDescription);
+  }
+
+  /** Provides test parameters for the planInputPartitions data parity test. */
+  private static Stream<Arguments> planInputPartitionsParameters() {
+    Optional<Integer> noMaxFiles = Optional.empty();
+    Optional<Long> noMaxBytes = Optional.empty();
+
+    return Stream.of(
+        // Basic version range tests
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 2L,
+            noMaxFiles,
+            noMaxBytes,
+            "Single version (1 to 2)"),
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 3L,
+            noMaxFiles,
+            noMaxBytes,
+            "Multiple versions (1 to 3)"),
+        Arguments.of(
+            /* fromVersion= */ 0L,
+            /* toVersion= */ 5L,
+            noMaxFiles,
+            noMaxBytes,
+            "From version 0 to 5"),
+        Arguments.of(
+            /* fromVersion= */ 2L,
+            /* toVersion= */ 4L,
+            noMaxFiles,
+            noMaxBytes,
+            "Mid-range versions (2 to 4)"),
+
+        // Rate limiting tests
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 5L,
+            Optional.of(5),
+            noMaxFiles,
+            "With maxFiles limit"),
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 5L,
+            noMaxFiles,
+            Optional.of(5000L),
+            "With maxBytes limit"),
+        Arguments.of(
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 5L,
+            Optional.of(10),
+            Optional.of(10000L),
+            "With both limits"),
+
+        // Edge cases
+        Arguments.of(
+            /* fromVersion= */ 3L,
+            /* toVersion= */ 3L,
+            noMaxFiles,
+            noMaxBytes,
+            "Same version (3 to 3)"));
+  }
+
+  /**
+   * Helper method to convert InternalRow to Row for comparison.
+   *
+   * @param internalRow The InternalRow to convert
+   * @param schema The schema of the row
+   * @return A Row object
+   */
+  private Row convertInternalRowToRow(InternalRow internalRow, StructType schema) {
+    // Use Spark's built-in conversion from InternalRow to Row
+    scala.collection.Seq<Object> seq = internalRow.toSeq(schema);
+    Object[] values = scala.collection.JavaConverters.seqAsJavaList(seq).toArray();
+    return new org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema(values, schema);
+  }
+
+  /**
+   * Helper method to compare data results between expected (ground truth) and DSv2.
+   *
+   * @param expectedRows Rows from ground truth (batch read from Delta table)
+   * @param dsv2Rows Rows from DSv2's planInputPartitions()
+   * @param testDescription Description of the test case for error messages
+   */
+  private void compareDataResults(
+      List<Row> expectedRows, List<Row> dsv2Rows, String testDescription) {
+    assertEquals(
+        expectedRows.size(),
+        dsv2Rows.size(),
+        String.format(
+            "[%s] Number of rows should match: Expected=%d, DSv2=%d",
+            testDescription, expectedRows.size(), dsv2Rows.size()));
+
+    // Sort both lists for consistent comparison (order may differ due to partitioning)
+    Comparator<Row> rowComparator =
+        (r1, r2) -> {
+          // Compare by id field (first column)
+          int id1 = r1.getInt(0);
+          int id2 = r2.getInt(0);
+          return Integer.compare(id1, id2);
+        };
+
+    List<Row> sortedExpected =
+        expectedRows.stream().sorted(rowComparator).collect(Collectors.toList());
+    List<Row> sortedDsv2 = dsv2Rows.stream().sorted(rowComparator).collect(Collectors.toList());
+
+    // Compare each row
+    for (int i = 0; i < sortedExpected.size(); i++) {
+      Row expectedRow = sortedExpected.get(i);
+      Row dsv2Row = sortedDsv2.get(i);
+
+      assertEquals(
+          expectedRow.length(),
+          dsv2Row.length(),
+          String.format(
+              "[%s] Row %d length mismatch: Expected=%d, DSv2=%d",
+              testDescription, i, expectedRow.length(), dsv2Row.length()));
+
+      // Compare each field
+      for (int fieldIdx = 0; fieldIdx < expectedRow.length(); fieldIdx++) {
+        Object expectedValue = expectedRow.get(fieldIdx);
+        Object dsv2Value = dsv2Row.get(fieldIdx);
+
+        // Convert both values to strings for comparison to handle UTF8String vs String
+        String expectedStr = expectedValue == null ? null : expectedValue.toString();
+        String dsv2Str = dsv2Value == null ? null : dsv2Value.toString();
+
+        assertEquals(
+            expectedStr,
+            dsv2Str,
+            String.format(
+                "[%s] Row %d, field %d mismatch: Expected=%s, DSv2=%s",
+                testDescription, i, fieldIdx, expectedStr, dsv2Str));
+      }
+    }
+  }
+
+  // ================================================================================================
+  // Tests for getStartingVersion parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Parameterized test that verifies parity between DSv1 DeltaSource.getStartingVersion and DSv2
+   * SparkMicroBatchStream.getStartingVersion.
+   */
+  @ParameterizedTest
+  @MethodSource("getStartingVersionParameters")
+  public void testGetStartingVersion(
+      String startingVersion, Optional<Long> expectedVersion, @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_starting_version_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Create 5 versions (version 0 = CREATE TABLE, versions 1-5 = INSERTs)
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 1,
+        /* includeEmptyVersion= */ false);
+
+    testAndCompareStartingVersion(
+        testTablePath, startingVersion, expectedVersion, "startingVersion=" + startingVersion);
+  }
+
+  /** Provides test parameters for the parameterized getStartingVersion test. */
+  private static Stream<Arguments> getStartingVersionParameters() {
+    return Stream.of(
+        Arguments.of(/* startingVersion= */ "0", /* expectedVersion= */ Optional.of(0L)),
+        Arguments.of(/* startingVersion= */ "1", /* expectedVersion= */ Optional.of(1L)),
+        Arguments.of(/* startingVersion= */ "3", /* expectedVersion= */ Optional.of(3L)),
+        Arguments.of(/* startingVersion= */ "5", /* expectedVersion= */ Optional.of(5L)),
+        Arguments.of(/* startingVersion= */ "latest", /* expectedVersion= */ Optional.of(6L)),
+        Arguments.of(/* startingVersion= */ null, /* expectedVersion= */ Optional.empty()));
+  }
+
+  /**
+   * Test that verifies both DSv1 and DSv2 handle the case where no DeltaOptions are provided. DSv1
+   * receives an empty DeltaOptions (no parameters), while DSv2 receives Optional.empty(). This
+   * tests the equivalence between these two approaches.
+   */
+  @Test
+  public void testGetStartingVersion_noOptions(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_no_options_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Create 5 versions (version 0 = CREATE TABLE, versions 1-5 = INSERTs)
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 1,
+        /* includeEmptyVersion= */ false);
+
+    // dsv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaOptions emptyOptions = emptyDeltaOptions();
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, emptyOptions);
+    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+
+    // dsv2
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, new Configuration());
+    SparkMicroBatchStream dsv2Stream =
+        createTestStreamWithDefaults(snapshotManager, new Configuration(), emptyDeltaOptions());
+    Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
+
+    compareStartingVersionResults(dsv1Result, dsv2Result, Optional.empty(), "No options provided");
+  }
+
+  /** Test that verifies both DSv1 and DSv2 handle negative startingVersion values identically. */
+  @Test
+  public void testGetStartingVersion_negativeVersion_throwsError(@TempDir File tempDir)
+      throws Exception {
+    // Negative values are rejected during DeltaOptions parsing, before getStartingVersion is
+    // called.
+    assertThrows(IllegalArgumentException.class, () -> createDeltaOptions("-1"));
+  }
+
+  /**
+   * Parameterized test that verifies both DSv1 and DSv2 handle the protocol validation behavior
+   * identically with the validation flag on/off.
+   *
+   * <p>When protocol validation is enabled, validateProtocolAt is called and must succeed. When
+   * disabled, the code immediately falls back to checkVersionExists without protocol validation.
+   */
+  @ParameterizedTest
+  @MethodSource("protocolValidationParameters")
+  public void testGetStartingVersion_protocolValidationFlag(
+      boolean enableProtocolValidation,
+      String startingVersion,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_protocol_fallback_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Create 5 versions (version 0 = CREATE TABLE, versions 1-5 = INSERTs)
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 1,
+        /* includeEmptyVersion= */ false);
+
+    // Test with protocol validation enabled/disabled
+    String configKey = DeltaSQLConf.FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL().key();
+    try {
+      spark.conf().set(configKey, String.valueOf(enableProtocolValidation));
+      testAndCompareStartingVersion(
+          testTablePath,
+          startingVersion,
+          Optional.of(Long.parseLong(startingVersion)),
+          testDescription);
+    } finally {
+      spark.conf().unset(configKey);
+    }
+  }
+
+  /** Provides test parameters for protocol validation scenarios. */
+  private static Stream<Arguments> protocolValidationParameters() {
+    return Stream.of(
+        Arguments.of(
+            /* enableProtocolValidation= */ true,
+            /* startingVersion= */ "2",
+            "Protocol validation enabled"),
+        Arguments.of(
+            /* enableProtocolValidation= */ false,
+            /* startingVersion= */ "3",
+            "Protocol validation disabled"));
+  }
+
+  // TODO(#5320): Add test for unsupported table feature
+  // Test case where protocol validation encounters an unsupported table feature and throws
+  // (does NOT fall back to checkVersionExists). This is difficult to test reliably as it
+  // requires creating a table with features that Kernel doesn't support, which Spark SQL
+  // validates upfront. This scenario is tested through integration tests.
+
+  /**
+   * Test case where protocol validation fails with a non-feature exception (snapshot cannot be
+   * recreated), but checkVersionExists succeeds (commit logically exists).
+   *
+   * <p>Scenario: After creating a checkpoint at version 10, old log files 0-5 are deleted
+   * (simulating log cleanup by timestamp). This makes version 7 non-recreatable (it exists between
+   * the deleted logs and the checkpoint). Protocol validation fails when trying to build snapshot
+   * at version 7, but checkVersionExists succeeds because the commit still logically exists.
+   */
+  @Test
+  public void testGetStartingVersion_protocolValidationNonFeatureExceptionFallback(
+      @TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_non_recreatable_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Create 10 versions (version 0 = CREATE TABLE, versions 1-10 = INSERTs)
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 10,
+        /* rowsPerVersion= */ 1,
+        /* includeEmptyVersion= */ false);
+
+    // Create checkpoint at version 10
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    Snapshot snapshotV10 =
+        deltaLog.getSnapshotAt(
+            10, Option.<CheckpointInstance>empty(), Option.<CatalogTable>empty(), false);
+    deltaLog.checkpoint(snapshotV10, Option.<CatalogTable>empty());
+
+    // Simulate log cleanup by timestamp: delete logs 0-5
+    // This makes version 7 non-recreatable while allowing DeltaLog to load the latest snapshot
+    Path logPath = new Path(testTablePath, "_delta_log");
+    for (long version = 0; version <= 5; version++) {
+      Path logFile = new Path(logPath, String.format("%020d.json", version));
+      File file = new File(logFile.toUri().getPath());
+      if (file.exists()) {
+        file.delete();
+      }
+    }
+
+    // Test with startingVersion=7 (a version that's no longer recreatable but logically exists)
+    String startingVersion = "7";
+
+    // dsv1
+    DeltaLog freshDeltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource =
+        createDeltaSource(freshDeltaLog, testTablePath, createDeltaOptions(startingVersion));
+    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+
+    // dsv2
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, new Configuration());
+    SparkMicroBatchStream dsv2Stream =
+        createTestStreamWithDefaults(
+            snapshotManager, new Configuration(), createDeltaOptions(startingVersion));
+    Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
+
+    compareStartingVersionResults(
+        dsv1Result,
+        dsv2Result,
+        Optional.of(Long.parseLong(startingVersion)),
+        "Protocol validation fallback with non-recreatable version");
+  }
+
+  // ================================================================================================
+
   // Helper methods
   // ================================================================================================
 
@@ -1162,28 +1859,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     if (scalaMaxFiles.isEmpty() && scalaMaxBytes.isEmpty()) {
       return Optional.empty();
     }
-    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
+    DeltaOptions options = emptyDeltaOptions();
     return Optional.of(new DeltaSource.AdmissionLimits(options, scalaMaxFiles, scalaMaxBytes));
-  }
-
-  /** Helper method to create a DeltaSource instance for testing. */
-  private DeltaSource createDeltaSource(DeltaLog deltaLog, String tablePath) {
-    DeltaOptions options = new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
-    scala.collection.immutable.Seq<org.apache.spark.sql.catalyst.expressions.Expression> emptySeq =
-        scala.collection.JavaConverters.asScalaBuffer(
-                new java.util.ArrayList<org.apache.spark.sql.catalyst.expressions.Expression>())
-            .toList();
-    org.apache.spark.sql.delta.Snapshot snapshot =
-        deltaLog.update(false, scala.Option.empty(), scala.Option.empty());
-    return new DeltaSource(
-        spark,
-        deltaLog,
-        /* catalogTableOpt= */ scala.Option.empty(),
-        options,
-        /* snapshotAtSourceInit= */ snapshot,
-        /* metadataPath= */ tablePath + "/_checkpoint",
-        /* metadataTrackingLog= */ scala.Option.empty(),
-        /* filters= */ emptySeq);
   }
 
   /** Helper method to format a DSv1 IndexedFile for debugging. */
@@ -1243,5 +1920,103 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
           dsv2Offsets.get(i),
           String.format("%s (iteration %d)", testDescription, i));
     }
+  }
+
+  private DeltaSource createDeltaSource(DeltaLog deltaLog, String tablePath) {
+    DeltaOptions options = emptyDeltaOptions();
+    return createDeltaSource(deltaLog, tablePath, options);
+  }
+
+  private DeltaSource createDeltaSource(DeltaLog deltaLog, String tablePath, DeltaOptions options) {
+    Seq<Expression> emptySeq = JavaConverters.asScalaBuffer(new ArrayList<Expression>()).toList();
+    Snapshot snapshot = deltaLog.update(false, Option.empty(), Option.empty());
+    return new DeltaSource(
+        spark,
+        deltaLog,
+        /* catalogTableOpt= */ Option.empty(),
+        options,
+        /* snapshotAtSourceInit= */ snapshot,
+        /* metadataPath= */ tablePath + "/_checkpoint",
+        /* metadataTrackingLog= */ Option.empty(),
+        /* filters= */ emptySeq);
+  }
+
+  /** Helper method to create a SparkMicroBatchStream with default empty values for testing. */
+  private SparkMicroBatchStream createTestStreamWithDefaults(
+      PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
+    return new SparkMicroBatchStream(
+        snapshotManager,
+        snapshotManager.loadLatestSnapshot(),
+        hadoopConf,
+        spark,
+        options,
+        /* tablePath= */ "",
+        /* dataSchema= */ new StructType(),
+        /* partitionSchema= */ new StructType(),
+        /* readDataSchema= */ new StructType(),
+        /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
+        /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
+  }
+
+  /** Helper method to create DeltaOptions with startingVersion for testing. */
+  private DeltaOptions createDeltaOptions(String startingVersionValue) {
+    if (startingVersionValue == null) {
+      // Empty options
+      return emptyDeltaOptions();
+    } else {
+      // Create Scala Map with startingVersion
+      scala.collection.immutable.Map<String, String> scalaMap =
+          Map$.MODULE$.<String, String>empty().updated("startingVersion", startingVersionValue);
+      return new DeltaOptions(scalaMap, spark.sessionState().conf());
+    }
+  }
+
+  /** Helper method to test and compare getStartingVersion results from DSv1 and DSv2. */
+  private void testAndCompareStartingVersion(
+      String testTablePath,
+      String startingVersion,
+      Optional<Long> expectedVersion,
+      String testDescription)
+      throws Exception {
+    // DSv1: Create DeltaSource and get starting version
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource =
+        createDeltaSource(deltaLog, testTablePath, createDeltaOptions(startingVersion));
+    scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+
+    // DSv2: Create SparkMicroBatchStream and get starting version
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, new Configuration());
+    SparkMicroBatchStream dsv2Stream =
+        createTestStreamWithDefaults(
+            snapshotManager, new Configuration(), createDeltaOptions(startingVersion));
+    Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
+
+    compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);
+  }
+
+  /** Helper method to compare getStartingVersion results from DSv1 and DSv2. */
+  private void compareStartingVersionResults(
+      scala.Option<Object> dsv1Result,
+      Optional<Long> dsv2Result,
+      Optional<Long> expectedVersion,
+      String testDescription) {
+
+    Optional<Long> dsv1Optional;
+    if (dsv1Result.isEmpty()) {
+      dsv1Optional = Optional.empty();
+    } else {
+      dsv1Optional = Optional.of((Long) dsv1Result.get());
+    }
+
+    assertEquals(
+        dsv1Optional,
+        dsv2Result,
+        String.format("DSv1 and DSv2 getStartingVersion should match for %s", testDescription));
+
+    assertEquals(
+        expectedVersion,
+        dsv2Result,
+        String.format("DSv2 getStartingVersion should match for %s", testDescription));
   }
 }

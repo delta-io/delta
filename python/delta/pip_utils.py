@@ -83,7 +83,7 @@ See the online documentation for the correct usage of this function.
     # Determine the artifact name based on Spark version
     # NOTE: When updating LATEST_RELEASED_SPARK_VERSION in project/CrossSparkVersions.scala,
     # also update the version check here to match the new latest version.
-    latest_released_spark_version_prefix = "3.5."
+    latest_released_spark_version_prefix = "4.0."
 
     artifact_name = f"delta-spark_{scala_version}"
 

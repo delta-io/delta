@@ -20,6 +20,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
@@ -41,7 +42,6 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetArrayItem, GetArrayStructFields, GetMapValue, GetStructField}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumnsUtils}
-import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -1502,7 +1502,7 @@ def normalizeColumnNamesInDataType(
    * Returns 'true' if any VariantType exists in the table schema.
    */
   def checkForVariantTypeColumnsRecursively(schema: StructType): Boolean = {
-    SchemaUtils.typeExistsRecursively(schema)(VariantShims.isVariantType(_))
+    SchemaUtils.typeExistsRecursively(schema)(_.isInstanceOf[VariantType])
   }
 
   /**
@@ -1537,7 +1537,7 @@ def normalizeColumnNamesInDataType(
     case DateType =>
     case TimestampType =>
     case TimestampNTZType =>
-    case dt if VariantShims.isVariantType(dt) =>
+    case dt if dt.isInstanceOf[VariantType] =>
     case BinaryType =>
     case _: DecimalType =>
     case a: ArrayType =>

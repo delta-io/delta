@@ -263,7 +263,7 @@ class CatalogOwnedEnablementSuite
       }
       checkError(
         error,
-        "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+        "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map[String, String]())
     }
@@ -276,7 +276,7 @@ class CatalogOwnedEnablementSuite
       }
       checkError(
         error,
-        "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+        "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map[String, String]())
     }

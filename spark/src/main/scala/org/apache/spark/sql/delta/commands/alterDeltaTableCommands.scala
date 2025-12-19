@@ -46,7 +46,7 @@ import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.{Filter, IgnoreCachedData, QualifiedColType}
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, IgnoreCachedData, QualifiedColType, QualifiedColTypeShims}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, SparkCharVarcharUtils}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
@@ -683,8 +683,10 @@ case class AlterTableAddColumnsDeltaCommand(
 
       val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
-      col.default.map { value =>
-        Some((col.name.init, field.withCurrentDefaultValue(value), col.position.map(toV2Position)))
+      QualifiedColTypeShims.getDefaultValueStr(col).map { defaultStr =>
+        Some((col.name.init,
+          field.withCurrentDefaultValue(defaultStr),
+          col.position.map(toV2Position)))
       }.getOrElse {
         Some((col.name.init, field, col.position.map(toV2Position)))
       }
@@ -883,6 +885,9 @@ case class AlterTableChangeColumnDeltaCommand(
 
       val transformedSchema = columnChanges.foldLeft(oldSchema)(transformSchemaOnce)
 
+      // Validate clustering columns remain in stats schema after column reordering
+      validateClusteringColumnsAfterReordering(sparkSession, txn, columnChanges)
+
       val newSchemaWithTypeWideningMetadata =
         TypeWideningMetadata.addTypeWideningMetadata(
           txn,
@@ -991,6 +996,40 @@ case class AlterTableChangeColumnDeltaCommand(
           filtered.slice(endIndex + 1, filtered.length)
     }
     newFieldList.toSeq
+  }
+
+  /**
+   * Validates that clustering columns remain in the stats schema after column reordering.
+   *
+   * This validation ensures that when a user executes `ALTER TABLE ALTER COLUMN col1 AFTER col2`,
+   * all clustering columns that were in the stats schema before the reordering remain in the
+   * stats schema after the operation. When DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK
+   * is enabled, the validation runs and throws an error if any clustering column would lose
+   * stats collection due to position-based indexing. When disabled (default), no validation
+   * is performed and stats collection may follow position-based indexing rules.
+   *
+   * @param spark The SparkSession
+   * @param txn The transaction
+   * @param columnChanges The column changes being applied
+   */
+  private def validateClusteringColumnsAfterReordering(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      columnChanges: Seq[DeltaChangeColumnSpec]): Unit = {
+    if (!spark.conf.get(
+      DeltaSQLConf.DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK)) {
+      return
+    }
+    // Only validate if table supports clustering and check is enabled
+    if (ClusteredTableUtils.isSupported(txn.snapshot.protocol) &&
+        columnChanges.exists(_.colPosition.isDefined)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+      if (clusteringColumns.nonEmpty) {
+        // Validate that prior stats schema is preserved (clustering columns remain in stats)
+        ClusteredTableUtils.validateClusteringColumnsInStatsSchema(
+          txn.snapshot, clusteringColumns)
+      }
+    }
   }
 
   /**

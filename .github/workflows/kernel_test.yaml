@@ -37,11 +37,12 @@ jobs:
           echo "Runner arch: ${{ runner.arch }}"
       - name: Checkout code
         uses: actions/checkout@v4
+      # Run unit tests with JDK 17. These unit tests depend on Spark, and Spark 4.0+ is JDK 17.
       - name: install java
         uses: actions/setup-java@v4
         with:
           distribution: "zulu"
-          java-version: "11"
+          java-version: "17"
       - name: Cache SBT and dependencies
         id: cache-sbt
         uses: actions/cache@v4
@@ -59,7 +60,7 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
-      - name: Run tests
+      - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
 
@@ -68,6 +69,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
+      # Run integration tests with JDK 11, as they have no Spark dependency
       - name: install java
         uses: actions/setup-java@v3
         with:

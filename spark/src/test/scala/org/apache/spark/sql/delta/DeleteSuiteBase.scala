@@ -30,8 +30,7 @@ trait DeleteBaseMixin
   extends QueryTest
   with SharedSparkSession
   with DeltaDMLTestUtils
-  with DeltaTestUtilsForTempViews
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -539,7 +538,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       Some(".*More than one row returned by a subquery used as an expression(?s).*")
   )
 
-  testSparkMasterOnly("Variant type") {
+  test("Variant type") {
     val dstDf = sql(
       """SELECT parse_json(cast(id as string)) v, id i
       FROM range(3)""")

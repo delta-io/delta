@@ -23,6 +23,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.shims.UnsupportedTableOperationErrorShims
 
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -39,8 +40,7 @@ trait UpdateBaseMixin
   with SharedSparkSession
   with DeltaDMLTestUtils
   with DeltaSQLTestUtils
-  with DeltaTestUtilsForTempViews
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaTestUtilsForTempViews {
   import testImplicits._
 
   protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
@@ -516,8 +516,9 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
           parameters = Map("tableName" -> tableSQLIdentifier.stripPrefix("delta.")))
       // Thrown when running with name-based SQL
       case e: SparkUnsupportedOperationException =>
-        checkError(e, "_LEGACY_ERROR_TEMP_2096",
-          parameters = Map("ddl" -> "UPDATE TABLE"))
+        checkError(e, UnsupportedTableOperationErrorShims.UNSUPPORTED_TABLE_OPERATION_ERROR_CODE,
+          parameters = UnsupportedTableOperationErrorShims.updateTableErrorParameters(
+            tableSQLIdentifier))
     }
   }
 
@@ -979,7 +980,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       Some(".*ore than one row returned by a subquery used as an expression(?s).*")
   )
 
-  testSparkMasterOnly("Variant type") {
+  test("Variant type") {
     val df = sql(
       """SELECT parse_json(cast(id as string)) v, id i
         FROM range(2)""")

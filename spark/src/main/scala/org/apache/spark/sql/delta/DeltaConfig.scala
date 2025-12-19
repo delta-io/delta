@@ -953,6 +953,17 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toLong,
     _ >= 0,
     "needs to be greater or equal to zero.")
+
+  /**
+   * If true, enables the MaterializePartitionColumns table feature which requires partition
+   * columns to be materialized for future parquet data files.
+   */
+  val ENABLE_MATERIALIZE_PARTITION_COLUMNS_FEATURE = buildConfig[Option[Boolean]](
+    "enableMaterializePartitionColumnsFeature",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

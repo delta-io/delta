@@ -27,10 +27,12 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
+import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSource, DeltaSourceOffset}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, OffsetSeqLog}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -51,8 +53,7 @@ import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -187,7 +188,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         userSpecifiedSchema = Some(StructType.fromDDL("value STRING")),
         className = "delta",
         options = Map("path" -> inputDir.getCanonicalPath))
-      DataFrameUtils.ofRows(spark, StreamingRelation(v1DataSource))
+      DataFrameUtils.ofRows(spark, Relocated.StreamingRelation(v1DataSource))
     }
   }
 
