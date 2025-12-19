@@ -573,6 +573,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     ),
 
     libraryDependencies ++= Seq(
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JUnit 5 test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
