@@ -387,7 +387,7 @@ lazy val sparkV1 = (project in file("spark"))
 
 // ============================================================
 // Spark Module 2: sparkV1Filtered (v1 without DeltaLog for v2 dependency)
-// This filtered version of sparkV1 is needed because sparkV2 (kernel-spark) depends on some
+// This filtered version of sparkV1 is needed because sparkV2 (spark/v2) depends on some
 // V1 classes for utilities and common functionality, but must NOT have access to DeltaLog,
 // Snapshot, OptimisticTransaction, or actions that belongs to core V1 delta libraries.
 // We should use Kernel as the Delta implementation.
@@ -420,9 +420,9 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
   )
 
 // ============================================================
-// Spark Module 3: sparkV2 (kernel-spark based, depends on v1-filtered)
+// Spark Module 3: sparkV2 (Kernel-based DSv2 connector, depends on v1-filtered)
 // ============================================================
-lazy val sparkV2 = (project in file("kernel-spark"))
+lazy val sparkV2 = (project in file("spark/v2"))
   .dependsOn(sparkV1Filtered)
   .dependsOn(kernelDefaults)
   .dependsOn(kernelUnityCatalog % "compile->compile;test->test")
