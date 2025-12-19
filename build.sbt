@@ -739,9 +739,6 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
       "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
 
-      // Cloud storage support.
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
-
       // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
       "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
@@ -761,6 +758,17 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
     ),
+
+    // Conditionally add hadoop-aws dependency only when UC_REMOTE=true
+    // Please see: https://github.com/delta-io/delta/issues/5624#issuecomment-3673383736
+    // Once we release the relocated unitycatalog-server, we can remove this.
+    libraryDependencies ++= {
+      if (sys.env.get("UC_REMOTE").contains("true")) {
+        Seq("org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test")
+      } else {
+        Seq.empty
+      }
+    },
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
