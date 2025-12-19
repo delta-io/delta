@@ -41,28 +41,20 @@ import org.junit.jupiter.api.TestInstance;
 /**
  * Abstract base class that provides Unity Catalog server integration for Delta tests.
  *
- * <p>This class automatically: - Starts a local Unity Catalog server before all tests - Configures
- * Spark to connect to the UC server - Stops the server and cleans up after all tests
+ * <p>Automatically starts a local Unity Catalog server before tests and stops it after. To use a
+ * remote server instead, set {@code UC_REMOTE=true} and configure {@code UC_URI}, {@code UC_TOKEN},
+ * {@code UC_CATALOG_NAME}, {@code UC_SCHEMA_NAME}, and {@code UC_BASE_TABLE_LOCATION}.
  *
- * <p>The UC server runs with Unity Catalog dependencies to provide catalog functionality for
- * integration testing.
- *
- * <p>Usage:
+ * <p>{@code unityCatalogInfo()} is the only API for subclasses, All other methods are internal
+ * implementation details.
  *
  * <pre>
  * public class MyUCTest extends UnityCatalogSupport {
- *
- *   {@literal @}Override
- *   protected SparkConf getSparkConf() {
- *     SparkConf conf = new SparkConf();
- *     // ... configure spark ...
- *     return configureSparkWithUnityCatalog(conf);
- *   }
- *
  *   {@literal @}Test
  *   public void myTest() {
- *     // Use getCatalogName() to reference the catalog
- *     getSparkSession().sql("CREATE TABLE " + getCatalogName() + ".default.test_table ...");
+ *     UnityCatalogInfo ucInfo = unityCatalogInfo();
+ *     String tableName = ucInfo.catalogName() + "." + ucInfo.schemaName() + ".my_table";
+ *     spark.sql("CREATE TABLE " + tableName + " (id INT) USING DELTA");
  *   }
  * }
  * </pre>
@@ -112,6 +104,7 @@ public abstract class UnityCatalogSupport {
       return baseTableLocation;
     }
 
+    /** Creates a configured Unity Catalog API client. */
     public ApiClient createApiClient() {
       return ApiClientBuilder.create()
           .uri(serverUri)
@@ -136,6 +129,18 @@ public abstract class UnityCatalogSupport {
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
   }
 
+  /**
+   * Returns the Unity Catalog configuration for use in tests.
+   *
+   * <p>This is the primary method subclasses should use to access Unity Catalog connection details,
+   * authentication tokens, and storage locations.
+   *
+   * <p><strong>Note:</strong> This is the only public API intended for subclasses. All other
+   * methods are internal implementation details.
+   *
+   * @return the Unity Catalog configuration
+   * @see UnityCatalogInfo
+   */
   protected UnityCatalogInfo unityCatalogInfo() {
     if (isUCRemoteConfigured()) {
       String serverUri = System.getenv(UC_URI);
@@ -158,7 +163,7 @@ public abstract class UnityCatalogSupport {
           ucBaseTableLocation, "Local Unity Catalog Temp Directory is not configured");
       // For local UC, use default schema and temp directory
       return new UnityCatalogInfo(
-          String.format("http://localhost:" + ucPort),
+          String.format("http://localhost:%s/", ucPort),
           "unity",
           UC_STATIC_TOKEN,
           "default",

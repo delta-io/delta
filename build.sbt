@@ -764,7 +764,12 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     // Once we release the relocated unitycatalog-server, we can remove this.
     libraryDependencies ++= {
       if (sys.env.get("UC_REMOTE").contains("true")) {
-        Seq("org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test")
+        Seq(
+          "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-client-api" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion % "test"
+        )
       } else {
         Seq.empty
       }
