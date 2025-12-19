@@ -60,6 +60,7 @@ public final class SnapshotManagerFactory {
       if (ucTableInfo.isPresent()) {
         return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
       }
+      // Catalog table without UC metadata falls back to path-based handling.
     }
 
     // Default: path-based snapshot manager for non-UC tables
