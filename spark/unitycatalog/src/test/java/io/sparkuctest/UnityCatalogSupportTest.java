@@ -16,63 +16,203 @@
 
 package io.sparkuctest;
 
+import static io.sparkuctest.UnityCatalogSupport.UC_BASE_TABLE_LOCATION;
+import static io.sparkuctest.UnityCatalogSupport.UC_CATALOG_NAME;
+import static io.sparkuctest.UnityCatalogSupport.UC_REMOTE;
+import static io.sparkuctest.UnityCatalogSupport.UC_SCHEMA_NAME;
+import static io.sparkuctest.UnityCatalogSupport.UC_TOKEN;
+import static io.sparkuctest.UnityCatalogSupport.UC_URI;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import io.sparkuctest.UnityCatalogSupport.UnityCatalogInfo;
 import java.lang.reflect.Field;
+import java.util.List;
 import java.util.Map;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-public class UnityCatalogSupportTest extends UnityCatalogSupport {
+public class UnityCatalogSupportTest {
 
-  private static final Map<String, String> ENV_VARS =
-      ImmutableMap.of(
-          UC_REMOTE, "true",
-          UC_URI, "http://localhost:8080",
-          UC_TOKEN, "TestRemoteToken",
-          UC_CATALOG_NAME, "TestRemoteCatalog",
-          UC_SCHEMA_NAME, "TestRemoteSchema",
-          UC_BASE_TABLE_LOCATION, "s3://test-bucket/key");
-
-  @BeforeAll
-  public static void beforeAll() throws Exception {
-    for (Map.Entry<String, String> e : ENV_VARS.entrySet()) {
-      setEnv(e.getKey(), e.getValue());
-    }
-  }
-
-  @AfterAll
-  public static void afterAll() throws Exception {
-    for (Map.Entry<String, String> e : ENV_VARS.entrySet()) {
-      removeEnv(e.getKey());
-    }
-  }
+  private static final List<String> ALL_ENVS =
+      ImmutableList.of(
+          UC_REMOTE, UC_URI, UC_TOKEN, UC_CATALOG_NAME, UC_SCHEMA_NAME, UC_BASE_TABLE_LOCATION);
 
   @Test
   public void testUnityCatalogInfo() {
-    UnityCatalogInfo catalogInfo = unityCatalogInfo();
-    Assertions.assertEquals("TestRemoteCatalog", catalogInfo.catalogName());
-    Assertions.assertEquals("http://localhost:8080", catalogInfo.serverUri());
-    Assertions.assertEquals("TestRemoteCatalog", catalogInfo.catalogName());
-    Assertions.assertEquals("TestRemoteToken", catalogInfo.serverToken());
-    Assertions.assertEquals("TestRemoteSchema", catalogInfo.schemaName());
-    Assertions.assertEquals("s3://test-bucket/key", catalogInfo.baseTableLocation());
+    withEnvTesting(
+        ImmutableMap.of(
+            UC_REMOTE,
+            "true",
+            UC_URI,
+            "http://localhost:8080",
+            UC_TOKEN,
+            "TestRemoteToken",
+            UC_CATALOG_NAME,
+            "TestRemoteCatalog",
+            UC_SCHEMA_NAME,
+            "TestRemoteSchema",
+            UC_BASE_TABLE_LOCATION,
+            "s3://test-bucket/key"),
+        () -> {
+          TestingUCSupport uc = new TestingUCSupport();
+          UnityCatalogInfo catalogInfo = uc.unityCatalogInfo();
+          assertThat(catalogInfo.catalogName()).isEqualTo("TestRemoteCatalog");
+          assertThat(catalogInfo.serverUri()).isEqualTo("http://localhost:8080");
+          assertThat(catalogInfo.serverToken()).isEqualTo("TestRemoteToken");
+          assertThat(catalogInfo.schemaName()).isEqualTo("TestRemoteSchema");
+          assertThat(catalogInfo.baseTableLocation()).isEqualTo("s3://test-bucket/key");
+        });
+  }
+
+  @Test
+  public void testNoUri() {
+    withEnvTesting(
+        ImmutableMap.of(
+            UC_REMOTE,
+            "true",
+            UC_TOKEN,
+            "TestRemoteToken",
+            UC_CATALOG_NAME,
+            "TestRemoteCatalog",
+            UC_SCHEMA_NAME,
+            "TestRemoteSchema",
+            UC_BASE_TABLE_LOCATION,
+            "s3://test-bucket/key"),
+        () -> {
+          TestingUCSupport uc = new TestingUCSupport();
+          assertThatThrownBy(uc::unityCatalogInfo)
+              .isInstanceOf(NullPointerException.class)
+              .hasMessageContaining("UC_URI must be set when UC_REMOTE=true");
+        });
+  }
+
+  @Test
+  public void testNoCatalogName() {
+    withEnvTesting(
+        ImmutableMap.of(
+            UC_REMOTE,
+            "true",
+            UC_URI,
+            "http://localhost:8080",
+            UC_TOKEN,
+            "TestRemoteToken",
+            UC_SCHEMA_NAME,
+            "TestRemoteSchema",
+            UC_BASE_TABLE_LOCATION,
+            "s3://test-bucket/key"),
+        () -> {
+          TestingUCSupport uc = new TestingUCSupport();
+          assertThatThrownBy(() -> uc.unityCatalogInfo())
+              .isInstanceOf(NullPointerException.class)
+              .hasMessageContaining("UC_CATALOG_NAME must be set when UC_REMOTE=true");
+        });
+  }
+
+  @Test
+  public void testNoToken() {
+    withEnvTesting(
+        ImmutableMap.of(
+            UC_REMOTE,
+            "true",
+            UC_URI,
+            "http://localhost:8080",
+            UC_CATALOG_NAME,
+            "TestRemoteCatalog",
+            UC_SCHEMA_NAME,
+            "TestRemoteSchema",
+            UC_BASE_TABLE_LOCATION,
+            "s3://test-bucket/key"),
+        () -> {
+          TestingUCSupport uc = new TestingUCSupport();
+          assertThatThrownBy(() -> uc.unityCatalogInfo())
+              .isInstanceOf(NullPointerException.class)
+              .hasMessageContaining("UC_TOKEN must be set when UC_REMOTE=true");
+        });
+  }
+
+  @Test
+  public void testNoSchemaName() {
+    withEnvTesting(
+        ImmutableMap.of(
+            UC_REMOTE,
+            "true",
+            UC_URI,
+            "http://localhost:8080",
+            UC_TOKEN,
+            "TestRemoteToken",
+            UC_CATALOG_NAME,
+            "TestRemoteCatalog",
+            UC_BASE_TABLE_LOCATION,
+            "s3://test-bucket/key"),
+        () -> {
+          TestingUCSupport uc = new TestingUCSupport();
+          assertThatThrownBy(() -> uc.unityCatalogInfo())
+              .isInstanceOf(NullPointerException.class)
+              .hasMessageContaining("UC_SCHEMA_NAME must be set when UC_REMOTE=true");
+        });
+  }
+
+  @Test
+  public void testNoBaseTableLocation() {
+    withEnvTesting(
+        ImmutableMap.of(
+            UC_REMOTE,
+            "true",
+            UC_URI,
+            "http://localhost:8080",
+            UC_TOKEN,
+            "TestRemoteToken",
+            UC_CATALOG_NAME,
+            "TestRemoteCatalog",
+            UC_SCHEMA_NAME,
+            "TestRemoteSchema"),
+        () -> {
+          TestingUCSupport uc = new TestingUCSupport();
+          assertThatThrownBy(() -> uc.unityCatalogInfo())
+              .isInstanceOf(NullPointerException.class)
+              .hasMessageContaining("UC_BASE_TABLE_LOCATION must be set when UC_REMOTE=true");
+        });
+  }
+
+  public void withEnvTesting(Map<String, String> envs, Runnable test) {
+    // Clear all UC-related environment variables first to ensure clean state
+    ALL_ENVS.forEach(UnityCatalogSupportTest::removeEnv);
+    envs.forEach(UnityCatalogSupportTest::setEnv);
+    try {
+      test.run();
+    } finally {
+      // Clean up all UC-related environment variables after test
+      ALL_ENVS.forEach(UnityCatalogSupportTest::removeEnv);
+    }
   }
 
   @SuppressWarnings("unchecked")
-  private static void setEnv(String key, String value) throws Exception {
-    Map<String, String> env = System.getenv();
-    Field f = env.getClass().getDeclaredField("m");
-    f.setAccessible(true);
-    ((Map<String, String>) f.get(env)).put(key, value);
+  private static void setEnv(String key, String value) {
+    try {
+      Map<String, String> env = System.getenv();
+      Field f = env.getClass().getDeclaredField("m");
+      f.setAccessible(true);
+      ((Map<String, String>) f.get(env)).put(key, value);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @SuppressWarnings("unchecked")
-  private static void removeEnv(String key) throws Exception {
-    Map<String, String> env = System.getenv();
-    Field field = env.getClass().getDeclaredField("m");
-    field.setAccessible(true);
-    ((Map<String, String>) field.get(env)).remove(key);
+  private static void removeEnv(String key) {
+    try {
+      Map<String, String> env = System.getenv();
+      Field field = env.getClass().getDeclaredField("m");
+      field.setAccessible(true);
+      ((Map<String, String>) field.get(env)).remove(key);
+    } catch (NoSuchFieldException e) {
+      // Ignore if field doesn't exist (different JVM implementation)
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
+
+  public static class TestingUCSupport extends UnityCatalogSupport {}
 }

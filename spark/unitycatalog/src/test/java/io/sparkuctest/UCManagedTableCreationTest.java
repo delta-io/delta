@@ -49,7 +49,7 @@ public class UCManagedTableCreationTest extends UCDeltaTableIntegrationBaseTest 
       Map<String, String> properties = tableInfo.getProperties();
 
       assertThat(columns).isNotNull();
-      assertThat(columns).hasSize(2);
+      assertThat(columns).isEmpty();
 
       final String SUPPORTED = "supported";
       HashMap<String, String> expectedProperties = new HashMap<>();

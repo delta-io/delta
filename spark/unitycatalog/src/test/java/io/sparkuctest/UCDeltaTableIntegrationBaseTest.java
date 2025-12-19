@@ -77,9 +77,6 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // Set the AWS S3 implementation for remote unity catalog server testing.
     conf.set("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
 
-    // TODO: Temporary workaround to enable remote UC integration tests; REMOVE it if not required.
-    conf.set("spark.databricks.delta.catalog.update.enabled", "true");
-
     // Set the catalog specific configs.
     UnityCatalogInfo catalogInfo = unityCatalogInfo();
     String catalogName = catalogInfo.catalogName();

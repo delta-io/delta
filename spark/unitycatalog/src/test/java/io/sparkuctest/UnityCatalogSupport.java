@@ -163,7 +163,7 @@ public abstract class UnityCatalogSupport {
           ucBaseTableLocation, "Local Unity Catalog Temp Directory is not configured");
       // For local UC, use default schema and temp directory
       return new UnityCatalogInfo(
-          String.format("http://localhost:%s/", ucPort),
+          String.format("http://localhost:%s/", ucServerPort),
           "unity",
           UC_STATIC_TOKEN,
           "default",
@@ -175,7 +175,7 @@ public abstract class UnityCatalogSupport {
   private UnityCatalogServer ucServer;
 
   /** The port on which the UC server is running. */
-  private int ucPort;
+  private int ucServerPort;
 
   /** The temporary directory for UC server data. */
   private File ucServerDir;
@@ -220,7 +220,7 @@ public abstract class UnityCatalogSupport {
     ucBaseTableLocation.deleteOnExit();
 
     // Find an available port
-    ucPort = findAvailablePort();
+    ucServerPort = findAvailablePort();
 
     // Set up server properties
     Properties serverProps = new Properties();
@@ -234,7 +234,10 @@ public abstract class UnityCatalogSupport {
     ServerProperties initServerProperties = new ServerProperties(serverProps);
 
     UnityCatalogServer server =
-        UnityCatalogServer.builder().port(ucPort).serverProperties(initServerProperties).build();
+        UnityCatalogServer.builder()
+            .port(ucServerPort)
+            .serverProperties(initServerProperties)
+            .build();
 
     server.start();
     ucServer = server;
