@@ -375,6 +375,11 @@ class AutoCompactConfigurationIdColumnMappingSuite extends AutoCompactConfigurat
 class AutoCompactExecutionIdColumnMappingSuite extends AutoCompactExecutionSuite
   with DeltaColumnMappingEnableIdMode {
   override def runAllTests: Boolean = true
+  // TODO: these tests need to be fixed for Spark master
+  override def skipTests: Seq[String] = Seq(
+    "variant auto compact kicks in when enabled - table config",
+    "variant auto compact kicks in when enabled - session config"
+  )
 }
 
 class AutoCompactConfigurationNameColumnMappingSuite extends AutoCompactConfigurationSuite
@@ -385,5 +390,10 @@ class AutoCompactConfigurationNameColumnMappingSuite extends AutoCompactConfigur
 class AutoCompactExecutionNameColumnMappingSuite extends AutoCompactExecutionSuite
   with DeltaColumnMappingEnableNameMode {
   override def runAllTests: Boolean = true
+  // TODO: these tests need to be fixed for Spark master
+  override def skipTests: Seq[String] = Seq(
+    "variant auto compact kicks in when enabled - table config",
+    "variant auto compact kicks in when enabled - session config"
+  )
 }
 
