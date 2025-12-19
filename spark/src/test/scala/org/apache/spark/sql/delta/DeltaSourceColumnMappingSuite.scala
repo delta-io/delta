@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -32,7 +33,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.execution.streaming.{StreamExecution, StreamingExecutionRelation}
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.StreamingExecutionRelation
 import org.apache.spark.sql.streaming.{DataStreamReader, StreamTest}
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils

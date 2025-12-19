@@ -21,13 +21,13 @@ import java.io.{File, FileNotFoundException}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.test.SharedSparkSession
@@ -255,7 +255,8 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       assert(ae.getMessage.contains("Converting a view to a Delta table") ||
         ae.getMessage.contains("Table default.v not found") ||
         ae.getMessage.contains("Table or view 'v' not found in database 'default'") ||
-        ae.getMessage.contains("table or view `default`.`v` cannot be found"))
+        ae.getMessage.contains("table or view `default`.`v` cannot be found") ||
+        ae.getMessage.contains("The table or view `spark_catalog`.`default`.`v` cannot be found"))
     }
   }
 

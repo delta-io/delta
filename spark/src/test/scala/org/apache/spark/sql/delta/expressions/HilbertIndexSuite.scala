@@ -18,10 +18,10 @@ package org.apache.spark.sql.delta.expressions
 
 import java.util
 
-import org.scalatest.Tag
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.delta.test.shims.GridTestShim
 
-class HilbertIndexSuite extends SparkFunSuite {
+class HilbertIndexSuite extends SparkFunSuite with GridTestShim {
 
   /**
    * Represents a test case. Each n-k pair will verify the continuity of the mapping,
@@ -37,13 +37,6 @@ class HilbertIndexSuite extends SparkFunSuite {
     TestCase(5, 4),
     TestCase(6, 3)
   )
-
-  def gridTest[A](testNamePrefix: String, testTags: Tag*)(params: Seq[A])(
-    testFun: A => Unit): Unit = {
-    for (param <- params) {
-      test(testNamePrefix + s" ($param)", testTags: _*)(testFun(param))
-    }
-  }
 
   gridTest("HilbertStates caches states")(2 to 9) { n =>
     val start = System.nanoTime()
