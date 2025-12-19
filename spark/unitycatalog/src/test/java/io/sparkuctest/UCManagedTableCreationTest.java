@@ -33,7 +33,7 @@ public class UCManagedTableCreationTest extends UCDeltaTableIntegrationBaseTest 
   public void testCreateManagedTable() throws Exception {
     // TODO: make this a thorough test of managed table creation with different parameters.
     String tableName = "test_managed_table";
-    String fullTableName = getCatalogName() + ".default." + tableName;
+    String fullTableName = unityCatalogInfo().catalogName() + ".default." + tableName;
     String tableSchema = "id INT, active BOOLEAN";
     try {
       sql(

@@ -168,7 +168,7 @@ public abstract class UnityCatalogSupport {
   private File ucBaseTableLocation = null;
 
   /** Creates a Unity Catalog API client configured for this server. */
-  private ApiClient createClient() {
+  protected ApiClient createClient() {
     ApiClient client = new ApiClient();
     client.setScheme("http");
     client.setHost("localhost");
