@@ -40,7 +40,7 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala213 = "2.13.16"
+val scala213 = "2.13.17"
 val all_scala_versions = Seq(scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
@@ -66,7 +66,7 @@ val sparkVersion = settingKey[String]("Spark version")
 
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
-val hadoopVersion = "3.4.0"
+val hadoopVersion = "3.4.2"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -162,6 +162,29 @@ def runTaskOnlyOnSparkMaster[T](
       val masterVersion = SparkVersionSpec.MASTER.map(_.fullVersion).getOrElse("(no master version configured)")
       println(s"Project $projectName: Skipping `$taskName` as Spark version " +
         s"${CrossSparkVersions.getSparkVersion()} does not equal $masterVersion.")
+      // scalastyle:on println
+      emptyValue
+    }
+  }
+}
+
+/**
+ * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
+ *       setting macro.
+ */
+def runTaskOnlyOnSparkDefault[T](
+  task: sbt.TaskKey[T],
+  taskName: String,
+  projectName: String,
+  emptyValue: => T): Def.Initialize[Task[T]] = {
+  if (CrossSparkVersions.getSparkVersionSpec().isDefault) {
+    Def.task(task.value)
+  } else {
+    Def.task {
+      // scalastyle:off println
+      val defaultVersion = SparkVersionSpec.DEFAULT.fullVersion
+      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
+        s"${CrossSparkVersions.getSparkVersion()} does not equal $defaultVersion.")
       // scalastyle:on println
       emptyValue
     }
@@ -709,6 +732,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     ),
 
     libraryDependencies ++= Seq(
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JUnit 5 test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
@@ -1076,6 +1100,31 @@ lazy val iceberg = (project in file("iceberg"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentModuleName(sparkVersion),
+    // TODO: upgrade to Spark 4.1?
+    Compile / compile := runTaskOnlyOnSparkDefault(
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-iceberg",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkDefault(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-iceberg",
+      emptyValue = ()
+    ).value,
+    publish := runTaskOnlyOnSparkDefault(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-iceberg",
+      emptyValue = ()
+    ).value,
+    publishM2 := runTaskOnlyOnSparkDefault(
+      task = publishM2,
+      taskName = "publishM2",
+      projectName = "delta-iceberg",
+      emptyValue = ()
+    ).value,
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
@@ -1237,12 +1286,37 @@ lazy val hudi = (project in file("hudi"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    Compile / compile := runTaskOnlyOnSparkDefault(
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-hudi",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkDefault(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-hudi",
+      emptyValue = ()
+    ).value,
+    publish := runTaskOnlyOnSparkDefault(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-hudi",
+      emptyValue = ()
+    ).value,
+    publishM2 := runTaskOnlyOnSparkDefault(
+      task = publishM2,
+      taskName = "publishM2",
+      projectName = "delta-hudi",
+      emptyValue = ()
+    ).value,
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
         ExclusionRule(organization = "org.apache.hadoop"),
         ExclusionRule(organization = "org.apache.zookeeper"),
       ),
-      "org.apache.spark" %% "spark-avro" % defaultSparkVersion % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+      "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
       "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
     ),
     assembly / assemblyJarName := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
