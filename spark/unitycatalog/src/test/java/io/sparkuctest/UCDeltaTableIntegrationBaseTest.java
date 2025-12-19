@@ -48,7 +48,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    * not yet supported in this release.
    */
   protected static Stream<TableType> allTableTypes() {
-    return Stream.of(TableType.EXTERNAL);
+    return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
   }
 
   private SparkSession sparkSession;
@@ -74,11 +74,6 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     conf = configureSparkWithUnityCatalog(conf);
 
     sparkSession = SparkSession.builder().config(conf).getOrCreate();
-
-    // Enable testing so that catalogManaged UC tables can be created.
-    // This is checked by CreateDeltaTableCommand which calls org.apache.spark.util.Utils.isTesting.
-    // TODO: clean up once it's not required.
-    System.setProperty("spark.testing", "true");
   }
 
   /** Stop the SparkSession after all tests. */

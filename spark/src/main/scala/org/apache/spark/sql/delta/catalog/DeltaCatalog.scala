@@ -24,6 +24,8 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
@@ -41,7 +43,6 @@ import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
-import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -209,6 +210,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       writer,
       operation,
       tableByPath = isByPath,
+      allowCatalogOwned = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
       // respect third party catalogs. Note: only handle CREATE TABLE for now, we
       // should support CTAS later.
@@ -352,11 +354,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         // TODO: we should extract write options from table properties for all the cases. We
         //       can remove the UC check when we have confidence.
-        val respectOptions = isUnityCatalog || properties.containsKey("test.simulateUC")
-        val (props, writeOptions) = if (respectOptions) {
+        val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
+        val (props, writeOptions) = if (isUC) {
           val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
           expandTableProps(props, writeOptions, spark.sessionState.conf)
           props.remove("test.simulateUC")
+          translateUCTableIdProperty(props)
           (props, writeOptions)
         } else {
           (properties, Map.empty[String, String])
@@ -574,6 +577,18 @@ class DeltaCatalog extends DelegatingCatalogExtension
         }
       }
     }
+  }
+
+  /**
+   * The UC table ID property was renamed from an old name. In a transition period we need to
+   * translate the old UC table ID property name set by caller to new one. And in case both the new
+   * and old properties are set, remove the old one. Later in UC server it might throw error if it
+   * sees both.
+   * TODO: clean up once callers are migrated.
+   */
+  private def translateUCTableIdProperty(props: util.Map[String, String]): Unit = {
+    val oldTableIdProperty = Option(props.remove(UC_TABLE_ID_KEY_OLD))
+    oldTableIdProperty.foreach(props.putIfAbsent(UC_TABLE_ID_KEY, _))
   }
 
   /**
