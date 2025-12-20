@@ -25,9 +25,12 @@ import org.apache.http.entity.ContentType
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType}
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
+import shadedForDelta.org.apache.iceberg.expressions.Binder
 import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
 import shadedForDelta.org.apache.iceberg.types.Types
 
@@ -63,6 +66,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   override def afterAll(): Unit = {
     try {
       if (server != null) {
+        server.clearCaptured()
         server.stop()
       }
     } finally {
@@ -183,6 +187,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       func(table)
     } finally {
       catalog.dropTable(tableId, false)
+      server.clearCaptured()
     }
   }
 
@@ -222,6 +227,121 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
     assert(metadata.planningEndpointUri == expectedEndpoint,
       s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
+  }
+
+  test("filter sent to IRC server over HTTP") {
+    withTempTable("filterTest") { table =>
+      // Create test data with more varied values for comprehensive testing
+      val tableName = s"rest_catalog.${defaultNamespace}.filterTest"
+      sql(s"""
+        INSERT INTO $tableName (id, name)
+        VALUES
+          (1, 'alice'),
+          (2, 'bob'),
+          (3, 'charlie'),
+          (10, 'david'),
+          (20, 'eve')
+      """)
+
+      // Spark schema matching the table schema for filter conversion
+      import org.apache.spark.sql.types._
+      val sparkSchema = StructType(Seq(
+        StructField("id", LongType, nullable = false),
+        StructField("name", StringType, nullable = false)
+      ))
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        // Test cases: (filter, description)
+        val testCases = Seq(
+          (EqualTo("id", 2L), "EqualTo numeric"),
+          (EqualTo("name", "bob"), "EqualTo string"),
+          (LessThan("id", 10L), "LessThan"),
+          (GreaterThan("id", 5L), "GreaterThan"),
+          (LessThanOrEqual("id", 3L), "LessThanOrEqual"),
+          (GreaterThanOrEqual("id", 2L), "GreaterThanOrEqual"),
+          (IsNull("name"), "IsNull"),
+          (IsNotNull("name"), "IsNotNull"),
+          (And(EqualTo("id", 2L), EqualTo("name", "bob")), "And"),
+          (Or(EqualTo("id", 1L), EqualTo("id", 3L)), "Or")
+        )
+
+        testCases.foreach { case (filter, description) =>
+          // Clear previous captured filter
+          server.clearCaptured()
+
+          // Convert Spark filter to expected Iceberg expression
+          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter, sparkSchema)
+          assert(expectedExpr.isDefined,
+            s"[$description] Filter conversion should succeed for: $filter")
+
+          // Call client with filter
+          client.planScan(defaultNamespace.toString, "filterTest", filter = Some(filter))
+
+          // Verify server captured the filter
+          val capturedFilter = server.getCapturedFilter
+          assert(capturedFilter != null,
+            s"[$description] Server should have captured filter")
+
+          // isEquivalentTo() only works on bound expressions, so bind both to schema for comparison
+          // Binding resolves field references from names to schema-specific field IDs and types
+          val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
+          val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
+
+          assert(boundCaptured.isEquivalentTo(boundExpected),
+            s"[$description] Expected expression: $boundExpected, got: $boundCaptured")
+        }
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("projection sent to IRC server over HTTP") {
+    withTempTable("projectionTest") { table =>
+      // Create test data with SQL
+      val tableName = s"rest_catalog.${defaultNamespace}.projectionTest"
+      sql(s"""
+        INSERT INTO $tableName (id, name)
+        VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')
+      """)
+
+      // Test cases covering different projection scenarios
+      val testCases = Seq(
+        ("single column",
+          StructType(Seq(StructField("id", LongType))),
+          Set("id")),
+        ("multiple columns",
+          StructType(Seq(StructField("id", LongType), StructField("name", StringType))),
+          Set("id", "name")),
+        ("all columns",
+          StructType(Seq(StructField("id", LongType), StructField("name", StringType))),
+          Set("id", "name")),
+        ("different order",
+          StructType(Seq(StructField("name", StringType), StructField("id", LongType))),
+          Set("name", "id"))
+      )
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        testCases.foreach { case (description, projection, expectedFields) =>
+          client.planScan(
+            defaultNamespace.toString, "projectionTest", projection = Some(projection))
+
+          // Verify server captured the projection
+          val capturedProjection = server.getCapturedProjection
+          assert(capturedProjection != null,
+            s"[$description] Server should have captured projection")
+
+          // Verify field names match expected
+          val fieldNames = capturedProjection.asScala.toSet
+          assert(fieldNames == expectedFields,
+            s"[$description] Expected $expectedFields, got: $fieldNames")
+        }
+      } finally {
+        client.close()
+      }
+    }
   }
 
 }
