@@ -93,6 +93,18 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
   protected var materializedSourceRDD: Option[RDD[InternalRow]] = None
 
   /**
+   * True if source materialization is used.
+   * It is set when materializedSourceRDD may not yet be initialized.
+   */
+  private var materializeSource = false
+
+  /**
+   * StorageLevel used for source materialization.
+   * It is set when materializedSourceRDD may not yet be initialized.
+   */
+  private var materializeSourceStorageLevel = StorageLevel.NONE
+
+  /**
    * Track which attempt or retry it is in runWithMaterializedSourceAndRetries
    */
   protected var attempt: Int = 0
@@ -145,6 +157,8 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
         }
         materializedSourceRDD = None
         mergeSource = None
+        materializeSource = false
+        materializeSourceStorageLevel = StorageLevel.NONE
       }
     } while (doRetry)
 
@@ -200,7 +214,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
 
     // Record if we ran out of executor disk space when we materialized the source.
     case s: SparkException
-      if materializedSourceRDD.nonEmpty &&
+      if materializeSource &&
         s.getMessage.contains("java.io.IOException: No space left on device") =>
       // Record situations where we ran out of disk space, possibly because of the space took
       // by the materialized RDD.
@@ -210,8 +224,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
         data = MergeIntoMaterializeSourceError(
           errorType = MergeIntoMaterializeSourceErrorType.OUT_OF_DISK.toString,
           attempt = attempt,
-          materializedSourceRDDStorageLevel =
-            materializedSourceRDD.get.getStorageLevel.toString
+          materializedSourceRDDStorageLevel = materializeSourceStorageLevel.toString
         )
       )
       RetryHandling.RethrowException
@@ -314,6 +327,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       isInsertOnly: Boolean): Unit = {
     val (materialize, materializeReason) =
       shouldMaterializeSource(spark, source, isInsertOnly)
+    materializeSource = materialize
     if (!materialize) {
       // Does not materialize, simply return the dataframe from source plan
       mergeSource = Some(
@@ -345,17 +359,37 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       DataFrameUtils.ofRows(spark, source)
     }
 
+    // Select appropriate StorageLevel
+    materializeSourceStorageLevel = StorageLevel.fromString(
+      if (attempt == 1) {
+        spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL)
+      } else if (attempt == 2) {
+        // If it failed the first time, potentially use a different storage level on retry. The
+        // first retry has its own conf to allow gradually increasing the replication level.
+        spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_FIRST_RETRY)
+      } else {
+        spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY)
+      }
+    )
+
     // Caches the source in RDD cache using localCheckpoint, which cuts away the RDD lineage,
     // which shall ensure that the source cannot be recomputed and thus become inconsistent.
-    val checkpointedSourcePlanDF = baseSourcePlanDF
-      // Set eager=false for now, even if we should be doing eager, so that we can set the storage
-      // level before executing.
-      .localCheckpoint(eager = false)
+    //
+    // WARNING: if eager == false, the source used during the first Spark Job that uses this may
+    // still be inconsistent with source materialized afterwards.
+    // This is because doCheckpoint that finalizes the lazy checkpoint is called after the Job
+    // that triggered the lazy checkpointing finished.
+    // If blocks were lost during that job, they may still get recomputed and changed compared
+    // to how they were used during the execution of the job.
+    val checkpointedSourcePlanDF =
+      baseSourcePlanDF.localCheckpoint(
+        eager = true, storageLevel = materializeSourceStorageLevel)
 
     // We have to reach through the crust and into the plan of the checkpointed DF
     // to get the RDD that was actually checkpointed, to be able to unpersist it later...
     var checkpointedPlan = checkpointedSourcePlanDF.queryExecution.analyzed
     val rdd = checkpointedPlan.asInstanceOf[LogicalRDD].rdd
+    assert(rdd.isCheckpointed)
     materializedSourceRDD = Some(rdd)
     rdd.setName("mergeMaterializedSource")
 
@@ -370,34 +404,6 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       )
     )
 
-
-    // Sets appropriate StorageLevel
-    val storageLevel = StorageLevel.fromString(
-      if (attempt == 1) {
-        spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL)
-      } else if (attempt == 2) {
-        // If it failed the first time, potentially use a different storage level on retry. The
-        // first retry has its own conf to allow gradually increasing the replication level.
-        spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_FIRST_RETRY)
-      } else {
-        spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY)
-      }
-    )
-    rdd.persist(storageLevel)
-
-    // WARNING: if eager == false, the source used during the first Spark Job that uses this may
-    // still be inconsistent with source materialized afterwards.
-    // This is because doCheckpoint that finalizes the lazy checkpoint is called after the Job
-    // that triggered the lazy checkpointing finished.
-    // If blocks were lost during that job, they may still get recomputed and changed compared
-    // to how they were used during the execution of the job.
-    if (spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER)) {
-      // Force the evaluation of the `rdd`, since we cannot access `doCheckpoint()` from here.
-      rdd
-        .mapPartitions(_ => Iterator.empty.asInstanceOf[Iterator[InternalRow]])
-        .foreach((_: InternalRow) => ())
-      assert(rdd.isCheckpointed)
-    }
 
     logDebug(s"Materializing $operation with pruned columns $referencedSourceColumns.")
     logDebug(s"Materialized $operation source plan:\n${getMergeSource.df.queryExecution}")

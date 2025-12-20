@@ -328,6 +328,21 @@ trait PartitionLikeDataSkippingSuiteBase
     }
   }
 
+  test("partition-like data skipping evaluates file eligibility before skipping expression") {
+    val tbl = "tbl"
+    withClusteredTable(tbl, "a STRING, b BIGINT", "a") {
+      spark.range(10)
+        .withColumnRenamed("id", "b")
+        .withColumn("a", concat(lit("abcde" * 10), lit("--"), col("b")))
+        .select("a", "b") // Reorder columns to ensure the schema matches.
+        .repartitionByRange(10, col("a"))
+        .write.format("delta").mode("append").insertInto(tbl)
+
+      validateExpectedScanMetrics(
+        tbl, s"SELECT * FROM $tbl WHERE SPLIT(a, '--')[1]=8", 10, 1, true, 1L)
+    }
+  }
+
   test("partition-like data skipping not applied to sufficiently small tables") {
     validateExpectedScanMetrics(
       tableName = testTableName,

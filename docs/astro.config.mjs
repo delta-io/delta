@@ -5,7 +5,7 @@ import netlify from "@astrojs/netlify";
 
 // https://astro.build/config
 export default defineConfig({
-  site: "https://delta-docs-incubator.netlify.app/",
+  site: "https://docs.delta.io/",
   image: {
     service: {
       entrypoint: "astro/assets/services/sharp",
@@ -205,6 +205,25 @@ export default defineConfig({
           label: "Contribute",
           link: "https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md",
           attrs: { target: "_blank" },
+        },
+      ],
+      head: [
+        {
+          tag: "script",
+          attrs: {
+            async: true,
+            src: "https://www.googletagmanager.com/gtag/js?id=UA-138952006-1",
+          },
+        },
+        {
+          tag: "script",
+          content: `
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+
+          gtag('config', 'UA-138952006-1');
+          `,
         },
       ],
     }),

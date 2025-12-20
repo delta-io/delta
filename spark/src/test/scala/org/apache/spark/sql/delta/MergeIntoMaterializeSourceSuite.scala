@@ -180,12 +180,10 @@ trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMix
   }
 
   for {
-    eager <- BOOLEAN_DOMAIN
     materialized <- BOOLEAN_DOMAIN
-  }  test(s"merge logs out of disk errors - eager=$eager, materialized=$materialized") {
+  } test(s"merge logs out of disk errors - materialized=$materialized") {
     import DeltaSQLConf.MergeMaterializeSource
     withSQLConf(
-        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString,
         DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key ->
           (if (materialized) MergeMaterializeSource.AUTO else MergeMaterializeSource.NONE)) {
       val injectEx = new java.io.IOException("No space left on device")
@@ -260,47 +258,40 @@ trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMix
 
     // For 1 to maxAttempts - 1 RDD block lost failures, merge should retry and succeed.
     for {
-      eager <- BOOLEAN_DOMAIN
       kills <- 1 to maxAttempts - 1
     } {
-      test(s"materialize source unpersist with $kills kill attempts succeeds - eager=$eager") {
+      test(s"materialize source unpersist with $kills kill attempts succeeds") {
         withTable(tblName) {
-          withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString) {
-            val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, kills)
-            val events =
-              allDeltaEvents.filter(_.tags.get("opType").contains("delta.dml.merge.stats"))
-            assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
-            val mergeStats = JsonUtils.fromJson[MergeStats](events(0).blob)
-            assert(mergeStats.materializeSourceAttempts.isDefined, s"MergeStats:\n$mergeStats")
-            assert(
-              mergeStats.materializeSourceAttempts.get == kills + 1,
-              s"MergeStats:\n$mergeStats")
+          val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, kills)
+          val events =
+            allDeltaEvents.filter(_.tags.get("opType").contains("delta.dml.merge.stats"))
+          assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
+          val mergeStats = JsonUtils.fromJson[MergeStats](events(0).blob)
+          assert(mergeStats.materializeSourceAttempts.isDefined, s"MergeStats:\n$mergeStats")
+          assert(
+            mergeStats.materializeSourceAttempts.get == kills + 1,
+            s"MergeStats:\n$mergeStats")
 
-            // Check query result after merge
-            val tab = sql(s"select * from $tblName order by id")
-              .collect()
-              .map(row => row.getLong(0))
-              .toSeq
-            assert(tab == (0L until 90L) ++ (100L until 120L))
-          }
+          // Check query result after merge
+          val tab = sql(s"select * from $tblName order by id")
+            .collect()
+            .map(row => row.getLong(0))
+            .toSeq
+          assert(tab == (0L until 90L) ++ (100L until 120L))
         }
       }
     }
 
     // Eventually it should fail after exceeding maximum number of attempts.
-    for (eager <- BOOLEAN_DOMAIN) {
-      test(s"materialize source unpersist with $maxAttempts kill attempts fails - eager=$eager") {
-        withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString) {
-          withTable(tblName) {
-            val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, maxAttempts)
-            val events = allDeltaEvents
-              .filter(_.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE))
-            assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
-            val error = JsonUtils.fromJson[MergeIntoMaterializeSourceError](events(0).blob)
-            assert(error.errorType == MergeIntoMaterializeSourceErrorType.RDD_BLOCK_LOST.toString)
-            assert(error.attempt == maxAttempts)
-          }
-        }
+    test(s"materialize source unpersist with $maxAttempts kill attempts fails") {
+      withTable(tblName) {
+        val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, maxAttempts)
+        val events = allDeltaEvents
+          .filter(_.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE))
+        assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
+        val error = JsonUtils.fromJson[MergeIntoMaterializeSourceError](events(0).blob)
+        assert(error.errorType == MergeIntoMaterializeSourceErrorType.RDD_BLOCK_LOST.toString)
+        assert(error.attempt == maxAttempts)
       }
     }
   }
@@ -358,8 +349,7 @@ trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
     hints
   }
 
-  for (eager <- BOOLEAN_DOMAIN)
-  test(s"materialize source preserves dataframe hints - eager=$eager") {
+  test(s"materialize source preserves dataframe hints") {
     withTable("A", "B", "T") {
       sql("select id, id as v from range(50000)").write.format("delta").saveAsTable("T")
       sql("select id, id+2 as v from range(10000)").write.format("csv").saveAsTable("A")
@@ -367,7 +357,6 @@ trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
 
       // Manually added broadcast hint will mess up the expected hints hence disable it
       withSQLConf(
-        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString,
         SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "-1") {
         // Simple BROADCAST hint
         val hSimple = getHints(

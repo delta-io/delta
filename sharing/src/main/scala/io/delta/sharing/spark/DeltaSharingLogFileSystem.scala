@@ -229,9 +229,15 @@ case class ConstructedDeltaLogMetadata(
     minVersion: Long,
     maxVersion: Long)
 
+/** Public constants for DeltaSharingLogFileSystem accessible visible outside the package */
+object DeltaSharingLogFileSystemConstants {
+  /** The URI scheme used for delta-sharing fake delta-logs. */
+  final val SCHEME = "delta-sharing-log"
+}
+
 private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
-  val SCHEME = "delta-sharing-log"
+  val SCHEME = DeltaSharingLogFileSystemConstants.SCHEME
 
   // The constant added as prefix to all delta sharing block ids.
   private val BLOCK_ID_TEST_PREFIX = "test_"

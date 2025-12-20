@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.GeneratedAsIdentityType.GeneratedAlways
 import org.apache.spark.sql.delta.actions.RemoveFile
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -29,7 +30,6 @@ import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.types.{DoubleType, IntegerType, LongType}
 import org.apache.spark.util.Utils

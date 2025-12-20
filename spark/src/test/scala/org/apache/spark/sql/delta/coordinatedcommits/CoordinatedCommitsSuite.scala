@@ -1685,7 +1685,7 @@ abstract class CommitCoordinatorSuiteBase
       if (isCatalogOwnedTest) {
         checkError(
           e,
-          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
           sqlState = "42616",
           parameters = Map[String, String]())
       } else {
@@ -1733,7 +1733,7 @@ abstract class CommitCoordinatorSuiteBase
       if (isCatalogOwnedTest) {
         checkError(
           e,
-          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
           sqlState = "42616",
           parameters = Map[String, String]())
       } else {

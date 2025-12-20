@@ -48,14 +48,25 @@ def get_args():
         required=False,
         default=None,
         help="some shard")
+    parser.add_argument(
+        "--spark-version",
+        required=False,
+        default=None,
+        help="Spark version to use (passed as -DsparkVersion to SBT)")
     return parser.parse_args()
 
 
-def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None):
+def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None, spark_version=None):
     print("##### Running SBT tests #####")
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    cmd = [sbt_path, "clean"]
+    cmd = [sbt_path]
+    
+    # Pass Spark version as system property to SBT (must come before commands)
+    if spark_version:
+        cmd.append(f"-DsparkVersion={spark_version}")
+    
+    cmd.append("clean")
 
     test_cmd = "test"
     if shard:
@@ -276,4 +287,5 @@ if __name__ == "__main__":
         run_python_tests(root_dir)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
+        spark_version = args.spark_version or os.getenv("SPARK_VERSION")
+        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard, spark_version)

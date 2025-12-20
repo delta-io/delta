@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.snapshot.unitycatalog;
 
 import static java.util.Objects.requireNonNull;
+import static scala.jdk.javaapi.CollectionConverters.asJava;
 
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
@@ -29,7 +30,7 @@ import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$
 /**
  * Utility class for extracting Unity Catalog table information from Spark catalog metadata.
  *
- * <p>This class isolates Spark dependencies, allowing {@link UCManagedSnapshotManager} to be
+ * <p>This class isolates Spark dependencies, allowing {@link UCManagedTableSnapshotManager} to be
  * created without Spark if table info is provided directly via {@link UCTableInfo}.
  */
 public final class UCUtils {
@@ -85,9 +86,8 @@ public final class UCUtils {
 
     UCCatalogConfig config = configOpt.get();
     String ucUri = config.uri();
-    String ucToken = config.token();
 
-    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, ucToken));
+    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {

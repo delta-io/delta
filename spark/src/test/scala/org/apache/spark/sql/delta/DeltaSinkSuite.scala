@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
@@ -34,7 +35,6 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.DataSourceScanExec
 import org.apache.spark.sql.execution.datasources._
-import org.apache.spark.sql.execution.streaming.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
 import org.apache.spark.sql.execution.streaming.sources.WriteToMicroBatchDataSourceV1
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming._

@@ -101,7 +101,10 @@ trait ConvertIcebergToDeltaUtils extends SharedSparkSession {
   }
 
   override protected def createSparkSession: TestSparkSession = {
-    SparkSession.cleanupAnyExistingSession()
+    // Clean up any existing session (Spark 4.0 API)
+    SparkSession.getActiveSession.foreach(_.stop())
+    SparkSession.clearActiveSession()
+    SparkSession.clearDefaultSession()
     val session = new IcebergCompatibleDeltaTestSparkSession(sparkConf)
     session.conf.set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, classOf[DeltaCatalog].getName)
     session
@@ -614,16 +617,18 @@ trait ConvertIcebergToDeltaSuiteBase
       var ex = intercept[Exception] {
         spark.sql(s"INSERT INTO $table VALUES (4, 'd', null)")
       }
-      assert(ex.getMessage.contains("Null value appeared in non-nullable field") ||
-        // TODO: remove it after OSS 3.4 release.
+      // Spark 4.0+ uses uppercase NULL, 3.4+ uses capitalized Null, <3.4 has column name
+      assert(ex.getMessage.contains("NULL value appeared in non-nullable field") ||
+        ex.getMessage.contains("Null value appeared in non-nullable field") ||
         ex.getMessage.contains("""Cannot write nullable values to non-null column 'name'"""))
 
       // Should not be able to write nulls to not null partition column
       ex = intercept[Exception] {
         spark.sql(s"INSERT INTO $table VALUES (null, 'e', 'e')")
       }
-      assert(ex.getMessage.contains("Null value appeared in non-nullable field") ||
-        // TODO: remove it after OSS 3.4 release.
+      // Spark 4.0+ uses uppercase NULL, 3.4+ uses capitalized Null, <3.4 has column name
+      assert(ex.getMessage.contains("NULL value appeared in non-nullable field") ||
+        ex.getMessage.contains("Null value appeared in non-nullable field") ||
         ex.getMessage.contains("""Cannot write nullable values to non-null column 'id'"""))
 
       // Should be able to write nulls to nullable column

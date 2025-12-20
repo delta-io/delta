@@ -25,13 +25,13 @@ import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaHiveTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import com.fasterxml.jackson.core.JsonParseException
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogWithListener
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.hive.HiveExternalCatalog
 import org.apache.spark.sql.types.{ArrayType, DoubleType, IntegerType, LongType, MapType, StringType, StructField, StructType}
@@ -69,6 +69,7 @@ class DeltaUpdateCatalogSuite
 
   test("streaming") {
     withTable(tbl) {
+      implicit val sparkSession: SparkSession = spark
       implicit val _sqlContext = spark.sqlContext
       val stream = MemoryStream[Long]
       val df1 = stream.toDF().toDF("id")
@@ -107,6 +108,7 @@ class DeltaUpdateCatalogSuite
   test("streaming - external location") {
     withTempDir { dir =>
       withTable(tbl) {
+        implicit val sparkSession: SparkSession = spark
         implicit val _sqlContext = spark.sqlContext
         val stream = MemoryStream[Long]
         val df1 = stream.toDF().toDF("id")
@@ -146,6 +148,7 @@ class DeltaUpdateCatalogSuite
 
   test("streaming - external table that already exists") {
     withTable(tbl) {
+      implicit val sparkSession: SparkSession = spark
       implicit val _sqlContext = spark.sqlContext
       val stream = MemoryStream[Long]
       val df1 = stream.toDF().toDF("id")

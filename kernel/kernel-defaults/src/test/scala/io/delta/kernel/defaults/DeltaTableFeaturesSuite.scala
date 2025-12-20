@@ -328,6 +328,21 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
     }
   }
 
+  test("read succeeds with unrecognized writer-only feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+      // Add an unknown writer feature to the protocol
+      // When DELTA_TESTING=1 (set in build.sbt) this test writer feature is allowed
+      spark.sql(
+        "ALTER TABLE delta.`" + tablePath +
+          "` SET TBLPROPERTIES ('delta.feature.testWriter' = 'supported')")
+
+      // Read should succeed - writer-only features don't affect readers
+      getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      assert(getProtocol(engine, tablePath).getWriterFeatures().contains("testWriter"))
+    }
+  }
+
   /* ---- Start: type widening tests ---- */
   test("only typeWidening feature is enabled when metadata supports it: new table") {
     withTempDirAndEngine { (tablePath, engine) =>

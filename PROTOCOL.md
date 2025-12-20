@@ -152,17 +152,20 @@ The state of a table at a given version is called a _snapshot_ and is defined by
 ## File Types
 A Delta table is stored within a directory and is composed of the following different types of files.
 
-Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
+Here is an example of a Delta table with four entries in the commit log, stored in the directory `mytable`.
 ```
-/mytable/_delta_log/00000000000000000000.json
-/mytable/_delta_log/00000000000000000001.json
-/mytable/_delta_log/00000000000000000003.json
-/mytable/_delta_log/00000000000000000003.checkpoint.parquet
+/mytable/_delta_log/00000000000000000042.json
+/mytable/_delta_log/00000000000000000042.checkpoint.parquet
+/mytable/_delta_log/00000000000000000043.json
+/mytable/_delta_log/00000000000000000044.json
+/mytable/_delta_log/00000000000000000045.json
 /mytable/_delta_log/_last_checkpoint
 /mytable/_change_data/cdc-00000-924d9ac7-21a9-4121-b067-a0a6517aa8ed.c000.snappy.parquet
 /mytable/part-00000-3935a07c-416b-4344-ad97-2a38342ee2fc.c000.snappy.parquet
 /mytable/deletion_vector-0c6cbaaf-5e04-4c9d-8959-1088814f58ef.bin
 ```
+
+This example represents a table after [metadata cleanup](#metadata-cleanup) has removed older log entries. The checkpoint at version 42 contains the complete table state, while versions 43-45 are subsequent commits. Each file type is described in the sections below.
 
 ### Data Files
 Data files can be stored in the root directory of the table or in any non-hidden subdirectory (i.e., one whose name does not start with an `_`).

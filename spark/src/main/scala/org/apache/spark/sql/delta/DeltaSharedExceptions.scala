@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 import org.antlr.v4.runtime.ParserRuleContext
 
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.parser.{ParseException, ParserUtils}
+import org.apache.spark.sql.catalyst.parser.{DeltaParseException, ParseException, ParseExceptionShims, ParserUtils}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.QueryContext
 
@@ -81,19 +81,10 @@ class DeltaUnsupportedOperationException(
   override def getQueryContext: Array[QueryContext] = new Array(0);
 }
 
-class DeltaParseException(
-    ctx: ParserRuleContext,
-    errorClass: String,
-    messageParameters: Map[String, String] = Map.empty)
-  extends ParseException(
-      Option(ParserUtils.command(ctx)),
-      ParserUtils.position(ctx.getStart),
-      ParserUtils.position(ctx.getStop),
-      errorClass,
-      messageParameters
-    ) with DeltaThrowable {
-  override def getErrorClass: String = errorClass
-}
+// DeltaParseException is now defined in ParseExceptionShims
+// (see scala-spark-*/shims/ParseExceptionShims.scala) to handle the different ParseException
+// constructor signatures between Spark versions.
+// In Spark 4.1, ParseException removed the 'stop' parameter from its constructor.
 
 class DeltaArithmeticException(
     errorClass: String,
