@@ -182,7 +182,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    */
   protected def isV1WriterSaveAsTableOverwrite: Boolean = {
     val options = new DeltaOptions(table.storage.properties, conf)
-    options.isDataFrameWriterV1SaveAsTableOverwrite // ||
+    options.isDataFrameWriterV1SaveAsTableOverwrite ||
       // Horrible hack for Spark versions before 4.1.
       Thread.currentThread().getStackTrace.exists(_.toString.contains(
         classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
