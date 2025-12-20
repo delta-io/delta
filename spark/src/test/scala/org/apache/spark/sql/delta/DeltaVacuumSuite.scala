@@ -947,7 +947,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           CheckFiles(Seq("file1.txt")),
           ExpectFailure(
             GC(false, Seq(tempDir), Some(-2)),
-            classOf[IllegalArgumentException],
+            classOf[DeltaIllegalArgumentException],
             Seq("Retention", "less than", "0"))
         )
         val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
@@ -956,7 +956,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           CheckFiles(Seq("file2.txt")),
           ExpectFailure(
             ExecuteVacuumInScala(deltaTable, Seq(), Some(-2)),
-            classOf[IllegalArgumentException],
+            classOf[DeltaIllegalArgumentException],
             Seq("Retention", "less than", "0"))
         )
       }
@@ -1008,8 +1008,8 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           CheckFiles(Seq("file1.txt")),
           ExpectFailure(
             GC(false, Nil, Some(0)),
-            classOf[IllegalArgumentException],
-            Seq("spark.databricks.delta.retentionDurationCheck.enabled = false", "168 hours"))
+            classOf[DeltaIllegalArgumentException],
+            Seq("delta.retentionDurationCheck.enabled = false", "168 hours"))
         )
       }
 
@@ -1047,11 +1047,11 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
       withTempDeltaTable(targetDF, enableDVs = true) { (targetTable, targetLog) =>
         // Add some DVs.
         targetTable().delete("id < 10")
-        val e = intercept[IllegalArgumentException] {
+        val e = intercept[DeltaIllegalArgumentException] {
           spark.sql(s"VACUUM delta.`${targetLog.dataPath}` RETAIN 0 HOURS")
         }
         assert(e.getMessage.contains(
-          "Are you sure you would like to vacuum files with such a low retention period?"))
+          "The specified VACUUM retention period is too low"))
       }
   }
 

@@ -3141,6 +3141,23 @@
     ],
     "sqlState" : "42846"
   },
+  "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE" : {
+    "message" : [
+      "Retention period for Vacuum can't be less than 0 hours."
+    ],
+    "sqlState" : "22003"
+  },
+  "DELTA_VACUUM_RETENTION_PERIOD_TOO_SHORT" : {
+    "message" : [
+      "The specified VACUUM retention period is too low and may corrupt this Delta table if any writes are in progress.",
+      "",
+      "If no operations (insert, upsert, delete, optimize) are running, you can disable this safety check by setting:",
+      "delta.retentionDurationCheck.enabled = false",
+      "",
+      "Otherwise, use a retention period of at least <configuredRetentionHours> hours."
+    ],
+    "sqlState" : "22003"
+  },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
     "message" : [
       "Versions (<versionList>) are not contiguous. ",

@@ -1868,6 +1868,17 @@ trait DeltaErrorsBase
       errorClass = "DELTA_CANNOT_VACUUM_LITE")
   }
 
+  def vacuumRetentionPeriodNegative(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE")
+  }
+
+  def vacuumRetentionPeriodTooShort(configuredRetentionHours: Long): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_VACUUM_RETENTION_PERIOD_TOO_SHORT",
+      messageParameters = Array(configuredRetentionHours.toString))
+  }
+
   def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION",
