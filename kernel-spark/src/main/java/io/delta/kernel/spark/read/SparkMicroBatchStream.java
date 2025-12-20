@@ -177,7 +177,7 @@ public class SparkMicroBatchStream
 
     this.snapshotAtSourceInit = (SnapshotImpl) snapshotAtSourceInit;
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
-    // TODO: schema tracking for non-additive schema changes
+    // TODO(#5319): schema tracking for non-additive schema changes
     this.readSchemaAtSourceInit =
         SchemaUtils.convertKernelSchemaToSparkSchema(snapshotAtSourceInit.getSchema());
     this.shouldValidateOffsets =
@@ -677,7 +677,8 @@ public class SparkMicroBatchStream
         // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
         // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
         // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-        validateCommit(batch, version, snapshotAtSourceInit.getPath(), endOffset);
+        // TODO(#5319): schema tracking
+        validateCommit(batch, version, snapshotAtSourceInit.getPath(), endOffset, true);
 
         currentVersion = version;
         currentIndex =
@@ -730,7 +731,8 @@ public class SparkMicroBatchStream
       ColumnarBatch batch,
       long version,
       String tablePath,
-      Optional<DeltaSourceOffset> endOffsetOpt) {
+      Optional<DeltaSourceOffset> endOffsetOpt,
+      boolean verifyMetadataAction) {
     // If endOffset is at the beginning of this version, exit early.
     if (endOffsetOpt.isPresent()) {
       DeltaSourceOffset endOffset = endOffsetOpt.get();
@@ -760,8 +762,10 @@ public class SparkMicroBatchStream
       Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
       if (metadataOpt.isPresent()) {
         Metadata metadata = metadataOpt.get();
-        checkReadIncompatibleSchemaChanges(
-            metadata, version, /* validatedDuringStreamStart */ false);
+        if (verifyMetadataAction) {
+          checkReadIncompatibleSchemaChanges(
+              metadata, version, /* validatedDuringStreamStart */ false);
+        }
         Preconditions.checkArgument(
             metadataAction == null, "Should not encounter two metadata actions in the same commit");
         metadataAction = metadata;
@@ -787,7 +791,7 @@ public class SparkMicroBatchStream
               newMetadata.getId(), oldMetadata.getId());
     }
 
-    // TODO: schema tracking for non-additive schema changes
+    // TODO(#5319): schema tracking for non-additive schema changes
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -807,7 +811,7 @@ public class SparkMicroBatchStream
       // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
       // will cause the stream to fail with a retryable exception, and the stream will restart using
       // the new schema.
-      boolean allowWideningTypeChanges = typeWideningEnabled; // TODO: schema tracking
+      boolean allowWideningTypeChanges = typeWideningEnabled; // TODO(#5319): schema tracking
       // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
       // column mapping schema changes, we can allow the standard check to allow missing columns
       // from the read schema in the schema change, because the only case that happens is when
