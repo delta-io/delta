@@ -40,7 +40,7 @@ public class UnityCatalogSupportTest {
           UC_REMOTE, UC_URI, UC_TOKEN, UC_CATALOG_NAME, UC_SCHEMA_NAME, UC_BASE_TABLE_LOCATION);
 
   @Test
-  public void testUnityCatalogInfo() {
+  public void testUnityCatalogInfo() throws Exception {
     withEnvTesting(
         ImmutableMap.of(
             UC_REMOTE,
@@ -57,7 +57,7 @@ public class UnityCatalogSupportTest {
             "s3://test-bucket/key"),
         () -> {
           TestingUCSupport ucSupport = new TestingUCSupport();
-          UnityCatalogInfo uc = ucSupport.unityCatalogInfo();
+          UnityCatalogInfo uc = ucSupport.accessUnityCatalogInfo();
           assertThat(uc.catalogName()).isEqualTo("TestRemoteCatalog");
           assertThat(uc.serverUri()).isEqualTo("http://localhost:8080");
           assertThat(uc.serverToken()).isEqualTo("TestRemoteToken");
@@ -67,7 +67,7 @@ public class UnityCatalogSupportTest {
   }
 
   @Test
-  public void testNoUri() {
+  public void testNoUri() throws Exception {
     withEnvTesting(
         ImmutableMap.of(
             UC_REMOTE,
@@ -82,14 +82,14 @@ public class UnityCatalogSupportTest {
             "s3://test-bucket/key"),
         () -> {
           TestingUCSupport uc = new TestingUCSupport();
-          assertThatThrownBy(uc::unityCatalogInfo)
+          assertThatThrownBy(uc::accessUnityCatalogInfo)
               .isInstanceOf(NullPointerException.class)
               .hasMessageContaining("UC_URI must be set when UC_REMOTE=true");
         });
   }
 
   @Test
-  public void testNoCatalogName() {
+  public void testNoCatalogName() throws Exception {
     withEnvTesting(
         ImmutableMap.of(
             UC_REMOTE,
@@ -104,14 +104,14 @@ public class UnityCatalogSupportTest {
             "s3://test-bucket/key"),
         () -> {
           TestingUCSupport uc = new TestingUCSupport();
-          assertThatThrownBy(() -> uc.unityCatalogInfo())
+          assertThatThrownBy(uc::accessUnityCatalogInfo)
               .isInstanceOf(NullPointerException.class)
               .hasMessageContaining("UC_CATALOG_NAME must be set when UC_REMOTE=true");
         });
   }
 
   @Test
-  public void testNoToken() {
+  public void testNoToken() throws Exception {
     withEnvTesting(
         ImmutableMap.of(
             UC_REMOTE,
@@ -126,14 +126,14 @@ public class UnityCatalogSupportTest {
             "s3://test-bucket/key"),
         () -> {
           TestingUCSupport uc = new TestingUCSupport();
-          assertThatThrownBy(() -> uc.unityCatalogInfo())
+          assertThatThrownBy(uc::accessUnityCatalogInfo)
               .isInstanceOf(NullPointerException.class)
               .hasMessageContaining("UC_TOKEN must be set when UC_REMOTE=true");
         });
   }
 
   @Test
-  public void testNoSchemaName() {
+  public void testNoSchemaName() throws Exception {
     withEnvTesting(
         ImmutableMap.of(
             UC_REMOTE,
@@ -148,14 +148,14 @@ public class UnityCatalogSupportTest {
             "s3://test-bucket/key"),
         () -> {
           TestingUCSupport uc = new TestingUCSupport();
-          assertThatThrownBy(() -> uc.unityCatalogInfo())
+          assertThatThrownBy(uc::accessUnityCatalogInfo)
               .isInstanceOf(NullPointerException.class)
               .hasMessageContaining("UC_SCHEMA_NAME must be set when UC_REMOTE=true");
         });
   }
 
   @Test
-  public void testNoBaseTableLocation() {
+  public void testNoBaseTableLocation() throws Exception {
     withEnvTesting(
         ImmutableMap.of(
             UC_REMOTE,
@@ -170,18 +170,23 @@ public class UnityCatalogSupportTest {
             "TestRemoteSchema"),
         () -> {
           TestingUCSupport uc = new TestingUCSupport();
-          assertThatThrownBy(() -> uc.unityCatalogInfo())
+          assertThatThrownBy(uc::accessUnityCatalogInfo)
               .isInstanceOf(NullPointerException.class)
               .hasMessageContaining("UC_BASE_TABLE_LOCATION must be set when UC_REMOTE=true");
         });
   }
 
-  public void withEnvTesting(Map<String, String> envs, Runnable test) {
+  public interface TestCall {
+
+    void call() throws Exception;
+  }
+
+  public void withEnvTesting(Map<String, String> envs, TestCall testCall) throws Exception {
     // Clear all UC-related environment variables first to ensure clean state
     ALL_ENVS.forEach(UnityCatalogSupportTest::removeEnv);
     envs.forEach(UnityCatalogSupportTest::setEnv);
     try {
-      test.run();
+      testCall.call();
     } finally {
       // Clean up all UC-related environment variables after test
       ALL_ENVS.forEach(UnityCatalogSupportTest::removeEnv);
@@ -214,5 +219,11 @@ public class UnityCatalogSupportTest {
     }
   }
 
-  public static class TestingUCSupport extends UnityCatalogSupport {}
+  private static class TestingUCSupport extends UnityCatalogSupport {
+
+    public UnityCatalogInfo accessUnityCatalogInfo() throws Exception {
+      setupServer();
+      return unityCatalogInfo();
+    }
+  }
 }
