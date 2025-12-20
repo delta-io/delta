@@ -565,11 +565,15 @@ trait IcebergWriterCompatV1SuiteBase
     tablePropertiesToEnable = Map("delta.feature.defaultColumns" -> "supported"),
     expectedErrorMessage = "Unsupported Delta table feature")
 
-  // collations is not added to Kernel yet --> throws an error on feature lookup
   testIncompatibleUnsupportedTableFeature(
     "collations inactive",
     tablePropertiesToEnable = Map("delta.feature.collations" -> "supported"),
-    expectedErrorMessage = "Unsupported Delta table feature")
+    expectedErrorMessage = "Unsupported Delta writer features")
+
+  testIncompatibleUnsupportedTableFeature(
+    "collations-preview inactive",
+    tablePropertiesToEnable = Map("delta.feature.collations-preview" -> "supported"),
+    expectedErrorMessage = "Unsupported Delta writer features")
 
   /* ----- Legacy incompatible features allowed if they are inactive  ----- */
 
