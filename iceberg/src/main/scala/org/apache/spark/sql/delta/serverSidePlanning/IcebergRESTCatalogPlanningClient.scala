@@ -156,9 +156,18 @@ class IcebergRESTCatalogPlanningClient(
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
-    // TODO: Add filter and projection pushdown to PlanTableScanRequest once Iceberg REST spec
-    // supports these parameters. For now, filters and projections are passed but not used.
-    val request = new PlanTableScanRequest.Builder().withSnapshotId(CURRENT_SNAPSHOT_ID).build()
+    val builder = new PlanTableScanRequest.Builder().withSnapshotId(CURRENT_SNAPSHOT_ID)
+
+    // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
+    // Schema parameter is empty for now (reserved for future type conversions).
+    filter.foreach { sparkFilter =>
+      val schema = org.apache.spark.sql.types.StructType(Seq.empty)
+      SparkToIcebergExpressionConverter.convert(sparkFilter, schema).foreach { icebergExpr =>
+        builder.withFilter(icebergExpr)
+      }
+    }
+
+    val request = builder.build()
 
     val requestJson = PlanTableScanRequestParser.toJson(request)
     val httpPost = new HttpPost(planTableScanUri)
