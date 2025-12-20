@@ -1612,6 +1612,68 @@ class DeltaLiteVacuumSuite
     }
   }
 
+  test("vacuum full repairs pruned log so subsequent lite vacuum can run (issue 4162)") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false"
+    ) {
+      withTempDir { dir =>
+        val path = dir.getAbsolutePath
+
+        // Set up a table similar to "lite vacuum not possible - commit 0 is missing", where
+        // we have a checkpoint so that the table snapshot is still reconstructable even after
+        // the earliest commit file (version 0) has been deleted.
+        spark.range(10)
+          .write
+          .format("delta")
+          .save(path) // version 0
+        spark.range(10)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(path) // version 1
+
+        val table = DeltaTableV2(spark, new Path(path))
+        // Checkpoint at the latest existing version (1) so the table can still be reconstructed
+        // after deleting v0.
+        table.deltaLog.createCheckpointAtVersion(1L)
+        // Simulate log pruning by deleting the first commit file.
+        deleteCommitFile(table, 0L)
+
+        // 1) VACUUM LITE should be blocked and throw DELTA_CANNOT_VACUUM_LITE.
+        val e1 = intercept[DeltaIllegalStateException] {
+          VacuumCommand.gc(
+            spark,
+            table,
+            dryRun = false,
+            retentionHours = Some(0),
+            inventory = None,
+            vacuumTypeOpt = Some("LITE"))
+        }
+        assert(e1.getMessage.contains(
+          "VACUUM LITE cannot delete all eligible files as some files" +
+            " are not referenced by the Delta log. Please run VACUUM FULL."))
+
+        // 2) VACUUM FULL should "repair" the log for LITE by persisting last vacuum info.
+        VacuumCommand.gc(
+          spark,
+          table,
+          dryRun = false,
+          retentionHours = Some(0),
+          inventory = None,
+          vacuumTypeOpt = Some("FULL"))
+
+        // 3) After the FULL repair, VACUUM LITE should now succeed without throwing.
+        VacuumCommand.gc(
+          spark,
+          table,
+          dryRun = false,
+          retentionHours = Some(0),
+          inventory = None,
+          vacuumTypeOpt = Some("LITE"))
+      }
+    }
+  }
+
   test("lite vacuum not possible - commits since last vacuum is missing") {
     withSQLConf(
       DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false"
