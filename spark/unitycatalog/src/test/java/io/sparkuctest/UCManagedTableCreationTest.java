@@ -49,6 +49,8 @@ public class UCManagedTableCreationTest extends UCDeltaTableIntegrationBaseTest 
       Map<String, String> properties = tableInfo.getProperties();
 
       assertThat(columns).isNotNull();
+      // At this point table schema can not be sent to server yet because it won't be updated
+      // later and that would cause problem.
       assertThat(columns).isEmpty();
 
       final String SUPPORTED = "supported";
