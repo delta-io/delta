@@ -435,7 +435,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     new Protocol(1, 4),
     testMetadata(includeGeneratedColumn = true))
 
-  checkWriteUnsupported(
+  // supported for append-only or remove-only
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 4 with changeDataFeed",
     new Protocol(1, 4),
     testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "true")))
@@ -502,7 +503,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     new Protocol(1, 7, Set().asJava, singleton("changeDataFeed")),
     testMetadata())
 
-  checkWriteUnsupported(
+  // supported for append-only or remove-only
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with changeDataFeed, " +
       "metadata contains changeDataFeed",
     new Protocol(1, 7, Set().asJava, singleton("changeDataFeed")),
