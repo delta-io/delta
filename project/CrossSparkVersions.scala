@@ -252,7 +252,6 @@ object SparkVersionSpec {
 
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
-    additionalSourceDir = Some("scala-spark-4.0"),
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.0"),
     antlr4Version = "4.13.1",
