@@ -138,6 +138,76 @@ class DummySessionCatalogInner extends DelegatingCatalogExtension {
   }
 }
 
+/**
+ * A session-catalog wrapper used in tests to simulate Unity Catalog managed tables by injecting
+ * UC-related properties into the returned [[CatalogTable.storage.properties]].
+ *
+ * This allows end-to-end plan construction (and streaming query execution attempts) to observe
+ * UC-managed markers through Spark's normal catalog resolution paths, without manually patching
+ * CatalogTable objects in tests.
+ */
+class UCTableInjectingSessionCatalogInner extends DelegatingCatalogExtension {
+  private val UC_TABLE_NAME = "uc_table"
+
+  override def loadTable(ident: Identifier): Table = {
+    val t = super.loadTable(ident).asInstanceOf[V1Table]
+    if (!ident.name().equalsIgnoreCase(UC_TABLE_NAME)) {
+      return t
+    }
+
+    V1Table(t.v1Table.copy(
+      storage = t.v1Table.storage.copy(
+        properties = t.v1Table.storage.properties ++ Map(
+          "test.simulateUC" -> "true",
+          "io.unitycatalog.tableId" -> "test-uc-table-id"
+        )
+      )
+    ))
+  }
+}
+
+/**
+ * A session catalog implementation that delegates to DeltaCatalog but injects UC markers for
+ * selected tables (see [[UCTableInjectingSessionCatalogInner]]).
+ */
+class UCTableInjectingSessionCatalog extends TableCatalog {
+  private var deltaCatalog: DeltaCatalog = null
+
+  override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
+    val inner = new UCTableInjectingSessionCatalogInner()
+    inner.setDelegateCatalog(new V2SessionCatalog(
+      SparkSession.active.sessionState.catalogManager.v1SessionCatalog))
+    deltaCatalog = new DeltaCatalog()
+    deltaCatalog.setDelegateCatalog(inner)
+  }
+
+  override def name(): String = deltaCatalog.name()
+
+  override def listTables(namespace: Array[String]): Array[Identifier] = {
+    deltaCatalog.listTables(namespace)
+  }
+
+  override def loadTable(ident: Identifier): Table = deltaCatalog.loadTable(ident)
+
+  override def createTable(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: java.util.Map[String, String]): Table = {
+    deltaCatalog.createTable(ident, schema, partitions, properties)
+  }
+
+  override def alterTable(ident: Identifier, changes: TableChange*): Table = {
+    deltaCatalog.alterTable(ident, changes: _*)
+  }
+
+  override def dropTable(ident: Identifier): Boolean = deltaCatalog.dropTable(ident)
+
+  override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
+    deltaCatalog.renameTable(oldIdent, newIdent)
+  }
+}
+
 // A dummy catalog that adds a layer between DeltaCatalog and the Spark SessionCatalog,
 // to attach additional table storage properties after the table is loaded, and generates location
 // for managed tables.

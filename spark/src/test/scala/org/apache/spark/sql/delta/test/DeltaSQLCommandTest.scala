@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
 import io.delta.sql.DeltaSparkSessionExtension
 
 import org.apache.spark.SparkConf
@@ -35,5 +36,12 @@ trait DeltaSQLCommandTest extends SharedSparkSession {
         classOf[DeltaSparkSessionExtension].getName)
       .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
         classOf[DeltaCatalog].getName)
+      .set(DeltaSQLConfV2.V2_ENABLE_MODE.key, v2EnableMode)
   }
+
+  /**
+   * Override this method in test suites to change the V2 connector enable mode.
+   * Default is AUTO (use V2 connector for catalog-managed tables).
+   */
+  protected def v2EnableMode: String = "AUTO"
 }
