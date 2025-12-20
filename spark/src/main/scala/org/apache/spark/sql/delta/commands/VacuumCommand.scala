@@ -167,6 +167,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
 
+      val tableId = snapshot.metadata.id
+      val truncatedTableId = tableId.split("-").head
+
       // VACUUM can break clones by removing files that clones still references for managed tables.
       // Eventually the catalog should track this dependency to avoid breaking clones,
       // but for now we block running VACUUM on CC tables.
@@ -372,7 +375,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             snapshotTombstoneRetentionMillis)
 
           val deleteStartTime = System.currentTimeMillis()
-          val filesDeleted = try {
+          val deleteResult = try {
             delete(diffFiles, spark, basePath,
               hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
           } catch {
@@ -380,6 +383,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               logVacuumEnd(spark, table, commandMetrics = commandMetrics)
               throw t
           }
+          val filesDeleted = deleteResult.count
           val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
           val stats = DeltaVacuumStats(
             isDryRun = false,
@@ -415,6 +419,25 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories. " +
             log"Vacuum stats: ${MDC(DeltaLogKeys.VACUUM_STATS, stats)}")
 
+          // Log deleted file paths based on DELTA_VACUUM_MAX_FILES_TO_LOG config
+          val maxFilesToLog =
+            spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_MAX_FILES_TO_LOG)
+          if (maxFilesToLog > 0 && deleteResult.deletedFiles.nonEmpty) {
+            val filesToLog = deleteResult.deletedFiles.take(maxFilesToLog)
+            val filesLogged = filesToLog.size
+            val totalFiles = deleteResult.deletedFiles.size
+            // Format file paths: group by 10 per line
+            val formattedPaths = filesToLog.grouped(10).map(_.mkString(", ")).mkString("\n  ")
+            val moreFilesMsg = if (totalFiles > maxFilesToLog) {
+              s"\n  ... and ${totalFiles - maxFilesToLog} more file(s)"
+            } else ""
+            logInfo(
+              log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] " +
+              log"Deleted file paths " +
+              log"(showing ${MDC(DeltaLogKeys.NUM_FILES, filesLogged)} of " +
+              log"${MDC(DeltaLogKeys.COUNT, totalFiles)}): " +
+              log"${MDC(DeltaLogKeys.PATHS, s"\n  $formattedPaths$moreFilesMsg")}")
+          }
 
           spark.createDataset(Seq(basePath)).toDF("path")
         } finally {
@@ -648,7 +671,13 @@ trait VacuumCommandImpl extends DeltaCommand {
   }
 
   /**
-   * Attempts to delete the list of candidate files. Returns the number of files deleted.
+   * Result of delete operation containing count and list of deleted files.
+   */
+  case class DeleteResult(count: Long, deletedFiles: Seq[String])
+
+  /**
+   * Attempts to delete the list of candidate files. Returns the number of files deleted
+   * and the list of successfully deleted file paths.
    */
   protected def delete(
       diff: Dataset[String],
@@ -656,20 +685,30 @@ trait VacuumCommandImpl extends DeltaCommand {
       basePath: String,
       hadoopConf: Broadcast[SerializableConfiguration],
       parallel: Boolean,
-      parallelPartitions: Int): Long = {
+      parallelPartitions: Int): DeleteResult = {
     import org.apache.spark.sql.delta.implicits._
 
     if (parallel) {
-      diff.repartition(parallelPartitions).mapPartitions { files =>
+      val deletedFiles = diff.repartition(parallelPartitions).mapPartitions { files =>
         val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
-        val filesDeletedPerPartition =
-          files.map(p => urlEncodedStringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
-        Iterator(filesDeletedPerPartition)
-      }.collect().sum
+        files.map(p => {
+          val path = urlEncodedStringToPath(p)
+          if (tryDeleteNonRecursive(fs, path)) {
+            Some(path.toString)
+          } else {
+            None
+          }
+        }).filter(_.isDefined).map(_.get)
+      }.collect()
+      DeleteResult(deletedFiles.size.toLong, deletedFiles.toSeq)
     } else {
       val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
       val fileResultSet = diff.toLocalIterator().asScala
-      fileResultSet.map(p => urlEncodedStringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+      val deletedFiles = fileResultSet.map(p => {
+        val path = urlEncodedStringToPath(p)
+        (path, tryDeleteNonRecursive(fs, path))
+      }).filter(_._2).map(_._1.toString).toSeq
+      DeleteResult(deletedFiles.size.toLong, deletedFiles)
     }
   }
 
