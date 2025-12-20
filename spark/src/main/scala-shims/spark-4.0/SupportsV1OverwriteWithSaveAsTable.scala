@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.connector.catalog
 
+/* Interface exists in Spark 4.1+. Is noop for Spark 4.0. */
 trait SupportsV1OverwriteWithSaveAsTable extends TableProvider {
   def addV1OverwriteWithSaveAsTableOption(): Boolean = true
 }
