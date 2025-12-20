@@ -922,7 +922,7 @@ public class SparkMicroBatchStream
               newMetadata.getId(), oldMetadata.getId());
     }
 
-    // TODO: schema tracking for non-additive schema changes
+    // TODO(#5319): schema tracking for non-additive schema changes
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -942,7 +942,7 @@ public class SparkMicroBatchStream
       // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
       // will cause the stream to fail with a retryable exception, and the stream will restart using
       // the new schema.
-      boolean allowWideningTypeChanges = typeWideningEnabled; // TODO: schema tracking
+      boolean allowWideningTypeChanges = typeWideningEnabled; // TODO(#5319): schema tracking
       // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
       // column mapping schema changes, we can allow the standard check to allow missing columns
       // from the read schema in the schema change, because the only case that happens is when
