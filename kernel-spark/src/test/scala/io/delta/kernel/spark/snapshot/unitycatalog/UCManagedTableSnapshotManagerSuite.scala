@@ -17,6 +17,8 @@ package io.delta.kernel.spark.snapshot.unitycatalog
 
 import java.util.Optional
 
+import scala.jdk.CollectionConverters._
+
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.spark.exception.VersionNotFoundException
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils}
@@ -32,12 +34,13 @@ class UCManagedTableSnapshotManagerSuite
   private val testUcTableId = "testUcTableId"
   private val testUcUri = "https://test-uc.example.com"
   private val testUcToken = "test-token"
+  private val testUcAuthConfig = Map("token" -> testUcToken).asJava
 
   private def createManager(
       ucClient: InMemoryUCClient,
       tablePath: String) = {
     val client = new UCCatalogManagedClient(ucClient)
-    val tableInfo = new UCTableInfo(testUcTableId, tablePath, testUcUri, testUcToken)
+    val tableInfo = new UCTableInfo(testUcTableId, tablePath, testUcUri, testUcAuthConfig)
     new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
   }
 
@@ -46,7 +49,7 @@ class UCManagedTableSnapshotManagerSuite
   test("constructor rejects null arguments") {
     val ucClient = new InMemoryUCClient("testMetastore")
     val client = new UCCatalogManagedClient(ucClient)
-    val tableInfo = new UCTableInfo(testUcTableId, "/test/path", testUcUri, testUcToken)
+    val tableInfo = new UCTableInfo(testUcTableId, "/test/path", testUcUri, testUcAuthConfig)
 
     val ex1 = intercept[NullPointerException] {
       new UCManagedTableSnapshotManager(null, tableInfo, defaultEngine)
@@ -78,7 +81,7 @@ class UCManagedTableSnapshotManagerSuite
 
   test("loadLatestSnapshot: throws when table does not exist in catalog") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableInfo = new UCTableInfo("nonExistentTableId", "/fake/path", testUcUri, testUcToken)
+    val tableInfo = new UCTableInfo("nonExistentTableId", "/fake/path", testUcUri, testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
     val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
 
@@ -279,7 +282,7 @@ class UCManagedTableSnapshotManagerSuite
 
   test("operations propagate InvalidTargetTableException from client") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableInfo = new UCTableInfo("nonExistentTableId", "/fake/path", testUcUri, testUcToken)
+    val tableInfo = new UCTableInfo("nonExistentTableId", "/fake/path", testUcUri, testUcAuthConfig)
     val client = new UCCatalogManagedClient(ucClient)
     val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
 
