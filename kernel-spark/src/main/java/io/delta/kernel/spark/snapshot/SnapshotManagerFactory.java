@@ -22,6 +22,7 @@ import io.delta.kernel.spark.snapshot.unitycatalog.UCUtils;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
+import io.unitycatalog.client.auth.TokenProvider;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
@@ -69,7 +70,8 @@ public final class SnapshotManagerFactory {
 
   private static UCManagedTableSnapshotManager createUCManagedSnapshotManager(
       UCTableInfo tableInfo, Engine kernelEngine) {
-    UCClient ucClient = new UCTokenBasedRestClient(tableInfo.getUcUri(), tableInfo.getUcToken());
+    TokenProvider tokenProvider = TokenProvider.create(tableInfo.getAuthConfig());
+    UCClient ucClient = new UCTokenBasedRestClient(tableInfo.getUcUri(), tokenProvider);
     UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
     return new UCManagedTableSnapshotManager(ucCatalogClient, tableInfo, kernelEngine);
   }
