@@ -78,7 +78,7 @@ public class SparkMicroBatchStream
 
   private static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
-          new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE)));
+          new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA)));
 
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
@@ -773,7 +773,19 @@ public class SparkMicroBatchStream
     }
   }
 
-  private void checkReadIncompatibleSchemaChanges(
+  /**
+   * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically: 1.
+   * Any column mapping related schema changes (rename / drop) columns 2. Standard
+   * read-compatibility changes including: a) No missing columns b) No data type changes c) No
+   * read-incompatible nullability changes If the check fails, we throw an exception to exit the
+   * stream. If lazy log initialization is required, we also run a one time scan to safely
+   * initialize the metadata tracking log upon any non-additive schema change failures.
+   *
+   * @param metadata Metadata that contains a potential schema change
+   * @param version Version for the metadata action
+   * @param validatedDuringStreamStart Whether this check is being done during stream start.
+   */
+  protected void checkReadIncompatibleSchemaChanges(
       Metadata metadata, long version, boolean validatedDuringStreamStart) {
     Metadata newMetadata, oldMetadata;
     if (version < snapshotAtSourceInit.getVersion()) {
@@ -854,7 +866,7 @@ public class SparkMicroBatchStream
               allowWideningTypeChanges,
               shouldAllowMissingColumns);
       boolean isCompatible = (Boolean) result._1();
-      Boolean isRetryable = result._2().getOrElse(null);
+      Boolean isRetryable = result._2().getOrElse(() -> null);
 
       if (!isCompatible) {
         Objects.requireNonNull(isRetryable);
