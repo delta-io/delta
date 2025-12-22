@@ -44,3 +44,4 @@ object DeltaSQLConfV2 extends DeltaSQLConfUtils {
       .checkValues(Set("NONE", "STRICT"))
       .createWithDefault("NONE")
 }
+
