@@ -129,10 +129,7 @@ private [sql] object DataSkippingPredicate {
 object SkippingEligibleColumn {
   def unapply(arg: Expression): Option[(Seq[String], DataType)] = {
     // Only atomic types are eligible for skipping, and args should always be resolved by now.
-    // Note: In Spark 4.1+, VariantType extends AtomicType, but it has special handling below
-    // because its physical representation is a struct and requires different treatment for stats.
-    val eligible = arg.resolved && arg.dataType.isInstanceOf[AtomicType] &&
-      arg.dataType.typeName != "variant"
+    val eligible = arg.resolved && arg.dataType.isInstanceOf[AtomicType]
     if (eligible) searchChain(arg).map(_ -> arg.dataType) else None
   }
 
