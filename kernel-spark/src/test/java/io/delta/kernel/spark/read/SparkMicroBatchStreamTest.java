@@ -1731,53 +1731,129 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   // ================================================================================================
 
   /**
-   * Parameterized test that verifies both DSv1 and DSv2 throw UnsupportedOperationException when
-   * encountering REMOVE actions (from DELETE, UPDATE, MERGE operations).
+   * Parameterized test that verifies both DSv1 and DSv2 throw DeltaIllegalStateException when
+   * encountering forward-fill additive schema change actions.
    */
   @ParameterizedTest
-  @MethodSource("incompatibleSchemaEvolutionScenarios")
-  public void testSchemaEvolution_onIncompatibleChanges_throwError(
+  @MethodSource("additiveSchemaEvolutionScenarios")
+  public void testSchemaEvolution_onForwardAdditiveChanges_throwsError(
       ScenarioSetup scenarioSetup, String testDescription, @TempDir File tempDir) throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName =
-        "test_incompatible_changes"
+        "test_forward_additive_changes"
             + Math.abs(testDescription.hashCode())
             + "_"
             + System.nanoTime();
     createSchemaEvolutionTestTable(testTablePath, testTableName);
 
-    // Execute the scenario-specific setup (which will generate REMOVE actions)
-    scenarioSetup.setup(testTableName, tempDir);
-
-    // Try to read from version 0, which should include commits with REMOVE actions
+    // Try to read from version 0, which should include commits with METADATA actions
     long fromVersion = 0L;
     long fromIndex = DeltaSourceOffset.BASE_INDEX();
     boolean isInitialSnapshot = false;
     Option<DeltaSourceOffset> endOffset = Option.empty();
 
-    // Disable schema tracking for this test
-    //
-    // spark.sessionState().conf().setConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING(), false);
-    //
-    // spark.sessionState().conf().setConf(DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES(), true);
-
-    // Test DSv1 DeltaSource
+    // Create DSv1 DeltaSource
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+
+    // Create DSv2 SparkMicroBatchStream
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // Execute schema change after source initialization to ensure forward change
+    scenarioSetup.setup(testTableName, tempDir);
 
     DeltaIllegalStateException dsv1Exception =
         assertThrows(
             DeltaIllegalStateException.class,
-            () ->
-                deltaSource.getFileChanges(
-                    fromVersion,
-                    fromIndex,
-                    isInitialSnapshot,
-                    endOffset,
-                    /* verifyMetadataAction= */ true),
-            String.format(
-                "DSv1 should throw on incompatible schema change for scenario: %s",
-                testDescription));
+            () -> {
+              ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+                  deltaSource.getFileChanges(
+                      fromVersion,
+                      fromIndex,
+                      isInitialSnapshot,
+                      endOffset,
+                      /* verifyMetadataAction= */ true);
+              // Consume the iterator to trigger validation
+              while (deltaChanges.hasNext()) {
+                // Exception is thrown by .next() when it encounters a REMOVE
+                deltaChanges.next();
+              }
+              deltaChanges.close();
+            },
+            String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
+
+    DeltaIllegalStateException dsv2Exception =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () -> {
+              CloseableIterator<IndexedFile> kernelChanges =
+                  stream.getFileChanges(
+                      fromVersion,
+                      fromIndex,
+                      isInitialSnapshot,
+                      ScalaUtils.toJavaOptional(endOffset));
+              try {
+                // Consume the iterator to trigger validation (if not already triggered)
+                while (kernelChanges.hasNext()) {
+                  kernelChanges.next();
+                }
+                kernelChanges.close();
+              } finally {
+                // Make sure to close the iterator even if exception occurs
+                if (kernelChanges != null) {
+                  try {
+                    kernelChanges.close();
+                  } catch (Exception ignored) {
+                  }
+                }
+              }
+            },
+            String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
+
+    assert dsv1Exception.getErrorClass().equals(dsv2Exception.getErrorClass());
+    assert dsv1Exception.getMessageParameters().equals(dsv2Exception.getMessageParameters());
+  }
+
+  /**
+   * Parameterized test that verifies both DSv1 and DSv2 return the same file changes when
+   * encountering backfill additive schema change actions.
+   */
+  @ParameterizedTest
+  @MethodSource("additiveSchemaEvolutionScenarios")
+  public void testSchemaEvolution_onBackfillAdditiveChanges(
+      ScenarioSetup scenarioSetup, String testDescription, @TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_backfill_additive_changes"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createSchemaEvolutionTestTable(testTablePath, testTableName);
+
+    // Execute schema change before source initialization to ensure backfill change
+    scenarioSetup.setup(testTableName, tempDir);
+
+    // Try to read from version 0, which should include commits with METADATA actions
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    boolean isInitialSnapshot = false;
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+
+    // Test DSv1 DeltaSource
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
 
     // Test DSv2 SparkMicroBatchStream
     Configuration hadoopConf = new Configuration();
@@ -1785,25 +1861,19 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
-    DeltaIllegalStateException dsv2Exception =
-        assertThrows(
-            DeltaIllegalStateException.class,
-            () ->
-                stream.getFileChanges(
-                    fromVersion,
-                    fromIndex,
-                    isInitialSnapshot,
-                    ScalaUtils.toJavaOptional(endOffset)),
-            String.format(
-                "DSv2 should throw on incompatible schema change for scenario: %s",
-                testDescription));
-
-    assert dsv1Exception.getErrorClass().equals(dsv2Exception.getErrorClass());
-    assert dsv1Exception.getMessage().equals(dsv2Exception.getMessage());
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset))) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
   }
 
-  /** Provides test scenarios that generate compatible METADATA actions. */
-  private static Stream<Arguments> compatibleSchemaEvolutionScenarios() {
+  /** Provides test scenarios that generate additive schema changes actions. */
+  private static Stream<Arguments> additiveSchemaEvolutionScenarios() {
     return Stream.of(
         // Add nullable column
         Arguments.of(
@@ -1813,173 +1883,13 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                 },
             "Add nullable column"),
 
-        // Add non-nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ADD COLUMN age INT NOT NULL", tableName);
-                },
-            "Add non-nullable column"),
-
-        // Drop nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql(
-                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
-                      tableName);
-                  sql("ALTER TABLE %s DROP COLUMN score", tableName);
-                },
-            "Drop nullable column"),
-
-        // Drop non-nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql(
-                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
-                      tableName);
-                  sql("ALTER TABLE %s DROP COLUMN id", tableName);
-                },
-            "Drop non-nullable column"),
-
-        // Rename nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s RENAME COLUMN value TO score_value", tableName);
-                },
-            "Rename nullable column"),
-
-        // Rename non-nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s RENAME COLUMN id TO user_id", tableName);
-                },
-            "Rename non-nullable column"),
-
-        // Make nullable column non-nullable
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ALTER COLUMN name SET NOT NULL", tableName);
-                },
-            "Make nullable column non-nullable"),
-
         // Make non-nullable column nullable
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
                   sql("ALTER TABLE %s ALTER COLUMN id DROP NOT NULL", tableName);
                 },
-            "Make non-nullable column nullable"),
-
-        // Widen nullable type
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ALTER COLUMN value TYPE DECIMAL", tableName);
-                },
-            "Widen nullable type"),
-
-        // Widen non-nullable type
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ALTER COLUMN id TYPE DOUBLE", tableName);
-                },
-            "Widen non-nullable type"));
-  }
-
-  /** Provides test scenarios that generate incompatible METADATA actions. */
-  private static Stream<Arguments> incompatibleSchemaEvolutionScenarios() {
-    return Stream.of(
-        // Add nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ADD COLUMN age INT", tableName);
-                },
-            "Add nullable column"),
-
-        // Add non-nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ADD COLUMN age INT NOT NULL", tableName);
-                },
-            "Add non-nullable column"),
-
-        // Drop nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql(
-                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
-                      tableName);
-                  sql("ALTER TABLE %s DROP COLUMN score", tableName);
-                },
-            "Drop nullable column"),
-
-        // Drop non-nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql(
-                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
-                      tableName);
-                  sql("ALTER TABLE %s DROP COLUMN id", tableName);
-                },
-            "Drop non-nullable column"),
-
-        // Rename nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s RENAME COLUMN value TO score_value", tableName);
-                },
-            "Rename nullable column"),
-
-        // Rename non-nullable column
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s RENAME COLUMN id TO user_id", tableName);
-                },
-            "Rename non-nullable column"),
-
-        // Make nullable column non-nullable
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ALTER COLUMN name SET NOT NULL", tableName);
-                },
-            "Make nullable column non-nullable"),
-
-        // Make non-nullable column nullable
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ALTER COLUMN id DROP NOT NULL", tableName);
-                },
-            "Make non-nullable column nullable"),
-
-        // Widen nullable type
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ALTER COLUMN value TYPE DECIMAL", tableName);
-                },
-            "Widen nullable type"),
-
-        // Widen non-nullable type
-        Arguments.of(
-            (ScenarioSetup)
-                (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s ALTER COLUMN id TYPE DOUBLE", tableName);
-                },
-            "Widen non-nullable type"));
+            "Make non-nullable column nullable"));
   }
 
   // ================================================================================================
