@@ -47,6 +47,7 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.{AlterTableClusterBy,
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
+import org.apache.spark.sql.delta.commands.DescribeDeltaTable
 import io.delta.sql.parser.DeltaSqlBaseParser._
 import io.delta.tables.execution.VacuumTableCommand
 import org.antlr.v4.runtime._
@@ -436,10 +437,31 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitDescribeDeltaDetail(
       ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
-    DescribeDeltaDetailCommand(
-      Option(ctx.path).map(string),
-      Option(ctx.table).map(visitTableIdentifier),
-      Map.empty)
+    val path = Option(ctx.path).map(string)
+    val tableId = Option(ctx.table).map(visitTableIdentifier)
+    val timeTravelSpec = Option(ctx.clause).map { clause =>
+      DeltaTimeTravelSpec(
+        Option(clause.timestamp).map(token => Literal(token.getText.replaceAll("^'|'$", ""))),
+        Option(clause.version).map(_.getText.toLong),
+        Some("sql")
+      )
+    }
+    DescribeDeltaDetailCommand(path, tableId, Map.empty, timeTravelSpec)
+  }
+
+  override def visitDescribeDeltaTable(
+      ctx: DescribeDeltaTableContext): LogicalPlan = withOrigin(ctx) {
+    val path = Option(ctx.path).map(string)
+    val tableId = Option(ctx.table).map(visitTableIdentifier)
+    val isExtended = ctx.EXTENDED() != null
+    val timeTravelSpec = Option(ctx.clause).map { clause =>
+      DeltaTimeTravelSpec(
+        Option(clause.timestamp).map(token => Literal(token.getText.replaceAll("^'|'$", ""))),
+        Option(clause.version).map(_.getText.toLong),
+        Some("sql")
+      )
+    }
+    DescribeDeltaTable(path, tableId, isExtended, timeTravelSpec)
   }
 
   override def visitDescribeDeltaHistory(
