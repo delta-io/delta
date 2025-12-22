@@ -554,8 +554,17 @@ public class SparkMicroBatchStream
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
     List<IndexedFile> allIndexedFiles = new ArrayList<>();
-    Optional<Long> endVersionOpt =
-        endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
+    Optional<Long> endVersionOpt = Optional.empty();
+    if (endOffset.isPresent()) {
+      DeltaSourceOffset offset = endOffset.get();
+      long endVersion =
+          offset.index() == DeltaSourceOffset.BASE_INDEX()
+              ? offset.reservoirVersion() - 1
+              : offset.reservoirVersion();
+      if (endVersion >= 0) {
+        endVersionOpt = Optional.of(endVersion);
+      }
+    }
 
     // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
     // endVersion to be an actual existing version or empty.
