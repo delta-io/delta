@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.commands
 import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot, UnresolvedPathOrIdentifier}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableUtils, DeltaTimeTravelSpec, Snapshot, UnresolvedPathOrIdentifier}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.hadoop.fs.Path
@@ -67,10 +67,15 @@ object TableDetail {
 
 /**
  * A command for describing the details of a table such as the format, name, and size.
+ *
+ * @param child The logical plan representing the table to describe.
+ * @param hadoopConf Hadoop configuration options.
+ * @param timeTravelSpec Optional time travel specification for version/timestamp based queries.
  */
 case class DescribeDeltaDetailCommand(
     override val child: LogicalPlan,
-    hadoopConf: Map[String, String])
+    hadoopConf: Map[String, String],
+    timeTravelSpec: Option[DeltaTimeTravelSpec] = None)
   extends RunnableCommand
     with UnaryNode
     with DeltaLogging
@@ -91,7 +96,15 @@ case class DescribeDeltaDetailCommand(
         throw DeltaErrors.missingTableIdentifierException(DescribeDeltaDetailCommand.CMD_NAME)
     }
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
-      val snapshot = deltaLog.update(catalogTableOpt = tableMetadata)
+      // Get snapshot based on time travel spec or latest
+      val snapshot = timeTravelSpec match {
+        case Some(spec) =>
+          val (version, _) = DeltaTableUtils.resolveTimeTravelVersion(
+            sparkSession.sessionState.conf, deltaLog, tableMetadata, spec)
+          deltaLog.getSnapshotAt(version, catalogTableOpt = tableMetadata)
+        case None =>
+          deltaLog.update(catalogTableOpt = tableMetadata)
+      }
       if (snapshot.version == -1) {
         if (path.nonEmpty) {
           val fs = new Path(path.get).getFileSystem(deltaLog.newDeltaHadoopConf())
@@ -194,7 +207,8 @@ object DescribeDeltaDetailCommand {
   def apply(
     path: Option[String],
     tableIdentifier: Option[TableIdentifier],
-    hadoopConf: Map[String, String]
+    hadoopConf: Map[String, String],
+    timeTravelSpec: Option[DeltaTimeTravelSpec]
   ): DescribeDeltaDetailCommand = {
     val plan = UnresolvedPathOrIdentifier(
       path,
@@ -202,6 +216,6 @@ object DescribeDeltaDetailCommand {
       hadoopConf,
       CMD_NAME
     )
-    DescribeDeltaDetailCommand(plan, hadoopConf)
+    DescribeDeltaDetailCommand(plan, hadoopConf, timeTravelSpec)
   }
 }

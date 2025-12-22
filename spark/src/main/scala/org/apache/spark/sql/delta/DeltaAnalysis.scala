@@ -488,6 +488,8 @@ class DeltaAnalysis(session: SparkSession)
 
     case d: DescribeDeltaHistory if d.childrenResolved => d.toCommand
 
+    case d: DescribeDeltaTable if d.childrenResolved => d.toCommand
+
     case FallbackToV1DeltaRelation(v1Relation) => v1Relation
 
     case ResolvedTable(_, _, d: DeltaTableV2, _) if d.catalogTable.isEmpty && !d.tableExists =>
