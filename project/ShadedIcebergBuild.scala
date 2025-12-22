@@ -71,6 +71,7 @@ object ShadedIcebergBuild {
    * Here's an overview:
    *  PartitionSpec: sets checkConflicts to false to honor field ID assigned by Delta
    *  HiveCatalog, HiveTableOperations: allow metadataUpdates to overwrite schema and partition spec
+   *  RESTFileScanTaskParser: fixes NoSuchElementException on empty delete-file-references arrays
    */
   def updateMergeStrategy(prev: String => MergeStrategy): String => MergeStrategy = {
     case PathList("shadedForDelta", "org", "apache", "iceberg", s)
@@ -82,6 +83,8 @@ object ShadedIcebergBuild {
     case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
       MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec.class") =>
+      MergeStrategy.first
+    case PathList("shadedForDelta", "org", "apache", "iceberg", "rest", "RESTFileScanTaskParser.class") =>
       MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog.class") =>
       MergeStrategy.first

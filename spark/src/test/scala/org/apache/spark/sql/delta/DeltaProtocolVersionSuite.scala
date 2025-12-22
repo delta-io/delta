@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{unsafeDeltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import io.delta.storage.LogStore
 import io.delta.storage.commit.TableDescriptor
 import org.apache.hadoop.conf.Configuration
@@ -48,7 +49,6 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.CalendarInterval

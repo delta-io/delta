@@ -32,9 +32,8 @@ class VerifyVersionCommand(install):
 with open("python/README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-# TODO: once we support multiple Spark versions update this to be compatible with both
 install_requires_arg = ['pyspark>=4.0.1', 'importlib_metadata>=1.0.0']
-python_requires_arg = '>=3.9'
+python_requires_arg = '>=3.10'
 
 setup(
     name="delta-spark",

@@ -22,13 +22,14 @@ import java.nio.charset.StandardCharsets._
 import scala.io.{Source => IOSource}
 import scala.reflect.ClassTag
 
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.JsonIgnore
 
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.execution.streaming.{HDFSMetadataLog, MetadataVersionUtil}
+import org.apache.spark.sql.execution.streaming.HDFSMetadataLog
 import org.apache.spark.sql.types.{DataType, StructType}
 
 /**

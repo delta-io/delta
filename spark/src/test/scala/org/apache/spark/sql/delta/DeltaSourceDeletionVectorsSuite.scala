@@ -20,12 +20,12 @@ import java.io.File
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.PatienceConfiguration.Timeout
 
-import org.apache.spark.sql.execution.streaming.StreamExecution
 import org.apache.spark.sql.streaming.{StreamTest, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 

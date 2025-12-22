@@ -64,8 +64,7 @@ object ServerSidePlanningMetadata {
   /**
    * Create metadata from a loaded table.
    *
-   * Currently returns DefaultMetadata for all catalogs.
-   * Unity Catalog-specific implementation will be added in a later PR.
+   * Returns UnityCatalogMetadata for Unity Catalog tables, or DefaultMetadata otherwise.
    */
   def fromTable(
       table: Table,
@@ -73,8 +72,12 @@ object ServerSidePlanningMetadata {
       ident: Identifier,
       isUnityCatalog: Boolean): ServerSidePlanningMetadata = {
 
-    val catalogName = extractCatalogName(ident)
-    DefaultMetadata(catalogName, Map.empty)
+    if (isUnityCatalog) {
+      UnityCatalogMetadata.fromTable(table, spark, ident)
+    } else {
+      val catalogName = extractCatalogName(ident)
+      DefaultMetadata(catalogName, Map.empty)
+    }
   }
 
   private def extractCatalogName(ident: Identifier): String = {

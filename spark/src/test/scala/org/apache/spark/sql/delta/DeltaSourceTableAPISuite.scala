@@ -22,6 +22,7 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 import org.apache.spark.sql.{AnalysisException, Dataset}
 import org.apache.spark.sql.catalyst.TableIdentifier

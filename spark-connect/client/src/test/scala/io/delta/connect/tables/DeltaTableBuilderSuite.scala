@@ -537,3 +537,4 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 }
+

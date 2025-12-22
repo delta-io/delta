@@ -20,25 +20,19 @@ import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.DeltaConfigs.{COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaIllegalArgumentException
-import org.scalatest.Tag
+import org.apache.spark.sql.delta.test.shims.GridTestShim
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
 class CoordinatedCommitsUtilsSuite extends QueryTest
+  with GridTestShim
   with SharedSparkSession
   with CoordinatedCommitsTestUtils {
 
   /////////////////////////////////////////////////////////////////////////////////////////////
   //     Test CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl STARTS    //
   /////////////////////////////////////////////////////////////////////////////////////////////
-
-  def gridTest[A](testNamePrefix: String, testTags: Tag*)(params: Seq[A])(
-    testFun: A => Unit): Unit = {
-    for (param <- params) {
-      test(testNamePrefix + s" ($param)", testTags: _*)(testFun(param))
-    }
-  }
 
   private val cNameKey = COORDINATED_COMMITS_COORDINATOR_NAME.key
   private val cConfKey = COORDINATED_COMMITS_COORDINATOR_CONF.key

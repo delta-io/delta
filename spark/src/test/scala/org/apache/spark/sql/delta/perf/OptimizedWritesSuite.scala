@@ -25,10 +25,10 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOptions, DeltaTe
 import org.apache.spark.sql.delta.CommitStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{LongType, StructType}

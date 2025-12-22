@@ -44,7 +44,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
 /**
@@ -202,7 +202,7 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
         // is table
         case LogicalRelationWithTable(HadoopFsRelation(_, _, _, _, _, _), Some(_)) => true
         // is iceberg table
-        case DataSourceV2Relation(_: IcebergTablePlaceHolder, _, _, _, _) => false
+        case DataSourceV2RelationShim(_: IcebergTablePlaceHolder, _, _, _, _) => false
         // could not resolve table/db
         case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)

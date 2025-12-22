@@ -48,7 +48,7 @@ jobs:
       - name: Fix generate_api_docs script
         if: contains(matrix.version.ref, 'v4')
         run: |
-          sed -i 's|scala-2\.13|scala-2.13|g' docs/apis/generate_api_docs.py
+          sed -i 's|scala-2\.12|scala-2.13|g' docs/apis/generate_api_docs.py
           sed -i '/standalone_javadoc_gen_dir,/d' docs/apis/generate_api_docs.py
           sed -i '/flink_javadoc_gen_dir,/d' docs/apis/generate_api_docs.py
 

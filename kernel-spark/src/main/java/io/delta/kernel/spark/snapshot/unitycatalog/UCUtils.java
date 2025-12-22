@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.snapshot.unitycatalog;
 
 import static java.util.Objects.requireNonNull;
+import static scala.jdk.javaapi.CollectionConverters.asJava;
 
 import io.delta.kernel.spark.utils.CatalogTableUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
@@ -85,9 +86,8 @@ public final class UCUtils {
 
     UCCatalogConfig config = configOpt.get();
     String ucUri = config.uri();
-    String ucToken = config.token();
 
-    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, ucToken));
+    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {
