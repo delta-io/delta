@@ -15,13 +15,9 @@
  */
 package io.delta.kernel.spark.utils;
 
-import static java.util.Objects.requireNonNull;
-
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
-import java.util.Collections;
-import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.delta.util.DeltaCatalogUtils;
 
 /**
  * Utility helpers for inspecting Delta-related metadata persisted on Spark {@link CatalogTable}
@@ -41,27 +37,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  * </ul>
  */
 public final class CatalogTableUtils {
-  /**
-   * Property key for catalog-managed feature flag. Constructed from {@link
-   * TableFeatures#CATALOG_MANAGED_RW_FEATURE} (delta.feature.catalogManaged) and preview variant
-   * (delta.feature.catalogOwned-preview)
-   */
-  static final String FEATURE_CATALOG_MANAGED =
-      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
-          + TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName();
-
-  static final String FEATURE_CATALOG_OWNED_PREVIEW =
-      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + "catalogOwned-preview";
-  private static final String SUPPORTED = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE;
-
   private CatalogTableUtils() {}
-
-  /**
-   * Matches delta-spark's test-mode signal (see org.apache.spark.sql.delta.util.Utils.isTesting).
-   */
-  private static boolean isTesting() {
-    return System.getenv("DELTA_TESTING") != null;
-  }
 
   /**
    * Checks whether any catalog manages this table via CCv2 semantics.
@@ -70,16 +46,7 @@ public final class CatalogTableUtils {
    * @return {@code true} when either catalog feature flag is set to {@code supported}
    */
   public static boolean isCatalogManaged(CatalogTable table) {
-    requireNonNull(table, "table is null");
-    Map<String, String> storageProperties = getStorageProperties(table);
-    // Test-only escape hatch used by delta-spark suites to simulate Unity Catalog semantics
-    // without requiring a real commit coordinator / CCv2 table feature wiring.
-    // This should never be set in production catalogs.
-    if (isTesting() && storageProperties.containsKey("test.simulateUC")) {
-      return true;
-    }
-    return isCatalogManagedFeatureEnabled(storageProperties, FEATURE_CATALOG_MANAGED)
-        || isCatalogManagedFeatureEnabled(storageProperties, FEATURE_CATALOG_OWNED_PREVIEW);
+    return DeltaCatalogUtils.isCatalogManaged(table);
   }
 
   /**
@@ -89,42 +56,6 @@ public final class CatalogTableUtils {
    * @return {@code true} when the table is catalog managed and contains the UC identifier
    */
   public static boolean isUnityCatalogManagedTable(CatalogTable table) {
-    requireNonNull(table, "table is null");
-    Map<String, String> storageProperties = getStorageProperties(table);
-    boolean isUCBacked = storageProperties.containsKey(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
-    return isUCBacked && isCatalogManaged(table);
-  }
-
-  /**
-   * Checks whether the given feature key is enabled in the table properties.
-   *
-   * @param tableProperties The table properties
-   * @param featureKey The feature key
-   * @return {@code true} when the feature key is set to {@code supported}
-   */
-  private static boolean isCatalogManagedFeatureEnabled(
-      Map<String, String> tableProperties, String featureKey) {
-    requireNonNull(tableProperties, "tableProperties is null");
-    requireNonNull(featureKey, "featureKey is null");
-    String featureValue = tableProperties.get(featureKey);
-    if (featureValue == null) {
-      return false;
-    }
-    return featureValue.equalsIgnoreCase(SUPPORTED);
-  }
-
-  /**
-   * Returns the catalog storage properties published with a {@link CatalogTable}.
-   *
-   * @param table Spark {@link CatalogTable} descriptor
-   * @return Java map view of the storage properties, never null
-   */
-  private static Map<String, String> getStorageProperties(CatalogTable table) {
-    requireNonNull(table, "table is null");
-    if (table.storage() == null) {
-      return Collections.emptyMap();
-    }
-    Map<String, String> javaStorageProperties = ScalaUtils.toJavaMap(table.storage().properties());
-    return javaStorageProperties == null ? Collections.emptyMap() : javaStorageProperties;
+    return DeltaCatalogUtils.isUnityCatalogManagedTable(table);
   }
 }

@@ -18,6 +18,7 @@ package io.delta.kernel.spark.utils;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
 import java.util.HashMap;
@@ -29,11 +30,17 @@ import scala.Option;
 /** Tests for {@link CatalogTableUtils}. */
 class CatalogTableUtilsTest {
 
+  static final String FEATURE_CATALOG_MANAGED =
+      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
+          + TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName();
+
+  static final String FEATURE_CATALOG_OWNED_PREVIEW =
+      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + "catalogOwned-preview";
+
   @Test
   void testIsCatalogManaged_CatalogFlagEnabled_ReturnsTrue() {
     CatalogTable table =
-        catalogTable(
-            Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
+        catalogTable(Collections.emptyMap(), Map.of(FEATURE_CATALOG_MANAGED, "supported"));
 
     assertTrue(
         CatalogTableUtils.isCatalogManaged(table), "Catalog-managed flag should enable detection");
@@ -42,9 +49,7 @@ class CatalogTableUtilsTest {
   @Test
   void testIsCatalogManaged_PreviewFlagEnabled_ReturnsTrue() {
     CatalogTable table =
-        catalogTable(
-            Collections.emptyMap(),
-            Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "SuPpOrTeD"));
+        catalogTable(Collections.emptyMap(), Map.of(FEATURE_CATALOG_OWNED_PREVIEW, "SuPpOrTeD"));
 
     assertTrue(
         CatalogTableUtils.isCatalogManaged(table),
@@ -65,7 +70,7 @@ class CatalogTableUtilsTest {
         catalogTable(
             Collections.emptyMap(),
             Map.of(
-                CatalogTableUtils.FEATURE_CATALOG_MANAGED,
+                FEATURE_CATALOG_MANAGED,
                 "supported",
                 UCCommitCoordinatorClient.UC_TABLE_ID_KEY,
                 "abc-123"));
@@ -78,8 +83,7 @@ class CatalogTableUtilsTest {
   @Test
   void testIsUnityCatalogManaged_MissingId_ReturnsFalse() {
     CatalogTable table =
-        catalogTable(
-            Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
+        catalogTable(Collections.emptyMap(), Map.of(FEATURE_CATALOG_MANAGED, "supported"));
 
     assertFalse(
         CatalogTableUtils.isUnityCatalogManagedTable(table),
@@ -89,9 +93,7 @@ class CatalogTableUtilsTest {
   @Test
   void testIsUnityCatalogManaged_PreviewFlagMissingId_ReturnsFalse() {
     CatalogTable table =
-        catalogTable(
-            Collections.emptyMap(),
-            Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "supported"));
+        catalogTable(Collections.emptyMap(), Map.of(FEATURE_CATALOG_OWNED_PREVIEW, "supported"));
 
     assertFalse(
         CatalogTableUtils.isUnityCatalogManagedTable(table),

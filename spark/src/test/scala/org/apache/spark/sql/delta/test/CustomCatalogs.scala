@@ -22,7 +22,6 @@ import scala.collection.{immutable, mutable}
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
-import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.{Row, SparkSession}
@@ -139,46 +138,17 @@ class DummySessionCatalogInner extends DelegatingCatalogExtension {
 }
 
 /**
- * A session-catalog wrapper used in tests to simulate Unity Catalog managed tables by injecting
- * UC-related properties into the returned [[CatalogTable.storage.properties]].
- *
- * This allows end-to-end plan construction (and streaming query execution attempts) to observe
- * UC-managed markers through Spark's normal catalog resolution paths, without manually patching
- * CatalogTable objects in tests.
- */
-class UCTableInjectingSessionCatalogInner extends DelegatingCatalogExtension {
-  private val UC_TABLE_NAME = "uc_table"
-
-  override def loadTable(ident: Identifier): Table = {
-    val t = super.loadTable(ident).asInstanceOf[V1Table]
-    if (!ident.name().equalsIgnoreCase(UC_TABLE_NAME)) {
-      return t
-    }
-
-    V1Table(t.v1Table.copy(
-      storage = t.v1Table.storage.copy(
-        properties = t.v1Table.storage.properties ++ Map(
-          "test.simulateUC" -> "true",
-          "io.unitycatalog.tableId" -> "test-uc-table-id"
-        )
-      )
-    ))
-  }
-}
-
-/**
  * A session catalog implementation that delegates to DeltaCatalog but injects UC markers for
- * selected tables (see [[UCTableInjectingSessionCatalogInner]]).
+ * selected tables.
  */
 class UCTableInjectingSessionCatalog extends TableCatalog {
   private var deltaCatalog: DeltaCatalog = null
+  private val UC_TABLE_NAME = "uc_table"
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
-    val inner = new UCTableInjectingSessionCatalogInner()
-    inner.setDelegateCatalog(new V2SessionCatalog(
-      SparkSession.active.sessionState.catalogManager.v1SessionCatalog))
     deltaCatalog = new DeltaCatalog()
-    deltaCatalog.setDelegateCatalog(inner)
+    deltaCatalog.setDelegateCatalog(new V2SessionCatalog(
+      SparkSession.active.sessionState.catalogManager.v1SessionCatalog))
   }
 
   override def name(): String = deltaCatalog.name()
@@ -187,7 +157,40 @@ class UCTableInjectingSessionCatalog extends TableCatalog {
     deltaCatalog.listTables(namespace)
   }
 
-  override def loadTable(ident: Identifier): Table = deltaCatalog.loadTable(ident)
+  override def loadTable(ident: Identifier): Table = {
+    val table = deltaCatalog.loadTable(ident)
+    if (!ident.name().equalsIgnoreCase(UC_TABLE_NAME)) {
+      return table
+    }
+
+    table match {
+      case d: DeltaTableV2 if d.catalogTable.isDefined =>
+        val ct = d.catalogTable.get
+        val newCt = ct.copy(
+          storage = ct.storage.copy(
+            properties = ct.storage.properties ++ Map(
+              "test.simulateUC" -> "true",
+              "io.unitycatalog.tableId" -> "test-uc-table-id"
+            )
+          )
+        )
+        d.copy(catalogTable = Some(newCt))
+
+      case v1: V1Table =>
+        val ct = v1.v1Table
+        val newCt = ct.copy(
+          storage = ct.storage.copy(
+            properties = ct.storage.properties ++ Map(
+              "test.simulateUC" -> "true",
+              "io.unitycatalog.tableId" -> "test-uc-table-id"
+            )
+          )
+        )
+        V1Table(newCt)
+
+      case other => other
+    }
+  }
 
   override def createTable(
       ident: Identifier,

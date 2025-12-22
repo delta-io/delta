@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.{PartitionUtils, Utils}
+import org.apache.spark.sql.delta.util.{DeltaCatalogUtils, PartitionUtils, Utils}
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
 import org.json4s.jackson.Serialization
@@ -40,7 +40,6 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Expression, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{Table, TableProvider}
 import org.apache.spark.sql.connector.expressions.Transform
@@ -193,27 +192,12 @@ class DeltaDataSource
     // key constant from DeltaSQLConfUtils instead.
     val mode = spark.conf.get(DeltaSQLConf.V2_ENABLE_MODE_KEY, "NONE")
 
-    // Check if this schema came from SparkTable (V2 streaming) via ApplyV2Streaming
-    val isV2StreamingSchema =
-      parameters
-        .get(DeltaV2StreamingUtils.V2_STREAMING_SCHEMA_SOURCE_KEY)
-        .contains(DeltaV2StreamingUtils.V2_STREAMING_SCHEMA_SOURCE_SPARK_TABLE)
-
     mode.toUpperCase(Locale.ROOT) match {
-      case "NONE" =>
-        // V1 streaming: must load schema via DeltaLog
-        false
-      case "STRICT" =>
-        // In STRICT mode, DeltaCatalog always returns SparkTable for catalog tables
-        // If we have a schema and a catalog table, it came from SparkTable, so trust it
-        // For path-based tables, be conservative and reload
-        catalogTableOpt.isDefined
-      case "AUTO" =>
-        // V2 streaming for UC tables: only use provided schema if marker is set
-        // This distinguishes SparkTable schema from user-provided schema
-        isV2StreamingSchema
+      case "STRICT" | "AUTO" =>
+        // In STRICT or AUTO mode, we trust the schema if it's a Unity Catalog managed table.
+        catalogTableOpt.exists(DeltaCatalogUtils.isUnityCatalogManagedTable)
       case _ =>
-        // Unknown mode: be conservative, use DeltaLog
+        // NONE or unknown: V1 streaming or fallback, must load schema via DeltaLog
         false
     }
   }
