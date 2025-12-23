@@ -34,7 +34,7 @@ import io.delta.storage.commit.{
 }
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.apache.hadoop.fs.Path
-import org.mockito.ArgumentMatchers.anyString
+import org.mockito.ArgumentMatchers.{any, anyString}
 import org.mockito.Mock
 import org.mockito.Mockito
 import org.mockito.Mockito.{mock, when}
@@ -74,7 +74,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
     CommitCoordinatorProvider.registerBuilder(UCCommitCoordinatorBuilder)
     ucCommitCoordinator = new InMemoryUCCommitCoordinator()
     ucClient = new InMemoryUCClient(metastoreId.toString, ucCommitCoordinator)
-    when(mockFactory.createUCClient(anyString(), anyString())).thenReturn(ucClient)
+    when(mockFactory.createUCClient(anyString(), any[Map[String, String]]())).thenReturn(ucClient)
   }
   override protected def createTableCommitCoordinatorClient(
       deltaLog: DeltaLog): TableCommitCoordinatorClient = {
