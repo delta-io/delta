@@ -398,6 +398,14 @@ lazy val connectServer = (project in file("spark-connect/server"))
       // needed for the client. Including it causes classpath problems.
       ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     // Required for testing addFeatureSupport/dropFeatureSupport.
     Test / envVars += ("DELTA_TESTING", "1")
   )
