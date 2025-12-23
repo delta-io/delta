@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.FileNotFoundException
 import java.util.UUID
-import scala.collection.convert.ImplicitConversions.`map AsScala`
+
 import scala.collection.mutable
 import scala.math.Ordering.Implicits._
 import scala.util.Try
@@ -549,12 +549,6 @@ trait Checkpoints extends DeltaLogging {
   /** Returns the last complete checkpoint in the delta log directory (if any) */
   private def findLastCompleteCheckpoint(): Option[CheckpointInstance] = {
     val hadoopConf = newDeltaHadoopConf()
-
-    // scalastyle:off println
-    hadoopConf.getPropsWithPrefix("fs.s3a.").toSeq.sortBy(_._1)
-      .foreach{ case (k, v) => println(s"findLastCompleteCheckpoint -> fs.s3a.$k = $v")}
-    // scalastyle:on println
-
     val listingResult = store
       .listFrom(listingPrefix(logPath, 0L), hadoopConf)
       // Checkpoint files of 0 size are invalid but Spark will ignore them silently when
