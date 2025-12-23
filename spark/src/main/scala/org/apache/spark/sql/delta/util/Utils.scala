@@ -75,8 +75,7 @@ object Utils {
     // scalastyle:on
 
     catalogTableOpt
-      .map(catalogTable => DeltaLog.forTable(
-        sparkSession, catalogTable, catalogTable.storage.properties ++ options))
+      .map(catalogTable => DeltaLog.forTable(sparkSession, catalogTable, options))
       .getOrElse(DeltaLog.forTable(sparkSession, path, options))
   }
 
