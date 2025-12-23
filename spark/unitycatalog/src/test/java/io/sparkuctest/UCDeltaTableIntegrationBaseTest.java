@@ -83,6 +83,11 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // UC server is stopped by UnityCatalogSupport.tearDownServer()
   }
 
+  /** Expose the SparkSession for tests that need direct Spark APIs (e.g., streaming). */
+  protected SparkSession getSparkSession() {
+    return sparkSession;
+  }
+
   /** Get the SQL executor. Private to force subclasses to use sql() and check() methods. */
   private SQLExecutor getSqlExecutor() {
     return new SparkSQLExecutor(sparkSession);
