@@ -1727,7 +1727,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   // ================================================================================================
-  // Tests for checkReadIncompatibleSchemaChanges parity between DSv1 and DSv2
+  // Tests for checkReadIncompatibleSchemaChanges parity between v1 connector vs v2 connector
   // ================================================================================================
 
   /**
@@ -1875,13 +1875,31 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /** Provides test scenarios that generate additive schema changes actions. */
   private static Stream<Arguments> additiveSchemaEvolutionScenarios() {
     return Stream.of(
-        // Add nullable column
+        // Add nullable INT column
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
                   sql("ALTER TABLE %s ADD COLUMN age INT", tableName);
                 },
-            "Add nullable column"),
+            "Add nullable INT column"),
+
+        // Add nullable STRING column
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ADD COLUMN address STRING", tableName);
+                },
+            "Add nullable STRING column"),
+
+        // Add nullable STRUCT column
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s ADD COLUMN (address STRUCT<country: STRING, zip: INT>)",
+                      tableName);
+                },
+            "Add nullable STRUCT column"),
 
         // Make non-nullable column nullable
         Arguments.of(
