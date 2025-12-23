@@ -8,7 +8,7 @@ jobs:
       matrix:
         # Spark versions - must match CrossSparkVersions.ALL_SPECS in project/CrossSparkVersions.scala
         # Update this list when adding new Spark versions to CrossSparkVersions.scala
-        spark_version: ["4.0.1", "4.1.0-SNAPSHOT"]
+        spark_version: ["4.0.1", "4.1.0"]
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
