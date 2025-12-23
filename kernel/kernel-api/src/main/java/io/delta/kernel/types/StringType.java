@@ -52,6 +52,29 @@ public class StringType extends BasePrimitiveType {
     return collationIdentifier;
   }
 
+  /**
+   * Are the data types same? The metadata, collations or column names could be different.
+   *
+   * @param dataType
+   * @return
+   */
+  public boolean equivalent(DataType dataType) {
+    return dataType instanceof StringType;
+  }
+
+  /**
+   * Is `dataType` compatible input type for this type? The collations could be different.
+   *
+   * <p>Should be used for schema comparisons when checking input type compatibility.
+   *
+   * @param dataType
+   * @return
+   */
+  @Override
+  public boolean isInputCompatible(DataType dataType) {
+    return dataType instanceof StringType;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (!(o instanceof StringType)) {

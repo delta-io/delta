@@ -17,6 +17,7 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
+import java.util.function.Predicate;
 
 /**
  * Base class for all data types.
@@ -27,7 +28,9 @@ import io.delta.kernel.annotation.Evolving;
 public abstract class DataType {
 
   /**
-   * Are the data types same? The metadata or column names could be different.
+   * Are the data types same? The metadata, collations or column names could be different.
+   *
+   * <p>Should be used for schema comparisons during schema evolution.
    *
    * @param dataType
    * @return
@@ -37,11 +40,35 @@ public abstract class DataType {
   }
 
   /**
+   * Checks whether the given {@code dataType} is compatible as an input for this type. The
+   * collations could be different.
+   *
+   * <p>This method should be used for schema comparisons when validating input type compatibility.
+   * It should not be used in other contexts, such as during the read path.
+   *
+   * @param dataType
+   * @return
+   */
+  public boolean isInputCompatible(DataType dataType) {
+    return equals(dataType);
+  }
+
+  /**
    * Returns true iff this data is a nested data type (it logically parameterized by other types).
    *
    * <p>For example StructType, ArrayType, MapType are nested data types.
    */
   public abstract boolean isNested();
+
+  /**
+   * Returns true if the provided {@code predicate} matches this type or any nested child type.
+   *
+   * @param predicate
+   * @return
+   */
+  public boolean existsRecursively(Predicate<DataType> predicate) {
+    return predicate != null && predicate.test(this);
+  }
 
   @Override
   public abstract int hashCode();

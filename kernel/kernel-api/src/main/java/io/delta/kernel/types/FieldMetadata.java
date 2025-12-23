@@ -133,6 +133,39 @@ public final class FieldMetadata {
         .collect(Collectors.joining(", ", "{", "}"));
   }
 
+  /** Are the metadata same, ignoring the specified keys? */
+  public boolean equalsIgnoreKeys(FieldMetadata other, Set<String> keys) {
+    if (this == other) {
+      return true;
+    }
+    if (other == null) {
+      return false;
+    }
+
+    Map<String, Object> filteredMetadata =
+        this.metadata.entrySet().stream()
+            .filter(e -> !keys.contains(e.getKey()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    Map<String, Object> otherFilteredMetadata =
+        other.metadata.entrySet().stream()
+            .filter(e -> !keys.contains(e.getKey()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    if (filteredMetadata.size() != otherFilteredMetadata.size()) {
+      return false;
+    }
+    return filteredMetadata.entrySet().stream()
+        .allMatch(
+            e ->
+                Objects.equals(e.getValue(), otherFilteredMetadata.get(e.getKey()))
+                    || (e.getValue() != null
+                        && e.getValue().getClass().isArray()
+                        && otherFilteredMetadata.get(e.getKey()).getClass().isArray()
+                        && Arrays.equals(
+                            (Object[]) e.getValue(),
+                            (Object[]) otherFilteredMetadata.get(e.getKey()))));
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
