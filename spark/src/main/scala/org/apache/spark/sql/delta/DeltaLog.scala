@@ -963,17 +963,23 @@ object DeltaLog extends DeltaLogging {
       initialCatalogTable: Option[CatalogTable],
       clock: Clock
   ): DeltaLog = {
+    // Construct the filesystem options based on the DataFrameReader/Writer options, and if it's
+    // a catalog based table, we need combine both options and catalog-based table storage
+    // properties since all cloud credential information are stored in storage properties.
+    val catalogTableStorageProps = initialCatalogTable.map(t => t.storage.properties)
+      .getOrElse(Map.empty)
     val fileSystemOptions: Map[String, String] =
       if (spark.sessionState.conf.getConf(
           DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
         // We pick up only file system options so that we don't pass any parquet or json options to
         // the code that reads Delta transaction logs.
-        options.filterKeys { k =>
+        catalogTableStorageProps ++ options.filterKeys { k =>
           DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
         }.toMap
       } else {
-        Map.empty
+        catalogTableStorageProps ++ Map.empty
       }
+
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
