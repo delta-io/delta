@@ -60,11 +60,6 @@ case class DeltaSink(
     with UpdateExpressionsSupport
     with DeltaLogging {
 
-  // scalastyle:off println
-  options.options.foreach{ case (k, v) => println(s"DeltaSink#options --> key: $k --> val: $v")}
-  println(s"CatalogTable is Present ? --> ${catalogTable.isDefined}")
-  // scalastyle:on println
-
   private lazy val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
     sqlContext.sparkSession, catalogTable, path)
 

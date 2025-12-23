@@ -66,14 +66,6 @@ object Utils {
       catalogTableOpt: Option[CatalogTable],
       path: Path,
       options: Map[String, String] = Map.empty): DeltaLog = {
-
-    // scalastyle:off
-    println(s"getDeltaLogFromTableOrPath --> catalogTableOpt is present ? ${catalogTableOpt.isDefined}")
-    catalogTableOpt.foreach{
-      c => c.storage.properties.foreach{case (k, v) =>
-        println(s"getDeltaLogFromTableOrPath--> catalogTableOps: key: $k --> val: $v")}}
-    // scalastyle:on
-
     catalogTableOpt
       .map(catalogTable => DeltaLog.forTable(sparkSession, catalogTable, options))
       .getOrElse(DeltaLog.forTable(sparkSession, path, options))
