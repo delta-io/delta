@@ -629,41 +629,33 @@ trait DeltaSourceBase extends Source
         metadata.schema
       }
 
+      val schemaReadOptions = DeltaSourceUtils.SchemaReadOptions(
+        allowUnsafeStreamingReadOnColumnMappingSchemaChanges =
+          allowUnsafeStreamingReadOnColumnMappingSchemaChanges,
+        allowUnsafeStreamingReadOnPartitionColumnChanges =
+          allowUnsafeStreamingReadOnPartitionColumnChanges,
+        forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
+          forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart,
+        forceEnableUnsafeReadOnNullabilityChange = forceEnableUnsafeReadOnNullabilityChange,
+        isStreamingFromColumnMappingTable = isStreamingFromColumnMappingTable,
+        typeWideningEnabled = typeWideningEnabled,
+        enableSchemaTrackingForTypeWidening = enableSchemaTrackingForTypeWidening
+      )
       // There is a schema change. All of files after this commit will use `schemaChange`. Hence, we
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
       // query) to read these new files safely.
       val backfilling = version < snapshotAtSourceInit.version
-      // We forbid the case when the the schemaChange is nullable while the read schema is NOT
-      // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
-      // because we don't ever want to read back any nulls when the read schema is non-nullable.
-      val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
-      // If schema tracking is disabled for type widening, we allow widening type changes to go
-      // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
-      // will cause the stream to fail with a retryable exception, and the stream will restart using
-      // the new schema.
-      val allowWideningTypeChanges = typeWideningEnabled && !enableSchemaTrackingForTypeWidening
-      // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
-      // column mapping schema changes, we can allow the standard check to allow missing columns
-      // from the read schema in the schema change, because the only case that happens is when
-      // user rename/drops column but they don't care so they enabled the flag to unblock.
-      // This is only allowed when we are "backfilling", i.e. the stream progress is older than
-      // the analyzed table version. Any schema change past the analysis should still throw
-      // exception, because additive schema changes MUST be taken into account.
-      val shouldAllowMissingColumns = isStreamingFromColumnMappingTable &&
-          allowUnsafeStreamingReadOnColumnMappingSchemaChanges && backfilling
       // Partition column change will be ignored if user enable the unsafe flag
       val newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
       else newMetadata.partitionColumns
       val oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
       else oldMetadata.partitionColumns
 
-      val (isCompatible, isRetryable) = DeltaSource.validateBasicSchemaChanges(
+      val (isCompatible, isRetryable) = DeltaSourceUtils.validateBasicSchemaChanges(
         schemaChange, schema,
         newPartitionColumns, oldPartitionColumns,
         backfilling,
-        shouldForbidTightenNullability,
-        allowWideningTypeChanges,
-        shouldAllowMissingColumns)
+        schemaReadOptions)
 
       if (!isCompatible) {
         recordDeltaEvent(
@@ -1459,61 +1451,6 @@ object DeltaSource extends DeltaLogging {
           data = Map("message" -> e.getMessage))
     }
     false
-  }
-
-  /**
-   * Validate schema compatibility between data schema and read schema. Checks for read
-   * compatibility considering nullability, type widening, missing columns, and partition changes.
-   *
-   * Returns (isCompatible, isRetryable) where isRetryable is None if validation succeeded.
-   */
-  def validateBasicSchemaChanges(
-      dataSchema: StructType,
-      readSchema: StructType,
-      newPartitionColumns: Seq[String],
-      oldPartitionColumns: Seq[String],
-      backfilling: Boolean,
-      shouldForbidTightenNullability: Boolean,
-      allowWideningTypeChanges: Boolean,
-      shouldAllowMissingColumns: Boolean): (Boolean, Option[Boolean]) = {
-    if (!SchemaUtils.isReadCompatible(
-      existingSchema = dataSchema,
-      readSchema = readSchema,
-      forbidTightenNullability = shouldForbidTightenNullability,
-      allowMissingColumns = shouldAllowMissingColumns,
-      // When backfilling after a type change, allow processing the data using the new, wider
-      // type.
-      typeWideningMode = if (allowWideningTypeChanges && backfilling) {
-        TypeWideningMode.AllTypeWidening
-      } else {
-        TypeWideningMode.NoTypeWidening
-      },
-      newPartitionColumns = newPartitionColumns,
-      oldPartitionColumns = oldPartitionColumns
-    )) {
-      // Only schema change later than the current read snapshot/schema can be retried, in other
-      // words, backfills could never be retryable, because we have no way to refresh
-      // the latest schema to "catch up" when the schema change happens before than current read
-      // schema version.
-      // If not backfilling, we do another check to determine retryability, in which we assume
-      // we will be reading using this later `schemaChange` back on the current outdated `schema`,
-      // and if it works (including that `schemaChange` should not tighten the nullability
-      // constraint from `schema`), it is a retryable exception.
-      val retryable = !backfilling && SchemaUtils.isReadCompatible(
-        existingSchema = readSchema,
-        readSchema = dataSchema,
-        forbidTightenNullability = shouldForbidTightenNullability,
-        // Check for widening type changes that would succeed on retry when we backfill batches.
-        typeWideningMode = if (allowWideningTypeChanges) {
-          TypeWideningMode.AllTypeWidening
-        } else {
-          TypeWideningMode.NoTypeWidening
-        }
-      )
-      (false, Some(retryable))
-    } else {
-      (true, None)
-    }
   }
 
   /**
