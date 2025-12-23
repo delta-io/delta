@@ -732,6 +732,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     ),
 
     libraryDependencies ++= Seq(
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JUnit 5 test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
@@ -1022,6 +1023,13 @@ lazy val storage = (project in file("storage"))
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+      "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion excludeAll(
+        ExclusionRule(organization = "org.openapitools"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
