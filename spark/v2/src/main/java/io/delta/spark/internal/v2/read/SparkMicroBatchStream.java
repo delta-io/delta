@@ -916,8 +916,18 @@ public class SparkMicroBatchStream
    * @param version Version for the metadata action
    * @param validatedDuringStreamStart Whether this check is being done during stream start.
    */
-  protected void checkReadIncompatibleSchemaChanges(
-      Metadata metadata, long version, boolean validatedDuringStreamStart) {
+  private void checkReadIncompatibleSchemaChanges(
+      Metadata metadata,
+      long version,
+      long batchStartVersion,
+      Long batchEndVersion,
+      boolean validatedDuringStreamStart) {
+    logger.info(
+        "checking read incompatibility with schema at version {}, inside batch[{}, {}].",
+        version,
+        batchStartVersion,
+        batchEndVersion != null ? batchEndVersion : "latest");
+
     Metadata newMetadata, oldMetadata;
     if (version < snapshotAtSourceInit.getVersion()) {
       newMetadata = snapshotAtSourceInit.getMetadata();
@@ -938,7 +948,8 @@ public class SparkMicroBatchStream
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
-        || !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+        || !schemaReadOptions
+            .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
 
       StructType schemaChange = SchemaUtils.convertKernelSchemaToSparkSchema(metadata.getSchema());
 
@@ -946,29 +957,9 @@ public class SparkMicroBatchStream
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
       // query) to read these new files safely.
       boolean backfilling = version < snapshotAtSourceInit.getVersion();
-      // We forbid the case when the schemaChange is nullable while the read schema is NOT
-      // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
-      // because we don't ever want to read back any nulls when the read schema is non-nullable.
-      boolean shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange;
-      // If schema tracking is disabled for type widening, we allow widening type changes to go
-      // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
-      // will cause the stream to fail with a retryable exception, and the stream will restart using
-      // the new schema.
-      boolean allowWideningTypeChanges = typeWideningEnabled; // TODO(#5319): schema tracking
-      // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
-      // column mapping schema changes, we can allow the standard check to allow missing columns
-      // from the read schema in the schema change, because the only case that happens is when
-      // user rename/drops column but they don't care so they enabled the flag to unblock.
-      // This is only allowed when we are "backfilling", i.e. the stream progress is older than
-      // the analyzed table version. Any schema change past the analysis should still throw
-      // exception, because additive schema changes MUST be taken into account.
-      boolean shouldAllowMissingColumns =
-          isStreamingFromColumnMappingTable
-              && allowUnsafeStreamingReadOnColumnMappingSchemaChanges
-              && backfilling;
       // Partition column change will be ignored if user enable the unsafe flag
       Seq<String> newPartitionColumns, oldPartitionColumns;
-      if (allowUnsafeStreamingReadOnPartitionColumnChanges) {
+      if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges()) {
         newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
         oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
       } else {
@@ -986,16 +977,14 @@ public class SparkMicroBatchStream
                 .toSeq();
       }
 
-      final var result =
-          DeltaSource.validateBasicSchemaChanges(
+      Tuple2<Object, Option<Object>> result =
+          DeltaSourceUtils.validateBasicSchemaChanges(
               schemaChange,
               readSchemaAtSourceInit,
               newPartitionColumns,
               oldPartitionColumns,
               backfilling,
-              shouldForbidTightenNullability,
-              allowWideningTypeChanges,
-              shouldAllowMissingColumns);
+              schemaReadOptions);
       boolean isCompatible = (Boolean) result._1();
       Boolean isRetryable = result._2().getOrElse(() -> null);
 
