@@ -181,7 +181,69 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
       },
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
+  }
 
+  // INSERT types that already preserve null structs correctly before the null expansion fix
+  // (DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS).
+  val insertsAlreadyPreserveNull = Set(
+    StreamingInsert,
+    SQLInsertByPosition(SaveMode.Append),
+    SQLInsertByPosition(SaveMode.Overwrite),
+    SQLInsertOverwriteReplaceWhere,
+    SQLInsertOverwritePartitionByPosition
+  ) ++ insertsDataframe
+
+  for {
+    preserveNullSourceStructs <- BOOLEAN_DOMAIN
+    (inserts: Set[Insert], expectedAnswer) <- Seq(
+      // INSERT types that already handle null structs correctly
+      insertsAlreadyPreserveNull.intersect(insertsAppend) ->
+        TestData("a int, s struct <x: int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 2, "y": null } }""", """{ "a": 1, "s": null }""")),
+      insertsAlreadyPreserveNull.intersect(insertsOverwrite) ->
+        TestData("a int, s struct <x: int, y: int>",
+          Seq("""{ "a": 1, "s": null }""")),
+
+      // For all other INSERT types, the null struct gets incorrectly expanded to
+      // `struct<null, null>` unless preserveNullSourceStructs is enabled
+      (insertsAppend -- insertsAlreadyPreserveNull) ->
+        TestData("a int, s struct <x: int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 2, "y": null } }""",
+            if (preserveNullSourceStructs) {
+              """{ "a": 1, "s": null }"""
+            } else {
+              """{ "a": 1, "s": { "x": null, "y": null } }"""
+            }
+          )),
+      (insertsOverwrite -- insertsAlreadyPreserveNull) ->
+        TestData("a int, s struct <x: int, y: int>",
+          if (preserveNullSourceStructs) {
+            Seq("""{ "a": 1, "s": null }""")
+          } else {
+            Seq("""{ "a": 1, "s": { "x": null, "y": null } }""")
+          }
+        )
+    )
+  } {
+    testInserts(s"insert with extra nested field, null struct, " +
+        s"preserveNullSourceStructs=$preserveNullSourceStructs")(
+      initialData = TestData("a int, s struct <x: int>",
+        Seq("""{ "a": 1, "s": { "x": 2 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, s struct <x: int, y: int>",
+        Seq("""{ "a": 1, "s": null }""")),
+      expectedResult = ExpectedResult.Success(expected = expectedAnswer),
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
+        DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
+          -> preserveNullSourceStructs.toString
+      )
+    )
+  }
+
+  for (schemaEvolution <- BOOLEAN_DOMAIN) {
     // Adding new nested struct fields with schema evolution is allowed for all inserts, but
     // dataframe inserts by name don't support implicit casting and will fail due to the type
     // mismatch.
