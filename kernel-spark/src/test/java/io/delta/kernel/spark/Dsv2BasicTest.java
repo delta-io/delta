@@ -24,8 +24,8 @@ import java.util.UUID;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.*;
 import org.apache.spark.sql.streaming.StreamingQuery;
-import org.apache.spark.sql.streaming.StreamingQueryException;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -34,6 +34,13 @@ public class Dsv2BasicTest {
 
   private SparkSession spark;
   private String nameSpace;
+
+  private static final StructType TEST_SCHEMA =
+      DataTypes.createStructType(
+          Arrays.asList(
+              DataTypes.createStructField("id", DataTypes.IntegerType, false),
+              DataTypes.createStructField("name", DataTypes.StringType, false),
+              DataTypes.createStructField("value", DataTypes.DoubleType, false)));
 
   @BeforeAll
   public void setUp(@TempDir File tempDir) {
@@ -164,46 +171,87 @@ public class Dsv2BasicTest {
   }
 
   @Test
-  public void testStreamingRead(@TempDir File deltaTablePath) {
+  public void testStreamingReadMultipleVersions(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
-    // Create test data using standard Delta Lake
-    Dataset<Row> testData =
-        spark.createDataFrame(
-            Arrays.asList(RowFactory.create(1, "Alice", 100.0), RowFactory.create(2, "Bob", 200.0)),
-            DataTypes.createStructType(
-                Arrays.asList(
-                    DataTypes.createStructField("id", DataTypes.IntegerType, false),
-                    DataTypes.createStructField("name", DataTypes.StringType, false),
-                    DataTypes.createStructField("value", DataTypes.DoubleType, false))));
-    testData.write().format("delta").save(tablePath);
 
-    // Test streaming read using path-based table
+    // Write version 0
+    spark
+        .createDataFrame(Arrays.asList(RowFactory.create(1, "Alice", 100.0)), TEST_SCHEMA)
+        .write()
+        .format("delta")
+        .save(tablePath);
+
+    // Write version 1
+    spark
+        .createDataFrame(Arrays.asList(RowFactory.create(2, "Bob", 200.0)), TEST_SCHEMA)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    // Write version 2
+    spark
+        .createDataFrame(Arrays.asList(RowFactory.create(3, "Charlie", 300.0)), TEST_SCHEMA)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    // Start streaming from version 0 - should read all three versions
+    String dsv2TableRef = String.format("dsv2.delta.`%s`", tablePath);
     Dataset<Row> streamingDF =
-        spark.readStream().table(String.format("dsv2.delta.`%s`", tablePath));
-
+        spark.readStream().option("startingVersion", "0").table(dsv2TableRef);
     assertTrue(streamingDF.isStreaming(), "Dataset should be streaming");
-    StreamingQueryException exception =
-        assertThrows(
-            StreamingQueryException.class,
-            () -> {
-              StreamingQuery query =
-                  streamingDF
-                      .writeStream()
-                      .format("memory")
-                      .queryName("test_streaming_query")
-                      .outputMode("append")
-                      .start();
-              query.processAllAvailable();
-              query.stop();
-            });
-    Throwable rootCause = exception.getCause();
-    assertTrue(
-        rootCause instanceof UnsupportedOperationException,
-        "Root cause should be UnsupportedOperationException");
-    assertTrue(
-        rootCause.getMessage().contains("is not supported"),
-        "Root cause message should indicate that streaming operation is not supported: "
-            + rootCause.getMessage());
+
+    // Process all batches - should have all data from versions 0, 1, and 2
+    List<Row> actualRows = processStreamingQuery(streamingDF, "test_multiple_versions");
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create(1, "Alice", 100.0),
+            RowFactory.create(2, "Bob", 200.0),
+            RowFactory.create(3, "Charlie", 300.0));
+
+    assertStreamingDataEquals(actualRows, expectedRows);
+  }
+
+  @Test
+  public void testStreamingReadWithoutStartingVersion(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Write initial data
+    List<Row> initialRows =
+        Arrays.asList(RowFactory.create(1, "Alice", 100.0), RowFactory.create(2, "Bob", 200.0));
+    spark.createDataFrame(initialRows, TEST_SCHEMA).write().format("delta").save(tablePath);
+
+    // Create streaming DataFrame without startingVersion using DSv2 path
+    // Using dsv2.delta.`path` syntax to force DSv2 (SparkMicroBatchStream) instead of DSv1
+    String dsv2TableRef = String.format("dsv2.delta.`%s`", tablePath);
+
+    StreamingQuery query = null;
+    try {
+      query =
+          spark
+              .readStream()
+              .table(dsv2TableRef) // No startingVersion option
+              .writeStream()
+              .format("memory")
+              .queryName("test_no_starting_version")
+              .outputMode("append")
+              .start();
+
+      query.processAllAvailable();
+
+      // Should successfully read all data from initial snapshot
+      Dataset<Row> results = spark.sql("SELECT * FROM test_no_starting_version");
+      List<Row> actualRows = results.collectAsList();
+
+      assertStreamingDataEquals(actualRows, initialRows);
+    } finally {
+      if (query != null) {
+        query.stop();
+      }
+    }
   }
 
   //////////////////////
@@ -215,5 +263,49 @@ public class Dsv2BasicTest {
         expectedRows,
         actualRows,
         () -> "Datasets differ: expected=" + expectedRows + "\nactual=" + actualRows);
+  }
+
+  private List<Row> processStreamingQuery(Dataset<Row> streamingDF, String queryName)
+      throws Exception {
+    StreamingQuery query = null;
+    try {
+      query =
+          streamingDF
+              .writeStream()
+              .format("memory")
+              .queryName(queryName)
+              .outputMode("append")
+              .start();
+
+      query.processAllAvailable();
+
+      // Query the memory sink to get results
+      Dataset<Row> results = spark.sql("SELECT * FROM " + queryName);
+      return results.collectAsList();
+    } finally {
+      if (query != null) {
+        query.stop();
+      }
+    }
+  }
+
+  private void assertStreamingDataEquals(List<Row> actualRows, List<Row> expectedRows) {
+    assertEquals(
+        expectedRows.size(),
+        actualRows.size(),
+        () ->
+            "Row count differs: expected="
+                + expectedRows.size()
+                + " actual="
+                + actualRows.size()
+                + "\nExpected rows: "
+                + expectedRows
+                + "\nActual rows: "
+                + actualRows);
+
+    // Compare rows (order-independent for robustness)
+    assertTrue(
+        actualRows.containsAll(expectedRows) && expectedRows.containsAll(actualRows),
+        () -> "Streaming data differs:\nExpected: " + expectedRows + "\nActual: " + actualRows);
   }
 }

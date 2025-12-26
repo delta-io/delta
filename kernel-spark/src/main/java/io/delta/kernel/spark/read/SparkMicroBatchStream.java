@@ -15,9 +15,12 @@
  */
 package io.delta.kernel.spark.read;
 
+import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
+import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
@@ -34,6 +37,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.Comparator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -59,6 +63,7 @@ import org.slf4j.LoggerFactory;
 import scala.collection.JavaConverters;
 import scala.collection.Seq;
 
+// TODO(#5318): Use DeltaErrors error framework for consistent error handling.
 public class SparkMicroBatchStream
     implements MicroBatchStream, SupportsAdmissionControl, SupportsTriggerAvailableNow {
 
@@ -104,6 +109,10 @@ public class SparkMicroBatchStream
   private boolean isLastOffsetForTriggerAvailableNowInitialized = false;
 
   private boolean isTriggerAvailableNow = false;
+
+  // Cached starting version to ensure idempotent behavior for "latest" starting version.
+  // getStartingVersion() must return the same value across multiple calls.
+  private volatile Optional<Long> cachedStartingVersion = null;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -186,9 +195,9 @@ public class SparkMicroBatchStream
       version = startingVersionOpt.get();
       isInitialSnapshot = false;
     } else {
-      // TODO(#5318): Support initial snapshot case (isInitialSnapshot == true)
-      throw new UnsupportedOperationException(
-          "initialOffset with initial snapshot is not supported yet");
+      // No starting version - use snapshot captured at source initialization
+      version = snapshotAtSourceInit.getVersion();
+      isInitialSnapshot = true;
     }
 
     return DeltaSourceOffset.apply(
@@ -381,7 +390,11 @@ public class SparkMicroBatchStream
    *
    * <p>This is the DSv2 Kernel-based implementation of DeltaSource.getStartingVersion.
    */
-  Optional<Long> getStartingVersion() {
+  synchronized Optional<Long> getStartingVersion() {
+    if (cachedStartingVersion != null) {
+      return cachedStartingVersion;
+    }
+
     // TODO(#5319): DeltaSource.scala uses `allowOutOfRange` parameter from
     // DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.
     if (options.startingVersion().isDefined()) {
@@ -389,7 +402,8 @@ public class SparkMicroBatchStream
       if (startingVersion instanceof StartingVersionLatest$) {
         Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
         // "latest": start reading from the next commit
-        return Optional.of(latestSnapshot.getVersion() + 1);
+        cachedStartingVersion = Optional.of(latestSnapshot.getVersion() + 1);
+        return cachedStartingVersion;
       } else if (startingVersion instanceof StartingVersion) {
         long version = ((StartingVersion) startingVersion).version();
         if (!validateProtocolAt(spark, snapshotManager, engine, version)) {
@@ -401,11 +415,13 @@ public class SparkMicroBatchStream
           snapshotManager.checkVersionExists(
               version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
         }
-        return Optional.of(version);
+        cachedStartingVersion = Optional.of(version);
+        return cachedStartingVersion;
       }
     }
     // TODO(#5319): Implement startingTimestamp support
-    return Optional.empty();
+    cachedStartingVersion = Optional.empty();
+    return cachedStartingVersion;
   }
 
   /**
@@ -503,8 +519,11 @@ public class SparkMicroBatchStream
     CloseableIterator<IndexedFile> result;
 
     if (isInitialSnapshot) {
-      // TODO(#5318): Implement initial snapshot
-      throw new UnsupportedOperationException("initial snapshot is not supported yet");
+      // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
+      // filterDeltaLogs handles the case when no commits exist after fromVersion.
+      CloseableIterator<IndexedFile> snapshotFiles = getSnapshotFiles(fromVersion);
+      CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
+      result = snapshotFiles.combine(deltaChanges);
     } else {
       result = filterDeltaLogs(fromVersion, endOffset);
     }
@@ -537,12 +556,39 @@ public class SparkMicroBatchStream
     return result;
   }
 
-  // TODO(#5318): implement lazy loading (one batch at a time).
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
-    List<IndexedFile> allIndexedFiles = new ArrayList<>();
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
+
+    if (endVersionOpt.isPresent()) {
+      // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
+      // endVersion to be an actual existing version or empty.
+      long latestVersion = snapshotAtSourceInit.getVersion();
+      if (endVersionOpt.get() > latestVersion) {
+        // This could happen because:
+        // 1. data could be added after snapshotAtSourceInit was captured.
+        // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
+        // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
+        // TODO(#5318): kernel should ideally relax this constraint.
+        endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+      }
+
+      // After capping, check if startVersion is beyond the endVersion.
+      // This can happen when all files in the batch come from the initial snapshot
+      // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
+      if (startVersion > endVersionOpt.get()) {
+        return Utils.toCloseableIterator(Collections.emptyIterator());
+      }
+    } else {
+      // When endOffset is empty (offset discovery), check if startVersion exceeds the current
+      // latest version. We must load the current latest (not snapshotAtSourceInit) because new
+      // commits may have arrived since stream initialization.
+      long currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      if (startVersion > currentLatestVersion) {
+        return Utils.toCloseableIterator(Collections.emptyIterator());
+      }
+    }
 
     CommitRange commitRange;
     try {
@@ -550,97 +596,89 @@ public class SparkMicroBatchStream
     } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
       // If the requested version range doesn't exist (e.g., we're asking for version 6 when
       // the table only has versions 0-5).
-      return Utils.toCloseableIterator(allIndexedFiles.iterator());
+      return Utils.toCloseableIterator(Collections.emptyIterator());
     }
 
-    // Use getActionsFromRangeUnsafe instead of CommitRange.getActions() because:
-    // 1. CommitRange.getActions() requires a snapshot at exactly the startVersion, but when
+    // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
+    // 1. CommitRange.getCommitActions() requires a snapshot at exactly the startVersion, but when
     //    startingVersion option is used, we may not be able to recreate that exact snapshot
     //    (e.g., if log files have been cleaned up after checkpointing).
     // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
     //    AddFile actions and performs per-commit protocol validation.
-    try (CloseableIterator<ColumnarBatch> actionsIter =
-        StreamingHelper.getActionsFromRangeUnsafe(
+    return StreamingHelper.getCommitActionsFromRangeUnsafe(
             engine,
             (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
             snapshotAtSourceInit.getPath(),
-            ACTION_SET)) {
-      // Each ColumnarBatch belongs to a single commit version,
-      // but a single version may span multiple ColumnarBatches.
-      long currentVersion = -1;
-      long currentIndex = 0;
-      List<IndexedFile> currentVersionFiles = new ArrayList<>();
+            ACTION_SET)
+        .flatMap(
+            commit -> {
+              try {
+                long version = commit.getVersion();
 
-      while (actionsIter.hasNext()) {
-        ColumnarBatch batch = actionsIter.next();
-        if (batch.getSize() == 0) {
-          // TODO(#5318): this shouldn't happen, empty commits will still have a non-empty row
-          // with the version set. Make sure the kernel API is explicit about this.
-          continue;
-        }
-        long version = StreamingHelper.getVersion(batch);
-        // When version changes, flush the completed version
-        if (currentVersion != -1 && version != currentVersion) {
-          flushVersion(currentVersion, currentVersionFiles, allIndexedFiles);
-          currentVersionFiles.clear();
-          currentIndex = 0;
-        }
+                // First pass: Validate the commit.
+                // Eager execution: must process the entire commit first for all-or-nothing
+                // semantics.
+                validateCommit(commit, version, snapshotAtSourceInit.getPath(), endOffset);
 
-        // Validate the commit before processing files from this batch
-        // TODO(#5318): migrate to kernel's commit-level iterator (WIP).
-        // The current one-pass algorithm assumes REMOVE actions proceed ADD actions
-        // in a commit; we should implement a proper two-pass approach once kernel API is ready.
-        validateCommit(batch, version, snapshotAtSourceInit.getPath(), endOffset);
-
-        currentVersion = version;
-        currentIndex =
-            extractIndexedFilesFromBatch(batch, version, currentIndex, currentVersionFiles);
-      }
-
-      // Flush the last version
-      if (currentVersion != -1) {
-        flushVersion(currentVersion, currentVersionFiles, allIndexedFiles);
-      }
-    } catch (IOException e) {
-      throw new RuntimeException("Failed to read commit range", e);
-    }
-    // TODO(#5318): implement lazy loading (only load a batch into memory if needed).
-    return Utils.toCloseableIterator(allIndexedFiles.iterator());
+                // TODO(#5318): consider caching the commit actions to avoid reading the same commit
+                // twice.
+                // Second pass: Extract AddFile actions with dataChange=true.
+                // Build lazy iterator with sentinel IndexedFiles:
+                //   BEGIN (BASE_INDEX) + actual file actions + END (END_INDEX)
+                // These sentinel IndexedFiles have null file actions and are used for proper offset
+                // tracking. The BASE_INDEX sentinel marks the start of a version, allowing the
+                // offset
+                // to reference "before any files in this version". The END_INDEX sentinel marks the
+                // end of a version, which triggers version advancement in
+                // buildOffsetFromIndexedFile
+                // to skip re-reading the completed version.
+                // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
+                return Utils.singletonCloseableIterator(
+                        new IndexedFile(
+                            version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null))
+                    .combine(getFilesFromCommit(commit, version))
+                    .combine(
+                        Utils.singletonCloseableIterator(
+                            new IndexedFile(
+                                version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null)));
+              } catch (Exception e) {
+                // commit is not a CloseableIterator, we need to close it manually.
+                Utils.closeCloseables(commit);
+                throw (e instanceof RuntimeException)
+                    ? (RuntimeException) e
+                    : new RuntimeException(e);
+              }
+            });
   }
 
-  /**
-   * Flushes a completed version by adding BEGIN/END sentinels around data files.
-   *
-   * <p>Sentinels are IndexedFiles with null addFile that mark version boundaries. They serve
-   * several purposes:
-   *
-   * <ul>
-   *   <li>Enable offset tracking at version boundaries (before any files or after all files)
-   *   <li>Allow streaming to resume at the start or end of a version
-   *   <li>Handle versions with only metadata/protocol changes (no data files)
-   * </ul>
-   *
-   * <p>This mimics DeltaSource.addBeginAndEndIndexOffsetsForVersion
-   */
-  private void flushVersion(
-      long version, List<IndexedFile> versionFiles, List<IndexedFile> output) {
-    // Add BEGIN sentinel
-    output.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null));
-    // TODO(#5319): implement getMetadataOrProtocolChangeIndexedFileIterator.
-    // Add all data files
-    output.addAll(versionFiles);
-    // Add END sentinel
-    output.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null));
+  private CloseableIterator<IndexedFile> getFilesFromCommit(CommitActions commit, long version) {
+    // Assign each IndexedFile a unique index within the commit. We use a mutable array
+    // because variables captured by a lambda must be effectively final (never reassigned).
+    long[] fileIndex = {0};
+
+    return commit
+        .getActions()
+        .flatMap(
+            batch -> {
+              // Processing each batch eagerly because they are already loaded into memory.
+              List<IndexedFile> files = new ArrayList<>();
+              fileIndex[0] = extractIndexedFilesFromBatch(batch, version, fileIndex[0], files);
+              return Utils.toCloseableIterator(files.iterator());
+            });
   }
 
   /**
    * Validates a commit and fail the stream if it's invalid. Mimics
    * DeltaSource.validateCommitAndDecideSkipping in Scala.
    *
+   * @param commit the CommitActions representing a single commit
+   * @param version the commit version
+   * @param tablePath the path to the Delta table
+   * @param endOffsetOpt optional end offset for boundary checking
    * @throws RuntimeException if the commit is invalid.
    */
   private void validateCommit(
-      ColumnarBatch batch,
+      CommitActions commit,
       long version,
       String tablePath,
       Optional<DeltaSourceOffset> endOffsetOpt) {
@@ -652,22 +690,25 @@ public class SparkMicroBatchStream
         return;
       }
     }
-    int numRows = batch.getSize();
     // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreDeletes (legacy)
     // TODO(#5318): validate METADATA actions
-    for (int rowId = 0; rowId < numRows; rowId++) {
-      // RULE 1: If commit has RemoveFile(dataChange=true), fail this stream.
-      Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
-      if (removeOpt.isPresent()) {
-        RemoveFile removeFile = removeOpt.get();
-        Throwable error =
-            DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFile.getPath(), tablePath);
-        if (error instanceof RuntimeException) {
-          throw (RuntimeException) error;
-        } else {
-          throw new RuntimeException(error);
+
+    try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+      while (actionsIter.hasNext()) {
+        ColumnarBatch batch = actionsIter.next();
+        int numRows = batch.getSize();
+        for (int rowId = 0; rowId < numRows; rowId++) {
+          // RULE 1: If commit has RemoveFile(dataChange=true), fail this stream.
+          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
+          if (removeOpt.isPresent()) {
+            RemoveFile removeFile = removeOpt.get();
+            throw (RuntimeException)
+                DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFile.getPath(), tablePath);
+          }
         }
       }
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to process commit at version " + version, e);
     }
   }
 
@@ -689,5 +730,57 @@ public class SparkMicroBatchStream
     }
 
     return index;
+  }
+
+  /**
+   * Get all files from a snapshot at the specified version, sorted by modificationTime and path,
+   * with indices assigned sequentially, and wrapped with BEGIN/END sentinels.
+   *
+   * <p>Mimics DeltaSourceSnapshot in DSv1.
+   *
+   * @param version The snapshot version to read
+   * @return An iterator of IndexedFile representing the snapshot files
+   */
+  private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
+    // Load snapshot at the specified version
+    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+
+    // Build scan to get all files
+    Scan scan = snapshot.getScanBuilder().build();
+
+    // TODO(#5318): add memory protection for large snapshots.
+    List<AddFile> addFiles = new ArrayList<>();
+    try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
+      while (filesIter.hasNext()) {
+        FilteredColumnarBatch filteredBatch = filesIter.next();
+        ColumnarBatch batch = filteredBatch.getData();
+        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
+          StreamingHelper.getDataChangeAdd(batch, rowId).ifPresent(addFiles::add);
+        }
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(
+          String.format("Failed to read snapshot files at version %d", version), e);
+    }
+
+    // CRITICAL: Sort by modificationTime, then path for deterministic ordering
+    addFiles.sort(
+        Comparator.comparing(AddFile::getModificationTime).thenComparing(AddFile::getPath));
+
+    // Build IndexedFile list with sentinels
+    List<IndexedFile> indexedFiles = new ArrayList<>();
+
+    // Add BEGIN sentinel
+    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null));
+
+    // Add data files with sequential indices starting from 0
+    for (int i = 0; i < addFiles.size(); i++) {
+      indexedFiles.add(new IndexedFile(version, i, addFiles.get(i)));
+    }
+
+    // Add END sentinel
+    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null));
+
+    return Utils.toCloseableIterator(indexedFiles.iterator());
   }
 }
