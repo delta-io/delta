@@ -1,0 +1,18 @@
+Iceberg heartbeat executor shutdown
+
+--- a/hive-metastore/src/main/java/org/apache/iceberg/hive/HiveTableOperations.java
++++ b/hive-metastore/src/main/java/org/apache/iceberg/hive/HiveTableOperations.java
+@@ -391,6 +391,13 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
+
+     LOG.info(
+         "Committed to table {} with the new metadata location {}", fullName, newMetadataLocation);
++
++    // Shutdown the executor service to prevent thread leaks
++    if (exitingScheduledExecutorService != null && !exitingScheduledExecutorService.isShutdown()) {
++      LOG.info("Table {}: shutting down exitingScheduledExecutorService", fullName);
++      exitingScheduledExecutorService.shutdown();
++      LOG.info("Table {}: shutting down exitingScheduledExecutorService completed", fullName);
++    }
+   }
+
+   @VisibleForTesting
