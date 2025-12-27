@@ -57,11 +57,16 @@ public class Conversions {
     public static DataType dataType(LogicalType flinkType) {
       final LogicalTypeRoot typeRoot = flinkType.getTypeRoot();
       switch (typeRoot) {
+        case BOOLEAN:
+          return io.delta.kernel.types.BooleanType.BOOLEAN;
         case INTEGER:
           return io.delta.kernel.types.IntegerType.INTEGER;
         case VARCHAR:
         case CHAR:
           return io.delta.kernel.types.StringType.STRING;
+        case BINARY:
+        case VARBINARY:
+          return io.delta.kernel.types.BinaryType.BINARY;
         case BIGINT:
           return io.delta.kernel.types.LongType.LONG;
         case DOUBLE:
@@ -102,7 +107,7 @@ public class Conversions {
               mapType.getValueType().isNullable());
         default:
           throw new UnsupportedOperationException(
-              String.format("Type not supported: %s", flinkType));
+              String.format("Type not supported: %s: %s", flinkType, flinkType.getTypeRoot()));
       }
     }
 

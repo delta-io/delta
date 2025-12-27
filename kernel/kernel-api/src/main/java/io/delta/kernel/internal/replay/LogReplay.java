@@ -243,7 +243,7 @@ public class LogReplay {
             getLogReplayFiles(getLogSegment()),
             SET_TRANSACTION_READ_SCHEMA,
             Optional.empty())) {
-      while (reverseIter.hasNext()) {
+      while (reverseIter.hasNext() && !Thread.currentThread().isInterrupted()) {
         final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
         assert (columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
 
@@ -256,6 +256,9 @@ public class LogReplay {
             }
           }
         }
+      }
+      if (Thread.currentThread().isInterrupted()) {
+        throw new IllegalStateException("Thread was interrupted");
       }
     } catch (IOException ex) {
       throw new RuntimeException("Failed to fetch the transaction identifier", ex);
@@ -351,7 +354,7 @@ public class LogReplay {
             DOMAIN_METADATA_READ_SCHEMA,
             Optional.empty() /* checkpointPredicate */)) {
       Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
-      while (reverseIter.hasNext()) {
+      while (reverseIter.hasNext() && !Thread.currentThread().isInterrupted()) {
         final ActionWrapper nextElem = reverseIter.next();
         final long version = nextElem.getVersion();
         final ColumnarBatch columnarBatch = nextElem.getColumnarBatch();
@@ -366,6 +369,9 @@ public class LogReplay {
         if (minLogVersion.isPresent() && minLogVersion.get() == version) {
           break;
         }
+      }
+      if (Thread.currentThread().isInterrupted()) {
+        throw new IllegalStateException("Thread was interrupted");
       }
       logger.info(
           "{}: Loading domain metadata from log for version {}, "

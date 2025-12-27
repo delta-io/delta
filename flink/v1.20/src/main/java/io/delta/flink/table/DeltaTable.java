@@ -130,6 +130,12 @@ public interface DeltaTable extends Serializable {
   void refresh();
 
   /**
+   * Attempt to interrupt all operations this table is executing, allowing cancelling time-consuming
+   * operations such as log replay. The table should not be used after calling close.
+   */
+  void close() throws InterruptedException;
+
+  /**
    * Writes one or more Parquet files as part of the table and emits the corresponding {@code
    * AddFile} action describing the newly written data.
    *

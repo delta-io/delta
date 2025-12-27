@@ -85,7 +85,11 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   }
 
   @Override
-  public void close() throws Exception {}
+  public void close() throws Exception {
+    LOG.debug("Force closing the Committer. Interrupting running table loading");
+    // close the DeltaTable will interrupt ongoing operations such as log-replay
+    this.deltaTable.close();
+  }
 
   private void commitForSingleCheckpointId(
       long checkpointId, List<CommitRequest<DeltaCommittable>> committables) {
