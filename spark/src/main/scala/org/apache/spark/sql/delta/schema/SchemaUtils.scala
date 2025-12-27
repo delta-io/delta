@@ -22,6 +22,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
@@ -42,6 +43,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetArrayItem, GetArrayStructFields, GetMapValue, GetStructField}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumnsUtils}
+import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -1688,7 +1690,11 @@ def normalizeColumnNamesInDataType(
           }
         }
         .map(columnParts =>
-          if (SparkSession.active.conf.get(DeltaSQLConf.DELTA_RENAME_COLUMN_ESCAPE_NAME)) {
+          // Always preserve escaping for dataSkippingStatsColumns because users may configure it
+          // using escaped identifiers (backticks) for special-character column names.
+          if (deltaConfig == DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key) {
+            columnParts.map(quoteIfNeeded).mkString(".")
+          } else if (SparkSession.active.conf.get(DeltaSQLConf.DELTA_RENAME_COLUMN_ESCAPE_NAME)) {
             UnresolvedAttribute(columnParts).sql
           } else {
             UnresolvedAttribute(columnParts).name
