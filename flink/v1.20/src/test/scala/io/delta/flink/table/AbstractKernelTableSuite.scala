@@ -163,4 +163,62 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
       assert(retryCounter == 3)
     })
   }
+
+  test("force cancel ongoing log replay") {
+    withTempDir { dir =>
+      val engine = DefaultEngine.create(new Configuration())
+      val schema = new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING)
+      createNonEmptyTable(engine, dir.getAbsolutePath, schema)
+
+      var callcounter = 0
+
+      val table = new HadoopTableForTest(
+        dir.toURI, Map.empty[String, String].asJava, schema, Seq.empty[String].asJava) {
+
+        override protected def loadLatestSnapshot(): Snapshot = {
+          val snapshot = super.loadLatestSnapshot()
+          callcounter += 1
+          if (callcounter >= 2) {
+            for (i <- 0 until 50) {
+              Thread.sleep(100);
+            }
+          }
+          snapshot
+        }
+      }
+
+      // this thread will refresh the table
+      val thread1 = new Thread(() => {
+        table.refresh()
+      })
+      thread1.start()
+
+      // If we do not call close, the refresh will take ~5s to stop
+      var wcstart = System.currentTimeMillis()
+      while (thread1.isAlive) {
+        Thread.sleep(100)
+      }
+      var elapse = System.currentTimeMillis() - wcstart
+      assert(elapse >= 4500)
+
+      // this thread will refresh the table
+      val thread2 = new Thread(() => {
+        try {
+          table.refresh()
+        } catch {
+          case _: Exception => // Ignore the InterruptException
+        }
+      })
+      thread2.start()
+      // If we call close, the refresh was interrupted quickly
+      Thread.sleep(100)
+      wcstart = System.currentTimeMillis()
+      table.close()
+      while (thread2.isAlive) {
+        Thread.sleep(100)
+      }
+      elapse = System.currentTimeMillis() - wcstart
+      assert(elapse < 200)
+    }
+  }
 }

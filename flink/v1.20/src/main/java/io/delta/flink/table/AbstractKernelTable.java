@@ -46,6 +46,10 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
@@ -127,7 +131,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected void loadExistingTable() {
     // With an existing table, partitions loaded from the table take precedence
-    final Snapshot latestSnapshot = loadLatestSnapshot();
+    final Snapshot latestSnapshot = snapshot();
     // We use a temporary transaction to generate a TransactionStateRow.
     // It serves as a holder for schema and partition columns.
     // The transaction will not be committed, and is discarded afterward.
@@ -233,6 +237,28 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return tableState;
   }
 
+  ExecutorService threadPool = Executors.newSingleThreadExecutor();
+
+  /**
+   * Load snapshot using a separated thread. This will allow external
+   * request to interrupt the thread during time-consuming operations
+   * in loading snapshot, such as log replay.
+   * @return loaded snapshot
+   */
+  protected Snapshot snapshot() {
+    try {
+      return threadPool.submit(this::loadLatestSnapshot).get();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public void close() throws InterruptedException {
+    threadPool.shutdownNow();
+    threadPool.awaitTermination(10, TimeUnit.MINUTES);
+  }
+
   /**
    * Subclass must implement this method to fetch a Kernel snapshot
    *
@@ -269,7 +295,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
         () -> {
           Snapshot currentSnapshot = snapshot;
           if (currentSnapshot == null) {
-            currentSnapshot = loadLatestSnapshot();
+            currentSnapshot = snapshot();
           }
           this.schema = currentSnapshot.getSchema();
           this.partitionColumns = currentSnapshot.getPartitionColumnNames();
@@ -292,7 +318,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
           Engine localEngine = getEngine();
           Transaction txn;
           try {
-            Snapshot snapshot = loadLatestSnapshot();
+            Snapshot snapshot = snapshot();
             UpdateTableTransactionBuilder txnBuilder =
                 snapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
             if (txnId != null) {

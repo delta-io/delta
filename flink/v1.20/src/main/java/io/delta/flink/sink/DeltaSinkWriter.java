@@ -105,7 +105,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
     Map<String, String> writerKey =
         partitionValues.entrySet().stream()
             .collect(
-                Collectors.toMap(entry -> entry.getKey(), entry -> entry.getValue().toString()));
+                Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
 
     if (!writerTasksByPartition.containsKey(writerKey)) {
       writerTasksByPartition.put(
@@ -132,7 +132,11 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
   public void flush(boolean endOfInput) throws IOException, InterruptedException {}
 
   @Override
-  public void close() throws Exception {}
+  public void close() throws Exception {
+    // close the DeltaTable will interrupt ongoing operations such as log-replay
+    LOG.debug("Force closing the Writer. Interrupting running table loading");
+    this.deltaTable.close();
+  }
 
   public static class Builder {
 
