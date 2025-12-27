@@ -110,7 +110,7 @@ trait VectorTestUtils {
     }
   }
 
-  protected def intVector(values: Seq[IntegerJ]): ColumnVector = {
+  def intVector(values: Seq[IntegerJ]): ColumnVector = {
     new ColumnVector {
       override def getDataType: DataType = IntegerType.INTEGER
 
