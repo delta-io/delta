@@ -36,10 +36,10 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
       databaseName: String,
       table: String,
       filterOption: Option[Filter] = None,
-      projection: Option[StructType] = None): ScanPlan = {
+      projectionOption: Option[Seq[String]] = None): ScanPlan = {
     // Capture filter and projection for test verification
     TestServerSidePlanningClient.capturedFilter = filterOption
-    TestServerSidePlanningClient.capturedProjection = projection
+    TestServerSidePlanningClient.capturedProjection = projectionOption
 
     val fullTableName = s"$databaseName.$table"
 
@@ -97,10 +97,10 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
  */
 object TestServerSidePlanningClient {
   private var capturedFilter: Option[Filter] = None
-  private var capturedProjection: Option[StructType] = None
+  private var capturedProjection: Option[Seq[String]] = None
 
   def getCapturedFilter: Option[Filter] = capturedFilter
-  def getCapturedProjection: Option[StructType] = capturedProjection
+  def getCapturedProjection: Option[Seq[String]] = capturedProjection
   def clearCaptured(): Unit = {
     capturedFilter = None
     capturedProjection = None
