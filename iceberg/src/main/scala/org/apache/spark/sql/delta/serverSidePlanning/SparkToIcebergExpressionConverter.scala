@@ -59,21 +59,21 @@ object SparkToIcebergExpressionConverter {
   /**
    * Convert a Spark Filter to an Iceberg Expression.
    *
-   * @param filter The Spark filter to convert
+   * @param sparkFilter The Spark filter to convert
    * @return Some(Expression) if the filter is supported, None otherwise
    */
-  def convert(filter: Filter): Option[Expression] = filter match {
+  def convert(sparkFilter: Filter): Option[Expression] = sparkFilter match {
     // Equality and Comparison Operators
-    case EqualTo(attribute, value) =>
-      Some(convertEqualTo(attribute, value))
-    case LessThan(attribute, value) =>
-      Some(convertLessThan(attribute, value))
-    case GreaterThan(attribute, value) =>
-      Some(convertGreaterThan(attribute, value))
-    case LessThanOrEqual(attribute, value) =>
-      Some(convertLessThanOrEqual(attribute, value))
-    case GreaterThanOrEqual(attribute, value) =>
-      Some(convertGreaterThanOrEqual(attribute, value))
+    case EqualTo(attribute, sparkValue) =>
+      Some(convertEqualTo(attribute, sparkValue))
+    case LessThan(attribute, sparkValue) =>
+      Some(convertLessThan(attribute, sparkValue))
+    case GreaterThan(attribute, sparkValue) =>
+      Some(convertGreaterThan(attribute, sparkValue))
+    case LessThanOrEqual(attribute, sparkValue) =>
+      Some(convertLessThanOrEqual(attribute, sparkValue))
+    case GreaterThanOrEqual(attribute, sparkValue) =>
+      Some(convertGreaterThanOrEqual(attribute, sparkValue))
 
     // Null Checks
     case IsNull(attribute) =>
@@ -84,15 +84,15 @@ object SparkToIcebergExpressionConverter {
     // Logical Combinators
     case And(left, right) =>
       for {
-        leftExpr <- convert(left)
-        rightExpr <- convert(right)
-      } yield Expressions.and(leftExpr, rightExpr)
+        leftIcebergExpr <- convert(left)
+        rightIcebergExpr <- convert(right)
+      } yield Expressions.and(leftIcebergExpr, rightIcebergExpr)
 
     case Or(left, right) =>
       for {
-        leftExpr <- convert(left)
-        rightExpr <- convert(right)
-      } yield Expressions.or(leftExpr, rightExpr)
+        leftIcebergExpr <- convert(left)
+        rightIcebergExpr <- convert(right)
+      } yield Expressions.or(leftIcebergExpr, rightIcebergExpr)
 
     // Unsupported Filters
     case _ =>
@@ -107,22 +107,22 @@ object SparkToIcebergExpressionConverter {
    * Multiple filters are combined with AND. Unsupported filters are not pushed to the server
    * (affects performance only, not correctness - Spark re-applies all filters as residuals).
    *
-   * @param filters Array of Spark filters
+   * @param sparkFilters Array of Spark filters
    * @return Some(Expression) if at least one filter is supported, None if all are unsupported
    */
-  def convertFilters(filters: Array[Filter]): Option[Expression] = {
-    if (filters.isEmpty) return None
+  def convertFilters(sparkFilters: Array[Filter]): Option[Expression] = {
+    if (sparkFilters.isEmpty) return None
 
-    val convertedExprs = filters.flatMap(f => convert(f))
-    if (convertedExprs.isEmpty) return None
+    val convertedIcebergExprs = sparkFilters.flatMap(f => convert(f))
+    if (convertedIcebergExprs.isEmpty) return None
 
     // Combine all expressions with AND
-    Some(convertedExprs.reduce((left, right) => Expressions.and(left, right)))
+    Some(convertedIcebergExprs.reduce((left, right) => Expressions.and(left, right)))
   }
 
   // Private helper methods for type-specific conversions
 
-  private def convertEqualTo(attribute: String, value: Any): Expression = value match {
+  private def convertEqualTo(attribute: String, sparkValue: Any): Expression = sparkValue match {
     case v: Int => Expressions.equal(attribute, v: Integer)
     case v: Long => Expressions.equal(attribute, v: java.lang.Long)
     case v: Float => Expressions.equal(attribute, v: java.lang.Float)
@@ -130,30 +130,33 @@ object SparkToIcebergExpressionConverter {
     case v: String => Expressions.equal(attribute, v)
     case v: Boolean => Expressions.equal(attribute, v: java.lang.Boolean)
     case null => Expressions.isNull(attribute)
-    case _ => Expressions.equal(attribute, value.toString)
+    case _ => Expressions.equal(attribute, sparkValue.toString)
   }
 
-  private def convertLessThan(attribute: String, value: Any): Expression = value match {
+  private def convertLessThan(attribute: String, sparkValue: Any): Expression = sparkValue match {
     case v: Int => Expressions.lessThan(attribute, v: Integer)
     case v: Long => Expressions.lessThan(attribute, v: java.lang.Long)
     case v: Float => Expressions.lessThan(attribute, v: java.lang.Float)
     case v: Double => Expressions.lessThan(attribute, v: java.lang.Double)
     case v: String => Expressions.lessThan(attribute, v)
     case _ =>
-      throw new IllegalArgumentException(s"Unsupported type for LessThan: ${value.getClass}")
+      throw new IllegalArgumentException(s"Unsupported type for LessThan: ${sparkValue.getClass}")
   }
 
-  private def convertGreaterThan(attribute: String, value: Any): Expression = value match {
+  private def convertGreaterThan(attribute: String, sparkValue: Any): Expression =
+    sparkValue match {
     case v: Int => Expressions.greaterThan(attribute, v: Integer)
     case v: Long => Expressions.greaterThan(attribute, v: java.lang.Long)
     case v: Float => Expressions.greaterThan(attribute, v: java.lang.Float)
     case v: Double => Expressions.greaterThan(attribute, v: java.lang.Double)
     case v: String => Expressions.greaterThan(attribute, v)
     case _ =>
-      throw new IllegalArgumentException(s"Unsupported type for GreaterThan: ${value.getClass}")
+      throw new IllegalArgumentException(
+        s"Unsupported type for GreaterThan: ${sparkValue.getClass}")
   }
 
-  private def convertLessThanOrEqual(attribute: String, value: Any): Expression = value match {
+  private def convertLessThanOrEqual(attribute: String, sparkValue: Any): Expression =
+    sparkValue match {
     case v: Int => Expressions.lessThanOrEqual(attribute, v: Integer)
     case v: Long => Expressions.lessThanOrEqual(attribute, v: java.lang.Long)
     case v: Float => Expressions.lessThanOrEqual(attribute, v: java.lang.Float)
@@ -161,10 +164,11 @@ object SparkToIcebergExpressionConverter {
     case v: String => Expressions.lessThanOrEqual(attribute, v)
     case _ =>
       throw new IllegalArgumentException(
-        s"Unsupported type for LessThanOrEqual: ${value.getClass}")
+        s"Unsupported type for LessThanOrEqual: ${sparkValue.getClass}")
   }
 
-  private def convertGreaterThanOrEqual(attribute: String, value: Any): Expression = value match {
+  private def convertGreaterThanOrEqual(attribute: String, sparkValue: Any): Expression =
+    sparkValue match {
     case v: Int => Expressions.greaterThanOrEqual(attribute, v: Integer)
     case v: Long => Expressions.greaterThanOrEqual(attribute, v: java.lang.Long)
     case v: Float => Expressions.greaterThanOrEqual(attribute, v: java.lang.Float)
@@ -172,6 +176,6 @@ object SparkToIcebergExpressionConverter {
     case v: String => Expressions.greaterThanOrEqual(attribute, v)
     case _ =>
       throw new IllegalArgumentException(
-        s"Unsupported type for GreaterThanOrEqual: ${value.getClass}")
+        s"Unsupported type for GreaterThanOrEqual: ${sparkValue.getClass}")
   }
 }
