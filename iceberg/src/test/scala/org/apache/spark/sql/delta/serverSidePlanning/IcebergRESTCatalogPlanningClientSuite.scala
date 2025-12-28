@@ -275,7 +275,10 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
             s"[$description] Filter conversion should succeed for: $filter")
 
           // Call client with filter
-          client.planScan(defaultNamespace.toString, "filterTest", filter = Some(filter))
+          client.planScan(
+            defaultNamespace.toString,
+            "filterTest",
+            sparkFilterOption = Some(filter))
 
           // Verify server captured the filter
           val capturedFilter = server.getCapturedFilter
