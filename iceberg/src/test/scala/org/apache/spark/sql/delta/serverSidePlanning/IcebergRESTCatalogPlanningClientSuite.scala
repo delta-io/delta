@@ -270,7 +270,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           server.clearCaptured()
 
           // Convert Spark filter to expected Iceberg expression
-          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter, sparkSchema)
+          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter)
           assert(expectedExpr.isDefined,
             s"[$description] Filter conversion should succeed for: $filter")
 

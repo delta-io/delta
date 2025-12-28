@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.sources._
-import org.apache.spark.sql.types.StructType
 import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
 
 /**
@@ -49,8 +48,7 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  * Example usage:
  * {{{
  *   val sparkFilter = EqualTo("id", 5)
- *   val schema = StructType(...)
- *   SparkToIcebergExpressionConverter.convert(sparkFilter, schema) match {
+ *   SparkToIcebergExpressionConverter.convert(sparkFilter) match {
  *     case Some(icebergExpr) => // Use expression
  *     case None => // Filter not supported
  *   }
@@ -62,10 +60,9 @@ object SparkToIcebergExpressionConverter {
    * Convert a Spark Filter to an Iceberg Expression.
    *
    * @param filter The Spark filter to convert
-   * @param schema The table schema (currently unused but reserved for future type conversions)
    * @return Some(Expression) if the filter is supported, None otherwise
    */
-  def convert(filter: Filter, schema: StructType): Option[Expression] = filter match {
+  def convert(filter: Filter): Option[Expression] = filter match {
     // Equality and Comparison Operators
     case EqualTo(attribute, value) =>
       Some(convertEqualTo(attribute, value))              // Expressions.equal()
@@ -87,14 +84,14 @@ object SparkToIcebergExpressionConverter {
     // Logical Combinators
     case And(left, right) =>
       for {
-        leftExpr <- convert(left, schema)
-        rightExpr <- convert(right, schema)
+        leftExpr <- convert(left)
+        rightExpr <- convert(right)
       } yield Expressions.and(leftExpr, rightExpr)  // Expressions.and()
 
     case Or(left, right) =>
       for {
-        leftExpr <- convert(left, schema)
-        rightExpr <- convert(right, schema)
+        leftExpr <- convert(left)
+        rightExpr <- convert(right)
       } yield Expressions.or(leftExpr, rightExpr)   // Expressions.or()
 
     // Unsupported Filters
@@ -111,13 +108,12 @@ object SparkToIcebergExpressionConverter {
    * (affects performance only, not correctness - Spark re-applies all filters as residuals).
    *
    * @param filters Array of Spark filters
-   * @param schema The table schema
    * @return Some(Expression) if at least one filter is supported, None if all are unsupported
    */
-  def convertFilters(filters: Array[Filter], schema: StructType): Option[Expression] = {
+  def convertFilters(filters: Array[Filter]): Option[Expression] = {
     if (filters.isEmpty) return None
 
-    val convertedExprs = filters.flatMap(f => convert(f, schema))
+    val convertedExprs = filters.flatMap(f => convert(f))
     if (convertedExprs.isEmpty) return None
 
     // Combine all expressions with AND

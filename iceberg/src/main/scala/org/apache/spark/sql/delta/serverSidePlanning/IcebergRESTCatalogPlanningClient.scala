@@ -159,10 +159,8 @@ class IcebergRESTCatalogPlanningClient(
     val builder = new PlanTableScanRequest.Builder().withSnapshotId(CURRENT_SNAPSHOT_ID)
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
-    // Schema parameter is empty for now (reserved for future type conversions).
     filter.foreach { sparkFilter =>
-      val schema = org.apache.spark.sql.types.StructType(Seq.empty)
-      SparkToIcebergExpressionConverter.convert(sparkFilter, schema).foreach { icebergExpr =>
+      SparkToIcebergExpressionConverter.convert(sparkFilter).foreach { icebergExpr =>
         builder.withFilter(icebergExpr)
       }
     }

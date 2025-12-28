@@ -17,20 +17,13 @@
 package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.sources._
-import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
-  private val testSchema = StructType(Seq(
-    StructField("id", IntegerType),
-    StructField("name", StringType),
-    StructField("age", IntegerType)
-  ))
-
   // Helper: Assert filter converts successfully and output contains expected terms
   private def assertConverts(filter: Filter, expectedTerms: String*): Unit = {
-    val result = SparkToIcebergExpressionConverter.convert(filter, testSchema)
+    val result = SparkToIcebergExpressionConverter.convert(filter)
     assert(result.isDefined, s"Should convert: $filter")
     val expr = result.get.toString
     expectedTerms.foreach(term =>
@@ -40,13 +33,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Helper: Assert filter returns None (unsupported)
   private def assertReturnsNone(filter: Filter): Unit = {
-    val result = SparkToIcebergExpressionConverter.convert(filter, testSchema)
+    val result = SparkToIcebergExpressionConverter.convert(filter)
     assert(result.isEmpty, s"Should return None for unsupported filter: $filter")
   }
 
   // Helper: Assert filter converts and output contains operator (case-insensitive)
   private def assertContainsOperator(filter: Filter, operators: String*): Unit = {
-    val result = SparkToIcebergExpressionConverter.convert(filter, testSchema)
+    val result = SparkToIcebergExpressionConverter.convert(filter)
     assert(result.isDefined, s"Should convert: $filter")
     val expr = result.get.toString.toLowerCase(java.util.Locale.ROOT)
     operators.foreach(op =>
@@ -62,7 +55,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertConverts(EqualTo("active", true), "active")  // boolean
 
     // EqualTo with null becomes IsNull
-    val nullResult = SparkToIcebergExpressionConverter.convert(EqualTo("name", null), testSchema)
+    val nullResult = SparkToIcebergExpressionConverter.convert(EqualTo("name", null))
     assert(nullResult.isDefined, "Should convert EqualTo with null")
     assert(
       nullResult.get.toString.toLowerCase(java.util.Locale.ROOT).contains("null"),
@@ -112,7 +105,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // convertFilters (array) tests
   test("convertFilters with single filter") {
     val filters = Array[Filter](EqualTo("id", 5))
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters, testSchema)
+    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
 
     assert(result.isDefined, "Should convert single filter")
     assert(result.get.toString.contains("id"), "Expression should reference 'id'")
@@ -124,7 +117,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       GreaterThan("age", 18),
       IsNotNull("name")
     )
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters, testSchema)
+    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
 
     assert(result.isDefined, "Should convert multiple filters")
     val exprStr = result.get.toString.toLowerCase(java.util.Locale.ROOT)
@@ -140,7 +133,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       StringStartsWith("name", "A"),  // Unsupported
       GreaterThan("age", 18)          // Supported
     )
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters, testSchema)
+    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
 
     assert(result.isDefined, "Should convert supported filters and skip unsupported")
     val exprStr = result.get.toString
@@ -157,14 +150,14 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       StringEndsWith("name", "Z"),
       StringContains("name", "foo")
     )
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters, testSchema)
+    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
 
     assert(result.isEmpty, "Should return None when all filters are unsupported")
   }
 
   test("convertFilters returns None for empty array") {
     val filters = Array.empty[Filter]
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters, testSchema)
+    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
 
     assert(result.isEmpty, "Empty filter array should return None")
   }
