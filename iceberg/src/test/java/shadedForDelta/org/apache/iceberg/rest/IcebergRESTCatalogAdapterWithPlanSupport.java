@@ -174,22 +174,22 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
 
     LOG.debug("Handling plan table scan request");
 
-    // 1. Extract table identifier
+    // Extract table identifier
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
 
-    // 2. Parse request
+    // Parse request
     PlanTableScanRequest planRequest = parsePlanRequest(request);
     LOG.debug("Plan request parsed: snapshotId={}", planRequest.snapshotId());
 
-    // 3. Load table from catalog
+    // Load table from catalog
     Table table = catalog.loadTable(tableIdent);
     LOG.debug("Table loaded: {}", table);
 
-    // 4. Create table scan
+    // Create table scan
     TableScan tableScan = table.newScan();
 
-    // 5. Apply snapshot if specified and valid
+    // Apply snapshot if specified and valid
     if (planRequest.snapshotId() != null && planRequest.snapshotId() != 0) {
       tableScan = tableScan.useSnapshot(planRequest.snapshotId());
       LOG.debug("Using snapshot: {}", planRequest.snapshotId());
@@ -197,11 +197,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
       LOG.debug("Using current snapshot (snapshotId was null or 0)");
     }
 
-    // 6. Capture filter for test verification
+    // Capture filter for test verification
     capturedFilter = planRequest.filter();
     LOG.debug("Captured filter: {}", capturedFilter);
 
-    // 7. Validate that unsupported features are not requested
+    // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {
       throw new UnsupportedOperationException(
           "Incremental scans are not supported in this test implementation");
@@ -215,18 +215,18 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
           "Column stats are not supported in this test implementation");
     }
 
-    // 8. Execute scan planning
+    // Execute scan planning
     List<FileScanTask> fileScanTasks = new ArrayList<>();
     try (CloseableIterable<FileScanTask> tasks = tableScan.planFiles()) {
       tasks.forEach(task -> fileScanTasks.add(task));
     }
     LOG.debug("Planned {} file scan tasks", fileScanTasks.size());
 
-    // 9. Get partition specs for serialization
+    // Get partition specs for serialization
     Map<Integer, shadedForDelta.org.apache.iceberg.PartitionSpec> specsById = table.specs();
     LOG.debug("Table has {} partition specs", specsById.size());
 
-    // 10. Build response (Pattern 1: COMPLETED with direct tasks)
+    // Build response (Pattern 1: COMPLETED with direct tasks)
     return PlanTableScanResponse.builder()
         .withPlanStatus(PlanStatus.COMPLETED)
         .withFileScanTasks(fileScanTasks)
