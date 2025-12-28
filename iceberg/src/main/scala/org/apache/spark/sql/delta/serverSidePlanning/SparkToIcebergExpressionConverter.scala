@@ -65,34 +65,34 @@ object SparkToIcebergExpressionConverter {
   def convert(filter: Filter): Option[Expression] = filter match {
     // Equality and Comparison Operators
     case EqualTo(attribute, value) =>
-      Some(convertEqualTo(attribute, value))              // Expressions.equal()
+      Some(convertEqualTo(attribute, value))
     case LessThan(attribute, value) =>
-      Some(convertLessThan(attribute, value))             // Expressions.lessThan()
+      Some(convertLessThan(attribute, value))
     case GreaterThan(attribute, value) =>
-      Some(convertGreaterThan(attribute, value))          // Expressions.greaterThan()
+      Some(convertGreaterThan(attribute, value))
     case LessThanOrEqual(attribute, value) =>
-      Some(convertLessThanOrEqual(attribute, value))      // Expressions.lessThanOrEqual()
+      Some(convertLessThanOrEqual(attribute, value))
     case GreaterThanOrEqual(attribute, value) =>
-      Some(convertGreaterThanOrEqual(attribute, value))   // Expressions.greaterThanOrEqual()
+      Some(convertGreaterThanOrEqual(attribute, value))
 
     // Null Checks
     case IsNull(attribute) =>
-      Some(Expressions.isNull(attribute))                 // Expressions.isNull()
+      Some(Expressions.isNull(attribute))
     case IsNotNull(attribute) =>
-      Some(Expressions.notNull(attribute))                // Expressions.notNull()
+      Some(Expressions.notNull(attribute))
 
     // Logical Combinators
     case And(left, right) =>
       for {
         leftExpr <- convert(left)
         rightExpr <- convert(right)
-      } yield Expressions.and(leftExpr, rightExpr)  // Expressions.and()
+      } yield Expressions.and(leftExpr, rightExpr)
 
     case Or(left, right) =>
       for {
         leftExpr <- convert(left)
         rightExpr <- convert(right)
-      } yield Expressions.or(leftExpr, rightExpr)   // Expressions.or()
+      } yield Expressions.or(leftExpr, rightExpr)
 
     // Unsupported Filters
     case _ =>
