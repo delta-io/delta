@@ -49,31 +49,31 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // EqualTo tests
   test("convert EqualTo with various types") {
-    assertConverts(EqualTo("id", 5), "id", "5")  // integer
-    assertConverts(EqualTo("name", "Alice"), "name")  // string
-    assertConverts(EqualTo("id", 1234567890L), "id")  // long
-    assertConverts(EqualTo("active", true), "active")  // boolean
+    assertConverts(EqualTo("id", 5), "==", "id", "5")  // integer
+    assertConverts(EqualTo("name", "Alice"), "==", "name")  // string
+    assertConverts(EqualTo("id", 1234567890L), "==", "id")  // long
+    assertConverts(EqualTo("active", true), "==", "active")  // boolean
 
     // EqualTo with null becomes IsNull
     val nullResult = SparkToIcebergExpressionConverter.convert(EqualTo("name", null))
     assert(nullResult.isDefined, "Should convert EqualTo with null")
-    assert(
-      nullResult.get.toString.toLowerCase(java.util.Locale.ROOT).contains("null"),
-      "Should handle null value")
+    val nullExpr = nullResult.get.toString
+    assert(nullExpr.contains("is_null"), s"Should be is_null operator: $nullExpr")
+    assert(nullExpr.contains("name"), s"Should contain column name: $nullExpr")
   }
 
   // Comparison operator tests
   test("convert comparison operators") {
-    assertConverts(LessThan("age", 30), "age", "30")
-    assertConverts(GreaterThan("age", 18), "age", "18")
-    assertConverts(LessThanOrEqual("price", 99.99), "price")
-    assertConverts(GreaterThanOrEqual("timestamp", 1234567890L), "timestamp")
+    assertConverts(LessThan("age", 30), "<", "age", "30")
+    assertConverts(GreaterThan("age", 18), ">", "age", "18")
+    assertConverts(LessThanOrEqual("price", 99.99), "<=", "price")
+    assertConverts(GreaterThanOrEqual("timestamp", 1234567890L), ">=", "timestamp")
   }
 
   // Null check tests
   test("convert null check operators") {
-    assertConverts(IsNull("name"), "name", "null")
-    assertConverts(IsNotNull("name"), "name", "null")
+    assertConverts(IsNull("name"), "is_null", "name")
+    assertConverts(IsNotNull("name"), "not_null", "name")
   }
 
   // Logical operator tests
@@ -108,7 +108,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val result = SparkToIcebergExpressionConverter.convertFilters(filters)
 
     assert(result.isDefined, "Should convert single filter")
-    assert(result.get.toString.contains("id"), "Expression should reference 'id'")
+    val exprStr = result.get.toString
+    assert(exprStr.contains("=="), s"Should contain '==' operator: $exprStr")
+    assert(exprStr.contains("id"), s"Expression should reference 'id': $exprStr")
   }
 
   test("convertFilters combines multiple filters with AND") {
@@ -120,11 +122,14 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val result = SparkToIcebergExpressionConverter.convertFilters(filters)
 
     assert(result.isDefined, "Should convert multiple filters")
-    val exprStr = result.get.toString.toLowerCase(java.util.Locale.ROOT)
+    val exprStr = result.get.toString
     assert(exprStr.contains("and"), "Multiple filters should be combined with AND")
-    assert(exprStr.contains("id"), "Should contain 'id' filter")
-    assert(exprStr.contains("age"), "Should contain 'age' filter")
-    assert(exprStr.contains("name"), "Should contain 'name' filter")
+    assert(exprStr.contains("=="), "Should contain '==' operator")
+    assert(exprStr.contains(">"), "Should contain '>' operator")
+    assert(exprStr.contains("not_null"), "Should contain 'not_null' operator")
+    assert(exprStr.contains("id"), "Should contain 'id' column")
+    assert(exprStr.contains("age"), "Should contain 'age' column")
+    assert(exprStr.contains("name"), "Should contain 'name' column")
   }
 
   test("convertFilters skips unsupported filters") {
@@ -137,11 +142,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
     assert(result.isDefined, "Should convert supported filters and skip unsupported")
     val exprStr = result.get.toString
-    assert(exprStr.contains("id"), "Should contain 'id' filter")
-    assert(exprStr.contains("age"), "Should contain 'age' filter")
-    assert(
-      exprStr.toLowerCase(java.util.Locale.ROOT).contains("and"),
-      "Should combine remaining filters with AND")
+    assert(exprStr.contains("and"), "Should combine remaining filters with AND")
+    assert(exprStr.contains("=="), "Should contain '==' operator")
+    assert(exprStr.contains(">"), "Should contain '>' operator")
+    assert(exprStr.contains("id"), "Should contain 'id' column")
+    assert(exprStr.contains("age"), "Should contain 'age' column")
   }
 
   test("convertFilters returns None when all filters are unsupported") {
@@ -164,9 +169,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Type conversion tests
   test("convert with different numeric types") {
-    assertConverts(EqualTo("count", 42), "count")  // int
-    assertConverts(EqualTo("bigCount", 1234567890123L), "bigCount")  // long
-    assertConverts(GreaterThan("price", 19.99), "price")  // double
-    assertConverts(LessThan("rating", 4.5f), "rating")  // float
+    assertConverts(EqualTo("count", 42), "==", "count")  // int
+    assertConverts(EqualTo("bigCount", 1234567890123L), "==", "bigCount")  // long
+    assertConverts(GreaterThan("price", 19.99), ">", "price")  // double
+    assertConverts(LessThan("rating", 4.5f), "<", "rating")  // float
   }
 }
