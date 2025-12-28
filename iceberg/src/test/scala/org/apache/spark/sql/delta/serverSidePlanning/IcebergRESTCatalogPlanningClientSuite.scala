@@ -344,7 +344,9 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       try {
         testCases.foreach { case (description, projection, expectedFields) =>
           client.planScan(
-            defaultNamespace.toString, "projectionTest", projection = Some(projection))
+            defaultNamespace.toString,
+            "projectionTest",
+            sparkProjectionOption = Some(projection))
 
           // Verify server captured the projection
           val capturedProjection = server.getCapturedProjection
