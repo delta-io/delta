@@ -27,8 +27,5 @@ jobs:
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
 
-      - name: Generate Spark versions JSON
-        run: build/sbt exportSparkVersionsJson
-      
       - name: Run cross-Spark build test
         run: python project/tests/test_cross_spark_publish.py
