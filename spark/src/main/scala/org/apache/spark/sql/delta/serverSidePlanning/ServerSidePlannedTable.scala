@@ -264,17 +264,19 @@ class ServerSidePlannedScan(
   }
 
   // Only pass projection if columns are actually pruned (not SELECT *)
-  private val projection: Option[StructType] = {
+  // Extract field names for planning client (server only needs names, not types)
+  private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(requiredSchema)
+      Some(requiredSchema.fieldNames.toSeq)
     }
   }
 
   override def planInputPartitions(): Array[InputPartition] = {
     // Call the server-side planning API to get the scan plan
-    val scanPlan = planningClient.planScan(databaseName, tableName, combinedFilter, projection)
+    val scanPlan = planningClient.planScan(
+      databaseName, tableName, combinedFilter, projectionColumnNames)
 
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>

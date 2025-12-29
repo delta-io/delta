@@ -327,16 +327,16 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       // Test cases covering different projection scenarios
       val testCases = Seq(
         ("single column",
-          StructType(Seq(StructField("id", LongType))),
+          Seq("id"),
           Set("id")),
         ("multiple columns",
-          StructType(Seq(StructField("id", LongType), StructField("name", StringType))),
+          Seq("id", "name"),
           Set("id", "name")),
         ("all columns",
-          StructType(Seq(StructField("id", LongType), StructField("name", StringType))),
+          Seq("id", "name"),
           Set("id", "name")),
         ("different order",
-          StructType(Seq(StructField("name", StringType), StructField("id", LongType))),
+          Seq("name", "id"),
           Set("name", "id"))
       )
 
