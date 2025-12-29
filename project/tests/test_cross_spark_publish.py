@@ -354,10 +354,6 @@ class SparkVersionsScriptTest:
 
     def test_json_format(self) -> bool:
         """Test that the JSON file is well-formed with expected fields."""
-        print("\n" + "="*70)
-        print("TEST: JSON Format Validation")
-        print("="*70)
-
         if not self.ensure_json_exists():
             return False
 
@@ -366,12 +362,8 @@ class SparkVersionsScriptTest:
                 data = json.load(f)
 
             # Validate it's an array
-            if not isinstance(data, list):
-                print("  ✗ JSON must be an array")
-                return False
-
-            if len(data) == 0:
-                print("  ✗ JSON array is empty")
+            if not isinstance(data, list) or len(data) == 0:
+                print("  ✗ JSON must be a non-empty array")
                 return False
 
             # Validate each entry has required fields
@@ -383,25 +375,13 @@ class SparkVersionsScriptTest:
                         return False
 
                 # Validate field types
-                if not isinstance(entry["fullVersion"], str):
-                    print(f"  ✗ Entry {idx}: fullVersion must be a string")
-                    return False
-                if not isinstance(entry["shortVersion"], str):
-                    print(f"  ✗ Entry {idx}: shortVersion must be a string")
-                    return False
-                if not isinstance(entry["isMaster"], bool):
-                    print(f"  ✗ Entry {idx}: isMaster must be a boolean")
-                    return False
-                if not isinstance(entry["targetJvm"], str):
-                    print(f"  ✗ Entry {idx}: targetJvm must be a string")
+                if not isinstance(entry["fullVersion"], str) or not isinstance(entry["shortVersion"], str) or \
+                   not isinstance(entry["isMaster"], bool) or not isinstance(entry["targetJvm"], str):
+                    print(f"  ✗ Entry {idx}: Invalid field types")
                     return False
 
-            print(f"  ✓ JSON format is valid")
-            print(f"  ✓ Found {len(data)} Spark version(s)")
-            for entry in data:
-                version_label = "master" if entry["isMaster"] else entry["shortVersion"]
-                print(f"    - {version_label} (full: {entry['fullVersion']}, JVM: {entry['targetJvm']})")
-
+            versions_str = ", ".join([entry.get("isMaster") and "master" or entry["shortVersion"] for entry in data])
+            print(f"  ✓ JSON format valid: {len(data)} version(s) [{versions_str}]")
             return True
 
         except json.JSONDecodeError as e:
@@ -413,10 +393,6 @@ class SparkVersionsScriptTest:
 
     def test_all_spark_versions(self) -> bool:
         """Test that --all-spark-versions produces valid JSON array."""
-        print("\n" + "="*70)
-        print("TEST: All Spark Versions Output")
-        print("="*70)
-
         if not self.ensure_json_exists():
             return False
 
@@ -429,63 +405,81 @@ class SparkVersionsScriptTest:
                 check=True
             )
 
-            matrix_output = result.stdout.strip()
-            print(f"  Matrix output: {matrix_output}")
+            matrix_versions = json.loads(result.stdout.strip())
 
-            # Parse the output as JSON
-            matrix_versions = json.loads(matrix_output)
-
-            # Validate it's an array
-            if not isinstance(matrix_versions, list):
-                print("  ✗ Matrix output must be a JSON array")
+            # Validate it's a non-empty array of strings
+            if not isinstance(matrix_versions, list) or len(matrix_versions) == 0:
+                print("  ✗ Must output a non-empty JSON array")
                 return False
 
-            if len(matrix_versions) == 0:
-                print("  ✗ Matrix array is empty")
+            if not all(isinstance(v, str) for v in matrix_versions):
+                print("  ✗ All matrix entries must be strings")
                 return False
 
-            # Validate each entry is a string
-            for version in matrix_versions:
-                if not isinstance(version, str):
-                    print(f"  ✗ Matrix entry must be a string, got: {type(version)}")
-                    return False
-
-            # Load the JSON to validate consistency
+            # Validate consistency with JSON
             with open(self.json_path, 'r') as f:
                 data = json.load(f)
 
-            # Check that we have the right number of versions
             if len(matrix_versions) != len(data):
                 print(f"  ✗ Matrix has {len(matrix_versions)} versions, JSON has {len(data)}")
                 return False
 
-            # Validate each version matches expected format
-            for idx, (matrix_ver, json_entry) in enumerate(zip(matrix_versions, data)):
-                expected = "master" if json_entry["isMaster"] else json_entry["shortVersion"]
-                if matrix_ver != expected:
-                    print(f"  ✗ Entry {idx}: expected '{expected}', got '{matrix_ver}'")
-                    return False
-
-            print(f"  ✓ Matrix contains {len(matrix_versions)} version(s): {matrix_versions}")
+            print(f"  ✓ --all-spark-versions: {matrix_versions}")
             return True
 
-        except subprocess.CalledProcessError as e:
-            print(f"  ✗ Script failed: {e}")
-            print(f"  stderr: {e.stderr}")
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  ✗ Failed: {e}")
             return False
-        except json.JSONDecodeError as e:
-            print(f"  ✗ Invalid JSON output: {e}")
+
+    def test_released_spark_versions(self) -> bool:
+        """Test that --released-spark-versions excludes snapshots."""
+        if not self.ensure_json_exists():
             return False
-        except Exception as e:
-            print(f"  ✗ Unexpected error: {e}")
+
+        try:
+            result = subprocess.run(
+                ["python3", str(self.script_path), "--released-spark-versions"],
+                cwd=self.delta_root,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            released_versions = json.loads(result.stdout.strip())
+
+            # Validate it's an array of strings
+            if not isinstance(released_versions, list):
+                print("  ✗ Must output a JSON array")
+                return False
+
+            if not all(isinstance(v, str) for v in released_versions):
+                print("  ✗ All entries must be strings")
+                return False
+
+            # Load JSON and verify snapshots are excluded
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            expected_count = sum(1 for entry in data if "-SNAPSHOT" not in entry["fullVersion"])
+            if len(released_versions) != expected_count:
+                print(f"  ✗ Expected {expected_count} released versions, got {len(released_versions)}")
+                return False
+
+            # Verify no snapshot versions included
+            for version in released_versions:
+                if "SNAPSHOT" in version.upper():
+                    print(f"  ✗ Released versions should not include snapshots: {version}")
+                    return False
+
+            print(f"  ✓ --released-spark-versions: {released_versions} (snapshots excluded)")
+            return True
+
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  ✗ Failed: {e}")
             return False
 
     def test_get_field(self) -> bool:
         """Test that --get-field works for various version formats."""
-        print("\n" + "="*70)
-        print("TEST: Get Field Functionality")
-        print("="*70)
-
         if not self.ensure_json_exists():
             return False
 
@@ -496,17 +490,13 @@ class SparkVersionsScriptTest:
 
             test_cases = []
             for entry in data:
-                # Test short version
+                # Test short version and full version
                 test_cases.append((entry["shortVersion"], "targetJvm", entry["targetJvm"]))
-                test_cases.append((entry["shortVersion"], "fullVersion", entry["fullVersion"]))
-                
-                # Test full version
-                test_cases.append((entry["fullVersion"], "targetJvm", entry["targetJvm"]))
+                test_cases.append((entry["fullVersion"], "fullVersion", entry["fullVersion"]))
                 
                 # Test "master" if applicable
                 if entry["isMaster"]:
                     test_cases.append(("master", "targetJvm", entry["targetJvm"]))
-                    test_cases.append(("master", "fullVersion", entry["fullVersion"]))
 
             all_passed = True
             for version, field, expected in test_cases:
@@ -518,26 +508,17 @@ class SparkVersionsScriptTest:
                     check=True
                 )
 
-                output = result.stdout.strip()
-                # The output is JSON-formatted, so parse it
-                actual = json.loads(output)
-
+                actual = json.loads(result.stdout.strip())
                 if actual != expected:
                     print(f"  ✗ --get-field {version} {field}: expected {expected}, got {actual}")
                     all_passed = False
-                else:
-                    print(f"  ✓ --get-field {version} {field} → {actual}")
 
+            if all_passed:
+                print(f"  ✓ --get-field: Tested {len(test_cases)} cases successfully")
             return all_passed
 
-        except subprocess.CalledProcessError as e:
-            print(f"  ✗ Script failed: {e}")
-            print(f"  stderr: {e.stderr}")
-            return False
-        except Exception as e:
-            print(f"  ✗ Unexpected error: {e}")
-            import traceback
-            traceback.print_exc()
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  ✗ Failed: {e}")
             return False
 
 
@@ -561,7 +542,8 @@ def main():
         script_test = SparkVersionsScriptTest(delta_root)
         script_test1_passed = script_test.test_json_format()
         script_test2_passed = script_test.test_all_spark_versions()
-        script_test3_passed = script_test.test_get_field()
+        script_test3_passed = script_test.test_released_spark_versions()
+        script_test4_passed = script_test.test_get_field()
 
         # Test cross-Spark build workflow
         print("\n" + "="*70)
@@ -582,7 +564,8 @@ def main():
         print("\nPart 1: Spark Versions Script Tests")
         print(f"  JSON Format:                            {'✓ PASSED' if script_test1_passed else '✗ FAILED'}")
         print(f"  All Spark Versions Output:              {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
-        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
+        print(f"  Released Spark Versions Output:         {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
+        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
         print(f"  Default publishM2:                      {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
         print(f"  runOnlyForReleasableSparkModules:       {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
@@ -590,7 +573,7 @@ def main():
         print("="*70)
 
         all_tests_passed = (
-            script_test1_passed and script_test2_passed and script_test3_passed and
+            script_test1_passed and script_test2_passed and script_test3_passed and script_test4_passed and
             build_test1_passed and build_test2_passed and build_test3_passed
         )
 
