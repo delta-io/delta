@@ -161,10 +161,16 @@ public class SparkMicroBatchStream
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
     // TODO(#5319): schema tracking for non-additive schema changes
     this.readSchemaAtSourceInit =
-        SchemaUtils.convertKernelSchemaToSparkSchema(snapshotAtSourceInit.getSchema());
+        Objects.requireNonNull(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshotAtSourceInit.getSchema()),
+            "readSchemaAtSourceInit is null");
     this.shouldValidateOffsets =
-        (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION());
-    this.schemaReadOptions = constructSchemaReadOptions();
+        Objects.requireNonNull(
+            (Boolean)
+                spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION()),
+            "shouldValidateOffsets is null");
+    this.schemaReadOptions =
+        Objects.requireNonNull(constructSchemaReadOptions(), "schemaReadOptions is null");
   }
 
   private DeltaSourceUtils.SchemaReadOptions constructSchemaReadOptions() {
