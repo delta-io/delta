@@ -1814,8 +1814,14 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             },
             String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
 
-    assert dsv1Exception.getErrorClass().equals(dsv2Exception.getErrorClass());
-    assert dsv1Exception.getMessageParameters().equals(dsv2Exception.getMessageParameters());
+    assertEquals(
+        dsv1Exception.getErrorClass(),
+        dsv2Exception.getErrorClass(),
+        "v1 connector and v2 connector should throw the same error class on forward-fill additive schema changes");
+    assertEquals(
+        dsv1Exception.getMessageParameters(),
+        dsv2Exception.getMessageParameters(),
+        "v1 connector and v2 connector should throw the same error messages on forward-fill additive schema changes");
   }
 
   /**
@@ -1901,13 +1907,41 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                 },
             "Add nullable STRUCT column"),
 
+        // Add multiple nullable columns
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s ADD COLUMN (address STRING, zip INT, time TIMESTAMP)",
+                      tableName);
+                },
+            "Add multiple nullable columns"),
+
         // Make non-nullable column nullable
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
                   sql("ALTER TABLE %s ALTER COLUMN id DROP NOT NULL", tableName);
                 },
-            "Make non-nullable column nullable"));
+            "Make non-nullable column nullable"),
+
+        // Add nullable column and then make non-nullable column nullable
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ALTER COLUMN id DROP NOT NULL", tableName);
+                  sql("ALTER TABLE %s ADD COLUMN age INT", tableName);
+                },
+            "Add nullable column and then make non-nullable column nullable"),
+
+        // Make non-nullable column nullable and then add nullable column
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ADD COLUMN age INT", tableName);
+                  sql("ALTER TABLE %s ALTER COLUMN id DROP NOT NULL", tableName);
+                },
+            "Make non-nullable column nullable and then add nullable column"));
   }
 
   // ================================================================================================
