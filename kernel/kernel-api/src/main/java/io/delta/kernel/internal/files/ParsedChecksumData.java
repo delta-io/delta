@@ -43,22 +43,13 @@ public final class ParsedChecksumData extends ParsedLogData {
     return new ParsedChecksumData(version, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedChecksumData forInlineData(long version, ColumnarBatch inlineData) {
-    return new ParsedChecksumData(version, Optional.empty(), Optional.of(inlineData));
-  }
-
   private ParsedChecksumData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);
   }
 
   @Override
-  public String getParentCategoryName() {
-    return "Checksum";
-  }
-
-  @Override
-  public Class<? extends ParsedLogData> getParentCategoryClass() {
+  public Class<? extends ParsedLogData> getGroupByCategoryClass() {
     return ParsedChecksumData.class;
   }
 }

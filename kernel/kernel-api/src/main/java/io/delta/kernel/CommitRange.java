@@ -59,10 +59,9 @@ public interface CommitRange {
    * <p>The boundary indicates whether the range was defined using a specific version number or a
    * timestamp.
    *
-   * @return an {@link Optional} containing the start boundary, or empty if the range was created
-   *     with default start parameters (version 0)
+   * @return the start boundary for this commit range
    */
-  Optional<CommitRangeBuilder.CommitBoundary> getQueryStartBoundary();
+  CommitRangeBuilder.CommitBoundary getQueryStartBoundary();
 
   /**
    * Returns the original query boundary used to define the end boundary of this commit range, if
@@ -104,5 +103,23 @@ public interface CommitRange {
    *     unsupported by Kernel
    */
   CloseableIterator<ColumnarBatch> getActions(
+      Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet);
+
+  /**
+   * Returns an iterator of commits in this commit range, where each commit is represented as a
+   * {@link CommitActions} object.
+   *
+   * @param engine the {@link Engine} to use for reading the Delta log files
+   * @param startSnapshot the snapshot for startVersion, required to ensure the table is readable by
+   *     Kernel at startVersion
+   * @param actionSet the set of action types to include in the results. Only actions of these types
+   *     will be returned in each commit's actions iterator
+   * @return a {@link CloseableIterator} over {@link CommitActions}, one per commit version in this
+   *     range
+   * @throws IllegalArgumentException if startSnapshot.getVersion() != startVersion
+   * @throws KernelException if the version range contains a version with reader protocol that is
+   *     unsupported by Kernel
+   */
+  CloseableIterator<CommitActions> getCommitActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet);
 }

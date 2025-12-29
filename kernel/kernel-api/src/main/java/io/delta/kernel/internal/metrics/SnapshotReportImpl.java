@@ -17,6 +17,7 @@ package io.delta.kernel.internal.metrics;
 
 import static java.util.Objects.requireNonNull;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.metrics.SnapshotMetricsResult;
 import io.delta.kernel.metrics.SnapshotReport;
 import java.util.Optional;
@@ -92,5 +93,10 @@ public class SnapshotReportImpl extends DeltaOperationReportImpl implements Snap
   @Override
   public Optional<Long> getProvidedTimestamp() {
     return providedTimestamp;
+  }
+
+  @Override
+  public String toJson() throws JsonProcessingException {
+    return MetricsReportSerializer.OBJECT_MAPPER.writeValueAsString(this);
   }
 }

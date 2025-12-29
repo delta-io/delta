@@ -27,14 +27,24 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
 
 /**
- * [[SQLConf]] entries for Delta features.
+ * Utility trait providing common configuration building methods for Delta SQL configs.
+ *
+ * This trait contains only utility methods and constants, no actual config entries.
+ * It is designed to be extended by multiple configuration objects without causing
+ * duplicate config registration.
  */
-trait DeltaSQLConfBase {
+trait DeltaSQLConfUtils {
   val SQL_CONF_PREFIX = "spark.databricks.delta"
 
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"$SQL_CONF_PREFIX.$key")
   def buildStaticConf(key: String): ConfigBuilder =
     SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
+}
+
+/**
+ * [[SQLConf]] entries for Delta features.
+ */
+trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
     buildConf("timeTravel.resolveOnIdentifier.enabled")
@@ -631,6 +641,32 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS =
+    buildConf("merge.preserveNullSourceStructs")
+      .internal()
+      .doc(
+        """Fixes the null expansion issue by preserving NULL structs in MERGE operations. When set
+          |to true, a NULL struct in the source will be preserved as NULL in the target after MERGE,
+          |rather than being incorrectly expanded to a struct with NULL fields. When set to false,
+          |NULL structs are expanded. This fix addresses null expansion caused by (1) struct type
+          |cast, and (2) expanding UPDATE SET * to leaf-level actions in schema evolution (when
+          |`spark.databricks.delta.merge.preserveNullSourceStructs.updateStar` is also enabled).
+          |Note: The fix for struct type cast also fixes the null expansion issue in UPDATE queries
+          |and streaming inserts with struct type cast.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
+
+  val DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS_UPDATE_STAR =
+    buildConf("merge.preserveNullSourceStructs.updateStar")
+      .internal()
+      .doc("""Fixes the null expansion issue in MERGE with UPDATE SET * actions in schema evolution.
+             |When set to true, and `spark.databricks.delta.merge.preserveNullSourceStructs` is also
+             |true, a NULL struct in the source will be preserved as NULL in the target after MERGE,
+             |rather than being incorrectly expanded to a struct with NULL fields. Otherwise, NULL
+             |structs are expanded.""".stripMargin)
+      .fallbackConf(DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)
+
   val DELTA_SCHEMA_TYPE_CHECK =
     buildConf("schema.typeCheck.enabled")
       .doc(
@@ -1005,13 +1041,6 @@ trait DeltaSQLConfBase {
       .doc("How many times to try MERGE in case of lost RDD materialized source data")
       .intConf
       .createWithDefault(4)
-
-  val MERGE_MATERIALIZE_SOURCE_EAGER =
-    buildConf("merge.materializeSource.eager")
-      .internal()
-      .doc("Materialize the source eagerly before Job 1")
-      .booleanConf
-      .createWithDefault(true)
 
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
@@ -1416,12 +1445,12 @@ trait DeltaSQLConfBase {
         "during schema evolution. This flag is guarded by the flag 'delta.enableTypeWidening'" +
         "All supported widenings are enabled with 'always' selected, which allows some " +
         "conversions between integer types and floating numbers. The value 'same_family_type' " +
-        "fallbacks to the default behavior of the guarding flag. 'never' allows no widenings.")
+        "was the historical behavior. 'never' allows no widenings.")
       .internal()
       .stringConf
       .transform(_.toUpperCase(Locale.ROOT))
       .checkValues(AllowAutomaticWideningMode.values.map(_.toString))
-      .createWithDefault(AllowAutomaticWideningMode.SAME_FAMILY_TYPE.toString)
+      .createWithDefault(AllowAutomaticWideningMode.ALWAYS.toString)
 
   val DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING =
     buildConf("typeWidening.enableStreamingSchemaTracking")
@@ -1666,6 +1695,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH =
+    buildConf("skipping.enhancedIsNullPushdownExprs.maxDepth")
+      .doc("The maximum number of times a complex expression like Or or And would have an IsNull " +
+        "pushed down in it for data skipping.")
+      .internal()
+      .intConf
+      .createWithDefault(8)
+
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
    * already used by Databricks' data skipping implementation. There's no benefit to making OSS
@@ -1755,6 +1792,46 @@ trait DeltaSQLConfBase {
         "to write data without providing values for a nullable column via DataFrame.write")
       .booleanConf
       .createWithDefault(true)
+
+  object GeneratedColumnValidateOnWriteMode extends Enumeration {
+    val OFF, LOG_ONLY, ASSERT = Value
+
+    def fromConf(conf: SQLConf): Value =
+      withName(conf.getConf(GENERATED_COLUMN_VALIDATE_ON_WRITE))
+
+    def default: Value =
+      withName(GENERATED_COLUMN_VALIDATE_ON_WRITE.defaultValueString)
+  }
+
+  val GENERATED_COLUMN_VALIDATE_ON_WRITE =
+    buildConf("generatedColumn.validateOnWrite.enabled")
+      .internal()
+      .doc("When enabled, validates generated column expressions during write operations to " +
+        "protect against disallowed expressions.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
+      .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
+
+  object ValidateCheckConstraintsMode extends Enumeration {
+    val OFF, LOG_ONLY, ASSERT = Value
+
+    def fromConf(conf: SQLConf): Value =
+      withName(conf.getConf(VALIDATE_CHECK_CONSTRAINTS))
+
+    def default: Value =
+      withName(VALIDATE_CHECK_CONSTRAINTS.defaultValueString)
+  }
+
+  val VALIDATE_CHECK_CONSTRAINTS =
+    buildConf("checkConstraints.validation.enabled")
+      .internal()
+      .doc("When enabled, validates check constraints expressions during both creation and write" +
+        " paths to protect against disallowed expressions.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(ValidateCheckConstraintsMode.values.map(_.toString))
+      .createWithDefault(ValidateCheckConstraintsMode.LOG_ONLY.toString)
 
   val DELTA_CONVERT_ICEBERG_ENABLED =
     buildConf("convert.iceberg.enabled")
@@ -1921,6 +1998,24 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK =
+    buildConf("liquid.alterColumnAfter.statsSchemaCheck")
+      .internal()
+      .doc(
+         """
+           |When enabled, validates that clustering columns remain in the stats schema after
+           | a user executes `ALTER TABLE ALTER COLUMN col1 AFTER col2`. The validation checks
+           | that all clustering columns that were in the stats schema before the column reordering
+           | remain in the stats schema after the operation. This ensures that clustering columns
+           | continue to have statistics collected even if their position in the table schema
+           | changes. When disabled, no validation is performed and stats collection may follow
+           | position-based indexing rules (e.g., `dataSkippingNumIndexedCols`), potentially
+           | causing clustering columns to lose stats collection if they move outside the indexed
+           | range.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CHANGE_COLUMN_CHECK_DEPENDENT_EXPRESSIONS_USE_V2 =
     buildConf("changeColumn.checkDependentExpressionsUseV2")
       .internal()
@@ -1932,6 +2027,19 @@ trait DeltaSQLConfBase {
           |
           |This is a safety switch - we should only turn this off when there is an issue with
           |expression checking logic that prevents a valid column change from going through.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_RENAME_COLUMN_ESCAPE_NAME =
+    buildConf("changeColumn.renameColumnEscapeName")
+      .internal()
+      .doc(
+        """
+          |Properly escape column names when renaming a column in the metadata.
+          |
+          |This is a safety switch - we should only set this to false if the fix introduces some
+          |regression.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
@@ -2095,6 +2203,20 @@ trait DeltaSQLConfBase {
           |nested field in the data and table schema.
           |When false, missing, extra or reordered columns or nested fields also trigger adding an
           |implicit cast.
+          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
+          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_STREAMING_SINK_IMPLICIT_CAST_ESCAPE_COLUMN_NAMES =
+    buildConf("streaming.sink.implicitCastEscapeColumnNames")
+      .internal()
+      .doc(
+        """
+          |When true, the code paths handling implicit casting in streaming will escape column names
+          |to properly handle e.g. dots in column names.
+          |This is a kill-switch and shouldn't be disabled unless necessary to mitigate an issue.
           |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
           |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
           |""".stripMargin)
@@ -2716,6 +2838,16 @@ trait DeltaSQLConfBase {
     .booleanConf
     .createWithDefault(false)
 
+  val FORCE_USE_PREVIEW_SHREDDING_FEATURE =
+    buildConf("variantShredding.forceUsePreviewTableFeature")
+    .internal()
+    .doc(
+      """
+        | If true, attach the 'variantShredding-preview' table feature when enabling shredding
+        | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
+
   ///////////
   // TESTING
   ///////////
@@ -2792,6 +2924,15 @@ trait DeltaSQLConfBase {
         """When disabled all DML commands using reliable metrics just log a warning on command
           |invariant violation and proceed to commit.
           |When enabled, it's decided by a per-command flag.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val ENABLE_SERVER_SIDE_PLANNING =
+    buildConf("catalog.enableServerSidePlanning")
+      .internal()
+      .doc(
+        """When enabled, DeltaCatalog will use server-side scan planning path
+          |instead of normal table loading.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 }

@@ -75,7 +75,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   /**
    * Key for identifying Unity Catalog table ID in `delta.coordinatedCommits.tableConf{-preview}`.
    */
-  final static public String UC_TABLE_ID_KEY = "ucTableId";
+  final static public String UC_TABLE_ID_KEY = "io.unitycatalog.tableId";
+  // Previously this key was ucTableId. It was later renamed.
+  final static public String UC_TABLE_ID_KEY_OLD = "ucTableId";
 
   /**
    * Key for identifying Unity Catalog metastore ID in

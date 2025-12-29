@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.iceberg.transforms
+package shadedForDelta.org.apache.iceberg.transforms
 
 import scala.collection.JavaConverters._
 
@@ -22,10 +22,10 @@ import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.commands.convert.TypeToSparkTypeWithCustomCast
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
-import org.apache.iceberg.{PartitionField, PartitionSpec, Schema, StructLike}
-import org.apache.iceberg.types.Type.TypeID
-import org.apache.iceberg.types.Types
-import org.apache.iceberg.types.TypeUtil
+import shadedForDelta.org.apache.iceberg.{PartitionField, PartitionSpec, Schema, StructLike}
+import shadedForDelta.org.apache.iceberg.types.Type.TypeID
+import shadedForDelta.org.apache.iceberg.types.Types
+import shadedForDelta.org.apache.iceberg.types.TypeUtil
 
 import org.apache.spark.sql.types.{DateType, IntegerType, MetadataBuilder, StringType, StructField}
 
@@ -140,10 +140,10 @@ object IcebergPartitionUtil {
               .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, sourceField.fieldId())
             ("", TypeUtil.visit(sourceType, new TypeToSparkTypeWithCustomCast(castTimeType)))
 
-          case Timestamps.YEAR | Dates.YEAR =>
+          case Timestamps.MICROS_TO_YEAR | Dates.YEAR =>
             (s"year($sourceColumnName)", IntegerType)
 
-          case Timestamps.DAY | Dates.DAY =>
+          case Timestamps.MICROS_TO_DAY | Dates.DAY =>
             (s"cast($sourceColumnName as date)", DateType)
 
           case t: Truncate[_] if sourceType.typeId() == TypeID.STRING =>
@@ -154,10 +154,10 @@ object IcebergPartitionUtil {
             (icebergNumericTruncateExpression(sourceColumnName, t.width().toLong),
               TypeUtil.visit(sourceType, new TypeToSparkTypeWithCustomCast(castTimeType)))
 
-          case Timestamps.MONTH | Dates.MONTH =>
+          case Timestamps.MICROS_TO_MONTH | Dates.MONTH =>
             (s"date_format($sourceColumnName, 'yyyy-MM')", StringType)
 
-          case Timestamps.HOUR =>
+          case Timestamps.MICROS_TO_HOUR =>
             (s"date_format($sourceColumnName, 'yyyy-MM-dd-HH')", StringType)
 
           case other =>

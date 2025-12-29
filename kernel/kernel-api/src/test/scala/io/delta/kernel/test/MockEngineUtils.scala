@@ -163,6 +163,9 @@ trait BaseMockFileSystemClient extends FileSystemClient {
 
   override def getFileStatus(path: String): FileStatus =
     throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def copyFileAtomically(srcPath: String, destPath: String, overwrite: Boolean): Unit =
+    throw new UnsupportedOperationException("not supported in this test suite")
 }
 
 /**

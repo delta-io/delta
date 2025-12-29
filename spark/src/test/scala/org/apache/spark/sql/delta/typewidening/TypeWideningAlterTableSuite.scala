@@ -32,13 +32,11 @@ import org.apache.spark.sql.types._
  * Suite providing core coverage for type widening using ALTER TABLE CHANGE COLUMN TYPE.
  */
 class TypeWideningAlterTableSuite
-  extends QueryTest
+  extends TypeWideningAlterTableTests
     with ParquetTest
     with TypeWideningTestMixin
-    with TypeWideningAlterTableTests
 
-trait TypeWideningAlterTableTests
-  extends DeltaExcludedBySparkVersionTestMixinShims
+trait TypeWideningAlterTableTests extends QueryTest
     with QueryErrorsBase
     with TypeWideningTestCases {
   self: QueryTest with ParquetTest with TypeWideningTestMixin =>
@@ -46,7 +44,7 @@ trait TypeWideningAlterTableTests
   import testImplicits._
 
   for {
-    testCase <- supportedTestCases ++ alterTableOnlySupportedTestCases
+    testCase <- supportedTestCases ++ restrictedAutomaticWideningTestCases
     partitioned <- BOOLEAN_DOMAIN
   } {
     test(s"type widening ${testCase.fromType.sql} -> ${testCase.toType.sql}, " +
@@ -155,7 +153,7 @@ trait TypeWideningAlterTableTests
     }
   }
 
-  testSparkMasterOnly(
+  test(
     "widening Date -> TimestampNTZ rejected when TimestampNTZ feature isn't supported") {
     withTimestampNTZDisabled {
       sql(s"CREATE TABLE delta.`$tempPath` (a date) USING DELTA")
@@ -195,5 +193,17 @@ trait TypeWideningAlterTableTests
         "toType" -> "INT"
       ))
     )
+  }
+
+  test("type widening with user-defined type in table") {
+    val dataWithUDT =
+      (1 to 10).map(x => Tuple2(x.toByte, new TestUDT.MyDenseVector(Array(x*0.5, x*2.0))))
+    append(dataWithUDT.toDF("a", "udt"))
+    sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+  }
+
+  test("type widening with null type in table") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a byte, n VOID) USING DELTA")
+    sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
   }
 }

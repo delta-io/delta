@@ -21,7 +21,7 @@ import java.util
 import java.util.Optional
 
 import scala.collection.immutable.Seq
-import scala.jdk.CollectionConverters.setAsJavaSetConverter
+import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
@@ -155,7 +155,7 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
 
   private def readCrcInfo(engine: Engine, path: String, version: Long): CRCInfo = {
     ChecksumReader
-      .getCRCInfo(
+      .tryReadChecksumFile(
         engine,
         FileStatus.of(checksumFile(new Path(f"$path/_delta_log/"), version).toString))
       .orElseThrow(() => new IllegalStateException(s"CRC info not found for version $version"))

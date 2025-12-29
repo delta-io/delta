@@ -19,8 +19,8 @@ import java.io.File
 import java.nio.file.Files
 import java.util.{Locale, Optional}
 
-import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
+import scala.jdk.CollectionConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
@@ -37,6 +37,7 @@ import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElemen
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
 import io.delta.kernel.types.ByteType.BYTE
@@ -174,8 +175,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create un-partitioned table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn =
-        getCreateTxn(engine, tablePath, testSchema)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       assert(txn.getSchema(engine) === testSchema)
       assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
@@ -195,7 +195,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val table = Table.forPath(engine, tablePath)
       val txn1 = getCreateTxn(engine, tablePath, testSchema)
 
-      txn1.commit(engine, emptyIterable())
+      commitTransaction(txn1, engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
@@ -233,8 +233,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      getCreateTxn(engine, tablePath, testSchema)
-        .commit(engine, emptyIterable())
+      val txn0 = getCreateTxn(engine, tablePath, testSchema)
+      commitTransaction(txn0, engine, emptyIterable())
+
       // Create txn1 with config changes
       val txn1 = getUpdateTxn(
         engine,
@@ -261,8 +262,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      getCreateTxn(engine, tablePath, testSchema)
-        .commit(engine, emptyIterable())
+      val txn0 = getCreateTxn(engine, tablePath, testSchema)
+      commitTransaction(txn0, engine, emptyIterable())
 
       // Create txn1 with config changes
       val txn1 = getUpdateTxn(
@@ -423,8 +424,24 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         engine,
         tablePath,
         testSchema)
-      DeltaTable.forPath(spark, tablePath)
-        .addFeatureSupport("testUnsupportedWriter")
+
+      // Use your new commitUnsafe API to write an unsupported writer feature
+      import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
+      import org.apache.spark.sql.delta.actions.Protocol
+
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val txn = deltaLog.startTransaction()
+
+      // Create Protocol action with unsupported writer feature
+      val protocolAction = Protocol(
+        minReaderVersion = 3,
+        minWriterVersion = 7,
+        readerFeatures = Some(Set.empty),
+        writerFeatures = Some(Set("testUnsupportedWriter")))
+
+      // Use your elegant API to commit directly to version 1
+      txn.commitUnsafe(tablePath, 1L, protocolAction)
+
       val e = intercept[KernelException] {
         getUpdateTxn(engine, tablePath)
       }
@@ -684,7 +701,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val schema = if (includeTimestampNtz) goldenTableSchema
         else removeTimestampNtzTypeColumns(goldenTableSchema)
 
-        val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+        val data = readTableUsingKernel(engine, parquetAllTypes, schema).toSeq
         val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
 
         appendData(engine, tblPath, isNewTable = true, schema, data = dataWithPartInfo)
@@ -732,7 +749,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           "dateType",
           "timestampType") ++ (if (includeTimestampNtz) Seq("timestampNtzType") else Seq.empty)
         val casePreservingPartCols =
-          casePreservingPartitionColNames(schema, partCols.asJava).asScala.to[Seq]
+          casePreservingPartitionColNames(schema, partCols.asJava).asScala.toSeq
 
         // get the partition values from the data batch at the given rowId
         def getPartitionValues(batch: ColumnarBatch, rowId: Int): Map[String, Literal] = {
@@ -766,7 +783,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           }.toMap
         }
 
-        val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+        val data = readTableUsingKernel(engine, parquetAllTypes, schema).toSeq
 
         // From the above table read data, convert each row as a new batch with partition info
         // Take the values of the partitionCols from the data and create a new batch with the
@@ -1022,7 +1039,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
       // Create table with stats collection enabled.
       val txn = getCreateTxn(engine, tblPath, schema, tableProperties = tableProps)
-      txn.commit(engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
       // Write one batch of data.
       val dataBatches = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
@@ -1127,7 +1144,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // we need to compare stats after removing the tightBounds field from Kernel stats
       val kernelStatsWithoutTightBounds = kernelStats.map { node =>
         val objectNode =
-          node.deepCopy().asInstanceOf[com.fasterxml.jackson.databind.node.ObjectNode]
+          node.deepCopy().asInstanceOf[ObjectNode]
         objectNode.remove("tightBounds")
         objectNode
       }

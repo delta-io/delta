@@ -16,12 +16,15 @@
 
 package io.delta.kernel.defaults
 
-import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.AbstractTestUtils
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+/** Suite to test engine metrics when loading Protocol and Metadata through checksum files. */
+class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase
+    with TestUtilsWithTableManagerAPIs
+
+/** Suite to test engine metrics when loading Protocol and Metadata through checksum files. */
+class LegacyPandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase
+    with TestUtilsWithLegacyKernelAPIs
 
 /**
  * Base trait for testing log replay optimizations when reading tables with checksum files.

@@ -22,7 +22,7 @@ import io.delta.golden.GoldenTableUtils$;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.spark.table.SparkTable;
+import io.delta.kernel.spark.catalog.SparkTable;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -30,11 +30,12 @@ import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.QueryTest;
+import org.apache.spark.sql.QueryTest$;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.expressions.Expression;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.sources.*;
@@ -42,14 +43,14 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
-import scala.Function0;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class SparkGoldenTableTest extends QueryTest {
+public class SparkGoldenTableTest {
 
   private SparkSession spark;
 
@@ -59,18 +60,26 @@ public class SparkGoldenTableTest extends QueryTest {
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
-            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
             .set(
                 "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+                "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
             .setMaster("local[*]")
             .setAppName("SparkGoldenTableTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
   }
 
-  @Override
-  public SparkSession spark() {
-    return spark;
+  @AfterAll
+  public void tearDown() {
+    if (spark != null) {
+      spark.stop();
+      spark = null;
+    }
+  }
+
+  /** Helper method to check DataFrame results against expected rows. */
+  private void checkAnswer(Dataset<Row> df, List<Row> expected) {
+    QueryTest$.MODULE$.checkAnswer(df, expected);
   }
 
   @Test
@@ -111,7 +120,7 @@ public class SparkGoldenTableTest extends QueryTest {
               expectedDataSchema.fields()[1]
             });
     assertEquals(expectedSchema, table.schema());
-    assertEquals(tableName, table.name());
+    assertEquals(String.format("delta.`%s`", tablePath), table.name());
     // Check table columns
     assertEquals(4, table.columns().length);
     assertEquals("city", table.columns()[0].name());
@@ -125,7 +134,7 @@ public class SparkGoldenTableTest extends QueryTest {
     assertEquals("identity(city)", table.partitioning()[1].toString());
 
     // Check table properties
-    assertEquals(options.asCaseSensitiveMap(), table.properties());
+    assertEquals(Map.of(), table.properties());
 
     CaseInsensitiveStringMap scanOptions =
         new CaseInsensitiveStringMap(
@@ -268,6 +277,64 @@ public class SparkGoldenTableTest extends QueryTest {
                         "AND",
                         new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
                         new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))))));
+
+    // check SupportsRuntimeV2Filtering
+    // city = 'hz' AND date = '20180520'
+    org.apache.spark.sql.connector.expressions.filter.Predicate andPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "AND", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.datePredicate});
+    SparkScanTest.checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {andPredicate},
+        Arrays.asList("date=20180520/city=hz"));
+
+    // city = 'hz' OR date = '20180520'
+    org.apache.spark.sql.connector.expressions.filter.Predicate orPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "OR", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.datePredicate});
+    SparkScanTest.checkSupportsRuntimeFilters(
+        table,
+        scanOptions,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {orPredicate},
+        Arrays.asList("city=hz", "date=20180520"));
+
+    //  city = 'hz', cnt > 10
+    SparkScanTest.checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
+          SparkScanTest.cityPredicate, SparkScanTest.dataPredicate
+        },
+        Arrays.asList("city=hz"));
+
+    //  city = 'hz' OR cnt > 10
+    org.apache.spark.sql.connector.expressions.filter.Predicate orDataPredicate =
+        new org.apache.spark.sql.connector.expressions.filter.Predicate(
+            "OR", new Expression[] {SparkScanTest.cityPredicate, SparkScanTest.dataPredicate});
+    SparkScanTest.checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {orDataPredicate},
+        SparkScanTest.allCities);
+
+    // city = date
+    SparkScanTest.checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
+          SparkScanTest.negativeInterColPredicate
+        },
+        Arrays.asList());
+
+    // city <> date
+    SparkScanTest.checkSupportsRuntimeFilters(
+        table,
+        options,
+        new org.apache.spark.sql.connector.expressions.filter.Predicate[] {
+          SparkScanTest.interColPredicate
+        },
+        SparkScanTest.allCities);
   }
 
   private void checkSupportsPushDownFilters(
@@ -347,7 +414,7 @@ public class SparkGoldenTableTest extends QueryTest {
             "a STRUCT<aa: STRING, ab: STRING, ac: STRUCT<aca: INT, acb: BIGINT>>,b INT");
 
     assertEquals(expectedSchema, table.schema());
-    assertEquals(tableName, table.name());
+    assertEquals(String.format("delta.`%s`", tablePath), table.name());
     assertEquals(0, table.partitioning().length);
 
     CaseInsensitiveStringMap options =
@@ -504,16 +571,7 @@ public class SparkGoldenTableTest extends QueryTest {
     }
     Dataset<Row> df = full.selectExpr(projectedCols.toArray(new String[0]));
 
-    Function0<Dataset<Row>> dfFunc =
-        new Function0<Dataset<Row>>() {
-          @Override
-          public Dataset<Row> apply() {
-            return df;
-          }
-        };
-    scala.collection.immutable.Seq<Row> expectedSeq =
-        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
-    checkAnswer(dfFunc, expectedSeq);
+    checkAnswer(df, expected);
   }
 
   @Test
@@ -529,10 +587,6 @@ public class SparkGoldenTableTest extends QueryTest {
             "corrupted-last-checkpoint",
             "data-reader-absolute-paths-escaped-chars",
             "data-reader-escaped-chars",
-            "data-reader-timestamp_ntz-id-mode",
-            "data-reader-timestamp_ntz-name-mode",
-            "data-skipping-basic-stats-all-types-columnmapping-id",
-            "data-skipping-basic-stats-all-types-columnmapping-name",
             // File delete-re-add-same-file-different-transactions/bar does not exist
             "delete-re-add-same-file-different-transactions",
             // Root node at key schemaString is null but field isn't nullable
@@ -565,14 +619,7 @@ public class SparkGoldenTableTest extends QueryTest {
       Dataset<Row> df = spark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
       Dataset<Row> df2 = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
       assertEquals(df.schema(), df2.schema(), "Schema mismatch for table: " + tableName);
-      checkAnswer(
-          new Function0<Dataset<Row>>() {
-            @Override
-            public Dataset<Row> apply() {
-              return df;
-            }
-          },
-          df2);
+      checkAnswer(df2, df.collectAsList());
     }
   }
 
@@ -599,19 +646,8 @@ public class SparkGoldenTableTest extends QueryTest {
 
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
-
     Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
-    Function0<Dataset<Row>> dfFunc =
-        new Function0<Dataset<Row>>() {
-          @Override
-          public Dataset<Row> apply() {
-            return df;
-          }
-        };
-
-    scala.collection.immutable.Seq<Row> expectedSeq =
-        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
-    checkAnswer(dfFunc, expectedSeq);
+    checkAnswer(df, expected);
   }
 
   private String goldenTablePath(String name) {

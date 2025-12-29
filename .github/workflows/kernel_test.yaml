@@ -20,7 +20,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     env:
-      SCALA_VERSION: 2.12.18
+      SCALA_VERSION: 2.13.16
       NUM_SHARDS: 4
       DISABLE_UNIDOC: true # Another unidoc workflow will test unidoc.
       TEST_PARALLELISM_COUNT: 4
@@ -37,11 +37,12 @@ jobs:
           echo "Runner arch: ${{ runner.arch }}"
       - name: Checkout code
         uses: actions/checkout@v4
+      # Run unit tests with JDK 17. These unit tests depend on Spark, and Spark 4.0+ is JDK 17.
       - name: install java
         uses: actions/setup-java@v4
         with:
           distribution: "zulu"
-          java-version: "8"
+          java-version: "17"
       - name: Cache SBT and dependencies
         id: cache-sbt
         uses: actions/cache@v4
@@ -59,7 +60,7 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
-      - name: Run tests
+      - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
 
@@ -68,11 +69,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
+      # Run integration tests with JDK 11, as they have no Spark dependency
       - name: install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "8"
+          java-version: "11"
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local

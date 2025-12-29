@@ -15,34 +15,28 @@
  */
 package io.delta.kernel.spark.read;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.spark.utils.PartitionUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
-import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
-import scala.Function1;
-import scala.Option;
-import scala.Tuple2;
-import scala.collection.Iterator;
 import scala.collection.JavaConverters;
 
 public class SparkBatch implements Batch {
-  private final String tablePath;
+  private final Snapshot snapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -55,7 +49,7 @@ public class SparkBatch implements Batch {
   private final List<PartitionedFile> partitionedFiles;
 
   public SparkBatch(
-      String tablePath,
+      Snapshot snapshot,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -66,7 +60,7 @@ public class SparkBatch implements Batch {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf) {
 
-    this.tablePath = Objects.requireNonNull(tablePath, "tableName is null");
+    this.snapshot = Objects.requireNonNull(snapshot, "snapshot is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -88,7 +82,9 @@ public class SparkBatch implements Batch {
   @Override
   public InputPartition[] planInputPartitions() {
     SparkSession sparkSession = SparkSession.active();
-    long maxSplitBytes = calculateMaxSplitBytes(sparkSession);
+    long maxSplitBytes =
+        PartitionUtils.calculateMaxSplitBytes(
+            sparkSession, totalBytes, partitionedFiles.size(), sqlConf);
 
     scala.collection.Seq<FilePartition> filePartitions =
         FilePartition$.MODULE$.getFilePartitions(
@@ -98,25 +94,15 @@ public class SparkBatch implements Batch {
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    boolean enableVectorizedReader =
-        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
-    scala.collection.immutable.Map<String, String> optionsWithBatch =
-        scalaOptions.$plus(
-            new Tuple2<>(
-                FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
-                String.valueOf(enableVectorizedReader)));
-    Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
-        new ParquetFileFormat()
-            .buildReaderWithPartitionValues(
-                SparkSession.active(),
-                dataSchema,
-                partitionSchema,
-                readDataSchema,
-                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-                optionsWithBatch,
-                hadoopConf);
-
-    return new SparkReaderFactory(readFunc, enableVectorizedReader);
+    return PartitionUtils.createDeltaParquetReaderFactory(
+        snapshot,
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        dataFilters,
+        scalaOptions,
+        hadoopConf,
+        sqlConf);
   }
 
   @Override
@@ -125,8 +111,9 @@ public class SparkBatch implements Batch {
     if (!(obj instanceof SparkBatch)) return false;
 
     SparkBatch that = (SparkBatch) obj;
-    return Objects.equals(this.tablePath, that.tablePath)
+    return Objects.equals(this.snapshot, that.snapshot)
         && Objects.equals(this.readDataSchema, that.readDataSchema)
+        && Objects.equals(this.dataSchema, that.dataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
         && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
         && Arrays.equals(this.dataFilters, that.dataFilters)
@@ -135,30 +122,13 @@ public class SparkBatch implements Batch {
 
   @Override
   public int hashCode() {
-    int result = tablePath.hashCode();
+    int result = snapshot.hashCode();
     result = 31 * result + readDataSchema.hashCode();
+    result = 31 * result + dataSchema.hashCode();
     result = 31 * result + partitionSchema.hashCode();
     result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
     result = 31 * result + Arrays.hashCode(dataFilters);
     result = 31 * result + Integer.hashCode(partitionedFiles.size());
     return result;
-  }
-
-  private long calculateMaxSplitBytes(SparkSession sparkSession) {
-    long defaultMaxSplitBytes = sqlConf.filesMaxPartitionBytes();
-    long openCostInBytes = sqlConf.filesOpenCostInBytes();
-    Option<Object> minPartitionNumOption = sqlConf.filesMinPartitionNum();
-
-    int minPartitionNum =
-        minPartitionNumOption.isDefined()
-            ? ((Number) minPartitionNumOption.get()).intValue()
-            : sparkSession.leafNodeDefaultParallelism();
-    if (minPartitionNum <= 0) {
-      minPartitionNum = 1;
-    }
-    long calculatedTotalBytes = totalBytes + (long) partitionedFiles.size() * openCostInBytes;
-    long bytesPerCore = calculatedTotalBytes / minPartitionNum;
-
-    return Math.min(defaultMaxSplitBytes, Math.max(openCostInBytes, bytesPerCore));
   }
 }

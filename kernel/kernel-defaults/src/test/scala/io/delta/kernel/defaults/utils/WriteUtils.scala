@@ -82,6 +82,8 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   lazy val testSchema = new StructType().add("id", INTEGER)
   lazy val dataBatches1 = generateData(testSchema, Seq.empty, Map.empty, 200, 3)
   lazy val dataBatches2 = generateData(testSchema, Seq.empty, Map.empty, 400, 5)
+  lazy val seqOfUnpartitionedDataBatch1 = Seq(Map.empty[String, Literal] -> dataBatches1)
+  lazy val seqOfUnpartitionedDataBatch2 = Seq(Map.empty[String, Literal] -> dataBatches2)
 
   val testPartitionColumns = Seq("part1", "part2")
   val testPartitionSchema = new StructType()

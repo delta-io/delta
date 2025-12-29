@@ -39,8 +39,7 @@ import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, PathWithFileSystem, Utils => DeltaUtils}
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -161,6 +160,9 @@ class DeltaLog private(
 
   /** The unique identifier for this table. */
   def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
+
+  /** Returns the truncated table ID for logging purposes. */
+  private[delta] def truncatedTableId: String = tableId.split("-").head
 
   def getInitialCatalogTable: Option[CatalogTable] = initialCatalogTable
   /**
@@ -507,7 +509,7 @@ class DeltaLog private(
 
   /** Creates the log directory and commit directory if it does not exist. */
   def createLogDirectoriesIfNotExists(): Unit = {
-    val fs = logPath.getFileSystem(newDeltaHadoopConf())
+    val fs = PathWithFileSystem.withConf(logPath, newDeltaHadoopConf()).fs
     def createDirIfNotExists(path: Path): Unit = {
       // Optimistically attempt to create the directory first without checking its existence.
       // This is efficient because we're assuming it's more likely that the directory doesn't
@@ -933,8 +935,10 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
-    val fs = rootPath.getFileSystem(hadoopConf)
-    fs.makeQualified(rootPath)
+    PathWithFileSystem
+      .withConf(rootPath, hadoopConf)
+      .fs
+      .makeQualified(rootPath)
   }
 
   /**
@@ -973,8 +977,10 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
-    val fs = rawPath.getFileSystem(hadoopConf)
-    val path = fs.makeQualified(rawPath)
+    val path = PathWithFileSystem
+      .withConf(rawPath, hadoopConf)
+      .fs
+      .makeQualified(rawPath)
     def createDeltaLog(tablePath: Path = path): DeltaLog = recordDeltaOperation(
       null,
       "delta.log.create",
@@ -1066,7 +1072,7 @@ object DeltaLog extends DeltaLogging {
       // scalastyle:off deltahadoopconfiguration
       // This method cannot be called from DataFrameReader/Writer so it's safe to assume the user
       // has set the correct file system configurations in the session configs.
-      val fs = rawPath.getFileSystem(spark.sessionState.newHadoopConf())
+      val fs = PathWithFileSystem.withConf(rawPath, spark.sessionState.newHadoopConf()).fs
       // scalastyle:on deltahadoopconfiguration
       val path = fs.makeQualified(rawPath)
 

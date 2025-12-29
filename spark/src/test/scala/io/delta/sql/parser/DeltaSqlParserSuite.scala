@@ -28,7 +28,6 @@ import org.apache.spark.sql.delta.commands.{DeltaOptimizeContext, DescribeDeltaD
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper

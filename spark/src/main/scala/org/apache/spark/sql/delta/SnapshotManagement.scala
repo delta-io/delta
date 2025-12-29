@@ -744,7 +744,8 @@ trait SnapshotManagement { self: DeltaLog =>
       log" starting from checkpoint version " +
       log"${MDC(DeltaLogKeys.START_VERSION, initSegment.checkpointProvider.version)}."
     } else log"."
-    logInfo(log"Loading version ${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Loading version " +
+      log"${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
     createSnapshotFromGivenOrEquivalentLogSegment(
         initSegment, tableCommitCoordinatorClientOpt, catalogTableOpt) { segment =>
       new Snapshot(
@@ -1540,6 +1541,17 @@ trait SnapshotManagement { self: DeltaLog =>
     targetSnapshot: Snapshot, latestSnapshot: Snapshot): Unit = {
     if (!SparkSession.active.sessionState.conf.getConf(
       DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION)) {
+      return
+    }
+
+    // Skip enforcement for delta-sharing tables since they create a faked delta-log
+    // where the version timestamp may be set to 0.
+    val deltasharingLogFileSystemSchema =
+      // Cannot import io.delta.sharing.spark.DeltaSharingLogFileSystemConstants.SCHEME
+      // in the current (spark) module since sharing depends on spark; falling back to
+      // string comparison.
+      "delta-sharing-log"
+    if (logPath.toUri.getScheme == deltasharingLogFileSystemSchema) {
       return
     }
 

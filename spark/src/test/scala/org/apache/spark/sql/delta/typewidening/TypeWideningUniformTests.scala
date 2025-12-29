@@ -44,7 +44,7 @@ trait TypeWideningUniformTests extends QueryTest
   // Unsupported type changes are all base changes that aren't supported above and all changes that
   // are not eligible for schema evolution: int -> double, int -> decimal
   private val icebergUnsupportedTestCases =
-    supportedTestCases.diff(icebergSupportedTestCases) ++ alterTableOnlySupportedTestCases
+    supportedTestCases.diff(icebergSupportedTestCases) ++ restrictedAutomaticWideningTestCases
 
   /** Helper to enable Uniform with Iceberg compatibility on the given table. */
   private def enableIcebergUniform(tableName: String, compat: IcebergCompatBase): Unit =

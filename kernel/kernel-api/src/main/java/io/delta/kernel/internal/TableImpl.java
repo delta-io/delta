@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Collections.emptyList;
 
 import io.delta.kernel.*;
 import io.delta.kernel.data.ColumnarBatch;
@@ -192,8 +193,13 @@ public class TableImpl implements Table {
         DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, new Path(tablePath), startVersion, Optional.of(endVersion));
 
-    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
-        engine, tablePath, commitFiles, actionSet);
+    // Get CommitActions for each file
+    CloseableIterator<io.delta.kernel.CommitActions> commits =
+        DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+            engine, tablePath, commitFiles, actionSet);
+
+    // Flatten and add version/timestamp columns
+    return TableChangesUtils.flattenCommitsAndAddMetadata(engine, commits);
   }
 
   protected Path getDataPath() {
@@ -227,7 +233,11 @@ public class TableImpl implements Table {
   public long getVersionBeforeOrAtTimestamp(Engine engine, long millisSinceEpochUTC) {
     SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
     return DeltaHistoryManager.getVersionBeforeOrAtTimestamp(
-        engine, getLogPath(), millisSinceEpochUTC, latestSnapshot);
+        engine,
+        getLogPath(),
+        millisSinceEpochUTC,
+        latestSnapshot,
+        emptyList() /* catalogCommits */);
   }
 
   /**
@@ -254,7 +264,11 @@ public class TableImpl implements Table {
   public long getVersionAtOrAfterTimestamp(Engine engine, long millisSinceEpochUTC) {
     SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
     return DeltaHistoryManager.getVersionAtOrAfterTimestamp(
-        engine, getLogPath(), millisSinceEpochUTC, latestSnapshot);
+        engine,
+        getLogPath(),
+        millisSinceEpochUTC,
+        latestSnapshot,
+        emptyList() /* catalogCommits */);
   }
 
   /** Helper method that loads a snapshot with proper metrics recording, logging, and reporting. */

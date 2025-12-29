@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.catalogManaged
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.TableManager
@@ -31,12 +33,20 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
     with MockFileSystemClientUtils
     with ActionUtils {
 
+  implicit class OptionOps[T](option: Option[T]) {
+    def asJava: Optional[T] = option match {
+      case Some(value) => Optional.of(value)
+      case None => Optional.empty()
+    }
+  }
+
   private def testLogSegment(
       testName: String,
       versionToLoad: Long,
       checkpointVersionOpt: Option[Long],
       deltaVersions: Seq[Long],
       ratifiedCommitVersions: Seq[Long],
+      crcVersions: Seq[Long] = Seq.empty,
       expectedDeltaAndCommitVersionsOpt: Option[Seq[Long]] = None,
       expectedExceptionClassOpt: Option[Class[_ <: Exception]] = None): Unit = {
     // TODO: test with ratified=inline
@@ -44,9 +54,10 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
     test(testName + " - ratified=materialized") {
       val checkpointFile = checkpointVersionOpt.map(v => classicCheckpointFileStatus(v)).toSeq
       val deltaFiles = deltaFileStatuses(deltaVersions)
+      val crcFiles = crcVersions.map(checksumFileStatus)
       val ratifiedCommitParsedLogDatas = parsedRatifiedStagedCommits(ratifiedCommitVersions)
 
-      val engine = createMockFSListFromEngine(checkpointFile ++ deltaFiles)
+      val engine = createMockFSListFromEngine(checkpointFile ++ deltaFiles ++ crcFiles)
 
       val testSchema = new StructType().add("c1", IntegerType.INTEGER);
 
@@ -65,7 +76,9 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
         assert(expectedExceptionClassOpt.get.isInstance(exception))
       } else {
         val snapshot = builder.build(engine)
-        val actualDeltaAndCommitFileStatuses = snapshot.getLogSegment.getDeltas.asScala
+        val logSegment = snapshot.getLogSegment
+
+        val actualDeltaAndCommitFileStatuses = logSegment.getDeltas.asScala
 
         // Check: we got the expected versions
         val actualDeltaAndCommitVersions =
@@ -83,6 +96,26 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
           } else {
             assert(FileNames.isPublishedDeltaFile(path))
           }
+        }
+
+        // Check: maxPublishedDeltaVersion
+        val expectedMaxPublishedDeltaVersion = deltaVersions
+          .filter(_ <= versionToLoad).reduceOption(_ max _).asJava
+
+        assert(logSegment.getMaxPublishedDeltaVersion === expectedMaxPublishedDeltaVersion)
+
+        // Check: lastSeenChecksum
+        val expectedLastSeenChecksumVersion = crcVersions
+          .filter(v => v <= versionToLoad && checkpointVersionOpt.forall(v >= _))
+          .lastOption
+
+        expectedLastSeenChecksumVersion match {
+          case Some(expectedVersion) =>
+            val checksumPath = logSegment.getLastSeenChecksum.get.getPath
+            val actualVersion = FileNames.checksumVersion(checksumPath)
+            assert(actualVersion === expectedVersion)
+          case None =>
+            assert(!logSegment.getLastSeenChecksum.isPresent)
         }
       }
     }
@@ -193,6 +226,19 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
     deltaVersions = Seq(10L),
     ratifiedCommitVersions = Seq(11L),
     expectedDeltaAndCommitVersionsOpt = Some(Seq(11L)))
+
+  // scalastyle:off line.size.limit
+  // _delta_log: [10.checkpoint+json, 11.json+crc, 12.json, 13.crc,                     15.crc]
+  // catalog:    [                                          13.uuid.json, 14.uuid.json, 15.uuid.json, 16.uuid.json]
+  // scalastyle:on line.size.limit
+  testLogSegment(
+    testName = "Build LogSegment with CRC files for unpublished versions",
+    versionToLoad = 16L,
+    checkpointVersionOpt = Some(10L),
+    deltaVersions = Seq(10L, 11L, 12L),
+    ratifiedCommitVersions = 13L to 16L,
+    crcVersions = Seq(11L, 13L, 15L),
+    expectedDeltaAndCommitVersionsOpt = Some(11L to 16L))
 
   // TODO: Support this case in a followup PR
   // _delta_log: [                                                  ]

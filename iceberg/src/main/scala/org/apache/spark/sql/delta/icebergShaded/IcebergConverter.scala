@@ -457,10 +457,12 @@ class IcebergConverter(spark: SparkSession)
       table.properties().getOrDefault(
         TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
 
-    if (snapshotToConvert.path.toString == writeMetadataLocation) {
+    val shouldKeepPhysicalFiles =
       // Don't attempt any file cleanup in the edge-case configuration
       // that the data location (in Uniform the table root location)
       // is the same as the Iceberg metadata location
+      (snapshotToConvert.path.toString == writeMetadataLocation)
+    if (shouldKeepPhysicalFiles) {
       expireSnapshotHelper.cleanExpiredFiles(false)
     } else {
       expireSnapshotHelper.deleteWith(path => {
@@ -616,7 +618,10 @@ class IcebergConverter(spark: SparkSession)
           case file: FileAction =>
             addBuffer ++= Option(file.wrap.add)
             removeBuffer ++= Option(file.wrap.remove)
-            dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
+            if (file.wrap.add != null || file.wrap.remove != null) {
+              // We only care about data changes in add and remove actions
+              dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
+            }
             hasDv |= file.deletionVector != null
           case c: CommitInfo =>
             commitInfo = Some(c)
@@ -659,6 +664,14 @@ class IcebergConverter(spark: SparkSession)
                 "hasDv" -> hasDv.toString
               )
             )
+            logError(
+              s"""Unsupported combination of actions for incremental conversion. Context:
+                 |version -> ${targetSnapshot.version},
+                 |commitInfo -> ${commitInfo.map(_.operation).getOrElse("")},
+                 |hasAdd -> ${addFiles.nonEmpty.toString},
+                 |hasRemove -> ${removeFiles.nonEmpty.toString},
+                 |dataChange -> ${dataChange.toString},
+                 |hasDv -> ${hasDv.toString}""".stripMargin)
             throw new UnsupportedOperationException(
               "Unsupported combination of actions for incremental conversion.")
         }

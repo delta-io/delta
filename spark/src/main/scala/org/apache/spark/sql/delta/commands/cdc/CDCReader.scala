@@ -126,6 +126,7 @@ object CDCReader extends CDCReaderImpl
           deltaLog.update(catalogTableOpt = catalogTableOpt).version
         },
         sqlContext.sparkSession,
+        catalogTableOpt,
         readSchemaSnapshot = Some(snapshotForBatchSchema))
       constructRDD(df, requiredColumns, filters)
     }
@@ -216,6 +217,7 @@ trait CDCReaderImpl extends CDCReaderBase {
    *                Note that for log files where InCommitTimestamps are enabled, the iterator
    *                must also contain the [[CommitInfo]] action.
    * @param spark - SparkSession
+   * @param catalogTableOpt - The catalog table for the Delta table
    * @param isStreaming - indicates whether the DataFrame returned is a streaming DataFrame
    * @param useCoarseGrainedCDC - ignores checks related to CDC being disabled in any of the
    *         versions and computes CDC entirely from AddFiles/RemoveFiles (ignoring
@@ -224,15 +226,18 @@ trait CDCReaderImpl extends CDCReaderBase {
    * @return CDCInfo which contains the DataFrame of the changes as well as the statistics
    *         related to the changes
    */
+  // scalastyle:off argcount
   def changesToDF(
       readSchemaSnapshot: SnapshotDescriptor,
       start: Long,
       end: Long,
       changes: Iterator[(Long, Seq[Action])],
       spark: SparkSession,
+      catalogTableOpt: Option[CatalogTable],
       isStreaming: Boolean = false,
       useCoarseGrainedCDC: Boolean = false,
       startVersionSnapshot: Option[SnapshotDescriptor] = None): CDCVersionDiffInfo = {
+  // scalastyle:on argcount
     val deltaLog = readSchemaSnapshot.deltaLog
 
     if (end < start) {
@@ -250,7 +255,7 @@ trait CDCReaderImpl extends CDCReaderBase {
     val removeFiles = ListBuffer[CDCDataSpec[RemoveFile]]()
 
     val startVersionMetadata = startVersionSnapshot.map(_.metadata).getOrElse {
-      deltaLog.getSnapshotAt(start).metadata
+      deltaLog.getSnapshotAt(start, catalogTableOpt = catalogTableOpt).metadata
     }
     if (!useCoarseGrainedCDC && !isCDCEnabledOnTable(startVersionMetadata, spark)) {
       throw DeltaErrors.changeDataNotRecordedException(start, start, end)
@@ -600,37 +605,6 @@ trait CDCReaderImpl extends CDCReaderBase {
   }
 
   /**
-   * Builds a map from commit versions to associated commit timestamps where the timestamp
-   * is the modification time of the commit file. Note that this function will not return
-   * InCommitTimestamps, it is up to the consumer of this function to decide whether the
-   * file modification time is the correct commit timestamp or whether they need to read the ICT.
-   *
-   * @param start  start commit version
-   * @param end  end commit version (inclusive)
-   */
-  def getNonICTTimestampsByVersion(
-      deltaLog: DeltaLog,
-      start: Long,
-      end: Long): Map[Long, Timestamp] = {
-    // Correct timestamp values are only available through DeltaHistoryManager.getCommits(). Commit
-    // info timestamps are wrong, and file modification times are wrong because they need to be
-    // monotonized first. This just performs a list (we don't read the contents of the files in
-    // getCommits()) so the performance overhead is minimal.
-    val monotonizationStart =
-      math.max(start - DeltaHistoryManager.POTENTIALLY_UNMONOTONIZED_TIMESTAMPS, 0)
-    val commits = DeltaHistoryManager.getCommitsWithNonIctTimestamps(
-      deltaLog.store,
-      deltaLog.logPath,
-      monotonizationStart,
-      Some(end + 1),
-      deltaLog.newDeltaHadoopConf())
-
-    // Note that the timestamps come from filesystem modification timestamps, so they're
-    // milliseconds since epoch and we don't need to deal with timezones.
-    commits.map(f => (f.version -> new Timestamp(f.timestamp))).toMap
-  }
-
-  /**
    * Get the block of change data from start to end Delta log versions (both sides inclusive).
    * The returned DataFrame has isStreaming set to false.
    *
@@ -647,18 +621,20 @@ trait CDCReaderImpl extends CDCReaderBase {
       start: Long,
       end: Long,
       spark: SparkSession,
+      catalogTableOpt: Option[CatalogTable] = None,
       readSchemaSnapshot: Option[Snapshot] = None,
       useCoarseGrainedCDC: Boolean = false,
       startVersionSnapshot: Option[SnapshotDescriptor] = None): DataFrame = {
 
     val changesWithinRange = deltaLog.getChanges(
-      start, end, catalogTableOpt = None, failOnDataLoss = false)
+      start, end, catalogTableOpt, failOnDataLoss = false)
     changesToDF(
       readSchemaSnapshot.getOrElse(deltaLog.unsafeVolatileSnapshot),
       start,
       end,
       changesWithinRange,
       spark,
+      catalogTableOpt,
       isStreaming = false,
       useCoarseGrainedCDC = useCoarseGrainedCDC,
       startVersionSnapshot = startVersionSnapshot)
@@ -831,14 +807,6 @@ trait CDCReaderImpl extends CDCReaderBase {
     val commitInfo = versionToCommitInfo.get(fileVersion.version)
     new CDCDataSpec(fileVersion, addFiles.toSeq, commitInfo)
   }.toSeq
-
-  /**
-   * Represents the changes between some start and end version of a Delta table
-   * @param fileChangeDf contains all of the file changes (AddFile, RemoveFile, AddCDCFile)
-   * @param numFiles the number of AddFile + RemoveFile + AddCDCFiles that are in the df
-   * @param numBytes the total size of the AddFile + RemoveFile + AddCDCFiles that are in the df
-   */
-  case class CDCVersionDiffInfo(fileChangeDf: DataFrame, numFiles: Long, numBytes: Long)
 
   override def getConstructedCDCRelation(
     snapshotWithSchema: SnapshotWithSchemaMode,

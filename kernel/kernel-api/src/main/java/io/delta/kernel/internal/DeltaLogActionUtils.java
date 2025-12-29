@@ -18,20 +18,16 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.CommitActions;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
-import io.delta.kernel.expressions.ExpressionEvaluator;
-import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
-import io.delta.kernel.internal.replay.ActionsIterator;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
@@ -137,60 +133,6 @@ public class DeltaLogActionUtils {
     verifyDeltaVersions(commitFiles, startVersion, endVersionOpt, tablePath);
 
     return commitFiles;
-  }
-
-  /**
-   * Read the given commitFiles and return the contents as an iterator of batches. Also adds two
-   * columns "version" and "timestamp" that store the commit version and timestamp for the commit
-   * file that the batch was read from. The "version" and "timestamp" columns are the first and
-   * second columns in the returned schema respectively and both of {@link LongType}
-   *
-   * @param commitFiles list of delta commit files to read
-   * @param readSchema JSON schema to read
-   * @return an iterator over the contents of the files in the same order as the provided files
-   */
-  public static CloseableIterator<ColumnarBatch> readCommitFiles(
-      Engine engine, List<FileStatus> commitFiles, StructType readSchema) {
-    return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty())
-        .map(
-            actionWrapper -> {
-              long timestamp =
-                  actionWrapper
-                      .getTimestamp()
-                      .orElseThrow(
-                          () ->
-                              new RuntimeException("Commit files should always have a timestamp"));
-              ExpressionEvaluator commitVersionGenerator =
-                  wrapEngineException(
-                      () ->
-                          engine
-                              .getExpressionHandler()
-                              .getEvaluator(
-                                  readSchema,
-                                  Literal.ofLong(actionWrapper.getVersion()),
-                                  LongType.LONG),
-                      "Get the expression evaluator for the commit version");
-              ExpressionEvaluator commitTimestampGenerator =
-                  wrapEngineException(
-                      () ->
-                          engine
-                              .getExpressionHandler()
-                              .getEvaluator(readSchema, Literal.ofLong(timestamp), LongType.LONG),
-                      "Get the expression evaluator for the commit timestamp");
-              ColumnVector commitVersionVector =
-                  wrapEngineException(
-                      () -> commitVersionGenerator.eval(actionWrapper.getColumnarBatch()),
-                      "Evaluating the commit version expression");
-              ColumnVector commitTimestampVector =
-                  wrapEngineException(
-                      () -> commitTimestampGenerator.eval(actionWrapper.getColumnarBatch()),
-                      "Evaluating the commit timestamp expression");
-
-              return actionWrapper
-                  .getColumnarBatch()
-                  .withNewColumn(0, COMMIT_VERSION_STRUCT_FIELD, commitVersionVector)
-                  .withNewColumn(1, COMMIT_TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
-            });
   }
 
   /**
@@ -318,80 +260,26 @@ public class DeltaLogActionUtils {
   }
 
   /**
-   * Returns the delta actions from the delta files provided in commitFiles. Reads and returns the
-   * actions requested in actionSet. In addition, this function does a few key things:
+   * Returns CommitActions for each commit file. CommitActions are ordered by increasing version.
+   *
+   * <p>This function automatically:
    *
    * <ul>
-   *   <li>Performs protocol validations: we always read the protocol action. If we see a protocol
-   *       action, we validate that it is compatible with Kernel. If the protocol action was not
-   *       requested in actionSet, we remove it from the returned columnar batches.
-   *   <li>Adds commit version column: the first column in the returned batches will be the commit
-   *       version
-   *   <li>Add commit timestamp column: the second column in the returned batches will be the
-   *       timestamp column. This timestamp is the inCommitTimestamp if it is available, otherwise
-   *       it is the file modification time for the commit file.
-   * </ul>
-   *
-   * <p>For the returned columnar batches:
-   *
-   * <ul>
-   *   <li>Each row within the same batch is guaranteed to have the same commit version
-   *   <li>The batch commit versions are monotonically increasing
-   *   <li>The top-level columns include "version", "timestamp", and the actions requested in
-   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
-   *       respectively. The remaining columns are based on the actions requested and each have the
-   *       schema found in {@code DeltaAction.schema}.
-   *   <li>It is possible for a row to be all null
+   *   <li>Performs protocol validation by reading and validating the protocol action
+   *   <li>Extracts commit timestamp using inCommitTimestamp if available, otherwise file
+   *       modification time
+   *   <li>Filters out protocol and commitInfo actions if not requested in actionSet
    * </ul>
    */
-  public static CloseableIterator<ColumnarBatch> getActionsFromCommitFilesWithProtocolValidation(
+  public static CloseableIterator<CommitActions> getActionsFromCommitFilesWithProtocolValidation(
       Engine engine,
       String tablePath,
       List<FileStatus> commitFiles,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Create a new action set which is a super set of the requested actions.
-    // The extra actions are needed either for checks or to extract
-    // extra information. We will strip out the extra actions before
-    // returning the result.
-    Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
-    copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // commitInfo is needed to extract the inCommitTimestamp of delta files, this is used in
-    // ActionsIterator to resolve the timestamp when available
-    copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
-    // Determine whether the additional actions were in the original set.
-    boolean shouldDropProtocolColumn =
-        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    boolean shouldDropCommitInfoColumn =
-        !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
 
-    StructType readSchema =
-        new StructType(
-            copySet.stream()
-                .map(action -> new StructField(action.colName, action.schema, true))
-                .collect(Collectors.toList()));
-    logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
-
-    return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema)
-        .map(
-            batch -> {
-              int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
-              ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-              for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
-                if (!protocolVector.isNullAt(rowId)) {
-                  Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                  TableFeatures.validateKernelCanReadTheTable(protocol, tablePath);
-                }
-              }
-              ColumnarBatch batchToReturn = batch;
-              if (shouldDropProtocolColumn) {
-                batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
-              }
-              int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
-              if (shouldDropCommitInfoColumn) {
-                batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
-              }
-              return batchToReturn;
-            });
+    // For each commit file, create a CommitActions
+    return toCloseableIterator(commitFiles.iterator())
+        .map(commitFile -> new CommitActionsImpl(engine, commitFile, tablePath, actionSet));
   }
 
   //////////////////////

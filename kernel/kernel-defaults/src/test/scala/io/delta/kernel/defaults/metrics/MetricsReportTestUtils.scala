@@ -61,10 +61,10 @@ trait MetricsReportTestUtils extends TestUtils {
         f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
       }
       logger.warn("Caught exception:", e)
-      (reports, Some(e))
+      (reports.toSeq, Some(e))
     } else {
       f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
-      (reports, Option.empty)
+      (reports.toSeq, Option.empty)
     }
   }
 

@@ -20,7 +20,6 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
@@ -29,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
@@ -42,7 +42,6 @@ import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
@@ -202,6 +201,44 @@ class DeltaSuite extends QueryTest
     // append more
     Seq(4, 5, 6).toDF().write.format("delta").mode("append").save(tempDir.toString)
     checkAnswer(data.toDF(), Row(1) :: Row(2) :: Row(3) :: Row(4) :: Row(5) :: Row(6) :: Nil)
+  }
+
+  test("null struct with NullType field kept as null") {
+    withTempTable(createTable = false) { tableName =>
+      Seq(((null, 2), 1), (null, 2)).toDF("key", "value")
+        .write.format("delta").saveAsTable(tableName)
+
+      // Evolve the schema because tables with NullType columns cannot be read currently.
+      Seq(((10, 10), 10)).toDF("key", "value")
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .saveAsTable(tableName)
+
+      // Confirm struct value stays as null (fields are not set to null).
+      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"value" === 2)
+      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
+  }
+
+  test("null struct with NullType field, with backticks in the column name, kept as null") {
+    withTempTable(createTable = false) { tableName =>
+      Seq(((null, 2), 1), (null, 2)).toDF("key`", "val`ue")
+        .write.format("delta").saveAsTable(tableName)
+
+      // Evolve the schema because tables with NullType columns cannot be read currently.
+      Seq(((10, 10), 10)).toDF("key`", "val`ue")
+        .write
+        .format("delta")
+        .option("mergeSchema", "true")
+        .mode("append")
+        .saveAsTable(tableName)
+
+      // Confirm struct value stays as null (fields are not set to null).
+      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"`val``ue`" === 2)
+      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
   }
 
   test("partitioned append - nulls") {
@@ -1492,7 +1529,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().collect()
         }
-        assert(thrown.getMessage.contains(THROWS_ON_CORRUPTED_FILE_ERROR_MSG))
+        assert(thrown.getMessage.contains("[FAILED_READ_FILE.NO_HINT]"))
       }
     }
   }
@@ -1544,7 +1581,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().collect()
       }
-      assert(thrown.getMessage.contains(THROWS_ON_DELETED_FILE_ERROR_MSG))
+      assert(thrown.getMessage.contains("[FAILED_READ_FILE.FILE_NOT_EXIST]"))
     }
   }
 
@@ -2642,8 +2679,9 @@ class DeltaSuite extends QueryTest
       spark.sessionState.conf.setConfString(
         "spark.databricks.delta.write.txnVersion", "someVersion")
     }
-    assert(e.getMessage == "spark.databricks.delta.write.txnVersion should be " +
-      "long, but was someVersion")
+    assert(e.getMessage ==
+      "spark.databricks.delta.write.txnVersion should be long, but was someVersion" ||
+      e.getMessage.contains("INVALID_CONF_VALUE.TYPE_MISMATCH"))
 
     // clean up
     spark.conf.unset("spark.databricks.delta.write.txnAppId")

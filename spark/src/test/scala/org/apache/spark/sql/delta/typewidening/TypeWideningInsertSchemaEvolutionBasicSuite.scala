@@ -53,15 +53,14 @@ class TypeWideningInsertSchemaEvolutionBasicSuite
  */
 trait TypeWideningInsertSchemaEvolutionBasicTests
   extends DeltaInsertIntoTest
-  with TypeWideningTestCases
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with TypeWideningTestCases {
   self: QueryTest with TypeWideningTestMixin with DeltaDMLTestUtils =>
 
   import testImplicits._
   import scala.collection.JavaConverters._
 
   for {
-    testCase <- alterTableOnlySupportedTestCases ++ supportedTestCases
+    testCase <- restrictedAutomaticWideningTestCases ++ supportedTestCases
   } {
     test(s"INSERT - always automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
@@ -86,7 +85,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
   }
 
   for {
-    testCase <- alterTableOnlySupportedTestCases ++ supportedTestCases
+    testCase <- restrictedAutomaticWideningTestCases ++ supportedTestCases
   } {
     test(s"INSERT - never automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
@@ -106,13 +105,15 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
     }
   }
 
-  testSparkMasterOnly(s"INSERT - logs for missed opportunity for conversion") {
-    val testCase = alterTableOnlySupportedTestCases.head
+  test(s"INSERT - logs for missed opportunity for conversion") {
+    val testCase = restrictedAutomaticWideningTestCases.head
 
     append(testCase.initialValuesDF)
 
     val events = Log4jUsageLogger.track {
-      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+      withSQLConf(
+          SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString,
+          DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "same_family_type") {
         testCase.additionalValuesDF
         .write
         .format("delta")
@@ -148,7 +149,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
   }
 
   for {
-    testCase <- supportedTestCases
+    testCase <- supportedTestCases ++ restrictedAutomaticWideningTestCases
   } {
     test(s"INSERT - automatic type widening ${testCase.fromType.sql} -> ${testCase.toType.sql}") {
       append(testCase.initialValuesDF)
@@ -167,7 +168,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
   }
 
   for {
-    testCase <- unsupportedTestCases ++ alterTableOnlySupportedTestCases
+    testCase <- unsupportedTestCases
   } {
     test(s"INSERT - unsupported automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {

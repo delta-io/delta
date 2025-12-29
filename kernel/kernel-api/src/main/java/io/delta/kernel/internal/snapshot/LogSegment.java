@@ -20,6 +20,9 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
@@ -34,7 +37,50 @@ import org.slf4j.LoggerFactory;
 
 public class LogSegment {
 
+  //////////////////////////////////////////
+  // Static factory methods and constants //
+  //////////////////////////////////////////
+
+  /**
+   * Creates a LogSegment for a newly created table from a single {@link ParsedDeltaData}. Used to
+   * construct a post-commit Snapshot after a CREATE transaction.
+   *
+   * @param logPath The path to the _delta_log directory
+   * @param parsedDeltaVersion0 The ParsedDeltaData that must be for version 0
+   * @return A new LogSegment with just this delta
+   * @throws IllegalArgumentException if the ParsedDeltaData is not file-based
+   */
+  public static LogSegment createForNewTable(Path logPath, ParsedDeltaData parsedDeltaVersion0) {
+    checkArgument(parsedDeltaVersion0.isFile(), "Currently, only file-based deltas are supported");
+    checkArgument(
+        parsedDeltaVersion0.getVersion() == 0L,
+        "Version must be 0 for a LogSegment with only a single delta");
+
+    final FileStatus deltaFile = parsedDeltaVersion0.getFileStatus();
+    final List<FileStatus> deltas = Collections.singletonList(deltaFile);
+    final List<FileStatus> checkpoints = Collections.emptyList();
+    final List<FileStatus> compactions = Collections.emptyList();
+    final Optional<Long> maxPublishedDeltaVersion =
+        parsedDeltaVersion0 instanceof ParsedPublishedDeltaData
+            ? Optional.of(0L)
+            : Optional.empty();
+
+    return new LogSegment(
+        logPath,
+        0 /* version */,
+        deltas,
+        compactions,
+        checkpoints,
+        deltaFile /* deltaAtEndVersion */,
+        Optional.empty() /* lastSeenChecksum */,
+        maxPublishedDeltaVersion);
+  }
+
   private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
+
+  //////////////////////////////////
+  // Member methods and variables //
+  //////////////////////////////////
 
   private final Path logPath;
   private final long version;
@@ -44,6 +90,7 @@ public class LogSegment {
   private final FileStatus deltaAtEndVersion;
   private final Optional<Long> checkpointVersionOpt;
   private final Optional<FileStatus> lastSeenChecksum;
+  private final Optional<Long> maxPublishedDeltaVersion;
   private final List<FileStatus> deltasAndCheckpoints;
   private final Lazy<List<FileStatus>> deltasAndCheckpointsReversed;
   private final Lazy<List<FileStatus>> compactionsReversed;
@@ -74,6 +121,10 @@ public class LogSegment {
    *     that checkpoint version.
    * @param lastSeenChecksum The most recent checksum file encountered during log directory listing,
    *     if available.
+   * @param maxPublishedDeltaVersion The maximum version among all published delta files seen during
+   *     log segment construction, if available. Note that the Published Delta file for this version
+   *     may not be included as a Delta in this LogSegment, if there was a catalog commit that took
+   *     priority over it.
    */
   public LogSegment(
       Path logPath,
@@ -82,7 +133,8 @@ public class LogSegment {
       List<FileStatus> compactions,
       List<FileStatus> checkpoints,
       FileStatus deltaAtEndVersion,
-      Optional<FileStatus> lastSeenChecksum) {
+      Optional<FileStatus> lastSeenChecksum,
+      Optional<Long> maxPublishedDeltaVersion) {
 
     ///////////////////////
     // Input validations //
@@ -144,6 +196,7 @@ public class LogSegment {
     this.checkpoints = checkpoints;
     this.deltaAtEndVersion = deltaAtEndVersion;
     this.lastSeenChecksum = lastSeenChecksum;
+    this.maxPublishedDeltaVersion = maxPublishedDeltaVersion;
     this.deltasAndCheckpoints =
         Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList());
 
@@ -208,6 +261,27 @@ public class LogSegment {
   }
 
   /**
+   * Returns the maximum published delta version observed during log segment construction.
+   *
+   * <p>This is a best-effort API that returns what was actually seen during construction, not the
+   * authoritative maximum published delta version in the log.
+   *
+   * <p>{@code Optional.empty()} means "we don't know" - not necessarily that no deltas have been
+   * published. This can occur when:
+   *
+   * <ul>
+   *   <li>Only checkpoint files were found during listing (e.g., due to log cleanup)
+   *   <li>Listing bounds did not include published delta files
+   *   <li>The table contains only catalog commits with no published deltas
+   * </ul>
+   *
+   * @return the maximum published delta version seen during construction, or empty if unknown
+   */
+  public Optional<Long> getMaxPublishedDeltaVersion() {
+    return maxPublishedDeltaVersion;
+  }
+
+  /**
    * Returns the Delta file at the end {@code version} of this LogSegment.
    *
    * <p>If this LogSegment has checkpoints and deltas, then this is the last delta.
@@ -237,6 +311,65 @@ public class LogSegment {
     return deltasCheckpointsCompactionsReversed.get();
   }
 
+  public List<ParsedCatalogCommitData> getAllCatalogCommits() {
+    return deltas.stream()
+        .map(ParsedDeltaData::forFileStatus)
+        .filter(x -> x instanceof ParsedCatalogCommitData)
+        .map(ParsedCatalogCommitData.class::cast)
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Creates a new LogSegment by extending this LogSegment with additional deltas. Used to construct
+   * a post-commit Snapshot from a previous Snapshot.
+   *
+   * <p>The additional deltas must be contiguous and start at version + 1.
+   *
+   * @param addedDeltas List of ParsedDeltaData to add (must be contiguous and start at current
+   *     version + 1)
+   * @return A new LogSegment with the additional deltas
+   * @throws IllegalArgumentException if deltas are not contiguous or don't start at version + 1
+   */
+  public LogSegment newWithAddedDeltas(List<ParsedDeltaData> addedDeltas) {
+    if (addedDeltas.isEmpty()) {
+      return this;
+    }
+
+    // Validate file-based (not inline), contiguous, and starts at version + 1. Then, convert to
+    // file status.
+    final List<FileStatus> newDeltaFileStatuses = new ArrayList<>(addedDeltas.size());
+    long expectedVersion = version + 1;
+
+    for (ParsedDeltaData delta : addedDeltas) {
+      checkArgument(delta.isFile(), "Currently, only file-based deltas are supported");
+
+      checkArgument(
+          delta.getVersion() == expectedVersion,
+          "Delta versions must be contiguous. Expected %d but got %d",
+          expectedVersion,
+          delta.getVersion());
+
+      newDeltaFileStatuses.add(delta.getFileStatus());
+
+      expectedVersion++;
+    }
+
+    final List<FileStatus> combinedDeltas = new ArrayList<>(deltas);
+    combinedDeltas.addAll(newDeltaFileStatuses);
+
+    final ParsedDeltaData lastAddedDelta = ListUtils.getLast(addedDeltas);
+
+    return new LogSegment(
+        logPath,
+        lastAddedDelta.getVersion(), // Use the updated version
+        combinedDeltas,
+        compactions, // Keep existing compactions
+        checkpoints, // Keep existing checkpoints
+        lastAddedDelta.getFileStatus(),
+        lastSeenChecksum, // Keep existing lastSeenChecksum
+        maxPublishedDeltaVersion); // Keep existing maxPublishedDeltaVersion
+  }
+
   @Override
   public String toString() {
     return String.format(
@@ -247,7 +380,8 @@ public class LogSegment {
             + "  checkpoints=[%s\n  ],\n"
             + "  deltaAtEndVersion=%s,\n"
             + "  lastSeenChecksum=%s,\n"
-            + "  checkpointVersion=%s\n"
+            + "  checkpointVersion=%s,\n"
+            + "  maxPublishedDeltaVersion=%s\n"
             + "}",
         logPath,
         version,
@@ -255,7 +389,8 @@ public class LogSegment {
         formatList(checkpoints),
         deltaAtEndVersion,
         lastSeenChecksum.map(FileStatus::toString).orElse("None"),
-        checkpointVersionOpt.map(String::valueOf).orElse("None"));
+        checkpointVersionOpt.map(String::valueOf).orElse("None"),
+        maxPublishedDeltaVersion.map(String::valueOf).orElse("None"));
   }
 
   @Override
@@ -271,19 +406,19 @@ public class LogSegment {
   private void validateDeltasAreDeltas(List<FileStatus> deltas) {
     checkArgument(
         deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
-        "deltas must all be actual delta (commit) files");
+        () -> "deltas must all be actual delta (commit) files: " + deltas);
   }
 
   private void validateCompactionsAreCompactions(List<FileStatus> compactions) {
     checkArgument(
         compactions.stream().allMatch(fs -> FileNames.isLogCompactionFile(fs.getPath())),
-        "compactions must all be actual log compaction files");
+        () -> "compactions must all be actual log compaction files: " + compactions);
   }
 
   private void validateCheckpointsAreCheckpoints(List<FileStatus> checkpoints) {
     checkArgument(
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
-        "checkpoints must all be actual checkpoint files");
+        () -> "checkpoints must all be actual checkpoint files: " + checkpoints);
   }
 
   private void validateIndividualCompactionVersions(List<FileStatus> compactions) {
@@ -294,7 +429,7 @@ public class LogSegment {
                   Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
                   return versions._1 < versions._2;
                 }),
-        "compactions must have start version less than end version");
+        () -> "compactions must have start version less than end version: " + compactions);
   }
 
   private void validateCheckpointVersionsAreSame(
@@ -304,7 +439,7 @@ public class LogSegment {
           checkpoints.stream()
               .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
               .allMatch(v -> checkpointVersionOpt.get().equals(v)),
-          "All checkpoint files must have the same version");
+          () -> "All checkpoint files must have the same version: " + checkpoints);
     }
   }
 
@@ -315,13 +450,15 @@ public class LogSegment {
           long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
           checkArgument(
               checksumVersion <= version,
-              "checksum file's version should be less than or equal to logSegment's version");
+              "checksum version (%d) should be less than or equal to LogSegment version (%d)",
+              checksumVersion,
+              version);
           checkpointVersionOpt.ifPresent(
               checkpointVersion ->
                   checkArgument(
                       checksumVersion >= checkpointVersion,
-                      "checksum file's version %s should be greater than or equal to "
-                          + "checkpoint version %s",
+                      "checksum version (%d) should be greater than or equal to checkpoint "
+                          + "version (%d)",
                       checksumVersion,
                       checkpointVersion));
         });
@@ -333,22 +470,25 @@ public class LogSegment {
         checkpointVersion -> {
           checkArgument(
               deltaVersions.get(0) == checkpointVersion + 1,
-              "First delta file version must equal checkpointVersion + 1");
+              "First delta file version (%d) must equal checkpointVersion + 1 (%d)",
+              deltaVersions.get(0),
+              checkpointVersion + 1);
         });
   }
 
   private void validateLastDeltaVersionIsLogSegmentVersion(List<Long> deltaVersions, long version) {
     checkArgument(
         ListUtils.getLast(deltaVersions) == version,
-        "Last delta file version must equal the version of this LogSegment");
+        "Last delta file version (%d) must equal LogSegment version (%d)",
+        ListUtils.getLast(deltaVersions),
+        version);
   }
 
   private void validateDeltaVersionsAreContiguous(List<Long> deltaVersions) {
     for (int i = 1; i < deltaVersions.size(); i++) {
-      if (deltaVersions.get(i) != deltaVersions.get(i - 1) + 1) {
-        throw new IllegalArgumentException(
-            String.format("Delta versions must be contiguous: %s", deltaVersions));
-      }
+      checkArgument(
+          deltaVersions.get(i) == deltaVersions.get(i - 1) + 1,
+          () -> "Delta versions must be contiguous: " + deltaVersions);
     }
   }
 
@@ -365,7 +505,11 @@ public class LogSegment {
                           .orElse(true);
                   return checkpointVersionOkay && versions._2 <= version;
                 }),
-        "compactions must have start version > checkpointVersion AND end version <= version");
+        () ->
+            String.format(
+                "compactions must have startVersion > checkpointVersion (%d) AND endVersion <= "
+                    + "version (%d): %s",
+                checkpointVersionOpt.orElse(-1L), version, compactions));
   }
 
   private void validateCheckpointVersionEqualsLogSegmentVersion(
@@ -374,18 +518,23 @@ public class LogSegment {
         checkpointVersion -> {
           checkArgument(
               checkpointVersion == version,
-              "If there are no deltas, then checkpointVersion must equal the version "
-                  + "of this LogSegment");
+              "If no deltas, then checkpointVersion (%d) must equal LogSegment version (%d)",
+              checkpointVersion,
+              version);
         });
   }
 
   private void validateDeltaAtEndVersion(long version, FileStatus deltaAtEndVersion) {
     checkArgument(
         FileNames.isCommitFile(deltaAtEndVersion.getPath()),
-        "deltaAtEndVersion must be a delta file");
+        "deltaAtEndVersion must be a delta file: " + deltaAtEndVersion);
+
+    final long deltaVersion = FileNames.deltaVersion(deltaAtEndVersion.getPath());
     checkArgument(
-        FileNames.deltaVersion(deltaAtEndVersion.getPath()) == version,
-        "deltaAtEndVersion must have version equal to the version of this LogSegment");
+        deltaVersion == version,
+        "deltaAtEndVersion (%d) must be equal to LogSegment version (%d)",
+        deltaVersion,
+        version);
   }
 
   //////////////////////////

@@ -15,12 +15,18 @@
  */
 package io.delta.kernel.spark.read;
 
-import io.delta.kernel.data.MapValue;
+import static io.delta.kernel.spark.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
+
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.data.ScanStateRow;
+import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
+import io.delta.kernel.spark.utils.PartitionUtils;
 import io.delta.kernel.spark.utils.ScalaUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -28,23 +34,62 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
+import org.apache.spark.sql.connector.expressions.FieldReference;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
+import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
-import scala.collection.JavaConverters;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
-public class SparkScan implements Scan, SupportsReportStatistics {
+public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
-  private final String tablePath;
+  /** Supported streaming options for the V2 connector. */
+  private static final List<String> SUPPORTED_STREAMING_OPTIONS =
+      Collections.unmodifiableList(
+          Arrays.asList(
+              DeltaOptions.STARTING_VERSION_OPTION(),
+              DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
+              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
+
+  /**
+   * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
+   * startingVersion, maxFilesPerTrigger, and maxBytesPerTrigger are supported. User-defined custom
+   * options (not in DeltaOptions) are allowed to pass through.
+   */
+  private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  DeltaOptions.EXCLUDE_REGEX_OPTION().toLowerCase(),
+                  DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
+                  DeltaOptions.IGNORE_CHANGES_OPTION().toLowerCase(),
+                  DeltaOptions.IGNORE_DELETES_OPTION().toLowerCase(),
+                  DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase(),
+                  DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
+                  DeltaOptions.STARTING_TIMESTAMP_OPTION().toLowerCase(),
+                  DeltaOptions.CDC_READ_OPTION().toLowerCase(),
+                  DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
+                  DeltaOptions.CDC_END_VERSION().toLowerCase(),
+                  DeltaOptions.CDC_END_TIMESTAMP().toLowerCase(),
+                  DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase(),
+                  DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS().toLowerCase(),
+                  DeltaOptions.STREAMING_SOURCE_TRACKING_ID().toLowerCase(),
+                  DeltaOptions.ALLOW_SOURCE_COLUMN_DROP().toLowerCase(),
+                  DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME().toLowerCase(),
+                  DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE().toLowerCase())));
+
+  private final DeltaSnapshotManager snapshotManager;
+  private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -58,12 +103,13 @@ public class SparkScan implements Scan, SupportsReportStatistics {
   private final ZoneId zoneId;
 
   // Planned input files and stats
-  private final List<PartitionedFile> partitionedFiles = new ArrayList<>();
+  private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
   private volatile boolean planned = false;
 
   public SparkScan(
-      String tablePath,
+      DeltaSnapshotManager snapshotManager,
+      Snapshot initialSnapshot,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -72,9 +118,8 @@ public class SparkScan implements Scan, SupportsReportStatistics {
       io.delta.kernel.Scan kernelScan,
       CaseInsensitiveStringMap options) {
 
-    final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
-    this.tablePath =
-        normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
+    this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
+    this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
@@ -106,7 +151,7 @@ public class SparkScan implements Scan, SupportsReportStatistics {
   public Batch toBatch() {
     ensurePlanned();
     return new SparkBatch(
-        tablePath,
+        initialSnapshot,
         dataSchema,
         partitionSchema,
         readDataSchema,
@@ -120,7 +165,21 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    return new SparkMicroBatchStream();
+    DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
+    // Validate streaming options immediately after constructing DeltaOptions
+    validateStreamingOptions(deltaOptions);
+    return new SparkMicroBatchStream(
+        snapshotManager,
+        initialSnapshot,
+        hadoopConf,
+        SparkSession.active(),
+        deltaOptions,
+        getTablePath(),
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        dataFilters != null ? dataFilters : new Filter[0],
+        scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
   }
 
   @Override
@@ -152,42 +211,15 @@ public class SparkScan implements Scan, SupportsReportStatistics {
   }
 
   /**
-   * Build the partition {@link InternalRow} from kernel partition values by casting them to the
-   * desired Spark types using the session time zone for temporal types.
+   * Get the table path from the scan state.
+   *
+   * @return the table path with trailing slash
    */
-  private InternalRow getPartitionRow(MapValue partitionValues) {
-    final int numPartCols = partitionSchema.fields().length;
-    assert partitionValues.getSize() == numPartCols
-        : String.format(
-            Locale.ROOT,
-            "Partition values size from add file %d != partition columns size %d",
-            partitionValues.getSize(),
-            numPartCols);
-
-    final Object[] values = new Object[numPartCols];
-
-    // Build field name -> index map once
-    final Map<String, Integer> fieldIndex = new HashMap<>(numPartCols);
-    for (int i = 0; i < numPartCols; i++) {
-      fieldIndex.put(partitionSchema.fields()[i].name(), i);
-      values[i] = null;
-    }
-
-    // Fill values in a single pass over partitionValues
-    for (int idx = 0; idx < partitionValues.getSize(); idx++) {
-      final String key = partitionValues.getKeys().getString(idx);
-      final String strVal = partitionValues.getValues().getString(idx);
-      final Integer pos = fieldIndex.get(key);
-      if (pos != null) {
-        final StructField field = partitionSchema.fields()[pos];
-        values[pos] =
-            (strVal == null)
-                ? null
-                : PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
-      }
-    }
-    return InternalRow.fromSeq(
-        JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
+  private String getTablePath() {
+    final Engine tableEngine = DefaultEngine.create(hadoopConf);
+    final Row scanState = kernelScan.getScanState(tableEngine);
+    final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
+    return tableRoot.endsWith("/") ? tableRoot : tableRoot + "/";
   }
 
   /**
@@ -196,15 +228,15 @@ public class SparkScan implements Scan, SupportsReportStatistics {
    */
   private void planScanFiles() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
-    final Iterator<io.delta.kernel.data.FilteredColumnarBatch> scanFileBatches =
-        kernelScan.getScanFiles(tableEngine);
+    final String tablePath = getTablePath();
+    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
 
     final String[] locations = new String[0];
     final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
         scala.collection.immutable.Map$.MODULE$.empty();
 
     while (scanFileBatches.hasNext()) {
-      final io.delta.kernel.data.FilteredColumnarBatch batch = scanFileBatches.next();
+      final FilteredColumnarBatch batch = scanFileBatches.next();
 
       try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
         while (addFileRowIter.hasNext()) {
@@ -212,15 +244,7 @@ public class SparkScan implements Scan, SupportsReportStatistics {
           final AddFile addFile = new AddFile(row.getStruct(0));
 
           final PartitionedFile partitionedFile =
-              new PartitionedFile(
-                  getPartitionRow(addFile.getPartitionValues()),
-                  SparkPath.fromUrlString(tablePath + addFile.getPath()),
-                  0L,
-                  addFile.getSize(),
-                  locations,
-                  addFile.getModificationTime(),
-                  addFile.getSize(),
-                  otherConstantMetadataColumnValues);
+              PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
 
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
@@ -257,5 +281,83 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
   Configuration getConfiguration() {
     return hadoopConf;
+  }
+
+  @Override
+  public NamedReference[] filterAttributes() {
+    return Arrays.stream(partitionSchema.fields())
+        .map(field -> FieldReference.column(field.name()))
+        .toArray(NamedReference[]::new);
+  }
+
+  @Override
+  public void filter(org.apache.spark.sql.connector.expressions.filter.Predicate[] predicates) {
+
+    // Try to convert runtime predicates to catalyst expressions, then create predicate evaluators
+    List<InterpretedPredicate> evaluators = new ArrayList<>();
+    for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate : predicates) {
+      // only the predicates on partition columns will be converted
+      Optional<Expression> catalystExpr =
+          dsv2PredicateToCatalystExpression(predicate, partitionSchema);
+      if (catalystExpr.isPresent()) {
+        InterpretedPredicate predicateEvaluator =
+            org.apache.spark.sql.catalyst.expressions.Predicate.createInterpreted(
+                catalystExpr.get());
+        evaluators.add(predicateEvaluator);
+      }
+    }
+    if (evaluators.isEmpty()) {
+      return;
+    }
+
+    // Filter existing partitionedFiles with runtime filter evaluators
+    ensurePlanned();
+    List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
+    for (PartitionedFile pf : this.partitionedFiles) {
+      InternalRow partitionValues = pf.partitionValues();
+      boolean allMatch = evaluators.stream().allMatch(evaluator -> evaluator.eval(partitionValues));
+      if (allMatch) {
+        runtimeFilteredPartitionedFiles.add(pf);
+      }
+    }
+
+    // Update partitionedFiles and totalBytes, if any partition is filtered out
+    if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
+      this.partitionedFiles = runtimeFilteredPartitionedFiles;
+      this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
+    }
+  }
+
+  /**
+   * Validates that unsupported streaming options are not used. Uses a block list approach - only
+   * blocks known DeltaOptions that are unsupported, allowing user-defined custom options to pass
+   * through.
+   *
+   * <p>Note: DeltaOptions internally uses CaseInsensitiveMap, which preserves the original key
+   * casing but performs case-insensitive lookups.
+   *
+   * @param deltaOptions the DeltaOptions to validate
+   * @throws UnsupportedOperationException if unsupported options are found
+   */
+  static void validateStreamingOptions(DeltaOptions deltaOptions) {
+    List<String> unsupportedOptions = new ArrayList<>();
+    scala.collection.Iterator<String> keysIterator = deltaOptions.options().keysIterator();
+
+    while (keysIterator.hasNext()) {
+      String key = keysIterator.next();
+      // DeltaOptions uses CaseInsensitiveMap with keys already lowercased.
+      if (UNSUPPORTED_STREAMING_OPTIONS.contains(key)) {
+        unsupportedOptions.add(key);
+      }
+    }
+
+    if (!unsupportedOptions.isEmpty()) {
+      throw new UnsupportedOperationException(
+          String.format(
+              "The following streaming options are not supported: [%s]. "
+                  + "Supported options are: [%s].",
+              String.join(", ", unsupportedOptions),
+              String.join(", ", SUPPORTED_STREAMING_OPTIONS)));
+    }
   }
 }

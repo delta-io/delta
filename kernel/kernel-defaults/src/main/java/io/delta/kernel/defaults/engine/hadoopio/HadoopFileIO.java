@@ -99,6 +99,19 @@ public class HadoopFileIO implements FileIO {
     return Optional.ofNullable(hadoopConf.get(confKey));
   }
 
+  @Override
+  public void copyFileAtomically(String srcPath, String destPath, boolean overwrite)
+      throws IOException {
+    Path parsedSrcPath = new Path(srcPath);
+    Path parsedDestPath = new Path(destPath);
+    LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, parsedSrcPath.toUri().getScheme());
+
+    try (io.delta.storage.CloseableIterator<String> srcContents =
+        logStore.read(parsedSrcPath, hadoopConf)) {
+      logStore.write(parsedDestPath, srcContents, overwrite, hadoopConf);
+    }
+  }
+
   private FileSystem getFs(String path) {
     try {
       Path pathObject = new Path(path);

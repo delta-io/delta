@@ -22,6 +22,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedLogData;
 import java.util.Collections;
 import java.util.List;
@@ -37,30 +38,25 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
 
   public static class Context {
     public final String unresolvedPath;
-    public Optional<CommitBoundary> startBoundaryOpt = Optional.empty();
+    public final CommitBoundary startBoundary;
     public Optional<CommitBoundary> endBoundaryOpt = Optional.empty();
     public List<ParsedLogData> logDatas = Collections.emptyList();
 
-    public Context(String unresolvedPath) {
+    public Context(String unresolvedPath, CommitBoundary startBoundary) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
+      this.startBoundary = requireNonNull(startBoundary, "startBoundary is null");
     }
   }
 
   private final Context ctx;
 
-  public CommitRangeBuilderImpl(String unresolvedPath) {
-    ctx = new Context(unresolvedPath);
+  public CommitRangeBuilderImpl(String unresolvedPath, CommitBoundary startBoundary) {
+    ctx = new Context(unresolvedPath, startBoundary);
   }
 
   ///////////////////////////////////////
   // Public CommitRangeBuilder Methods //
   ///////////////////////////////////////
-
-  @Override
-  public CommitRangeBuilderImpl withStartBoundary(CommitBoundary startBoundary) {
-    ctx.startBoundaryOpt = Optional.of(requireNonNull(startBoundary, "startBoundary is null"));
-    return this;
-  }
 
   @Override
   public CommitRangeBuilderImpl withEndBoundary(CommitBoundary endBoundary) {
@@ -76,9 +72,6 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
 
   @Override
   public CommitRange build(Engine engine) {
-    if (!ctx.logDatas.isEmpty()) {
-      throw new UnsupportedOperationException("CommitRange does not support providing logData yet");
-    }
     validateInputOnBuild();
     return new CommitRangeFactory(engine, ctx).create(engine);
   }
@@ -88,9 +81,10 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
   ////////////////////////////
 
   private void validateInputOnBuild() {
-    // Validate that start boundary is less than or equal to end boundary if both are provided
-    if (ctx.startBoundaryOpt.isPresent() && ctx.endBoundaryOpt.isPresent()) {
-      CommitBoundary startBoundary = ctx.startBoundaryOpt.get();
+    // Validate that start boundary is less than or equal to end boundary if end boundary is
+    // provided
+    if (ctx.endBoundaryOpt.isPresent()) {
+      CommitBoundary startBoundary = ctx.startBoundary;
       CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
 
       // If both are version-based, compare versions
@@ -108,6 +102,8 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
       // Mixed types are allowed but will need runtime resolution
     }
 
-    // TODO: validate parsedLogData input
+    // Validate logData input
+    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
+    LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
   }
 }
