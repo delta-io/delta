@@ -16,17 +16,19 @@
 
 package io.delta.flink.sink
 
+import java.net.URI
+
+import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsJava, SeqHasAsJava}
+
 import io.delta.flink.TestHelper
 import io.delta.flink.table.HadoopTable
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
+
 import org.apache.flink.metrics.groups.UnregisteredMetricsGroup
 import org.apache.flink.table.data.{GenericRowData, StringData}
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.net.URI
-import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsJava, SeqHasAsJava}
 
 class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
 
@@ -48,11 +50,14 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         .withSubtaskId(0)
         .withAttemptNumber(1)
         .withDeltaTable(table)
+        .withConf(new DeltaSinkConf(schema, Map.empty[String, String].asJava))
         .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
         .build()
 
       for (i <- 0 until 20) {
-        sinkWriter.write(GenericRowData.of(i, StringData.fromString("p" + (i % 3))), null)
+        sinkWriter.write(
+          GenericRowData.of(i, StringData.fromString("p" + (i % 3))),
+          new TestSinkWriterContext(i * 100, i * 100))
       }
       val results = sinkWriter.prepareCommit()
       // Three partitions
@@ -85,11 +90,14 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         .withJobId("test-job")
         .withSubtaskId(0)
         .withAttemptNumber(1)
+        .withConf(new DeltaSinkConf(schema, Map.empty[String, String].asJava))
         .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
         .build()
 
       for (i <- 0 until 20) {
-        sinkWriter.write(GenericRowData.of(i, StringData.fromString("p" + (i % 3))), null)
+        sinkWriter.write(
+          GenericRowData.of(i, StringData.fromString("p" + (i % 3))),
+          new TestSinkWriterContext(i * 100, i * 100))
       }
       val results = sinkWriter.prepareCommit()
       // Three partitions

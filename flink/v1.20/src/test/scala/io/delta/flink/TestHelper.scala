@@ -16,26 +16,29 @@
 
 package io.delta.flink
 
+import java.io._
+import java.net.URI
+import java.nio.file.{Files, Path}
+import java.util.{Collections, Optional, UUID}
+
+import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsJava, SeqHasAsJava}
+import scala.util.Random
+
+import io.delta.kernel.{Operation, Snapshot, Table, TableManager}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
+import io.delta.kernel.internal.ScanImpl
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterable, DataFileStatus, FileStatus}
-import io.delta.kernel.{Operation, Snapshot, Table}
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-
-import java.io._
-import java.net.URI
-import java.nio.file.{Files, Path}
-import java.util.{Collections, Optional, UUID}
-import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsJava, SeqHasAsJava}
-import scala.util.Random
 
 trait TestHelper {
 
@@ -88,13 +91,6 @@ trait TestHelper {
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty): Row = {
     val table = Table.forPath(engine, tablePath)
-//    try {
-//      table.getLatestSnapshot(engine);
-//      val txn = table.createTransactionBuilder(engine, "dummyEngine", Operation.MANUAL_UPDATE)
-//        .build(engine)
-//      txn.getTransactionState(engine)
-//    } catch {
-//      case e: TableNotFoundException =>
     val txn = table.createTransactionBuilder(engine, "dummyEngine", Operation.CREATE_TABLE)
       .withSchema(engine, schema)
       .withPartitionColumns(engine, partitionCols.toList.asJava)
@@ -107,7 +103,8 @@ trait TestHelper {
       engine: Engine,
       tablePath: String,
       schema: StructType,
-      partitionCols: Seq[String] = Seq.empty): Table = {
+      partitionCols: Seq[String] = Seq.empty,
+      numRows: Long = 0): Table = {
     val table = Table.forPath(engine, tablePath)
     val txn = table.createTransactionBuilder(engine, "dummyEngine", Operation.CREATE_TABLE)
       .withSchema(engine, schema)
@@ -122,7 +119,11 @@ trait TestHelper {
     val dummyAddFile = AddFile.convertDataFileStatus(
       schema,
       URI.create(table.getPath(engine)),
-      new DataFileStatus(UUID.randomUUID().toString, 1000L, 2000L, Optional.empty),
+      new DataFileStatus(
+        UUID.randomUUID().toString,
+        1000L,
+        2000L,
+        Optional.of(dummyStatistics(numRows))),
       partitionMap,
       true,
       Map.empty[String, String].asJava,
@@ -165,6 +166,20 @@ trait TestHelper {
       CloseableIterable
         .inMemoryIterable(Utils.singletonCloseableIterator(
           SingleAction.createAddFileSingleAction(dummyAddFile.toRow)))).getPostCommitSnapshot
+  }
+
+  protected def verifyTableContent(
+      tablePath: String,
+      checker: (Long, Iterable[AddFile], java.util.Map[String, String]) => Unit): Unit = {
+    val engine = DefaultEngine.create(new Configuration())
+    val snapshot = TableManager.loadSnapshot(tablePath).build(engine)
+    val filesList = snapshot.getScanBuilder.build().asInstanceOf[ScanImpl]
+      .getScanFiles(engine, true).toInMemoryList
+    val actions = filesList.asScala
+      .flatMap(_.getRows.toInMemoryList.asScala)
+      .map(row => new AddFile(row.getStruct(0)))
+    val properties = snapshot.getTableProperties
+    checker(snapshot.getVersion, actions, properties)
   }
 
   protected def readParquet(filePath: Path, schema: StructType): Seq[Row] = {

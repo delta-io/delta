@@ -16,12 +16,13 @@
 
 package io.delta.flink.sink.dynamic
 
+import scala.jdk.CollectionConverters.MapHasAsJava
+
 import io.delta.flink.TestHelper
+
 import org.apache.flink.table.api.{DataTypes, EnvironmentSettings, Schema, TableEnvironment}
 import org.apache.flink.table.catalog.{CatalogTable, ResolvedCatalogTable, ResolvedSchema}
 import org.scalatest.funsuite.AnyFunSuite
-
-import scala.jdk.CollectionConverters.MapHasAsJava
 
 class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
 

@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.TimestampData;
 import org.apache.flink.table.types.logical.*;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.LogicalTypeRoot;
@@ -80,7 +81,7 @@ public class Conversions {
           return new io.delta.kernel.types.DecimalType(precision, scale);
         case DATE:
           return io.delta.kernel.types.DateType.DATE;
-        case TIMESTAMP_WITH_TIME_ZONE:
+        case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
           return io.delta.kernel.types.TimestampType.TIMESTAMP;
         case TIMESTAMP_WITHOUT_TIME_ZONE:
           return io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ;
@@ -153,6 +154,16 @@ public class Conversions {
       } else {
         throw new UnsupportedOperationException("Unsupported data type: " + dataType);
       }
+    }
+
+    /**
+     * Convert a Flink Timestamp Data to Kernel timestamp ( microseconds )
+     *
+     * @param input
+     * @return the microseconds
+     */
+    public static long timestamp(TimestampData input) {
+      return input.getMillisecond() * 1000 + input.getNanoOfMillisecond() / 1000;
     }
   }
 }

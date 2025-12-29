@@ -52,8 +52,9 @@ import org.slf4j.LoggerFactory;
  * </ol>
  *
  * NOTE: Unlike IcebergCommitter, which writes the checkpoint ID into snapshot to prevent a data
- * file from being added twice to the table, DeltaCommitter relies on Delta protocol to handle
- * duplicated files. Thus we don't explicitly write jobId/checkpointId into DeltaLog.
+ * file from being added twice to the table, DeltaCommitter relies on Delta protocol (transaction
+ * identifier) to handle duplicated files. Thus we don't explicitly write jobId/checkpointId into
+ * DeltaLog metadata.
  */
 public class DeltaCommitter implements Committer<DeltaCommittable> {
 
@@ -106,16 +107,26 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
           "Invalid schema evolution observed. Sink schema: {}, latest table schema: {}",
           conf.getSinkSchema(),
           latestSchema);
-      throw new RuntimeException("Invalid schema evolution observed, aborting committing");
+      throw new IllegalStateException("Invalid schema evolution observed, aborting committing");
     }
 
-    long highestWatermark =
+    long[] watermarks =
         committables.stream()
             .map(CommitRequest::getCommittable)
             .map(DeltaCommittable::getContext)
-            .mapToLong(WriterResultContext::getLowWatermark)
-            .max()
-            .orElse(0);
+            .map(context -> new long[] {context.getLowWatermark(), context.getHighWatermark()})
+            .reduce(
+                new long[] {Long.MAX_VALUE, -1L},
+                (a, b) -> {
+                  a[0] = Math.min(a[0], b[0]);
+                  a[1] = Math.max(a[1], b[1]);
+                  return a;
+                },
+                (a, b) -> {
+                  a[0] = Math.min(a[0], b[0]);
+                  a[1] = Math.max(a[1], b[1]);
+                  return a;
+                });
     final CloseableIterable<Row> dataActions =
         new CloseableIterable<Row>() {
           @Override
@@ -135,7 +146,11 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
     deltaTable.commit(
         dataActions,
         checkpointId,
-        Map.of("flink.high-watermark", String.valueOf(highestWatermark)));
+        Map.of(
+            "flink.low-watermark",
+            String.valueOf(watermarks[0]),
+            "flink.high-watermark",
+            String.valueOf(watermarks[1])));
   }
 
   private TreeMap<Long, List<CommitRequest<DeltaCommittable>>> sortCommittablesByCheckpointId(

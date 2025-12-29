@@ -17,9 +17,12 @@
 package io.delta.flink.sink;
 
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.io.Serializable;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public class DeltaSinkConf implements Serializable {
 
@@ -38,7 +41,7 @@ public class DeltaSinkConf implements Serializable {
 
     this.fileRollingSize = Long.parseLong(conf.getOrDefault(FILE_ROLLING_SIZE_KEY, "104857600"));
     switch (conf.getOrDefault(SCHEMA_EVOLUTION_MODE_KEY, "no")) {
-      case "allow":
+      case "newcolumn":
         this.schemaEvolutionPolicy = new NewColumnEvolution();
         break;
       case "no":
@@ -76,8 +79,18 @@ public class DeltaSinkConf implements Serializable {
   static class NewColumnEvolution implements SchemaEvolutionPolicy {
     @Override
     public boolean allowEvolve(StructType tableSchema, StructType sinkSchema) {
-      // TODO Not implemented
-      return false;
+      Map<String, StructField> tableFields =
+          tableSchema.fields().stream()
+              .collect(Collectors.toMap(StructField::getName, Function.identity()));
+      // Every field of sink schema must exist in table schema
+      return sinkSchema.fields().stream()
+          .allMatch(
+              field -> {
+                StructField tableField = tableFields.getOrDefault(field.getName(), null);
+                return tableField != null
+                    && tableField.getDataType().equivalent(field.getDataType())
+                    && tableField.isNullable() == field.isNullable();
+              });
     }
   }
 }

@@ -49,7 +49,7 @@ public class PostCommitOperator
           "Received committableSummary: {}, # committables: {}, checkpointId: {}",
           committableSummary,
           committableSummary.getNumberOfCommittables(),
-          committableSummary.getCheckpointId());
+          committableSummary.getCheckpointIdOrEOI());
     }
   }
 }

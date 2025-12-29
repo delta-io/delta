@@ -16,11 +16,16 @@
 
 package io.delta.flink.sink
 
+import java.util
+
+import scala.jdk.CollectionConverters.{CollectionHasAsScala, IteratorHasAsScala, SeqHasAsJava}
+
 import io.delta.flink.TestHelper
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.internal.ScanImpl
 import io.delta.kernel.internal.actions.AddFile
+
 import org.apache.flink.api.common.functions.MapFunction
 import org.apache.flink.api.common.typeinfo.{TypeInformation, Types}
 import org.apache.flink.streaming.api.datastream.DataStream
@@ -31,9 +36,6 @@ import org.apache.flink.table.types.logical.{IntType, RowType, VarCharType}
 import org.apache.flink.util.InstantiationUtil
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.util
-import scala.jdk.CollectionConverters.{CollectionHasAsScala, IteratorHasAsScala, SeqHasAsJava}
 
 class DeltaSinkSuite extends AnyFunSuite with TestHelper {
 

@@ -16,11 +16,13 @@
 
 package io.delta.flink.table
 
-import io.delta.flink.Conf
-import org.scalatest.funsuite.AnyFunSuite
-
 import java.util.function.Supplier
+
 import scala.jdk.CollectionConverters.MapHasAsJava
+
+import io.delta.flink.Conf
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class CredentialManagerSuite extends AnyFunSuite {
 

@@ -16,12 +16,13 @@
 
 package io.delta.flink.sink
 
-import io.delta.kernel.{types => ktypes}
-import org.apache.flink.table.types.logical.RowType.RowField
-import org.apache.flink.table.types.logical._
-import org.scalatest.funsuite.AnyFunSuite
-
 import scala.jdk.CollectionConverters.SeqHasAsJava
+
+import io.delta.kernel.{types => ktypes}
+
+import org.apache.flink.table.types.logical._
+import org.apache.flink.table.types.logical.RowType.RowField
+import org.scalatest.funsuite.AnyFunSuite
 
 class ConversionsSuite extends AnyFunSuite {
   private def row(fields: RowField*) = new RowType(fields.asJava)
@@ -88,8 +89,10 @@ class ConversionsSuite extends AnyFunSuite {
     val flinkSchema = row(f("counters", map))
 
     val expected = new ktypes.StructType()
-      .add("counters",
-        new ktypes.MapType(ktypes.StringType.STRING, ktypes.LongType.LONG, true), true)
+      .add(
+        "counters",
+        new ktypes.MapType(ktypes.StringType.STRING, ktypes.LongType.LONG, true),
+        true)
 
     val actual = Conversions.FlinkToDelta.schema(flinkSchema)
     assert(expected.equivalent(actual))

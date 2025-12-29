@@ -16,13 +16,14 @@
 
 package io.delta.flink.sink
 
+import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
+
 import io.delta.flink.TestHelper
 import io.delta.kernel.defaults.internal.json.JsonUtils
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
-import org.scalatest.funsuite.AnyFunSuite
 
-import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
+import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaCommittableSuite extends AnyFunSuite with TestHelper {
 

@@ -16,6 +16,11 @@
 
 package io.delta.flink.table
 
+import java.net.URI
+import java.util.{Collections, Optional}
+
+import scala.jdk.CollectionConverters.{IterableHasAsJava, MapHasAsJava}
+
 import io.delta.flink.TestHelper
 import io.delta.kernel.data.{ColumnVector, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
@@ -23,11 +28,8 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.{DataType, IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterable
-import org.scalatest.funsuite.AnyFunSuite
 
-import java.net.URI
-import java.util.{Collections, Optional}
-import scala.jdk.CollectionConverters.{IterableHasAsJava, MapHasAsJava}
+import org.scalatest.funsuite.AnyFunSuite
 
 class CCv2TableSuite extends AnyFunSuite with TestHelper {
 

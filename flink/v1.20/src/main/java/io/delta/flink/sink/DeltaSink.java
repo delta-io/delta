@@ -94,7 +94,6 @@ public class DeltaSink
     this.conf = conf;
   }
 
-  @Override
   public SinkWriter<RowData> createWriter(InitContext context) throws IOException {
     return new DeltaSinkWriter.Builder()
         .withJobId(context.getJobInfo().getJobId().toString())
@@ -102,7 +101,6 @@ public class DeltaSink
         .withAttemptNumber(context.getTaskInfo().getAttemptNumber())
         .withDeltaTable(deltaTable)
         .withConf(conf)
-        .withMetricGroup(context.metricGroup())
         .build();
   }
 

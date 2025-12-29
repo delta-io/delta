@@ -104,8 +104,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
 
     Map<String, String> writerKey =
         partitionValues.entrySet().stream()
-            .collect(
-                Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
+            .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
 
     if (!writerTasksByPartition.containsKey(writerKey)) {
       writerTasksByPartition.put(

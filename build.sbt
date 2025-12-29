@@ -1412,6 +1412,7 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
     )
   )
 
+/*
 lazy val flinkV2 = (project in file("flink/v2.0"))
   //  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
@@ -1425,6 +1426,7 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     Compile / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "main" / "java",
+    Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "java",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "scala",
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
@@ -1460,7 +1462,7 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
     )
   )
-
+*/
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)

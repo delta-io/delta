@@ -17,11 +17,12 @@
 package io.delta.flink.sink
 
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaSchemaDigestSuite extends AnyFunSuite {
 
-  test("sha256") {
+  test("digest") {
     val schema1 = new StructType()
       .add("id", IntegerType.INTEGER)
       .add("part", StringType.STRING)

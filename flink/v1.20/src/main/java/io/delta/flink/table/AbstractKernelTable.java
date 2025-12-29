@@ -33,7 +33,6 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
@@ -46,7 +45,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -114,50 +112,38 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   protected void initialize() {
-    try {
-      Catalog.TableBrief info = catalog.getTable(tableId);
-      tableUUID = info.uuid;
-      tablePath = info.tablePath;
-      loadExistingTable();
-    } catch (Throwable e) {
-      if (isTableNotFound.test(e)) {
-        Preconditions.checkArgument(schema != null);
-        initNewTable(schema, partitionColumns);
-      } else {
-        throw e;
-      }
-    }
-  }
-
-  protected void loadExistingTable() {
+    Catalog.TableBrief info = catalog.getTable(tableId);
+    tableUUID = info.uuid;
+    tablePath = info.tablePath;
     // With an existing table, partitions loaded from the table take precedence
-    final Snapshot latestSnapshot = snapshot();
-    // We use a temporary transaction to generate a TransactionStateRow.
-    // It serves as a holder for schema and partition columns.
-    // The transaction will not be committed, and is discarded afterward.
-    Row existingTableState =
-        latestSnapshot
-            .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
-            .build(getEngine())
-            .getTransactionState(getEngine());
-    this.serializableTableState = JsonUtils.rowToJson(existingTableState);
-    this.schema = TransactionStateRow.getLogicalSchema(existingTableState);
-    this.partitionColumns = TransactionStateRow.getPartitionColumnsList(existingTableState);
-  }
-
-  protected void initNewTable(StructType schema, List<String> partitionColumns) {
-    Row newTableState =
-        TableManager.buildCreateTableTransaction(getTablePath().toString(), schema, ENGINE_INFO)
-            .withDataLayoutSpec(
-                DataLayoutSpec.partitioned(
-                    Optional.of(partitionColumns)
-                        .map(
-                            nonEmpty ->
-                                nonEmpty.stream().map(Column::new).collect(Collectors.toList()))
-                        .orElseGet(Collections::emptyList)))
-            .build(getEngine())
-            .getTransactionState(getEngine());
-    this.serializableTableState = JsonUtils.rowToJson(newTableState);
+    final Optional<Snapshot> latestSnapshotOpt = snapshot();
+    if (latestSnapshotOpt.isPresent()) {
+      Snapshot latestSnapshot = latestSnapshotOpt.get();
+      // We use a temporary transaction to generate a TransactionStateRow.
+      // It serves as a holder for schema and partition columns.
+      // The transaction will not be committed, and is discarded afterward.
+      Row existingTableState =
+          latestSnapshot
+              .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
+              .build(getEngine())
+              .getTransactionState(getEngine());
+      this.serializableTableState = JsonUtils.rowToJson(existingTableState);
+      this.schema = TransactionStateRow.getLogicalSchema(existingTableState);
+      this.partitionColumns = TransactionStateRow.getPartitionColumnsList(existingTableState);
+    } else {
+      CreateTableTransactionBuilder createTxnBuilder =
+          TableManager.buildCreateTableTransaction(getTablePath().toString(), schema, ENGINE_INFO);
+      if (partitionColumns != null && !partitionColumns.isEmpty()) {
+        createTxnBuilder.withDataLayoutSpec(
+            DataLayoutSpec.partitioned(
+                Optional.of(partitionColumns)
+                    .map(
+                        nonEmpty -> nonEmpty.stream().map(Column::new).collect(Collectors.toList()))
+                    .orElseGet(Collections::emptyList)));
+      }
+      Row newTableState = createTxnBuilder.build(getEngine()).getTransactionState(getEngine());
+      this.serializableTableState = JsonUtils.rowToJson(newTableState);
+    }
   }
 
   /** Lazy initialization to ensure instances have unique UUID after serialization. */
@@ -240,15 +226,21 @@ public abstract class AbstractKernelTable implements DeltaTable {
   ExecutorService threadPool = Executors.newSingleThreadExecutor();
 
   /**
-   * Load snapshot using a separated thread. This will allow external
-   * request to interrupt the thread during time-consuming operations
-   * in loading snapshot, such as log replay.
-   * @return loaded snapshot
+   * Load snapshot using a separated thread. This will allow external request to interrupt the
+   * thread during time-consuming operations in loading snapshot, such as log replay.
+   *
+   * @return loaded snapshot, null if the table does not exist
    */
-  protected Snapshot snapshot() {
+  protected Optional<Snapshot> snapshot() {
     try {
-      return threadPool.submit(this::loadLatestSnapshot).get();
+      return Optional.of(threadPool.submit(this::loadLatestSnapshot).get());
     } catch (Exception e) {
+      if (isTableNotFound.test(e)) {
+        return Optional.empty();
+      }
+      if (e instanceof RuntimeException) {
+        throw (RuntimeException) e;
+      }
       throw new RuntimeException(e);
     }
   }
@@ -295,7 +287,10 @@ public abstract class AbstractKernelTable implements DeltaTable {
         () -> {
           Snapshot currentSnapshot = snapshot;
           if (currentSnapshot == null) {
-            currentSnapshot = snapshot();
+            currentSnapshot = snapshot().orElse(null);
+          }
+          if (currentSnapshot == null) {
+            return null;
           }
           this.schema = currentSnapshot.getSchema();
           this.partitionColumns = currentSnapshot.getPartitionColumnNames();
@@ -317,8 +312,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
         () -> {
           Engine localEngine = getEngine();
           Transaction txn;
-          try {
-            Snapshot snapshot = snapshot();
+          Optional<Snapshot> snapshotOpt = snapshot();
+          if (snapshotOpt.isPresent()) {
+            Snapshot snapshot = snapshotOpt.get();
             UpdateTableTransactionBuilder txnBuilder =
                 snapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
             if (txnId != null) {
@@ -326,23 +322,19 @@ public abstract class AbstractKernelTable implements DeltaTable {
             }
             txnBuilder.withTablePropertiesAdded(properties);
             txn = txnBuilder.build(engine);
-          } catch (Throwable e) {
-            if (isTableNotFound.test(e)) {
-              CreateTableTransactionBuilder txnBuilder =
-                  TableManager.buildCreateTableTransaction(
-                      getTablePath().toString(), getSchema(), ENGINE_INFO);
-              if (!getPartitionColumns().isEmpty()) {
-                txnBuilder.withDataLayoutSpec(
-                    DataLayoutSpec.partitioned(
-                        getPartitionColumns().stream()
-                            .map(Column::new)
-                            .collect(Collectors.toList())));
-              }
-              txnBuilder.withTableProperties(properties);
-              txn = txnBuilder.build(localEngine);
-            } else {
-              throw e;
+          } else {
+            CreateTableTransactionBuilder txnBuilder =
+                TableManager.buildCreateTableTransaction(
+                    getTablePath().toString(), getSchema(), ENGINE_INFO);
+            if (!getPartitionColumns().isEmpty()) {
+              txnBuilder.withDataLayoutSpec(
+                  DataLayoutSpec.partitioned(
+                      getPartitionColumns().stream()
+                          .map(Column::new)
+                          .collect(Collectors.toList())));
             }
+            txnBuilder.withTableProperties(properties);
+            txn = txnBuilder.build(localEngine);
           }
           TransactionCommitResult result = txn.commit(localEngine, actions);
           result.getPostCommitSnapshot().ifPresent(this::refresh);

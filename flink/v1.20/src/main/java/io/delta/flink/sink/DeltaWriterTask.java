@@ -17,9 +17,7 @@
 package io.delta.flink.sink;
 
 import io.delta.flink.table.DeltaTable;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.util.Utils;
@@ -29,6 +27,8 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.*;
 import org.apache.flink.api.connector.sink2.SinkWriter;
+import org.apache.flink.table.data.ArrayData;
+import org.apache.flink.table.data.MapData;
 import org.apache.flink.table.data.RowData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -145,47 +145,23 @@ public class DeltaWriterTask {
   private CloseableIterator<FilteredColumnarBatch> flinkRowDataAsKernelData() {
     final int numColumns = writeSchema.length();
     final ColumnVector[] columnVectors = new ColumnVector[numColumns];
-
+    RowAccess rowAccess = new RowDataListAccess(buffer);
     for (int colIdx = 0; colIdx < numColumns; colIdx++) {
       final DataType colDataType = writeSchema.at(colIdx).getDataType();
-      columnVectors[colIdx] = new RowDataColumnVectorView(buffer, colIdx, colDataType);
+      columnVectors[colIdx] = new RowDataColumnVectorView(rowAccess, colIdx, colDataType);
     }
-
     return Utils.singletonCloseableIterator(
         new FilteredColumnarBatch(
             new DefaultColumnarBatch(buffer.size(), writeSchema, columnVectors),
             Optional.empty() /* selectionVector */));
   }
 
-  static class RowDataColumnVectorView implements ColumnVector {
+  abstract static class AbstractColumnVectorView implements ColumnVector {
 
-    private final List<RowData> rows;
-    private final int colIdx;
-    private final DataType dataType;
+    protected final DataType dataType;
 
-    public RowDataColumnVectorView(List<RowData> rows, int colIdx, DataType dataType) {
-      this.rows = rows;
-      this.colIdx = colIdx;
+    public AbstractColumnVectorView(DataType dataType) {
       this.dataType = dataType;
-    }
-
-    @Override
-    public DataType getDataType() {
-      return this.dataType;
-    }
-
-    @Override
-    public int getSize() {
-      return this.rows.size();
-    }
-
-    @Override
-    public void close() {}
-
-    @Override
-    public boolean isNullAt(int rowId) {
-      checkValidRowId(rowId);
-      return rows.get(rowId).isNullAt(colIdx);
     }
 
     protected void checkValidRowId(int rowId) {
@@ -196,43 +172,162 @@ public class DeltaWriterTask {
 
     protected void checkValidDataType(DataType dataType) {
       if (!this.getDataType().equivalent(dataType)) {
-        throw new UnsupportedOperationException("Invalid value request for data type");
+        throw new UnsupportedOperationException(
+            "Invalid value request for data type: " + this.dataType + " <> " + dataType);
       }
     }
 
-    @Override
-    public int getInt(int rowId) {
-      checkValidRowId(rowId);
-      checkValidDataType(IntegerType.INTEGER);
-      return rows.get(rowId).getInt(colIdx);
+    public ArrayValue getArray(ArrayData arrayData) {
+      ArrayType arrayType = (ArrayType) getDataType();
+      ColumnVector elementView =
+          new ArrayDataColumnVectorView(arrayData, arrayType.getElementType());
+      return new ArrayValue() {
+        @Override
+        public int getSize() {
+          return arrayData.size();
+        }
+
+        @Override
+        public ColumnVector getElements() {
+          return elementView;
+        }
+      };
+    }
+
+    public MapValue getMap(MapData mapData) {
+      MapType mapType = (MapType) getDataType();
+      ColumnVector keyView =
+          new ArrayDataColumnVectorView(mapData.keyArray(), mapType.getKeyType());
+      ColumnVector valueView =
+          new ArrayDataColumnVectorView(mapData.valueArray(), mapType.getValueType());
+      return new MapValue() {
+        @Override
+        public int getSize() {
+          return mapData.size();
+        }
+
+        @Override
+        public ColumnVector getKeys() {
+          return keyView;
+        }
+
+        @Override
+        public ColumnVector getValues() {
+          return valueView;
+        }
+      };
+    }
+  }
+
+  interface RowAccess {
+    RowData get(int index);
+
+    int size();
+  }
+
+  static class RowDataListAccess implements RowAccess {
+    final List<RowData> rows;
+
+    protected RowDataListAccess(List<RowData> rows) {
+      this.rows = rows;
     }
 
     @Override
-    public long getLong(int rowId) {
-      checkValidRowId(rowId);
-      checkValidDataType(LongType.LONG);
-      return rows.get(rowId).getLong(colIdx);
+    public RowData get(int index) {
+      return rows.get(index);
     }
 
     @Override
-    public String getString(int rowId) {
-      checkValidRowId(rowId);
-      checkValidDataType(StringType.STRING);
-      return rows.get(rowId).getString(colIdx).toString();
+    public int size() {
+      return rows.size();
+    }
+  }
+
+  static class ArrayRowAccess implements RowAccess {
+    final ArrayData arrayData;
+    final int numFields;
+
+    public ArrayRowAccess(ArrayData arrayData, int numFields) {
+      this.arrayData = arrayData;
+      this.numFields = numFields;
     }
 
     @Override
-    public float getFloat(int rowId) {
-      checkValidRowId(rowId);
-      checkValidDataType(FloatType.FLOAT);
-      return rows.get(rowId).getFloat(colIdx);
+    public RowData get(int index) {
+      return arrayData.getRow(index, numFields);
     }
 
     @Override
-    public double getDouble(int rowId) {
+    public int size() {
+      return arrayData.size();
+    }
+  }
+
+  static class RowDataColumnVectorView extends AbstractColumnVectorView {
+    private final RowAccess rowAccess;
+    private final int[] path;
+    private final int[] nestedSize;
+    private final int index;
+
+    public RowDataColumnVectorView(RowAccess rowAccess, int index, DataType dataType) {
+      this(rowAccess, new int[] {index}, new int[0], dataType);
+    }
+
+    public RowDataColumnVectorView(
+        RowAccess rowAccess, int[] path, int[] nestedSize, DataType dataType) {
+      super(dataType);
+      this.rowAccess = rowAccess;
+      this.path = path;
+      this.nestedSize = nestedSize;
+      this.index = this.path[this.path.length - 1];
+    }
+
+    @Override
+    public DataType getDataType() {
+      return this.dataType;
+    }
+
+    @Override
+    public int getSize() {
+      return this.rowAccess.size();
+    }
+
+    @Override
+    public void close() {}
+
+    protected RowData extract(int rowId) {
+      RowData current = rowAccess.get(rowId);
+      for (int i = 0; i < path.length - 1; i++) {
+        if (current.isNullAt(path[i])) {
+          return null;
+        }
+        current = current.getRow(path[i], nestedSize[i]);
+      }
+      return current;
+    }
+
+    @Override
+    public boolean isNullAt(int rowId) {
       checkValidRowId(rowId);
-      checkValidDataType(DoubleType.DOUBLE);
-      return rows.get(rowId).getDouble(colIdx);
+      RowData current = extract(rowId);
+      if (current == null) {
+        return true;
+      }
+      return current.isNullAt(index);
+    }
+
+    @Override
+    public boolean getBoolean(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(BooleanType.BOOLEAN);
+      return extract(rowId).getBoolean(index);
+    }
+
+    @Override
+    public byte[] getBinary(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(BinaryType.BINARY);
+      return extract(rowId).getBinary(index);
     }
 
     @Override
@@ -243,9 +338,203 @@ public class DeltaWriterTask {
         throw new UnsupportedOperationException("Invalid value request for data type");
       }
       DecimalType actualType = (DecimalType) dataType;
-      return rows.get(rowId)
-          .getDecimal(colIdx, actualType.getPrecision(), actualType.getScale())
+      return extract(rowId)
+          .getDecimal(index, actualType.getPrecision(), actualType.getScale())
           .toBigDecimal();
+    }
+
+    @Override
+    public double getDouble(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(DoubleType.DOUBLE);
+      return extract(rowId).getDouble(index);
+    }
+
+    @Override
+    public float getFloat(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(FloatType.FLOAT);
+      return extract(rowId).getFloat(index);
+    }
+
+    @Override
+    public int getInt(int rowId) {
+      checkValidRowId(rowId);
+      if (getDataType().equivalent(IntegerType.INTEGER)
+          || getDataType().equivalent(DateType.DATE)) {
+        return extract(rowId).getInt(index);
+      } else {
+        throw new UnsupportedOperationException(
+            "Invalid value request for data type: " + this.dataType);
+      }
+    }
+
+    @Override
+    public long getLong(int rowId) {
+      checkValidRowId(rowId);
+      if (getDataType().equivalent(LongType.LONG)) {
+        return extract(rowId).getLong(index);
+      } else if (getDataType().equivalent(TimestampType.TIMESTAMP)
+          || getDataType().equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
+        return Conversions.FlinkToDelta.timestamp(extract(rowId).getTimestamp(index, 6));
+      } else {
+        throw new UnsupportedOperationException(
+            "Invalid value request for data type: " + this.dataType);
+      }
+    }
+
+    @Override
+    public String getString(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(StringType.STRING);
+      return extract(rowId).getString(index).toString();
+    }
+
+    @Override
+    public ColumnVector getChild(int ordinal) {
+      int[] childPath = new int[path.length + 1];
+      int[] childNestedSize = new int[nestedSize.length + 1];
+      System.arraycopy(path, 0, childPath, 0, path.length);
+      System.arraycopy(nestedSize, 0, childNestedSize, 0, nestedSize.length);
+      StructType nested = (StructType) getDataType();
+      childPath[path.length] = ordinal;
+      childNestedSize[nestedSize.length] = nested.length();
+      return new RowDataColumnVectorView(
+          rowAccess, childPath, childNestedSize, nested.fields().get(ordinal).getDataType());
+    }
+
+    @Override
+    public ArrayValue getArray(int rowId) {
+      ArrayData arrayData = extract(rowId).getArray(index);
+      return getArray(arrayData);
+    }
+
+    @Override
+    public MapValue getMap(int rowId) {
+      MapData mapData = extract(rowId).getMap(index);
+      return getMap(mapData);
+    }
+  }
+
+  static class ArrayDataColumnVectorView extends AbstractColumnVectorView {
+
+    final ArrayData data;
+
+    public ArrayDataColumnVectorView(ArrayData data, DataType elementType) {
+      super(elementType);
+      this.data = data;
+    }
+
+    @Override
+    public DataType getDataType() {
+      return super.dataType;
+    }
+
+    @Override
+    public int getSize() {
+      return data.size();
+    }
+
+    @Override
+    public void close() {}
+
+    @Override
+    public boolean isNullAt(int rowId) {
+      checkValidRowId(rowId);
+      return data.isNullAt(rowId);
+    }
+
+    @Override
+    public boolean getBoolean(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(BooleanType.BOOLEAN);
+      return data.getBoolean(rowId);
+    }
+
+    @Override
+    public byte[] getBinary(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(BinaryType.BINARY);
+      return data.getBinary(rowId);
+    }
+
+    @Override
+    public BigDecimal getDecimal(int rowId) {
+      checkValidRowId(rowId);
+      // Do not check precision and scale here because RowData support conversion
+      if (!(this.getDataType() instanceof DecimalType)) {
+        throw new UnsupportedOperationException("Invalid value request for data type");
+      }
+      DecimalType actualType = (DecimalType) dataType;
+      return data.getDecimal(rowId, actualType.getPrecision(), actualType.getScale())
+          .toBigDecimal();
+    }
+
+    @Override
+    public double getDouble(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(DoubleType.DOUBLE);
+      return data.getDouble(rowId);
+    }
+
+    @Override
+    public float getFloat(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(FloatType.FLOAT);
+      return data.getFloat(rowId);
+    }
+
+    @Override
+    public int getInt(int rowId) {
+      checkValidRowId(rowId);
+      if (getDataType().equivalent(IntegerType.INTEGER)
+          || getDataType().equivalent(DateType.DATE)) {
+        return data.getInt(rowId);
+      } else {
+        throw new UnsupportedOperationException(
+            "Invalid value request for data type: " + this.dataType);
+      }
+    }
+
+    @Override
+    public long getLong(int rowId) {
+      checkValidRowId(rowId);
+      if (getDataType().equivalent(LongType.LONG)) {
+        return data.getLong(rowId);
+      } else if (getDataType().equivalent(TimestampType.TIMESTAMP)
+          || getDataType().equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
+        return Conversions.FlinkToDelta.timestamp(data.getTimestamp(rowId, 6));
+      } else {
+        throw new UnsupportedOperationException(
+            "Invalid value request for data type: " + this.dataType);
+      }
+    }
+
+    @Override
+    public String getString(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(StringType.STRING);
+      return data.getString(rowId).toString();
+    }
+
+    @Override
+    public ColumnVector getChild(int ordinal) {
+      StructType nested = (StructType) getDataType();
+      int nestedSize = nested.fields().size();
+      return new RowDataColumnVectorView(
+          new ArrayRowAccess(data, nestedSize),
+          ordinal,
+          nested.fields().get(ordinal).getDataType());
+    }
+
+    @Override
+    public ArrayValue getArray(int rowId) {
+      return getArray(data.getArray(rowId));
+    }
+
+    @Override
+    public MapValue getMap(int rowId) {
+      return getMap(data.getMap(rowId));
     }
   }
 }

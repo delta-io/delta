@@ -16,6 +16,10 @@
 
 package io.delta.flink.table
 
+import java.net.URI
+
+import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
+
 import io.delta.flink.TestHelper
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
@@ -23,11 +27,9 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
+
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.net.URI
-import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 
 class HadoopTableSuite extends AnyFunSuite with TestHelper {
 
@@ -59,27 +61,6 @@ class HadoopTableSuite extends AnyFunSuite with TestHelper {
       }
       // There should be only one version
       assert(table.loadLatestSnapshot().getVersion == 1)
-    }
-  }
-
-  test("cache tables by path") {
-    withTempDir { dir =>
-      // Create a huge table
-      val schema = new StructType()
-        .add("id", IntegerType.INTEGER)
-        .add("part", StringType.STRING)
-      val partcol = List("part")
-      val engine = DefaultEngine.create(new Configuration());
-      createNonEmptyTable(engine, dir.getAbsolutePath, schema, partcol)
-      val hadoopTable = new HadoopTable(
-        dir.toURI,
-        Map.empty[String, String].asJava,
-        schema,
-        partcol.asJava)
-      for (i <- 0 until 5000) {
-        writeTable(engine, dir.getAbsolutePath, schema, partcol)
-      }
-      assert(true)
     }
   }
 

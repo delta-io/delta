@@ -16,21 +16,19 @@
 
 package io.delta.flink.sink
 
+import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
+
 import io.delta.flink.TestHelper
 import io.delta.flink.table.HadoopTable
-import io.delta.kernel.TableManager
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.ScanImpl
-import io.delta.kernel.internal.actions.AddFile
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
+
 import org.apache.flink.api.connector.sink2.Committer
 import org.apache.flink.api.connector.sink2.mocks.MockCommitRequest
 import org.apache.flink.runtime.metrics.groups.{InternalSinkCommitterMetricGroup, UnregisteredMetricGroups}
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsJava, SeqHasAsJava}
 
 class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
 
@@ -53,6 +51,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         .withDeltaTable(table)
         .withJobId("test-job")
         .withMetricGroup(metricGroup)
+        .withConf(new DeltaSinkConf(schema, Map.empty[String, String].asJava))
         .build()
 
       // By the way we direct the stream traffic, we should receive only one committable.
@@ -72,19 +71,16 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
       committer.commit(commitMessages.asJava)
 
       // The target table should have one version
-      val engine = DefaultEngine.create(new Configuration())
-      val snapshot = TableManager.loadSnapshot(dir.toString).build(engine)
-      assert(0L == snapshot.getVersion)
-      val filesList = snapshot.getScanBuilder.build().asInstanceOf[ScanImpl]
-        .getScanFiles(engine, true).toInMemoryList
-      val actions = filesList.get(0).getRows
-        .toInMemoryList.asScala.map(row => new AddFile(row.getStruct(0)))
-
-      // There should be 5 files to scan
-      assert(5 == actions.size)
-      assert(Set("p0", "p1", "p2", "p3", "p4") ==
-        actions.map(_.getPartitionValues.getValues.getString(0)).toSet)
-      assert(60 == actions.map(_.getNumRecords.get.longValue()).sum)
+      verifyTableContent(
+        dir.toString,
+        (version, actions, _) => {
+          assert(0L == version)
+          // There should be 5 files to scan
+          assert(5 == actions.size)
+          assert(Set("p0", "p1", "p2", "p3", "p4") ==
+            actions.map(_.getPartitionValues.getValues.getString(0)).toSet)
+          assert(60 == actions.map(_.getNumRecords.get.longValue()).sum)
+        })
     }
   }
 
@@ -104,6 +100,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         .withDeltaTable(table)
         .withJobId("test-job")
         .withMetricGroup(metricGroup)
+        .withConf(new DeltaSinkConf(schema, Map.empty[String, String].asJava))
         .build()
 
       // Three checkpoints, each contains 5 add files
@@ -123,27 +120,16 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
 
       committer.commit(commitMessages.asJava)
 
-      // The target table should have 3 version
-      val engine = DefaultEngine.create(new Configuration())
-      val snapshot = TableManager.loadSnapshot(dir.toString).build(engine)
-      assert(2L == snapshot.getVersion)
-
-      for (version <- 0 to 2) {
-        val filesList = TableManager.loadSnapshot(dir.toString).atVersion(version)
-          .build(engine)
-          .getScanBuilder
-          .build()
-          .asInstanceOf[ScanImpl]
-          .getScanFiles(engine, true).toInMemoryList
-        val actions = filesList.get(0).getRows
-          .toInMemoryList.asScala.map(row => new AddFile(row.getStruct(0)))
-
-        // There should be 5 files to scan
-        assert(5 == actions.size)
-        assert(Set("p0", "p1", "p2", "p3", "p4") ==
-          actions.map(_.getPartitionValues.getValues.getString(0)).toSet)
-        assert(60 == actions.map(_.getNumRecords.get.longValue()).sum)
-      }
+      verifyTableContent(
+        dir.toString,
+        (version, actions, _) => {
+          assert(2L == version)
+          // There should be 5 files to scan
+          assert(15 == actions.size)
+          assert(Set("p0", "p1", "p2", "p3", "p4") ==
+            actions.map(_.getPartitionValues.getValues.getString(0)).toSet)
+          assert(180 == actions.map(_.getNumRecords.get.longValue()).sum)
+        })
     }
   }
 
@@ -169,6 +155,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         .withDeltaTable(table)
         .withJobId("test-job")
         .withMetricGroup(metricGroup)
+        .withConf(new DeltaSinkConf(schema, Map.empty[String, String].asJava))
         .build()
 
       val commitMessages: List[Committer.CommitRequest[DeltaCommittable]] = Seq({
@@ -184,10 +171,61 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         new MockCommitRequest(committable)
       }).toList
 
-      val e = intercept[IllegalArgumentException] {
+      val e = intercept[IllegalStateException] {
         committer.commit(commitMessages.asJava)
       }
-      assert(e.getMessage.contains("DeltaSink does not support schema evolution."))
+      assert(e.getMessage.contains("Invalid schema evolution observed, aborting committing"))
+    }
+  }
+
+  test("commit writes watermarks") {
+    withTempDir { dir =>
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("part", StringType.STRING)
+
+      val table = new HadoopTable(
+        dir.toURI,
+        Map.empty[String, String].asJava,
+        schema,
+        List("part").asJava)
+
+      val committer = new DeltaCommitter.Builder()
+        .withDeltaTable(table)
+        .withJobId("test-job")
+        .withMetricGroup(metricGroup)
+        .withConf(new DeltaSinkConf(schema, Map.empty[String, String].asJava))
+        .build()
+
+      // By the way we direct the stream traffic, we should receive only one committable.
+      val commitMessages: List[Committer.CommitRequest[DeltaCommittable]] = Seq({
+        val actions = (0 until 5).map { i =>
+          dummyAddFileRow(schema, 10 + i, Map("part" -> Literal.ofString("p" + i)))
+        }.toList.asJava
+        val committable = new DeltaCommittable(
+          "test-job",
+          "test-opr",
+          1000L,
+          actions,
+          new WriterResultContext(200, 100))
+        new MockCommitRequest(committable)
+      }).toList
+
+      committer.commit(commitMessages.asJava)
+
+      // The target table should have one version
+      verifyTableContent(
+        dir.toString,
+        (version, actions, props) => {
+          assert(0L == version)
+          // There should be 5 files to scan
+          assert(5 == actions.size)
+          assert(Set("p0", "p1", "p2", "p3", "p4") ==
+            actions.map(_.getPartitionValues.getValues.getString(0)).toSet)
+          assert(60 == actions.map(_.getNumRecords.get.longValue()).sum)
+          assert(Map("flink.high-watermark" -> "200", "flink.low-watermark" -> "100")
+            .asJava == props)
+        })
     }
   }
 }
