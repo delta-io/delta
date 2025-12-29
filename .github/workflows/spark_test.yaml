@@ -22,7 +22,7 @@ jobs:
           build/sbt exportSparkVersionsJson
           
           # Extract the spark_version array for GitHub Actions matrix
-          SPARK_VERSIONS=$(python3 project/scripts/generate_spark_versions.py --github-matrix)
+          SPARK_VERSIONS=$(python3 project/scripts/generate_spark_versions.py --all-spark-versions)
           echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
           echo "Generated Spark versions: $SPARK_VERSIONS"
 
