@@ -35,10 +35,10 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
   override def planScan(
       databaseName: String,
       table: String,
-      sparkFilterOption: Option[Filter] = None,
+      filterOption: Option[Filter] = None,
       projection: Option[StructType] = None): ScanPlan = {
     // Capture filter and projection for test verification
-    TestServerSidePlanningClient.capturedFilter = sparkFilterOption
+    TestServerSidePlanningClient.capturedFilter = filterOption
     TestServerSidePlanningClient.capturedProjection = projection
 
     val fullTableName = s"$databaseName.$table"

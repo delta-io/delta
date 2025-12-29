@@ -49,15 +49,14 @@ trait ServerSidePlanningClient {
    *
    * @param databaseName The database or schema name
    * @param table The table name
-   * @param sparkFilterOption Optional filter expression to push down to server
-   *                          (Spark Filter format)
+   * @param filterOption Optional filter expression to push down to server (Spark Filter format)
    * @param projection Optional projection (required columns) to push down to server
    * @return ScanPlan containing files to read
    */
   def planScan(
       databaseName: String,
       table: String,
-      sparkFilterOption: Option[Filter] = None,
+      filterOption: Option[Filter] = None,
       projection: Option[StructType] = None): ScanPlan
 }
 

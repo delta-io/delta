@@ -110,7 +110,7 @@ object SparkToIcebergExpressionConverter {
    * @param sparkFilters Array of Spark filters
    * @return Some(Expression) if at least one filter is supported, None if all are unsupported
    */
-  def convertFilters(sparkFilters: Array[Filter]): Option[Expression] = {
+  def convertMultiple(sparkFilters: Array[Filter]): Option[Expression] = {
     if (sparkFilters.isEmpty) return None
 
     val convertedIcebergExprs = sparkFilters.flatMap(f => convert(f))

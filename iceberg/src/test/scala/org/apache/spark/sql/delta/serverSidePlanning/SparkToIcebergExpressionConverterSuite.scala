@@ -18,16 +18,28 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.sources._
 import org.scalatest.funsuite.AnyFunSuite
+import shadedForDelta.org.apache.iceberg.expressions.Expression.Operation
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
-  // Helper: Assert filter converts successfully and output contains expected terms
-  private def assertConverts(filter: Filter, expectedTerms: String*): Unit = {
+  // Helper: Assert filter converts successfully with type-safe operator validation
+  private def assertConvert(
+      filter: Filter,
+      expectedOp: Operation,
+      expectedTerms: String*): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(filter)
     assert(result.isDefined, s"Should convert: $filter")
-    val expr = result.get.toString
+
+    val expr = result.get
+
+    // Type-safe operator validation (prevents LT matching LT_EQ, etc.)
+    assert(expr.op() == expectedOp,
+      s"Expected operation $expectedOp but got ${expr.op()}")
+
+    // Still validate column names/values appear in output
+    val exprStr = expr.toString
     expectedTerms.foreach(term =>
-      assert(expr.contains(term), s"Missing '$term' in expression: $expr")
+      assert(exprStr.contains(term), s"Missing '$term' in: $exprStr")
     )
   }
 
@@ -37,60 +49,55 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assert(result.isEmpty, s"Should return None for unsupported filter: $filter")
   }
 
-  // Helper: Assert filter converts and output contains operator (case-insensitive)
-  private def assertContainsOperator(filter: Filter, operators: String*): Unit = {
-    val result = SparkToIcebergExpressionConverter.convert(filter)
-    assert(result.isDefined, s"Should convert: $filter")
-    val expr = result.get.toString.toLowerCase(java.util.Locale.ROOT)
-    operators.foreach(op =>
-      assert(expr.contains(op), s"Missing operator '$op' in: $expr")
-    )
-  }
-
   // EqualTo tests
   test("convert EqualTo with various types") {
-    assertConverts(EqualTo("id", 5), "==", "id", "5")  // integer
-    assertConverts(EqualTo("name", "Alice"), "==", "name")  // string
-    assertConverts(EqualTo("id", 1234567890L), "==", "id")  // long
-    assertConverts(EqualTo("active", true), "==", "active")  // boolean
+    assertConvert(EqualTo("id", 5), Operation.EQ, "id", "5")  // integer
+    assertConvert(EqualTo("name", "Alice"), Operation.EQ, "name")  // string
+    assertConvert(EqualTo("id", 1234567890L), Operation.EQ, "id")  // long
+    assertConvert(EqualTo("active", true), Operation.EQ, "active")  // boolean
 
     // EqualTo with null becomes IsNull
     val nullResult = SparkToIcebergExpressionConverter.convert(EqualTo("name", null))
     assert(nullResult.isDefined, "Should convert EqualTo with null")
-    val nullExpr = nullResult.get.toString
-    assert(nullExpr.contains("is_null"), s"Should be is_null operator: $nullExpr")
-    assert(nullExpr.contains("name"), s"Should contain column name: $nullExpr")
+    val nullExpr = nullResult.get
+    assert(nullExpr.op() == Operation.IS_NULL, s"Should be IS_NULL operator")
+    assert(nullExpr.toString.contains("name"), s"Should contain column name")
   }
 
   // Comparison operator tests
   test("convert comparison operators") {
-    assertConverts(LessThan("age", 30), "<", "age", "30")
-    assertConverts(GreaterThan("age", 18), ">", "age", "18")
-    assertConverts(LessThanOrEqual("price", 99.99), "<=", "price")
-    assertConverts(GreaterThanOrEqual("timestamp", 1234567890L), ">=", "timestamp")
+    assertConvert(LessThan("age", 30), Operation.LT, "age", "30")
+    assertConvert(GreaterThan("age", 18), Operation.GT, "age", "18")
+    assertConvert(LessThanOrEqual("price", 99.99), Operation.LT_EQ, "price")
+    assertConvert(GreaterThanOrEqual("timestamp", 1234567890L), Operation.GT_EQ, "timestamp")
   }
 
   // Null check tests
   test("convert null check operators") {
-    assertConverts(IsNull("name"), "is_null", "name")
-    assertConverts(IsNotNull("name"), "not_null", "name")
+    assertConvert(IsNull("name"), Operation.IS_NULL, "name")
+    assertConvert(IsNotNull("name"), Operation.NOT_NULL, "name")
   }
 
   // Logical operator tests
   test("convert logical operators") {
-    assertContainsOperator(
-      And(EqualTo("id", 5), GreaterThan("age", 18)), "and", "id", "age")
+    assertConvert(
+      And(EqualTo("id", 5), GreaterThan("age", 18)),
+      Operation.AND,
+      "id", "age")
 
-    assertContainsOperator(
-      Or(EqualTo("status", "active"), EqualTo("status", "pending")), "or")
+    assertConvert(
+      Or(EqualTo("status", "active"), EqualTo("status", "pending")),
+      Operation.OR,
+      "status")
 
     // Nested And/Or
-    assertContainsOperator(
+    assertConvert(
       And(
         Or(EqualTo("status", "active"), EqualTo("status", "pending")),
         GreaterThan("age", 18)
       ),
-      "and", "or")
+      Operation.AND,
+      "status", "age")
   }
 
   // Unsupported filter tests
@@ -102,10 +109,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertReturnsNone(Not(EqualTo("id", 5)))  // Not
   }
 
-  // convertFilters (array) tests
-  test("convertFilters with single filter") {
+  // convertMultiple (array) tests
+  test("convertMultiple with single filter") {
     val filters = Array[Filter](EqualTo("id", 5))
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
+    val result = SparkToIcebergExpressionConverter.convertMultiple(filters)
 
     assert(result.isDefined, "Should convert single filter")
     val exprStr = result.get.toString
@@ -113,13 +120,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assert(exprStr.contains("id"), s"Expression should reference 'id': $exprStr")
   }
 
-  test("convertFilters combines multiple filters with AND") {
+  test("convertMultiple combines multiple filters with AND") {
     val filters = Array[Filter](
       EqualTo("id", 5),
       GreaterThan("age", 18),
       IsNotNull("name")
     )
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
+    val result = SparkToIcebergExpressionConverter.convertMultiple(filters)
 
     assert(result.isDefined, "Should convert multiple filters")
     val exprStr = result.get.toString
@@ -132,13 +139,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assert(exprStr.contains("name"), "Should contain 'name' column")
   }
 
-  test("convertFilters skips unsupported filters") {
+  test("convertMultiple skips unsupported filters") {
     val filters = Array[Filter](
       EqualTo("id", 5),              // Supported
       StringStartsWith("name", "A"),  // Unsupported
       GreaterThan("age", 18)          // Supported
     )
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
+    val result = SparkToIcebergExpressionConverter.convertMultiple(filters)
 
     assert(result.isDefined, "Should convert supported filters and skip unsupported")
     val exprStr = result.get.toString
@@ -149,29 +156,29 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assert(exprStr.contains("age"), "Should contain 'age' column")
   }
 
-  test("convertFilters returns None when all filters are unsupported") {
+  test("convertMultiple returns None when all filters are unsupported") {
     val filters = Array[Filter](
       StringStartsWith("name", "A"),
       StringEndsWith("name", "Z"),
       StringContains("name", "foo")
     )
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
+    val result = SparkToIcebergExpressionConverter.convertMultiple(filters)
 
     assert(result.isEmpty, "Should return None when all filters are unsupported")
   }
 
-  test("convertFilters returns None for empty array") {
+  test("convertMultiple returns None for empty array") {
     val filters = Array.empty[Filter]
-    val result = SparkToIcebergExpressionConverter.convertFilters(filters)
+    val result = SparkToIcebergExpressionConverter.convertMultiple(filters)
 
     assert(result.isEmpty, "Empty filter array should return None")
   }
 
   // Type conversion tests
   test("convert with different numeric types") {
-    assertConverts(EqualTo("count", 42), "==", "count")  // int
-    assertConverts(EqualTo("bigCount", 1234567890123L), "==", "bigCount")  // long
-    assertConverts(GreaterThan("price", 19.99), ">", "price")  // double
-    assertConverts(LessThan("rating", 4.5f), "<", "rating")  // float
+    assertConvert(EqualTo("count", 42), Operation.EQ, "count")  // int
+    assertConvert(EqualTo("bigCount", 1234567890123L), Operation.EQ, "bigCount")  // long
+    assertConvert(GreaterThan("price", 19.99), Operation.GT, "price")  // double
+    assertConvert(LessThan("rating", 4.5f), Operation.LT, "rating")  // float
   }
 }
