@@ -411,10 +411,10 @@ class SparkVersionsScriptTest:
             print(f"  ✗ Unexpected error: {e}")
             return False
 
-    def test_github_matrix(self) -> bool:
-        """Test that --github-matrix produces valid JSON array."""
+    def test_all_spark_versions(self) -> bool:
+        """Test that --all-spark-versions produces valid JSON array."""
         print("\n" + "="*70)
-        print("TEST: GitHub Actions Matrix Generation")
+        print("TEST: All Spark Versions Output")
         print("="*70)
 
         if not self.ensure_json_exists():
@@ -422,7 +422,7 @@ class SparkVersionsScriptTest:
 
         try:
             result = subprocess.run(
-                ["python3", str(self.script_path), "--github-matrix"],
+                ["python3", str(self.script_path), "--all-spark-versions"],
                 cwd=self.delta_root,
                 capture_output=True,
                 text=True,
@@ -560,7 +560,7 @@ def main():
         print("="*70)
         script_test = SparkVersionsScriptTest(delta_root)
         script_test1_passed = script_test.test_json_format()
-        script_test2_passed = script_test.test_github_matrix()
+        script_test2_passed = script_test.test_all_spark_versions()
         script_test3_passed = script_test.test_get_field()
 
         # Test cross-Spark build workflow
@@ -581,7 +581,7 @@ def main():
         print("="*70)
         print("\nPart 1: Spark Versions Script Tests")
         print(f"  JSON Format:                            {'✓ PASSED' if script_test1_passed else '✗ FAILED'}")
-        print(f"  GitHub Matrix Generation:               {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
+        print(f"  All Spark Versions Output:              {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
         print(f"  Get Field Functionality:                {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
         print(f"  Default publishM2:                      {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")

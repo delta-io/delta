@@ -178,7 +178,7 @@ import Unidoc._
  *     # Output: [{"fullVersion": "4.0.1", "shortVersion": "4.0", "isMaster": false, "targetJvm": "17"}, ...]
  *
  *   Use with Python utilities to extract specific fields:
- *     python3 project/scripts/generate_spark_versions.py --github-matrix
+ *     python3 project/scripts/generate_spark_versions.py --all-spark-versions
  *     # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
  *     python3 project/scripts/generate_spark_versions.py --get-field "4.0" targetJvm
  *     python3 project/scripts/generate_spark_versions.py --get-field "master" targetJvm
