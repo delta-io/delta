@@ -36,13 +36,17 @@ def test(root_dir, code_dir, packages):
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
     extra_class_path = path.join(python_root_dir, path.join(code_dir, "testing"))
+    
+    # Include Maven local repository to resolve locally published Delta artifacts
+    maven_local_repo = "file://" + os.path.expanduser("~/.m2/repository")
 
     for test_file in test_files:
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
                    "--repositories",
-                   ("https://maven-central.storage-download.googleapis.com/maven2/,"
+                   (f"{maven_local_repo},"
+                    "https://maven-central.storage-download.googleapis.com/maven2/,"
                        "https://repo1.maven.org/maven2/,"
                        "https://repository.apache.org/content/repositories/orgapachespark-1484"),
                    "--packages", ",".join(packages), test_file]
