@@ -115,9 +115,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val result = SparkToIcebergExpressionConverter.convertMultiple(filters)
 
     assert(result.isDefined, "Should convert single filter")
-    val exprStr = result.get.toString
-    assert(exprStr.contains("=="), s"Should contain '==' operator: $exprStr")
-    assert(exprStr.contains("id"), s"Expression should reference 'id': $exprStr")
+    // Operator conversion already tested in convert() tests
+    assert(result.get.toString.contains("id"), "Expression should reference 'id'")
   }
 
   test("convertMultiple combines multiple filters with AND") {
@@ -129,11 +128,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val result = SparkToIcebergExpressionConverter.convertMultiple(filters)
 
     assert(result.isDefined, "Should convert multiple filters")
-    val exprStr = result.get.toString
-    assert(exprStr.contains("and"), "Multiple filters should be combined with AND")
-    assert(exprStr.contains("=="), "Should contain '==' operator")
-    assert(exprStr.contains(">"), "Should contain '>' operator")
-    assert(exprStr.contains("not_null"), "Should contain 'not_null' operator")
+    val expr = result.get
+
+    // Type-safe validation that result is AND
+    assert(expr.op() == Operation.AND, "Multiple filters should be combined with AND")
+
+    // Validate column references appear (operator conversion already tested in convert() tests)
+    val exprStr = expr.toString
     assert(exprStr.contains("id"), "Should contain 'id' column")
     assert(exprStr.contains("age"), "Should contain 'age' column")
     assert(exprStr.contains("name"), "Should contain 'name' column")
@@ -148,10 +149,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val result = SparkToIcebergExpressionConverter.convertMultiple(filters)
 
     assert(result.isDefined, "Should convert supported filters and skip unsupported")
-    val exprStr = result.get.toString
-    assert(exprStr.contains("and"), "Should combine remaining filters with AND")
-    assert(exprStr.contains("=="), "Should contain '==' operator")
-    assert(exprStr.contains(">"), "Should contain '>' operator")
+    val expr = result.get
+
+    // Type-safe validation that result is AND
+    assert(expr.op() == Operation.AND, "Should combine remaining filters with AND")
+
+    // Validate column references appear (operator conversion already tested in convert() tests)
+    val exprStr = expr.toString
     assert(exprStr.contains("id"), "Should contain 'id' column")
     assert(exprStr.contains("age"), "Should contain 'age' column")
   }
