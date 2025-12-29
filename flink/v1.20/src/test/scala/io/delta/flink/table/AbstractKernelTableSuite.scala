@@ -33,6 +33,7 @@ import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
 
+import org.apache.flink.util.InstantiationUtil
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -42,6 +43,23 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
     assert(AbstractKernelTable.normalize(URI.create("file:/var")).toString == "file:///var/")
     assert(AbstractKernelTable.normalize(URI.create("file:///var")).toString == "file:///var/")
     assert(AbstractKernelTable.normalize(URI.create("s3://host/var")).toString == "s3://host/var/")
+  }
+
+  test("table is serializable") {
+    withTempDir { dir =>
+      val tablePath = dir.getPath
+      val schema = new StructType().add("id", IntegerType.INTEGER)
+
+      val table = new HadoopTableForTest(
+        dir.toURI,
+        Map.empty[String, String].asJava,
+        schema,
+        Seq.empty[String].asJava)
+      val serialized: Array[Byte] = InstantiationUtil.serializeObject(table)
+      val copy = InstantiationUtil.deserializeObject(serialized, getClass.getClassLoader)
+        .asInstanceOf[AbstractKernelTable]
+      assert(copy != null)
+    }
   }
 
   test("commit to empty table without partition") {

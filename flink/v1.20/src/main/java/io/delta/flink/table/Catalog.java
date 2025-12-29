@@ -16,6 +16,7 @@
 
 package io.delta.flink.table;
 
+import java.io.Serializable;
 import java.net.URI;
 import java.util.Map;
 
@@ -36,7 +37,7 @@ import java.util.Map;
  *   <li>supplying credential or configuration information required for table access.
  * </ul>
  */
-public interface Catalog {
+public interface Catalog extends Serializable {
 
   /**
    * Loads metadata for a table identified by the given table identifier.

@@ -19,7 +19,6 @@ package io.delta.flink.sink;
 import io.delta.flink.table.*;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.types.StructType;
-import java.io.IOException;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
@@ -94,7 +93,8 @@ public class DeltaSink
     this.conf = conf;
   }
 
-  public SinkWriter<RowData> createWriter(InitContext context) throws IOException {
+  // Deprecated API for backward compatibility. Will not be called
+  public SinkWriter<RowData> createWriter(InitContext context) {
     return new DeltaSinkWriter.Builder()
         .withJobId(context.getJobInfo().getJobId().toString())
         .withSubtaskId(context.getTaskInfo().getIndexOfThisSubtask())
@@ -105,7 +105,7 @@ public class DeltaSink
   }
 
   @Override
-  public SinkWriter<RowData> createWriter(WriterInitContext context) throws IOException {
+  public SinkWriter<RowData> createWriter(WriterInitContext context) {
     return new DeltaSinkWriter.Builder()
         .withJobId(context.getJobInfo().getJobId().toString())
         .withSubtaskId(context.getTaskInfo().getIndexOfThisSubtask())
@@ -117,11 +117,11 @@ public class DeltaSink
   }
 
   @Override
-  public Committer<DeltaCommittable> createCommitter(CommitterInitContext context)
-      throws IOException {
+  public Committer<DeltaCommittable> createCommitter(CommitterInitContext context) {
     return new DeltaCommitter.Builder()
         .withJobId(context.getJobInfo().getJobId().toString())
         .withDeltaTable(deltaTable)
+        .withConf(conf)
         .withMetricGroup(context.metricGroup())
         .build();
   }

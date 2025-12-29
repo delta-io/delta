@@ -47,7 +47,7 @@ import java.util.Optional;
  * <p>All implementations must be {@link Serializable} to allow use in distributed execution
  * environments.
  */
-public interface DeltaTable extends Serializable {
+public interface DeltaTable extends Serializable, AutoCloseable {
 
   /**
    * Returns a stable identifier that uniquely represents this table within its catalog or storage
@@ -128,12 +128,6 @@ public interface DeltaTable extends Serializable {
    * <p>Implementations may perform I/O and metadata parsing as part of this operation.
    */
   void refresh();
-
-  /**
-   * Attempt to interrupt all operations this table is executing, allowing cancelling time-consuming
-   * operations such as log replay. The table should not be used after calling close.
-   */
-  void close() throws InterruptedException;
 
   /**
    * Writes one or more Parquet files as part of the table and emits the corresponding {@code

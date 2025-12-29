@@ -62,10 +62,10 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
 
   // All committables should have the same job id as the committer.
   // For simplicity, we get the job id from constructor.
-  private String jobId;
-  private DeltaTable deltaTable;
-  private DeltaSinkConf conf;
-  private SinkCommitterMetricGroup metricGroup;
+  private final String jobId;
+  private final DeltaTable deltaTable;
+  private final DeltaSinkConf conf;
+  private final SinkCommitterMetricGroup metricGroup;
 
   private DeltaCommitter(
       String jobId,

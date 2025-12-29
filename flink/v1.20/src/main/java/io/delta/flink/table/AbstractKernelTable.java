@@ -83,7 +83,10 @@ public abstract class AbstractKernelTable implements DeltaTable {
   protected String tableUUID;
   protected URI tablePath;
   protected final Map<String, String> configuration;
-  protected String serializableTableState;
+  /*
+   * This is the TransactionStateRow in json. Needed mainly by {@link #writeParquet}
+   */
+  protected String serializedTableState;
   protected List<String> partitionColumns;
 
   // These fields are not serializable. They need to be recreated
@@ -92,6 +95,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
   protected transient Row tableState;
   protected transient volatile Engine engine;
   protected transient CredentialManager credentialManager;
+  // Thread pool for executing interruptable operation.
+  protected transient ExecutorService threadPool = null;
 
   public AbstractKernelTable(
       Catalog catalog,
@@ -127,9 +132,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
               .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
               .build(getEngine())
               .getTransactionState(getEngine());
-      this.serializableTableState = JsonUtils.rowToJson(existingTableState);
-      this.schema = TransactionStateRow.getLogicalSchema(existingTableState);
-      this.partitionColumns = TransactionStateRow.getPartitionColumnsList(existingTableState);
+      this.serializedTableState = JsonUtils.rowToJson(existingTableState);
+      this.schema = latestSnapshot.getSchema();
+      this.partitionColumns = latestSnapshot.getPartitionColumnNames();
     } else {
       CreateTableTransactionBuilder createTxnBuilder =
           TableManager.buildCreateTableTransaction(getTablePath().toString(), schema, ENGINE_INFO);
@@ -142,7 +147,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
                     .orElseGet(Collections::emptyList)));
       }
       Row newTableState = createTxnBuilder.build(getEngine()).getTransactionState(getEngine());
-      this.serializableTableState = JsonUtils.rowToJson(newTableState);
+      this.serializedTableState = JsonUtils.rowToJson(newTableState);
     }
   }
 
@@ -194,7 +199,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
       credentialManager =
           new CredentialManager(
               () -> catalog.getCredentials(this.getTableUUID()),
-              () -> this.onCredentialsRefreshed());
+                  this::onCredentialsRefreshed);
     }
     return credentialManager;
   }
@@ -218,12 +223,17 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected Row getWriteState() {
     if (tableState == null) {
-      tableState = JsonUtils.rowFromJson(serializableTableState, TransactionStateRow.SCHEMA);
+      tableState = JsonUtils.rowFromJson(serializedTableState, TransactionStateRow.SCHEMA);
     }
     return tableState;
   }
 
-  ExecutorService threadPool = Executors.newSingleThreadExecutor();
+  protected synchronized ExecutorService getThreadPool() {
+    if (threadPool == null) {
+      threadPool = Executors.newSingleThreadExecutor();
+    }
+    return threadPool;
+  }
 
   /**
    * Load snapshot using a separated thread. This will allow external request to interrupt the
@@ -233,7 +243,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
    */
   protected Optional<Snapshot> snapshot() {
     try {
-      return Optional.of(threadPool.submit(this::loadLatestSnapshot).get());
+      return Optional.of(getThreadPool().submit(this::loadLatestSnapshot).get());
     } catch (Exception e) {
       if (isTableNotFound.test(e)) {
         return Optional.empty();
@@ -246,9 +256,13 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   @Override
-  public void close() throws InterruptedException {
-    threadPool.shutdownNow();
-    threadPool.awaitTermination(10, TimeUnit.MINUTES);
+  public synchronized void close() throws InterruptedException {
+    if (threadPool != null) {
+      threadPool.shutdownNow();
+      // This should return quickly if all tasks are interruptible
+      threadPool.awaitTermination(10, TimeUnit.MINUTES);
+      threadPool = null;
+    }
   }
 
   /**
@@ -300,7 +314,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
                   .buildUpdateTableTransaction("dummy", Operation.WRITE)
                   .build(getEngine())
                   .getTransactionState(getEngine());
-          this.serializableTableState = JsonUtils.rowToJson(this.tableState);
+          this.serializedTableState = JsonUtils.rowToJson(this.tableState);
           return null;
         });
   }
