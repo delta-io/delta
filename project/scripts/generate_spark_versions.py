@@ -8,10 +8,11 @@ and provides utilities for GitHub Actions workflows.
 Usage:
     # Generate GitHub Actions matrix JSON
     python project/scripts/generate_spark_versions.py --github-matrix
-    # Output: ["4.0.1", "4.1.0"]
+    # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
 
-    # Get a specific field for a Spark version
-    python project/scripts/generate_spark_versions.py --get-field 4.0.1 targetJvm
+    # Get a specific field for a Spark version (using short version or "master")
+    python project/scripts/generate_spark_versions.py --get-field 4.0 targetJvm
+    python project/scripts/generate_spark_versions.py --get-field master targetJvm
     # Output: "17"
 """
 
@@ -48,7 +49,7 @@ def main():
         "--get-field",
         nargs=2,
         metavar=("SPARK_VERSION", "FIELD"),
-        help="Get a specific field for a Spark version (e.g., --get-field 4.0.1 targetJvm)"
+        help="Get a specific field for a Spark version (e.g., --get-field 4.0 targetJvm or --get-field master targetJvm)"
     )
 
     args = parser.parse_args()
@@ -62,16 +63,28 @@ def main():
         versions = load_spark_versions(json_path)
 
         if args.github_matrix:
-            # Extract full versions for matrix
-            full_versions = [v["fullVersion"] for v in versions]
-            print(json.dumps(full_versions))
+            # For master version, use "master"; for others, use short version
+            matrix_versions = []
+            for v in versions:
+                if v.get("isMaster", False):
+                    matrix_versions.append("master")
+                else:
+                    matrix_versions.append(v["shortVersion"])
+            print(json.dumps(matrix_versions))
 
         elif args.get_field:
             spark_version, field = args.get_field
-            # Find the version entry
+            
+            # Find the version entry by matching:
+            # - "master" matches isMaster=true
+            # - short version like "4.0" matches shortVersion
+            # - full version like "4.0.1" matches fullVersion
             version_entry = None
             for v in versions:
-                if v["fullVersion"] == spark_version:
+                if spark_version == "master" and v.get("isMaster", False):
+                    version_entry = v
+                    break
+                elif spark_version == v["shortVersion"] or spark_version == v["fullVersion"]:
                     version_entry = v
                     break
 

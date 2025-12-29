@@ -168,16 +168,20 @@ import Unidoc._
  *
  *   The JSON is an array where each element contains:
  *   - fullVersion: Full version string (e.g., "4.0.1", "4.1.0")
+ *   - shortVersion: Short version string (e.g., "4.0", "4.1")
+ *   - isMaster: Whether this is the master/snapshot version
  *   - targetJvm: Target JVM version (e.g., "17")
  *
  *   Example:
  *     build/sbt exportSparkVersionsJson
  *     # Generates: target/spark-versions.json
- *     # Output: [{"fullVersion": "4.0.1", "targetJvm": "17"}, ...]
+ *     # Output: [{"fullVersion": "4.0.1", "shortVersion": "4.0", "isMaster": false, "targetJvm": "17"}, ...]
  *
  *   Use with Python utilities to extract specific fields:
  *     python3 project/scripts/generate_spark_versions.py --github-matrix
- *     python3 project/scripts/generate_spark_versions.py --get-field "4.0.1" targetJvm
+ *     # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
+ *     python3 project/scripts/generate_spark_versions.py --get-field "4.0" targetJvm
+ *     python3 project/scripts/generate_spark_versions.py --get-field "master" targetJvm
  *
  *   This ensures GitHub Actions always uses the versions defined here,
  *   eliminating manual synchronization across multiple files.
@@ -519,8 +523,11 @@ object CrossSparkVersions extends AutoPlugin {
         writer.println("[")
         SparkVersionSpec.ALL_SPECS.zipWithIndex.foreach { case (spec, idx) =>
           val comma = if (idx < SparkVersionSpec.ALL_SPECS.size - 1) "," else ""
+          val isMaster = SparkVersionSpec.MASTER.contains(spec)
           writer.println(s"""  {""")
           writer.println(s"""    "fullVersion": "${spec.fullVersion}",""")
+          writer.println(s"""    "shortVersion": "${spec.shortVersion}",""")
+          writer.println(s"""    "isMaster": $isMaster,""")
           writer.println(s"""    "targetJvm": "${spec.targetJvm}"""")
           writer.println(s"""  }$comma""")
         }
