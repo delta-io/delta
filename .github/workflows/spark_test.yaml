@@ -3,13 +3,11 @@ on: [push, pull_request]
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This ensures the workflow always uses the versions defined in the build
-  # The JSON contains all version-specific details: JVM version, Jackson version, etc.
   generate-matrix:
     name: "Generate Spark Versions Matrix"
     runs-on: ubuntu-24.04
     outputs:
       spark_versions: ${{ steps.generate.outputs.spark_versions }}
-      spark_versions_json: ${{ steps.generate.outputs.spark_versions_json }}
     steps:
       - uses: actions/checkout@v3
       - name: install java
@@ -27,11 +25,6 @@ jobs:
           SPARK_VERSIONS=$(python3 project/scripts/generate_spark_versions.py --github-matrix)
           echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
           echo "Generated Spark versions: $SPARK_VERSIONS"
-          
-          # Export full JSON with all details (JVM version, Jackson version, etc.)
-          # This can be used to access version-specific details in the test job
-          SPARK_VERSIONS_JSON=$(python3 project/scripts/generate_spark_versions.py --full-json | jq -c)
-          echo "spark_versions_json=$SPARK_VERSIONS_JSON" >> $GITHUB_OUTPUT
 
   test:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
@@ -72,10 +65,6 @@ jobs:
           JVM_VERSION=$(python3 project/scripts/generate_spark_versions.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
           echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
           echo "Using JVM version: $JVM_VERSION for Spark ${{ matrix.spark_version }}"
-          
-          # You can extract other fields too:
-          # JACKSON_VERSION=$(python3 project/scripts/generate_spark_versions.py --get-field "${{ matrix.spark_version }}" jacksonVersion | jq -r)
-          # ANTLR4_VERSION=$(python3 project/scripts/generate_spark_versions.py --get-field "${{ matrix.spark_version }}" antlr4Version | jq -r)
       - name: install java
         uses: actions/setup-java@v3
         with:
