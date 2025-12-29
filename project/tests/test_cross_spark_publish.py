@@ -16,6 +16,7 @@ The script will:
 4. Exit with status 0 on success, 1 on failure
 """
 
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -326,6 +327,220 @@ class CrossSparkPublishTest:
             print(f"Warning: Could not validate Spark versions: {e}\n")
 
 
+class SparkVersionsScriptTest:
+    """Tests for the generate_spark_versions.py script."""
+
+    def __init__(self, delta_root: Path):
+        self.delta_root = delta_root
+        self.json_path = delta_root / "target" / "spark-versions.json"
+        self.script_path = delta_root / "project" / "scripts" / "generate_spark_versions.py"
+
+    def ensure_json_exists(self) -> bool:
+        """Ensure the JSON file exists by running exportSparkVersionsJson."""
+        if not self.json_path.exists():
+            print("  Generating spark-versions.json...")
+            try:
+                subprocess.run(
+                    ["build/sbt", "exportSparkVersionsJson"],
+                    cwd=self.delta_root,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT
+                )
+            except subprocess.CalledProcessError:
+                print("  ✗ Failed to generate spark-versions.json")
+                return False
+        return True
+
+    def test_json_format(self) -> bool:
+        """Test that the JSON file is well-formed with expected fields."""
+        print("\n" + "="*70)
+        print("TEST: JSON Format Validation")
+        print("="*70)
+
+        if not self.ensure_json_exists():
+            return False
+
+        try:
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            # Validate it's an array
+            if not isinstance(data, list):
+                print("  ✗ JSON must be an array")
+                return False
+
+            if len(data) == 0:
+                print("  ✗ JSON array is empty")
+                return False
+
+            # Validate each entry has required fields
+            required_fields = ["fullVersion", "shortVersion", "isMaster", "targetJvm"]
+            for idx, entry in enumerate(data):
+                for field in required_fields:
+                    if field not in entry:
+                        print(f"  ✗ Entry {idx} missing required field: {field}")
+                        return False
+
+                # Validate field types
+                if not isinstance(entry["fullVersion"], str):
+                    print(f"  ✗ Entry {idx}: fullVersion must be a string")
+                    return False
+                if not isinstance(entry["shortVersion"], str):
+                    print(f"  ✗ Entry {idx}: shortVersion must be a string")
+                    return False
+                if not isinstance(entry["isMaster"], bool):
+                    print(f"  ✗ Entry {idx}: isMaster must be a boolean")
+                    return False
+                if not isinstance(entry["targetJvm"], str):
+                    print(f"  ✗ Entry {idx}: targetJvm must be a string")
+                    return False
+
+            print(f"  ✓ JSON format is valid")
+            print(f"  ✓ Found {len(data)} Spark version(s)")
+            for entry in data:
+                version_label = "master" if entry["isMaster"] else entry["shortVersion"]
+                print(f"    - {version_label} (full: {entry['fullVersion']}, JVM: {entry['targetJvm']})")
+
+            return True
+
+        except json.JSONDecodeError as e:
+            print(f"  ✗ Invalid JSON: {e}")
+            return False
+        except Exception as e:
+            print(f"  ✗ Unexpected error: {e}")
+            return False
+
+    def test_github_matrix(self) -> bool:
+        """Test that --github-matrix produces valid JSON array."""
+        print("\n" + "="*70)
+        print("TEST: GitHub Actions Matrix Generation")
+        print("="*70)
+
+        if not self.ensure_json_exists():
+            return False
+
+        try:
+            result = subprocess.run(
+                ["python3", str(self.script_path), "--github-matrix"],
+                cwd=self.delta_root,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            matrix_output = result.stdout.strip()
+            print(f"  Matrix output: {matrix_output}")
+
+            # Parse the output as JSON
+            matrix_versions = json.loads(matrix_output)
+
+            # Validate it's an array
+            if not isinstance(matrix_versions, list):
+                print("  ✗ Matrix output must be a JSON array")
+                return False
+
+            if len(matrix_versions) == 0:
+                print("  ✗ Matrix array is empty")
+                return False
+
+            # Validate each entry is a string
+            for version in matrix_versions:
+                if not isinstance(version, str):
+                    print(f"  ✗ Matrix entry must be a string, got: {type(version)}")
+                    return False
+
+            # Load the JSON to validate consistency
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            # Check that we have the right number of versions
+            if len(matrix_versions) != len(data):
+                print(f"  ✗ Matrix has {len(matrix_versions)} versions, JSON has {len(data)}")
+                return False
+
+            # Validate each version matches expected format
+            for idx, (matrix_ver, json_entry) in enumerate(zip(matrix_versions, data)):
+                expected = "master" if json_entry["isMaster"] else json_entry["shortVersion"]
+                if matrix_ver != expected:
+                    print(f"  ✗ Entry {idx}: expected '{expected}', got '{matrix_ver}'")
+                    return False
+
+            print(f"  ✓ Matrix contains {len(matrix_versions)} version(s): {matrix_versions}")
+            return True
+
+        except subprocess.CalledProcessError as e:
+            print(f"  ✗ Script failed: {e}")
+            print(f"  stderr: {e.stderr}")
+            return False
+        except json.JSONDecodeError as e:
+            print(f"  ✗ Invalid JSON output: {e}")
+            return False
+        except Exception as e:
+            print(f"  ✗ Unexpected error: {e}")
+            return False
+
+    def test_get_field(self) -> bool:
+        """Test that --get-field works for various version formats."""
+        print("\n" + "="*70)
+        print("TEST: Get Field Functionality")
+        print("="*70)
+
+        if not self.ensure_json_exists():
+            return False
+
+        try:
+            # Load the JSON to know what versions to test
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            test_cases = []
+            for entry in data:
+                # Test short version
+                test_cases.append((entry["shortVersion"], "targetJvm", entry["targetJvm"]))
+                test_cases.append((entry["shortVersion"], "fullVersion", entry["fullVersion"]))
+                
+                # Test full version
+                test_cases.append((entry["fullVersion"], "targetJvm", entry["targetJvm"]))
+                
+                # Test "master" if applicable
+                if entry["isMaster"]:
+                    test_cases.append(("master", "targetJvm", entry["targetJvm"]))
+                    test_cases.append(("master", "fullVersion", entry["fullVersion"]))
+
+            all_passed = True
+            for version, field, expected in test_cases:
+                result = subprocess.run(
+                    ["python3", str(self.script_path), "--get-field", version, field],
+                    cwd=self.delta_root,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+
+                output = result.stdout.strip()
+                # The output is JSON-formatted, so parse it
+                actual = json.loads(output)
+
+                if actual != expected:
+                    print(f"  ✗ --get-field {version} {field}: expected {expected}, got {actual}")
+                    all_passed = False
+                else:
+                    print(f"  ✓ --get-field {version} {field} → {actual}")
+
+            return all_passed
+
+        except subprocess.CalledProcessError as e:
+            print(f"  ✗ Script failed: {e}")
+            print(f"  stderr: {e.stderr}")
+            return False
+        except Exception as e:
+            print(f"  ✗ Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
 def main():
     """Main entry point."""
     try:
@@ -339,25 +554,47 @@ def main():
         print("="*70)
         print()
 
-        # Create test object and validate Spark versions
-        test = CrossSparkPublishTest(delta_root)
-        test.validate_spark_versions()
+        # Test the generate_spark_versions.py script first
+        print("\n" + "="*70)
+        print("PART 1: Spark Versions Script Tests")
+        print("="*70)
+        script_test = SparkVersionsScriptTest(delta_root)
+        script_test1_passed = script_test.test_json_format()
+        script_test2_passed = script_test.test_github_matrix()
+        script_test3_passed = script_test.test_get_field()
 
-        # Run all tests
-        test1_passed = test.test_default_publish()
-        test2_passed = test.test_run_only_for_spark_modules()
-        test3_passed = test.test_cross_spark_workflow()
+        # Test cross-Spark build workflow
+        print("\n" + "="*70)
+        print("PART 2: Cross-Spark Build Tests")
+        print("="*70)
+        build_test = CrossSparkPublishTest(delta_root)
+        build_test.validate_spark_versions()
+
+        # Run all build tests
+        build_test1_passed = build_test.test_default_publish()
+        build_test2_passed = build_test.test_run_only_for_spark_modules()
+        build_test3_passed = build_test.test_cross_spark_workflow()
 
         # Summary
         print("\n" + "="*70)
         print("TEST SUMMARY")
         print("="*70)
-        print(f"Default publishM2:                      {'✓ PASSED' if test1_passed else '✗ FAILED'}")
-        print(f"runOnlyForReleasableSparkModules:       {'✓ PASSED' if test2_passed else '✗ FAILED'}")
-        print(f"Cross-Spark Workflow:                   {'✓ PASSED' if test3_passed else '✗ FAILED'}")
+        print("\nPart 1: Spark Versions Script Tests")
+        print(f"  JSON Format:                            {'✓ PASSED' if script_test1_passed else '✗ FAILED'}")
+        print(f"  GitHub Matrix Generation:               {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
+        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
+        print("\nPart 2: Cross-Spark Build Tests")
+        print(f"  Default publishM2:                      {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
+        print(f"  runOnlyForReleasableSparkModules:       {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
+        print(f"  Cross-Spark Workflow:                   {'✓ PASSED' if build_test3_passed else '✗ FAILED'}")
         print("="*70)
 
-        if test1_passed and test2_passed and test3_passed:
+        all_tests_passed = (
+            script_test1_passed and script_test2_passed and script_test3_passed and
+            build_test1_passed and build_test2_passed and build_test3_passed
+        )
+
+        if all_tests_passed:
             print("\n✓ ALL TESTS PASSED")
             sys.exit(0)
         else:
