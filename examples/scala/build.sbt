@@ -113,12 +113,13 @@ getDeltaArtifactName := {
 }
 
 val getSparkVersionForCrossBuild = settingKey[Option[String]](
-  s"get spark version for cross-build artifact name from environment variable SPARK_VERSION"
+  s"get spark version for cross-build artifact name from environment variable SPARK_VERSION. " +
+  s"Returns None if SPARK_VERSION is not set or if it matches the default Spark version (4.0)."
 )
 
 getSparkVersionForCrossBuild := {
   sys.env.get("SPARK_VERSION") match {
-    case Some(v) if v.nonEmpty => Some(v)
+    case Some(v) if v.nonEmpty && v != "4.0" => Some(v)  // Default Spark is 4.0.x, so don't add suffix for 4.0
     case _ => None
   }
 }
