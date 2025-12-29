@@ -144,7 +144,7 @@ class IcebergRESTCatalogPlanningClient(
       database: String,
       table: String,
       sparkFilterOption: Option[Filter] = None,
-      sparkProjectionOption: Option[StructType] = None): ScanPlan = {
+      sparkProjectionOption: Option[Seq[String]] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
     // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
     // /v1/config to get the optional prefix and builds the proper endpoint
@@ -165,11 +165,10 @@ class IcebergRESTCatalogPlanningClient(
       }
     }
 
-    // Extract column names from projection and add to request if projection is present.
+    // Add column names from projection to request if projection is present.
     // This enables the server to optimize file listing for large tables with many columns.
-    sparkProjectionOption.foreach { sparkProjection =>
-      val columnNames = sparkProjection.fieldNames.toSeq.asJava
-      builder.withSelect(columnNames)
+    sparkProjectionOption.foreach { columnNames =>
+      builder.withSelect(columnNames.asJava)
     }
 
     val request = builder.build()

@@ -21,7 +21,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.input_file_name
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.StructType
 
 /**
  * Implementation of ServerSidePlanningClient that uses Spark SQL with input_file_name()

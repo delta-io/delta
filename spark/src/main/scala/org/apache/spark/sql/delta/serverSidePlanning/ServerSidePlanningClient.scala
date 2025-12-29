@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.StructType
 
 /**
  * Simple data class representing a file to scan.
