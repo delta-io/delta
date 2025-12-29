@@ -64,6 +64,13 @@ jobs:
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
+      - name: Get Spark version details
+        id: spark-details
+        run: |
+          # Get the full Spark version for this matrix entry
+          FULL_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" fullVersion | jq -r)
+          echo "full_version=$FULL_VERSION" >> $GITHUB_OUTPUT
+          echo "Full Spark version: $FULL_VERSION"
       - name: Install Job dependencies
         run: |
           sudo apt-get update
@@ -88,8 +95,8 @@ jobs:
           # `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
           # the`version.sbt` file.
           pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
-          # Install pyspark matching the matrix spark_version
-          pipenv run pip install pyspark==${{ matrix.spark_version }}.0
+          # Install pyspark matching the full spark version
+          pipenv run pip install pyspark==${{ steps.spark-details.outputs.full_version }}
           pipenv run pip install flake8==3.9.0
           pipenv run pip install black==23.12.1
           pipenv run pip install importlib_metadata==3.10.0
