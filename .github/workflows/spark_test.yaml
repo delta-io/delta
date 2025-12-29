@@ -1,14 +1,47 @@
 name: "Delta Spark"
 on: [push, pull_request]
 jobs:
+  # Generate Spark versions matrix from CrossSparkVersions.scala
+  # This ensures the workflow always uses the versions defined in the build
+  # The JSON contains all version-specific details: JVM version, Jackson version, etc.
+  generate-matrix:
+    name: "Generate Spark Versions Matrix"
+    runs-on: ubuntu-24.04
+    outputs:
+      spark_versions: ${{ steps.generate.outputs.spark_versions }}
+      spark_versions_json: ${{ steps.generate.outputs.spark_versions_json }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Generate Spark versions JSON
+        id: generate
+        run: |
+          # Generate the JSON file from CrossSparkVersions.scala
+          build/sbt exportSparkVersionsJson
+          
+          # Extract the spark_version array for GitHub Actions matrix
+          SPARK_VERSIONS=$(python3 project/scripts/generate_spark_versions.py --github-matrix)
+          echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
+          echo "Generated Spark versions: $SPARK_VERSIONS"
+          
+          # Export full JSON with all details (JVM version, Jackson version, etc.)
+          # This can be used to access version-specific details in the test job
+          SPARK_VERSIONS_JSON=$(python3 project/scripts/generate_spark_versions.py --full-json | jq -c)
+          echo "spark_versions_json=$SPARK_VERSIONS_JSON" >> $GITHUB_OUTPUT
+
   test:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
+    needs: generate-matrix
     strategy:
       matrix:
-        # Spark versions - must match CrossSparkVersions.ALL_SPECS in project/CrossSparkVersions.scala
-        # Update this list when adding new Spark versions to CrossSparkVersions.scala
-        spark_version: ["4.0.1", "4.1.0", "master"]
+        # Spark versions are dynamically generated from CrossSparkVersions.scala
+        # DO NOT hardcode versions here - they are automatically loaded from the build configuration
+        spark_version: ${{ fromJson(needs.generate-matrix.outputs.spark_versions) }}
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
@@ -29,11 +62,25 @@ jobs:
             !unity/**
             !kernel/**
             !connectors/**
+      - name: Get Spark version details
+        id: spark-details
+        run: |
+          # Generate JSON to get version-specific details
+          build/sbt exportSparkVersionsJson
+          
+          # Extract JVM version for this Spark version
+          JVM_VERSION=$(python3 project/scripts/generate_spark_versions.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
+          echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
+          echo "Using JVM version: $JVM_VERSION for Spark ${{ matrix.spark_version }}"
+          
+          # You can extract other fields too:
+          # JACKSON_VERSION=$(python3 project/scripts/generate_spark_versions.py --get-field "${{ matrix.spark_version }}" jacksonVersion | jq -r)
+          # ANTLR4_VERSION=$(python3 project/scripts/generate_spark_versions.py --get-field "${{ matrix.spark_version }}" antlr4Version | jq -r)
       - name: install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "17"
+          java-version: ${{ steps.spark-details.outputs.jvm_version }}
       - name: Cache Scala, SBT
         uses: actions/cache@v3
         with:
