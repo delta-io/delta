@@ -328,12 +328,12 @@ class CrossSparkPublishTest:
 
 
 class SparkVersionsScriptTest:
-    """Tests for the generate_spark_versions.py script."""
+    """Tests for the get_spark_version_info.py script."""
 
     def __init__(self, delta_root: Path):
         self.delta_root = delta_root
         self.json_path = delta_root / "target" / "spark-versions.json"
-        self.script_path = delta_root / "project" / "scripts" / "generate_spark_versions.py"
+        self.script_path = delta_root / "project" / "scripts" / "get_spark_version_info.py"
 
     def ensure_json_exists(self) -> bool:
         """Ensure the JSON file exists by running exportSparkVersionsJson."""
@@ -554,7 +554,7 @@ def main():
         print("="*70)
         print()
 
-        # Test the generate_spark_versions.py script first
+        # Test the get_spark_version_info.py script first
         print("\n" + "="*70)
         print("PART 1: Spark Versions Script Tests")
         print("="*70)

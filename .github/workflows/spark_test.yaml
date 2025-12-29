@@ -19,7 +19,7 @@ jobs:
         id: generate
         run: |
           # The script automatically generates spark-versions.json from CrossSparkVersions.scala
-          SPARK_VERSIONS=$(python3 project/scripts/generate_spark_versions.py --all-spark-versions)
+          SPARK_VERSIONS=$(python3 project/scripts/get_spark_version_info.py --all-spark-versions)
           echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
           echo "Generated Spark versions: $SPARK_VERSIONS"
 
@@ -56,7 +56,7 @@ jobs:
         id: spark-details
         run: |
           # The script automatically generates spark-versions.json if needed
-          JVM_VERSION=$(python3 project/scripts/generate_spark_versions.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
+          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
           echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
           echo "Using JVM version: $JVM_VERSION for Spark ${{ matrix.spark_version }}"
       - name: install java
