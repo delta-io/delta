@@ -144,14 +144,15 @@ def getLibraryDependencies(
     deltaVersion: String,
     deltaArtifactName: String,
     icebergSparkRuntimeArtifactName: String,
-    sparkVersionForCrossBuild: Option[String]): Seq[ModuleID] = {
+    sparkVersionForCrossBuild: Option[String],
+    scalaBinVersion: String): Seq[ModuleID] = {
   
   // For cross-Spark builds, we need to use explicit artifact names with Spark version
   // e.g., delta-spark_4.0_2.13 instead of delta-spark_2.13
   val deltaCoreDep = sparkVersionForCrossBuild match {
     case Some(sparkVer) =>
       // Use explicit cross-build naming: artifactName_sparkVersion_scalaVersion
-      "io.delta" % s"${deltaArtifactName}_${sparkVer}_${scalaBinaryVersion.value}" % deltaVersion
+      "io.delta" % s"${deltaArtifactName}_${sparkVer}_${scalaBinVersion}" % deltaVersion
     case None =>
       // Use standard %% which adds only Scala version
       "io.delta" %% deltaArtifactName % deltaVersion
@@ -159,7 +160,7 @@ def getLibraryDependencies(
   
   val deltaIcebergDep = sparkVersionForCrossBuild match {
     case Some(sparkVer) =>
-      "io.delta" % s"delta-iceberg_${sparkVer}_${scalaBinaryVersion.value}" % deltaVersion
+      "io.delta" % s"delta-iceberg_${sparkVer}_${scalaBinVersion}" % deltaVersion
     case None =>
       "io.delta" %% "delta-iceberg" % deltaVersion
   }
@@ -194,7 +195,8 @@ lazy val root = (project in file("."))
       getDeltaVersion.value,
       getDeltaArtifactName.value,
       getIcebergSparkRuntimeArtifactName.value,
-      getSparkVersionForCrossBuild.value),
+      getSparkVersionForCrossBuild.value,
+      scalaBinaryVersion.value),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
