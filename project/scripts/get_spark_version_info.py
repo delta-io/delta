@@ -9,12 +9,16 @@ The script automatically generates the JSON file if it doesn't exist.
 
 Usage:
     # Get all Spark versions as JSON array
-    python project/scripts/generate_spark_versions.py --all-spark-versions
+    python project/scripts/get_spark_version_info.py --all-spark-versions
     # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
 
+    # Get only released Spark versions (no snapshots)
+    python project/scripts/get_spark_version_info.py --released-spark-versions
+    # Output: ["4.0", "4.1"] (excludes versions with -SNAPSHOT)
+
     # Get a specific field for a Spark version (using short version or "master")
-    python project/scripts/generate_spark_versions.py --get-field 4.0 targetJvm
-    python project/scripts/generate_spark_versions.py --get-field master targetJvm
+    python project/scripts/get_spark_version_info.py --get-field 4.0 targetJvm
+    python project/scripts/get_spark_version_info.py --get-field master targetJvm
     # Output: "17"
 """
 
@@ -69,6 +73,11 @@ def main():
         help="Output all Spark versions as JSON array (e.g., [\"4.0\", \"4.1\"] or [\"master\", \"4.0\"])"
     )
     parser.add_argument(
+        "--released-spark-versions",
+        action="store_true",
+        help="Output only released Spark versions (excluding snapshots) as JSON array"
+    )
+    parser.add_argument(
         "--get-field",
         nargs=2,
         metavar=("SPARK_VERSION", "FIELD"),
@@ -92,6 +101,14 @@ def main():
                 if v.get("isMaster", False):
                     matrix_versions.append("master")
                 else:
+                    matrix_versions.append(v["shortVersion"])
+            print(json.dumps(matrix_versions))
+
+        elif args.released_spark_versions:
+            # Only include released versions (no -SNAPSHOT in fullVersion)
+            matrix_versions = []
+            for v in versions:
+                if "-SNAPSHOT" not in v["fullVersion"]:
                     matrix_versions.append(v["shortVersion"])
             print(json.dumps(matrix_versions))
 
