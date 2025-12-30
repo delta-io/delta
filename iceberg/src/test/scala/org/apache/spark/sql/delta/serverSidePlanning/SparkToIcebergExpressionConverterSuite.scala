@@ -19,8 +19,7 @@ package org.apache.spark.sql.delta.serverSidePlanning
 import org.apache.spark.sql.sources._
 import org.scalatest.funsuite.AnyFunSuite
 import shadedForDelta.org.apache.iceberg.expressions.Expression.Operation
-import shadedForDelta.org.apache.iceberg.expressions.{UnboundPredicate, Expressions}
-import scala.jdk.CollectionConverters._
+import shadedForDelta.org.apache.iceberg.expressions.UnboundPredicate
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
@@ -44,15 +43,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       // UnboundPredicate: Iceberg's expression representation before binding to a schema.
       // Once bound, column names are resolved to field IDs and types.
       case unbound: UnboundPredicate[_] =>
-        // Extract column name from term string: ref(name="id") -> id
-        val termStr = unbound.term().toString
-        val termName = if (termStr.startsWith("ref(name=\"") && termStr.endsWith("\")")) {
-          termStr.substring(10, termStr.length - 2)
-        } else {
-          termStr
-        }
+        // Use ref().name() to get the column name
+        val termName = unbound.ref().name()
         assert(termName == expectedTerm,
-          s"Expected term '$expectedTerm' but got '$termName' (from: $termStr)")
+          s"Expected term '$expectedTerm' but got '$termName'")
         assert(unbound.literal().toString.contains(expectedLiteralStr),
           s"Expected literal containing '$expectedLiteralStr' but got '${unbound.literal()}'")
       case _ =>
@@ -75,15 +69,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     // UnboundPredicate: Iceberg's expression representation before binding to a schema
     expr match {
       case unbound: UnboundPredicate[_] =>
-        // Extract column name from term string: ref(name="id") -> id
-        val termStr = unbound.term().toString
-        val termName = if (termStr.startsWith("ref(name=\"") && termStr.endsWith("\")")) {
-          termStr.substring(10, termStr.length - 2)
-        } else {
-          termStr
-        }
+        // Use ref().name() to get the column name
+        val termName = unbound.ref().name()
         assert(termName == expectedTerm,
-          s"Expected term '$expectedTerm' but got '$termName' (from: $termStr)")
+          s"Expected term '$expectedTerm' but got '$termName'")
       case _ =>
         fail(s"Expected UnboundPredicate but got ${expr.getClass.getSimpleName}")
     }
