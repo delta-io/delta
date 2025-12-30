@@ -19,11 +19,73 @@ package org.apache.spark.sql.delta.serverSidePlanning
 import org.apache.spark.sql.sources._
 import org.scalatest.funsuite.AnyFunSuite
 import shadedForDelta.org.apache.iceberg.expressions.Expression.Operation
+import shadedForDelta.org.apache.iceberg.expressions.{UnboundPredicate, Expressions}
+import scala.jdk.CollectionConverters._
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
-  // Helper: Assert filter converts successfully with type-safe operator validation
+  // Helper: Assert comparison/equality filter (validates term and literal in correct positions)
   private def assertConvert(
+      filter: Filter,
+      expectedOp: Operation,
+      expectedTerm: String,
+      expectedLiteralStr: String): Unit = {
+    val result = SparkToIcebergExpressionConverter.convert(filter)
+    assert(result.isDefined, s"Should convert: $filter")
+
+    val expr = result.get
+    assert(expr.op() == expectedOp,
+      s"Expected operation $expectedOp but got ${expr.op()}")
+
+    // Validate term (column name) is on left and literal value is on right
+    expr match {
+      case unbound: UnboundPredicate[_] =>
+        // Extract column name from term string: ref(name="id") -> id
+        val termStr = unbound.term().toString
+        val termName = if (termStr.startsWith("ref(name=\"") && termStr.endsWith("\")")) {
+          termStr.substring(10, termStr.length - 2)
+        } else {
+          termStr
+        }
+        assert(termName == expectedTerm,
+          s"Expected term '$expectedTerm' but got '$termName' (from: $termStr)")
+        assert(unbound.literal().toString.contains(expectedLiteralStr),
+          s"Expected literal containing '$expectedLiteralStr' but got '${unbound.literal()}'")
+      case _ =>
+        fail(s"Expected UnboundPredicate but got ${expr.getClass.getSimpleName}")
+    }
+  }
+
+  // Helper: Assert null check filter (only validates term, no literal)
+  private def assertConvertNullCheck(
+      filter: Filter,
+      expectedOp: Operation,
+      expectedTerm: String): Unit = {
+    val result = SparkToIcebergExpressionConverter.convert(filter)
+    assert(result.isDefined, s"Should convert: $filter")
+
+    val expr = result.get
+    assert(expr.op() == expectedOp,
+      s"Expected operation $expectedOp but got ${expr.op()}")
+
+    expr match {
+      case unbound: UnboundPredicate[_] =>
+        // Extract column name from term string: ref(name="id") -> id
+        val termStr = unbound.term().toString
+        val termName = if (termStr.startsWith("ref(name=\"") && termStr.endsWith("\")")) {
+          termStr.substring(10, termStr.length - 2)
+        } else {
+          termStr
+        }
+        assert(termName == expectedTerm,
+          s"Expected term '$expectedTerm' but got '$termName' (from: $termStr)")
+      case _ =>
+        fail(s"Expected UnboundPredicate but got ${expr.getClass.getSimpleName}")
+    }
+  }
+
+  // Helper: Assert logical operator (And/Or) - just validates operation and terms present
+  private def assertConvertLogical(
       filter: Filter,
       expectedOp: Operation,
       expectedTerms: String*): Unit = {
@@ -31,15 +93,12 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assert(result.isDefined, s"Should convert: $filter")
 
     val expr = result.get
-
-    // Type-safe operator validation (prevents LT matching LT_EQ, etc.)
     assert(expr.op() == expectedOp,
       s"Expected operation $expectedOp but got ${expr.op()}")
 
-    // Still validate column names/values appear in output
     val exprStr = expr.toString
     expectedTerms.foreach(term =>
-      assert(exprStr.contains(term), s"Missing '$term' in: $exprStr")
+      assert(exprStr.contains(term), s"Missing term '$term' in: $exprStr")
     )
   }
 
@@ -52,46 +111,42 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // EqualTo tests
   test("convert EqualTo with various types") {
     assertConvert(EqualTo("id", 5), Operation.EQ, "id", "5")  // integer
-    assertConvert(EqualTo("name", "Alice"), Operation.EQ, "name")  // string
-    assertConvert(EqualTo("id", 1234567890L), Operation.EQ, "id")  // long
-    assertConvert(EqualTo("active", true), Operation.EQ, "active")  // boolean
+    assertConvert(EqualTo("name", "Alice"), Operation.EQ, "name", "Alice")  // string
+    assertConvert(EqualTo("id", 1234567890L), Operation.EQ, "id", "1234567890")  // long
+    assertConvert(EqualTo("active", true), Operation.EQ, "active", "true")  // boolean
 
     // EqualTo with null becomes IsNull
-    val nullResult = SparkToIcebergExpressionConverter.convert(EqualTo("name", null))
-    assert(nullResult.isDefined, "Should convert EqualTo with null")
-    val nullExpr = nullResult.get
-    assert(nullExpr.op() == Operation.IS_NULL, s"Should be IS_NULL operator")
-    assert(nullExpr.toString.contains("name"), s"Should contain column name")
+    assertConvertNullCheck(EqualTo("name", null), Operation.IS_NULL, "name")
   }
 
   // Comparison operator tests
   test("convert comparison operators") {
     assertConvert(LessThan("age", 30), Operation.LT, "age", "30")
     assertConvert(GreaterThan("age", 18), Operation.GT, "age", "18")
-    assertConvert(LessThanOrEqual("price", 99.99), Operation.LT_EQ, "price")
-    assertConvert(GreaterThanOrEqual("timestamp", 1234567890L), Operation.GT_EQ, "timestamp")
+    assertConvert(LessThanOrEqual("price", 99.99), Operation.LT_EQ, "price", "99.99")
+    assertConvert(GreaterThanOrEqual("timestamp", 1234567890L), Operation.GT_EQ, "timestamp", "1234567890")
   }
 
   // Null check tests
   test("convert null check operators") {
-    assertConvert(IsNull("name"), Operation.IS_NULL, "name")
-    assertConvert(IsNotNull("name"), Operation.NOT_NULL, "name")
+    assertConvertNullCheck(IsNull("name"), Operation.IS_NULL, "name")
+    assertConvertNullCheck(IsNotNull("name"), Operation.NOT_NULL, "name")
   }
 
   // Logical operator tests
   test("convert logical operators") {
-    assertConvert(
+    assertConvertLogical(
       And(EqualTo("id", 5), GreaterThan("age", 18)),
       Operation.AND,
       "id", "age")
 
-    assertConvert(
+    assertConvertLogical(
       Or(EqualTo("status", "active"), EqualTo("status", "pending")),
       Operation.OR,
       "status")
 
     // Nested And/Or
-    assertConvert(
+    assertConvertLogical(
       And(
         Or(EqualTo("status", "active"), EqualTo("status", "pending")),
         GreaterThan("age", 18)
@@ -111,9 +166,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Type conversion tests
   test("convert with different numeric types") {
-    assertConvert(EqualTo("count", 42), Operation.EQ, "count")  // int
-    assertConvert(EqualTo("bigCount", 1234567890123L), Operation.EQ, "bigCount")  // long
-    assertConvert(GreaterThan("price", 19.99), Operation.GT, "price")  // double
-    assertConvert(LessThan("rating", 4.5f), Operation.LT, "rating")  // float
+    assertConvert(EqualTo("count", 42), Operation.EQ, "count", "42")  // int
+    assertConvert(EqualTo("bigCount", 1234567890123L), Operation.EQ, "bigCount", "1234567890123")  // long
+    assertConvert(GreaterThan("price", 19.99), Operation.GT, "price", "19.99")  // double
+    assertConvert(LessThan("rating", 4.5f), Operation.LT, "rating", "4.5")  // float
   }
 }
