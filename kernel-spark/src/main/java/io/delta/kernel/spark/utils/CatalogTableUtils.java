@@ -57,6 +57,13 @@ public final class CatalogTableUtils {
   private CatalogTableUtils() {}
 
   /**
+   * Matches delta-spark's test-mode signal (see org.apache.spark.sql.delta.util.Utils.isTesting).
+   */
+  private static boolean isTesting() {
+    return System.getenv("DELTA_TESTING") != null;
+  }
+
+  /**
    * Checks whether any catalog manages this table via CCv2 semantics.
    *
    * @param table Spark {@link CatalogTable} descriptor
@@ -65,6 +72,12 @@ public final class CatalogTableUtils {
   public static boolean isCatalogManaged(CatalogTable table) {
     requireNonNull(table, "table is null");
     Map<String, String> storageProperties = getStorageProperties(table);
+    // Test-only escape hatch used by delta-spark suites to simulate Unity Catalog semantics
+    // without requiring a real commit coordinator / CCv2 table feature wiring.
+    // This should never be set in production catalogs.
+    if (isTesting() && storageProperties.containsKey("test.simulateUC")) {
+      return true;
+    }
     return isCatalogManagedFeatureEnabled(storageProperties, FEATURE_CATALOG_MANAGED)
         || isCatalogManagedFeatureEnabled(storageProperties, FEATURE_CATALOG_OWNED_PREVIEW);
   }

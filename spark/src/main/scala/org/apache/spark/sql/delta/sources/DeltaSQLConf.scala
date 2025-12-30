@@ -39,6 +39,16 @@ trait DeltaSQLConfUtils {
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"$SQL_CONF_PREFIX.$key")
   def buildStaticConf(key: String): ConfigBuilder =
     SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
+
+  /**
+   * Canonical SQLConf key for Delta V2 enable mode.
+   *
+   * This constant is shared across spark and kernel modules to avoid repeating the literal
+   * "spark.databricks.delta.v2.enableMode" in multiple places.
+   *
+   * NOTE: The ConfigEntry itself is defined in kernel-spark (DeltaSQLConfV2).
+   */
+  final val V2_ENABLE_MODE_KEY: String = s"$SQL_CONF_PREFIX.v2.enableMode"
 }
 
 /**
