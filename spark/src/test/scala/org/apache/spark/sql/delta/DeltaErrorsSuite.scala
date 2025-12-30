@@ -112,11 +112,11 @@ trait DeltaErrorsSuiteBase
         StructType.fromDDL("id2 int"),
         detectedDuringStreaming = true),
     "concurrentAppendException" ->
-      DeltaErrors.concurrentAppendException(None, "p1"),
+      DeltaErrors.concurrentAppendException(None, "t", -1, partitionOpt = None),
     "concurrentDeleteDeleteException" ->
-      DeltaErrors.concurrentDeleteDeleteException(None, "p1"),
+      DeltaErrors.concurrentDeleteDeleteException(None, "t", -1, partitionOpt = None),
     "concurrentDeleteReadException" ->
-      DeltaErrors.concurrentDeleteReadException(None, "p1"),
+      DeltaErrors.concurrentDeleteReadException(None, "t", -1, partitionOpt = None),
     "concurrentWriteException" ->
       DeltaErrors.concurrentWriteException(None),
     "concurrentTransactionException" ->
@@ -2702,27 +2702,63 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentAppendException] {
-        throw org.apache.spark.sql.delta.DeltaErrors.concurrentAppendException(None, "p1")
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .concurrentAppendException(None, "t", -1, partitionOpt = None)
       }
-      checkError(e, "DELTA_CONCURRENT_APPEND", "2D521", Map.empty[String, String])
-      assert(e.getMessage
-        .contains("Files were added to p1 by a concurrent update. Please try the operation again."))
+      checkError(e, "DELTA_CONCURRENT_APPEND.WITHOUT_HINT", "2D521",
+        Map(
+          "operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
+          "docLink" -> generateDocsLink("/concurrency-control.html")
+        )
+      )
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentAppendException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .concurrentAppendException(None, "t", -1, partitionOpt = Some("p1"))
+      }
+      checkError(e, "DELTA_CONCURRENT_APPEND.WITH_PARTITION_HINT", "2D521",
+        Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
+          "partitionValues" -> "p1",
+          "docLink" -> generateDocsLink("/concurrency-control.html")))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentDeleteReadException] {
-        throw org.apache.spark.sql.delta.DeltaErrors.concurrentDeleteReadException(None, "p1")
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .concurrentDeleteReadException(None, "t", -1, partitionOpt = None)
       }
-      checkError(e, "DELTA_CONCURRENT_DELETE_READ", "2D521", Map.empty[String, String])
-      assert(e.getMessage.contains("This transaction attempted to read one or more files that " +
-        "were deleted (for example p1) by a concurrent update."))
+      checkError(e, "DELTA_CONCURRENT_DELETE_READ.WITHOUT_HINT", "2D521",
+        Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
+          "docLink" -> generateDocsLink("/concurrency-control.html")))
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentDeleteReadException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .concurrentDeleteReadException(None, "t", -1, partitionOpt = Some("p1"))
+      }
+      checkError(e, "DELTA_CONCURRENT_DELETE_READ.WITH_PARTITION_HINT", "2D521",
+        Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
+          "partitionValues" -> "p1",
+          "docLink" -> generateDocsLink("/concurrency-control.html")))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentDeleteDeleteException] {
-        throw org.apache.spark.sql.delta.DeltaErrors.concurrentDeleteDeleteException(None, "p1")
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .concurrentDeleteDeleteException(None, "t", -1, partitionOpt = None)
       }
-      checkError(e, "DELTA_CONCURRENT_DELETE_DELETE", "2D521", Map.empty[String, String])
-      assert(e.getMessage.contains("This transaction attempted to delete one or more files that " +
-        "were deleted (for example p1) by a concurrent update."))
+      checkError(e, "DELTA_CONCURRENT_DELETE_DELETE.WITHOUT_HINT", "2D521",
+        Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
+          "docLink" -> generateDocsLink("/concurrency-control.html")))
+    }
+    {
+      val e = intercept[io.delta.exceptions.ConcurrentDeleteDeleteException] {
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .concurrentDeleteDeleteException(None, "t", -1, partitionOpt = Some("p1"))
+      }
+      checkError(e, "DELTA_CONCURRENT_DELETE_DELETE.WITH_PARTITION_HINT", "2D521",
+        Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
+          "partitionValues" -> "p1",
+          "docLink" -> generateDocsLink("/concurrency-control.html")))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentTransactionException] {
