@@ -330,8 +330,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       // Test cases covering different projection scenarios
       val testCases = Seq(
         ("single column",
-          Seq("id"),
-          Set("id")),
+          Seq("id"), // input: columns to request
+          Set("id")), // expected: columns captured by server
         ("multiple columns",
           Seq("id", "name"),
           Set("id", "name")),
