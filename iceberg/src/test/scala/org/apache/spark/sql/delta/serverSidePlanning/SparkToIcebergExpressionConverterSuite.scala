@@ -64,6 +64,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertConvert(
       GreaterThanOrEqual("rating", 4.5f),
       Expressions.greaterThanOrEqual("rating", 4.5f))
+    assertConvert(
+      GreaterThanOrEqual("timestamp", 1234567890L),
+      Expressions.greaterThanOrEqual("timestamp", 1234567890L))
   }
 
   // Null check tests
