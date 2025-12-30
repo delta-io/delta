@@ -17,14 +17,11 @@
 package io.sparkuctest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.storage.commit.Commit;
-import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
-import io.delta.storage.commit.TableDescriptor;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.api.TablesApi;
@@ -33,19 +30,15 @@ import io.unitycatalog.client.model.TableInfo;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Files;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.delta.storage.LogStore;
-import org.apache.spark.sql.delta.storage.LogStoreInverseAdaptor;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.junit.jupiter.api.Test;
 import scala.Option;
@@ -70,23 +63,25 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
               + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported') "
               + "AS SELECT CAST(0 AS INT) AS id, CAST('seed' AS STRING) AS value",
           fullTableName);
-      waitForUcCommitConsistency(fullTableName);
+      long expectedVersion = 0L;
+      waitForUcCommitVisibility(fullTableName, expectedVersion);
 
       File checkpointDir = Files.createTempDirectory("uc-streaming-checkpoint-").toFile();
       String queryName = "uc_streaming_" + UUID.randomUUID().toString().replace("-", "");
       StreamingQuery query = null;
+      SparkSession writerSpark = null;
 
       try {
-        setV2Strict(spark);
+        spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
         assertEquals(V2_ENABLE_MODE_STRICT, spark.conf().get(V2_ENABLE_MODE_KEY));
 
+        // Use a separate session with the original mode for batch inserts; do not stop it since
+        // sessions share the SparkContext.
+        writerSpark = spark.newSession();
+        restoreV2Mode(writerSpark, originalMode);
+
         Dataset<Row> input =
-            spark
-                .readStream()
-                .format("delta")
-                // DSv2 streaming requires startingVersion; initial snapshot is unsupported.
-                .option("startingVersion", "0")
-                .table(fullTableName);
+            spark.readStream().format("delta").option("startingVersion", "0").table(fullTableName);
 
         query =
             input
@@ -97,11 +92,36 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
                 .outputMode("append")
                 .start();
 
-        waitForUcCommitConsistency(fullTableName);
+        waitForUcCommitVisibility(fullTableName, expectedVersion);
 
         query.processAllAvailable();
 
-        check(queryName, List.of(List.of("0", "seed")));
+        List<List<String>> expected = new ArrayList<>();
+        expected.add(List.of("0", "seed"));
+        check(queryName, expected);
+
+        assertTrue(
+            query.lastProgress() != null, "Expected initial streaming progress to be available");
+        long lastBatchId = query.lastProgress().batchId();
+
+        for (int i = 1; i <= 3; i++) {
+          String value = "value_" + i;
+          writerSpark
+              .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", fullTableName, i, value))
+              .collect();
+          expectedVersion += 1;
+          waitForUcCommitVisibility(fullTableName, expectedVersion);
+
+          query.processAllAvailable();
+
+          assertTrue(query.lastProgress() != null, "Expected streaming progress after insert " + i);
+          long batchId = query.lastProgress().batchId();
+          assertTrue(batchId > lastBatchId, "Expected a new micro-batch after insert " + i);
+          lastBatchId = batchId;
+
+          expected.add(List.of(String.valueOf(i), value));
+          check(queryName, expected);
+        }
       } finally {
         if (query != null) {
           query.stop();
@@ -115,11 +135,21 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
-  private static void setV2Strict(SparkSession spark) {
-    spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
-  }
-
-  private void waitForUcCommitConsistency(String fullTableName) throws Exception {
+  /**
+   * Polls UC commit state until the UC-visible version is at least the expected version.
+   *
+   * <ul>
+   *   <li>Look up the UC table to get its table ID and storage location.
+   *   <li>Call UC {@code getCommits} to find the latest table version and ratified commits.
+   *   <li>Compute the UC-visible version as max(latest, max ratified commit version).
+   *   <li>Retry until UC reports a version &gt;= expectedVersion or the poll budget is exhausted.
+   * </ul>
+   *
+   * <p>This is test-only waiting to avoid flakiness in streaming offset resolution when UC commit
+   * metadata is slightly behind. It does not mutate UC state, which matches production behavior.
+   */
+  private void waitForUcCommitVisibility(String fullTableName, long expectedVersion)
+      throws Exception {
     ApiClient apiClient = createClient();
     TablesApi tablesApi = new TablesApi(apiClient);
     TableInfo tableInfo = tablesApi.getTable(fullTableName, true, true);
@@ -134,7 +164,8 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
     URI tableUri = URI.create(tableInfo.getStorageLocation());
 
     try (UCClient ucClient = new UCTokenBasedRestClient(getServerUri(), tokenProvider)) {
-      Exception lastUpdateError = null;
+      long lastLatest = -1L;
+      long lastMaxCommit = -1L;
       for (int attempt = 0; attempt < UC_COMMIT_POLL_ATTEMPTS; attempt++) {
         GetCommitsResponse response =
             ucClient.getCommits(
@@ -142,52 +173,24 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
         long latest = response.getLatestTableVersion();
         long maxCommitVersion =
             response.getCommits().stream().mapToLong(Commit::getVersion).max().orElse(latest);
-        long targetVersion = Math.max(latest, maxCommitVersion);
-        if (response.getCommits().isEmpty() && latest >= targetVersion) {
+        long visibleVersion = Math.max(latest, maxCommitVersion);
+        lastLatest = latest;
+        lastMaxCommit = maxCommitVersion;
+        if (visibleVersion >= expectedVersion) {
           return;
-        }
-        try {
-          backfillCommits(tableInfo, targetVersion, ucClient);
-          ucClient.commit(
-              tableInfo.getTableId(),
-              tableUri,
-              Optional.empty(),
-              Optional.of(targetVersion),
-              false,
-              Optional.empty(),
-              Optional.empty());
-          lastUpdateError = null;
-        } catch (CommitFailedException | UCCommitCoordinatorException | RuntimeException e) {
-          lastUpdateError = e;
         }
         Thread.sleep(UC_COMMIT_POLL_SLEEP_MS);
       }
-      String message =
-          "UC commit coordinator did not report a consistent latest version for " + fullTableName;
-      if (lastUpdateError != null) {
-        message = message + ". Last update error: " + lastUpdateError.getMessage();
-        throw new IllegalStateException(message, lastUpdateError);
-      }
-      throw new IllegalStateException(message);
-    }
-  }
-
-  private void backfillCommits(TableInfo tableInfo, long targetVersion, UCClient ucClient) {
-    SparkSession spark = getSparkSession();
-    Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    LogStore sparkLogStore = org.apache.spark.sql.delta.storage.LogStore$.MODULE$.apply(spark);
-    io.delta.storage.LogStore logStore = new LogStoreInverseAdaptor(sparkLogStore, hadoopConf);
-    Path logPath = new Path(tableInfo.getStorageLocation(), "_delta_log");
-    Map<String, String> tableConf = new HashMap<>();
-    tableConf.put(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableInfo.getTableId());
-    TableDescriptor tableDescriptor = new TableDescriptor(logPath, Optional.empty(), tableConf);
-    UCCommitCoordinatorClient coordinatorClient =
-        new UCCommitCoordinatorClient(Collections.emptyMap(), ucClient);
-    try {
-      coordinatorClient.backfillToVersion(
-          logStore, hadoopConf, tableDescriptor, targetVersion, null);
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to backfill UC commits to version " + targetVersion, e);
+      throw new IllegalStateException(
+          "UC commit coordinator did not report version >= "
+              + expectedVersion
+              + " for "
+              + fullTableName
+              + " (latest="
+              + lastLatest
+              + ", maxCommit="
+              + lastMaxCommit
+              + ")");
     }
   }
 
