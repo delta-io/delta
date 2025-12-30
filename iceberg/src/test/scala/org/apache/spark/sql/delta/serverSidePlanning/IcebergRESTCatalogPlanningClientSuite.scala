@@ -320,8 +320,11 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       // Create test data with SQL
       val tableName = s"rest_catalog.${defaultNamespace}.projectionTest"
       sql(s"""
-        INSERT INTO $tableName (id, name)
-        VALUES (1, 'alice'), (2, 'bob'), (3, 'charlie')
+        INSERT INTO $tableName (id, name, age, price, rating, active)
+        VALUES
+          (1, 'alice', 25, 99.99, 4.5, true),
+          (2, 'bob', 30, 149.50, 4.2, false),
+          (3, 'charlie', 35, 199.99, 4.8, true)
       """)
 
       // Test cases covering different projection scenarios
@@ -346,7 +349,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           client.planScan(
             defaultNamespace.toString,
             "projectionTest",
-            projectionOption = Some(projection))
+            sparkProjectionOption = Some(projection))
 
           // Verify server captured the projection
           val capturedProjection = server.getCapturedProjection
