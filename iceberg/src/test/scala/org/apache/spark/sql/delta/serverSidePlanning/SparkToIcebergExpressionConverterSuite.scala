@@ -30,7 +30,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   private def assertConvert(sparkFilter: Filter, expectedIcebergExpr: Expression): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(sparkFilter)
     assert(result.isDefined, s"Should convert: $sparkFilter")
-    
+
     val actual = result.get
     // ExpressionUtil.equivalent(left, right, struct, caseSensitive)
     // caseSensitive=true: column names must match case exactly
