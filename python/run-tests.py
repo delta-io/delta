@@ -23,70 +23,6 @@ from os import path
 import json
 
 
-def get_spark_version_info(spark_version, root_dir):
-    """Get Spark version information from CrossSparkVersions via JSON.
-    
-    Args:
-        spark_version: Spark version string (e.g., "4.0", "4.1", or "default")
-        root_dir: Root directory of the Delta repository
-        
-    Returns:
-        Dict with version info including isDefault field, or None if not found
-    """
-    # If spark_version is "default", find the default version first
-    if spark_version == "default":
-        try:
-            script_path = os.path.join(root_dir, "project", "scripts", "get_spark_version_info.py")
-            result = subprocess.run(
-                ["python3", script_path, "--all-spark-versions"],
-                cwd=root_dir,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            versions = json.loads(result.stdout.strip())
-            # First non-"master" version is the default
-            for version in versions:
-                if version != "master":
-                    spark_version = version
-                    break
-        except Exception as e:
-            print(f"Warning: Could not determine default Spark version: {e}")
-            spark_version = "4.0"
-    
-    # Now get the full info for this version from JSON
-    try:
-        # Load the JSON file directly to get all fields including isDefault
-        json_path = os.path.join(root_dir, "target", "spark-versions.json")
-        
-        # Generate JSON if it doesn't exist
-        if not os.path.exists(json_path):
-            subprocess.run(
-                ["build/sbt", "exportSparkVersionsJson"],
-                cwd=root_dir,
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE
-            )
-        
-        with open(json_path, 'r') as f:
-            all_versions = json.load(f)
-        
-        # Find the matching version (by short version or "master")
-        for v in all_versions:
-            if spark_version == "master" and v.get("isMaster", False):
-                return v
-            elif spark_version == v["shortVersion"]:
-                return v
-        
-        print(f"Warning: Spark version {spark_version} not found in JSON")
-        return None
-        
-    except Exception as e:
-        print(f"Warning: Could not load Spark version info: {e}")
-        return None
-
-
 def test(root_dir, code_dir, packages):
     # Test the codes in the code_dir directory using its "tests" subdirectory,
     # each of them has main entry point to execute, which is python's unittest testing
@@ -148,8 +84,7 @@ def prepare(root_dir, spark_version):
 def get_local_package(package_name, spark_version, root_dir):
     """Get the Maven coordinates for a Delta package.
     
-    Uses get_spark_version_info to get the packageSuffix directly from
-    CrossSparkVersions (the single source of truth).
+    Queries CrossSparkVersions for the packageSuffix (e.g., "", "_4.1").
     
     Args:
         package_name: Name of the package (e.g., "delta-spark", "delta-connect-server")
@@ -164,10 +99,21 @@ def get_local_package(package_name, spark_version, root_dir):
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
 
-    # Get the package suffix directly from CrossSparkVersions
-    # This is the ONLY place that determines package naming logic
-    version_info = get_spark_version_info(spark_version, root_dir)
-    package_name_suffix = version_info.get("packageSuffix", "") if version_info else ""
+    # Get package suffix directly from CrossSparkVersions (single source of truth)
+    script_path = os.path.join(root_dir, "project", "scripts", "get_spark_version_info.py")
+    try:
+        result = subprocess.run(
+            ["python3", script_path, "--get-field", spark_version, "packageSuffix"],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        package_name_suffix = json.loads(result.stdout.strip())
+    except Exception as e:
+        print(f"Warning: Could not determine package suffix for Spark {spark_version}: {e}")
+        print(f"Falling back to empty suffix")
+        package_name_suffix = ""
 
     return f"io.delta:{package_name}{package_name_suffix}_2.13:" + version
 
