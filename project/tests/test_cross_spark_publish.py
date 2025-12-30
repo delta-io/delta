@@ -91,6 +91,7 @@ SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
 }
 
 # The default Spark version (no suffix in artifact names)
+# This is intentionally hardcoded here to explicitly test the default version.
 DEFAULT_SPARK = "4.0.1"
 
 
@@ -367,7 +368,7 @@ class SparkVersionsScriptTest:
                 return False
 
             # Validate each entry has required fields
-            required_fields = ["fullVersion", "shortVersion", "isMaster", "targetJvm"]
+            required_fields = ["fullVersion", "shortVersion", "isMaster", "isDefault", "targetJvm"]
             for idx, entry in enumerate(data):
                 for field in required_fields:
                     if field not in entry:
@@ -376,7 +377,8 @@ class SparkVersionsScriptTest:
 
                 # Validate field types
                 if not isinstance(entry["fullVersion"], str) or not isinstance(entry["shortVersion"], str) or \
-                   not isinstance(entry["isMaster"], bool) or not isinstance(entry["targetJvm"], str):
+                   not isinstance(entry["isMaster"], bool) or not isinstance(entry["isDefault"], bool) or \
+                   not isinstance(entry["targetJvm"], str):
                     print(f"  ✗ Entry {idx}: Invalid field types")
                     return False
 
