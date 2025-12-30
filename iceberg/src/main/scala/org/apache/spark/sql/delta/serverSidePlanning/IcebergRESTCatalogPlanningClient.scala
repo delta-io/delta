@@ -143,7 +143,7 @@ class IcebergRESTCatalogPlanningClient(
   override def planScan(
       database: String,
       table: String,
-      filterOption: Option[Filter] = None,
+      sparkFilterOption: Option[Filter] = None,
       sparkProjectionOption: Option[Seq[String]] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
     // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
@@ -159,7 +159,7 @@ class IcebergRESTCatalogPlanningClient(
     val builder = new PlanTableScanRequest.Builder().withSnapshotId(CURRENT_SNAPSHOT_ID)
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
-    filterOption.foreach { sparkFilter =>
+    sparkFilterOption.foreach { sparkFilter =>
       SparkToIcebergExpressionConverter.convert(sparkFilter).foreach { icebergExpr =>
         builder.withFilter(icebergExpr)
       }
