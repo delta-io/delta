@@ -1394,6 +1394,7 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
       "org.apache.flink" % "flink-core" % flink120Version % "provided",
       "org.apache.flink" % "flink-table-common" % flink120Version % "provided",
       "org.apache.flink" % "flink-streaming-java" % flink120Version % "provided",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flink120Version % "provided",
       "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.google.guava" % "guava" % "33.2.1-jre",

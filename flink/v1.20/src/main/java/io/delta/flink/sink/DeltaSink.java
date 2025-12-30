@@ -93,6 +93,14 @@ public class DeltaSink
     this.conf = conf;
   }
 
+  public DeltaTable getTable() {
+    return deltaTable;
+  }
+
+  public DeltaSinkConf getConf() {
+    return conf;
+  }
+
   // Deprecated API for backward compatibility. Will not be called
   public SinkWriter<RowData> createWriter(InitContext context) {
     return new DeltaSinkWriter.Builder()
@@ -151,7 +159,7 @@ public class DeltaSink
       DataStream<CommittableMessage<DeltaWriterResult>> writerResults) {
     TypeInformation<CommittableMessage<DeltaCommittable>> typeInformation =
         CommittableMessageTypeInfo.of(this::getCommittableSerializer);
-    String uid = String.format("DeltaSink preCommit aggregator: %s", deltaTable.getId());
+    String uid = "PreCommit Agg";
     // global forces all output records send to subtask 0 of the downstream committer operator.
     // This is to ensure commit only happen in one committer subtask.
     return writerResults

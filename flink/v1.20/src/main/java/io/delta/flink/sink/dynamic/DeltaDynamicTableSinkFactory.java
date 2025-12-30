@@ -30,17 +30,26 @@ import org.apache.flink.table.types.DataType;
 
 public class DeltaDynamicTableSinkFactory implements DynamicTableSinkFactory {
 
-  ConfigOption<String> TABLE_PATH =
+  public static ConfigOption<String> TABLE_PATH =
       ConfigOptions.key("table_path")
           .stringType()
           .noDefaultValue()
           .withDescription("Delta table path for the sink");
 
-  ConfigOption<String> PARTITIONS =
+  public static ConfigOption<String> PARTITIONS =
       ConfigOptions.key("partitions")
           .stringType()
           .noDefaultValue()
           .withDescription("Partition column names separated by comma");
+
+  public static ConfigOption<String> UID =
+      ConfigOptions.key("uid")
+          .stringType()
+          .noDefaultValue()
+          .withDescription("UID to be assigned to the sink");
+
+  public static ConfigOption<String> NAME =
+      ConfigOptions.key("name").stringType().noDefaultValue().withDescription("Name of the sink");
 
   @Override
   public DynamicTableSink createDynamicTableSink(Context context) {
@@ -58,7 +67,10 @@ public class DeltaDynamicTableSinkFactory implements DynamicTableSinkFactory {
     // TODO Support other Delta properties
     Map<String, String> deltaOptions = new HashMap<>();
     deltaOptions.put(TABLE_PATH.key(), options.get(TABLE_PATH));
-    deltaOptions.put(PARTITIONS.key(), options.getOptional(PARTITIONS).orElse(""));
+
+    options.getOptional(PARTITIONS).ifPresent(value -> deltaOptions.put(PARTITIONS.key(), value));
+    options.getOptional(UID).ifPresent(value -> deltaOptions.put(UID.key(), value));
+    options.getOptional(NAME).ifPresent(value -> deltaOptions.put(NAME.key(), value));
 
     return new DeltaDynamicTableSink(consumedDataType, sinkParallelism, deltaOptions);
   }
@@ -75,6 +87,6 @@ public class DeltaDynamicTableSinkFactory implements DynamicTableSinkFactory {
 
   @Override
   public Set<ConfigOption<?>> optionalOptions() {
-    return Set.of(PARTITIONS);
+    return Set.of(PARTITIONS, UID, NAME);
   }
 }

@@ -50,6 +50,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -108,7 +109,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
     this.tableId = tableId;
     this.configuration = conf;
     this.schema = schema;
-    this.partitionColumns = partitionColumns;
+    this.partitionColumns = normalize(partitionColumns);
     initialize();
   }
 
@@ -138,7 +139,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
     } else {
       CreateTableTransactionBuilder createTxnBuilder =
           TableManager.buildCreateTableTransaction(getTablePath().toString(), schema, ENGINE_INFO);
-      if (partitionColumns != null && !partitionColumns.isEmpty()) {
+      if (!partitionColumns.isEmpty()) {
         createTxnBuilder.withDataLayoutSpec(
             DataLayoutSpec.partitioned(
                 Optional.of(partitionColumns)
@@ -198,8 +199,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
     if (credentialManager == null) {
       credentialManager =
           new CredentialManager(
-              () -> catalog.getCredentials(this.getTableUUID()),
-                  this::onCredentialsRefreshed);
+              () -> catalog.getCredentials(this.getTableUUID()), this::onCredentialsRefreshed);
     }
     return credentialManager;
   }
@@ -480,5 +480,12 @@ public abstract class AbstractKernelTable implements DeltaTable {
       throw new RuntimeException(e);
     }
     return input;
+  }
+
+  protected static List<String> normalize(List<String> rawPartitions) {
+    if (rawPartitions == null) {
+      return List.of();
+    }
+    return rawPartitions.stream().filter(StringUtils::isNotEmpty).collect(Collectors.toList());
   }
 }

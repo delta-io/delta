@@ -16,9 +16,12 @@
 
 package io.delta.flink.sink.dynamic
 
+import java.io.File
+
 import scala.jdk.CollectionConverters.MapHasAsJava
 
 import io.delta.flink.TestHelper
+import io.delta.kernel.types.{LongType, StringType, StructType}
 
 import org.apache.flink.table.api.{DataTypes, EnvironmentSettings, Schema, TableEnvironment}
 import org.apache.flink.table.catalog.{CatalogTable, ResolvedCatalogTable, ResolvedSchema}
@@ -29,7 +32,7 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
   test("load table") {
     withTempDir { dir =>
       val options = Map(
-        "connector" -> "delta-connector",
+        "connector" -> "delta",
         "table_path" -> s"${dir.getPath}")
 
       val table = CatalogTable.of(
@@ -58,18 +61,19 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
   test("use sql to load table") {
     withTempDir { dir =>
       val settings = EnvironmentSettings.newInstance.inStreamingMode.build
-
       val tEnv = TableEnvironment.create(settings)
-
+      val numRecords = 1000
       tEnv.executeSql(
-        """
+        s"""
            CREATE TEMPORARY TABLE src (
            id BIGINT,
            dt STRING
            ) WITH (
-           'connector' = 'values',
-           'bounded' = 'true',
-           'data-id' = 'my_test'
+           'connector' = 'datagen',
+           'rows-per-second' = '100',
+           'fields.id.kind' = 'sequence',
+           'fields.id.start' = '1',
+           'fields.id.end' = '$numRecords'
            )""".stripMargin)
 
       tEnv.executeSql(
@@ -78,12 +82,26 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
             id BIGINT,
             dt STRING
           ) WITH (
-            'connector' = 'delta-connector',
-            'table_path' = '${dir.getPath}'
+            'connector' = 'delta',
+            'table_path' = '${dir.getPath}',
+            'uid' = 'someuid'
           )
         """.stripMargin)
 
-      tEnv.executeSql("INSERT INTO sink SELECT id, dt FROM src").await();
+      tEnv.executeSql("""INSERT INTO sink SELECT id, dt FROM src""".stripMargin).await()
+
+      val schema = new StructType()
+        .add("id", LongType.LONG)
+        .add("dt", StringType.STRING)
+      // Check the table content
+      verifyTableContent(
+        dir.getPath,
+        (_, addfiles, properties) => {
+          assert(numRecords == addfiles.map(_.getNumRecords.get().longValue()).sum)
+          assert((1 to numRecords).toSet == addfiles.flatMap { addfile =>
+            readParquet(dir.toPath.resolve(addfile.getPath), schema).map(_.getLong(0))
+          }.toSet)
+        })
     }
   }
 }

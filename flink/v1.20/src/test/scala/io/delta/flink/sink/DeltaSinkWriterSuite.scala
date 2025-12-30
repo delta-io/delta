@@ -32,6 +32,43 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
 
+  test("write to empty table with no partition") {
+    withTempDir { dir =>
+      val tablePath = dir.getAbsolutePath
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("part", StringType.STRING)
+
+      val table = new HadoopTable(
+        URI.create(tablePath),
+        Map.empty[String, String].asJava,
+        schema,
+        List.empty[String].asJava)
+
+      val sinkWriter = new DeltaSinkWriter.Builder()
+        .withJobId("test-job")
+        .withSubtaskId(0)
+        .withAttemptNumber(1)
+        .withDeltaTable(table)
+        .withConf(new DeltaSinkConf(schema, Map.empty[String, String].asJava))
+        .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
+        .build()
+
+      for (i <- 0 until 20) {
+        sinkWriter.write(
+          GenericRowData.of(i, StringData.fromString("p" + (i % 3))),
+          new TestSinkWriterContext(i * 100, i * 100))
+      }
+      val results = sinkWriter.prepareCommit()
+      // One partition
+      assert(1 == results.size())
+      // Each partition has one action
+      results.asScala.foreach { result =>
+        assert(1 == result.getDeltaActions.size)
+      }
+    }
+  }
+
   test("write to empty table using multiple partitions") {
     withTempDir { dir =>
       val tablePath = dir.getAbsolutePath

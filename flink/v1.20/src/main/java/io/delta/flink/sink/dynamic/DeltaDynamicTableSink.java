@@ -16,14 +16,22 @@
 
 package io.delta.flink.sink.dynamic;
 
+import static io.delta.flink.sink.dynamic.DeltaDynamicTableSinkFactory.*;
+
 import io.delta.flink.sink.DeltaSink;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.table.api.ValidationException;
 import org.apache.flink.table.connector.ChangelogMode;
+import org.apache.flink.table.connector.ProviderContext;
+import org.apache.flink.table.connector.sink.DataStreamSinkProvider;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
-import org.apache.flink.table.connector.sink.SinkV2Provider;
 import org.apache.flink.table.connector.sink.abilities.SupportsPartitioning;
+import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.RowType;
 
@@ -49,18 +57,31 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
   public SinkRuntimeProvider getSinkRuntimeProvider(Context context) {
     RowType rowType = (RowType) consumedDataType.getLogicalType();
 
+    // TODO Support Catalog-based sink creation
     DeltaSink deltaSink =
         new DeltaSink.Builder()
             .withFlinkSchema(rowType)
-            .withTablePath(options.get("table_path"))
-            .withPartitionColNames(Arrays.asList(options.getOrDefault("partitions", "").split(",")))
+            .withTablePath(options.get(TABLE_PATH.key()))
+            .withPartitionColNames(
+                Arrays.asList(options.getOrDefault(PARTITIONS.key(), "").split(",")))
             .build();
 
-    if (configuredParallelism != null) {
-      return SinkV2Provider.of(deltaSink, configuredParallelism);
-    } else {
-      return SinkV2Provider.of(deltaSink);
-    }
+    String uid = options.getOrDefault(UID.key(), UUID.randomUUID().toString());
+    // There is a 80 char limit to operator name.
+    String name = options.getOrDefault(NAME.key(), deltaSink.getTable().getId().substring(0, 60));
+
+    return new DataStreamSinkProvider() {
+      @Override
+      public DataStreamSink<?> consumeDataStream(
+          ProviderContext providerContext, DataStream<RowData> dataStream) {
+        return dataStream.sinkTo(deltaSink).uid(uid).name(name);
+      }
+
+      @Override
+      public Optional<Integer> getParallelism() {
+        return Optional.ofNullable(configuredParallelism);
+      }
+    };
   }
 
   @Override
