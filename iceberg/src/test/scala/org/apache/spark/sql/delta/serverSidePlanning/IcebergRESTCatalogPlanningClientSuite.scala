@@ -38,13 +38,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   import testImplicits._
 
   private val defaultNamespace = Namespace.of("testDatabase")
-  private val defaultSchema = new Schema(
-    Types.NestedField.required(1, "id", Types.LongType.get),
-    Types.NestedField.required(2, "name", Types.StringType.get),
-    Types.NestedField.required(3, "age", Types.IntegerType.get),
-    Types.NestedField.required(4, "price", Types.DoubleType.get),
-    Types.NestedField.required(5, "rating", Types.FloatType.get),
-    Types.NestedField.required(6, "active", Types.BooleanType.get))
+  private val defaultSchema = TestSchemas.defaultSchema
   private val defaultSpec = PartitionSpec.unpartitioned()
 
   private lazy val server = startServer()

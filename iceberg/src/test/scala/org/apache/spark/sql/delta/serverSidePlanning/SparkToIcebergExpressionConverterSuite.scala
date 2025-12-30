@@ -19,21 +19,13 @@ package org.apache.spark.sql.delta.serverSidePlanning
 import org.apache.spark.sql.sources._
 import org.scalatest.funsuite.AnyFunSuite
 import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil, Expressions}
-import shadedForDelta.org.apache.iceberg.types.Types._
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Test schema used to bind expressions for semantic comparison.
   // Binding resolves column names to field IDs/types, enabling type-safe comparison
   // that catches bugs like "age < 30" (int) vs "age < "30"" (string)
-  private val testSchema = StructType.of(
-    NestedField.optional(1, "id", LongType.get()),
-    NestedField.optional(2, "name", StringType.get()),
-    NestedField.optional(3, "age", IntegerType.get()),
-    NestedField.optional(4, "price", DoubleType.get()),
-    NestedField.optional(5, "timestamp", LongType.get()),
-    NestedField.optional(6, "active", BooleanType.get())
-  )
+  private val testSchema = TestSchemas.defaultSchema.asStruct()
 
   private def assertConvert(sparkFilter: Filter, expectedIcebergExpr: Expression): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(sparkFilter)
@@ -70,8 +62,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertConvert(GreaterThan("age", 18), Expressions.greaterThan("age", 18))
     assertConvert(LessThanOrEqual("price", 99.99), Expressions.lessThanOrEqual("price", 99.99))
     assertConvert(
-      GreaterThanOrEqual("timestamp", 1234567890L),
-      Expressions.greaterThanOrEqual("timestamp", 1234567890L))
+      GreaterThanOrEqual("rating", 4.5f),
+      Expressions.greaterThanOrEqual("rating", 4.5f))
   }
 
   // Null check tests
