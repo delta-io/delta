@@ -27,7 +27,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   private def assertConvert(
       filter: Filter,
       expectedOp: Operation,
-      expectedTerm: String,
+      expectedColumnName: String,
       expectedLiteralStr: String): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(filter)
     assert(result.isDefined, s"Should convert: $filter")
@@ -37,16 +37,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       s"Expected operation $expectedOp but got ${expr.op()}")
 
     // Validate term (column name) is on left and literal value is on right.
-    // Note: Spark Filter contract guarantees column is always the first parameter:
-    // LessThan(attribute: String, value: Any) produces "attribute < value", never "value < attribute"
+    // Spark Filter contract guarantees column is always the first parameter.
     expr match {
-      // UnboundPredicate: Iceberg's expression representation before binding to a schema.
-      // Once bound, column names are resolved to field IDs and types.
       case unbound: UnboundPredicate[_] =>
-        // Use ref().name() to get the column name
-        val termName = unbound.ref().name()
-        assert(termName == expectedTerm,
-          s"Expected term '$expectedTerm' but got '$termName'")
+        // UnboundPredicate is Iceberg's expression representation before binding to a schema.
+        val columnName = unbound.ref().name()
+        assert(columnName == expectedColumnName,
+          s"Expected column '$expectedColumnName' but got '$columnName'")
         assert(unbound.literal().toString.contains(expectedLiteralStr),
           s"Expected literal containing '$expectedLiteralStr' but got '${unbound.literal()}'")
       case _ =>
@@ -54,11 +51,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     }
   }
 
-  // Helper: Assert null check filter (only validates term, no literal)
+  // Helper: Assert null check filter (only validates column name, no literal)
   private def assertConvertNullCheck(
       filter: Filter,
       expectedOp: Operation,
-      expectedTerm: String): Unit = {
+      expectedColumnName: String): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(filter)
     assert(result.isDefined, s"Should convert: $filter")
 
@@ -69,20 +66,19 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     // UnboundPredicate: Iceberg's expression representation before binding to a schema
     expr match {
       case unbound: UnboundPredicate[_] =>
-        // Use ref().name() to get the column name
-        val termName = unbound.ref().name()
-        assert(termName == expectedTerm,
-          s"Expected term '$expectedTerm' but got '$termName'")
+        val columnName = unbound.ref().name()
+        assert(columnName == expectedColumnName,
+          s"Expected column '$expectedColumnName' but got '$columnName'")
       case _ =>
         fail(s"Expected UnboundPredicate but got ${expr.getClass.getSimpleName}")
     }
   }
 
-  // Helper: Assert logical operator (And/Or) - just validates operation and terms present
+  // Helper: Assert logical operator (And/Or) - just validates operation and column names present
   private def assertConvertLogical(
       filter: Filter,
       expectedOp: Operation,
-      expectedTerms: String*): Unit = {
+      expectedColumnNames: String*): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(filter)
     assert(result.isDefined, s"Should convert: $filter")
 
@@ -91,8 +87,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       s"Expected operation $expectedOp but got ${expr.op()}")
 
     val exprStr = expr.toString
-    expectedTerms.foreach(term =>
-      assert(exprStr.contains(term), s"Missing term '$term' in: $exprStr")
+    expectedColumnNames.foreach(columnName =>
+      assert(exprStr.contains(columnName), s"Missing column '$columnName' in: $exprStr")
     )
   }
 
