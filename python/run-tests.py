@@ -90,7 +90,11 @@ def get_local_package(package_name, spark_version):
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
 
-    if spark_version == "default" or spark_version == DEFAULT_SPARK:
+    # Compare short versions (e.g., "4.0" vs "4.0.1" -> both are "4.0")
+    default_spark_short = DEFAULT_SPARK[0:3]  # "4.0" from "4.0.1"
+    spark_version_short = spark_version[0:3] if len(spark_version) >= 3 else spark_version
+    
+    if spark_version == "default" or spark_version_short == default_spark_short:
         package_name_suffix = ""
     else:
         # For non-default spark versions we have suffix _MajorVersion.MinorVersion
