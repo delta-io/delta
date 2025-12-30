@@ -102,24 +102,6 @@ object SparkToIcebergExpressionConverter {
       None
   }
 
-  /**
-   * Convert an array of Spark filters to a single Iceberg Expression.
-   * Multiple filters are combined with AND. Unsupported filters are not pushed to the server
-   * (affects performance only, not correctness - Spark re-applies all filters as residuals).
-   *
-   * @param sparkFilters Array of Spark filters
-   * @return Some(Expression) if at least one filter is supported, None if all are unsupported
-   */
-  def convertMultiple(sparkFilters: Array[Filter]): Option[Expression] = {
-    if (sparkFilters.isEmpty) return None
-
-    val convertedIcebergExprs = sparkFilters.flatMap(f => convert(f))
-    if (convertedIcebergExprs.isEmpty) return None
-
-    // Combine all expressions with AND
-    Some(convertedIcebergExprs.reduce((left, right) => Expressions.and(left, right)))
-  }
-
   // Private helper methods for type-specific conversions
 
   private def convertEqualTo(attribute: String, sparkValue: Any): Expression = sparkValue match {
