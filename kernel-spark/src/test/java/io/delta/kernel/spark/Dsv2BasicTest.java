@@ -215,7 +215,8 @@ public class Dsv2BasicTest {
   }
 
   @Test
-  public void testStreamingReadWithoutStartingVersionThrowsException(@TempDir File deltaTablePath) {
+  public void testStreamingReadWithoutStartingVersion(@TempDir File deltaTablePath)
+      throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
 
     // Write initial data
@@ -223,37 +224,34 @@ public class Dsv2BasicTest {
         Arrays.asList(RowFactory.create(1, "Alice", 100.0), RowFactory.create(2, "Bob", 200.0));
     spark.createDataFrame(initialRows, TEST_SCHEMA).write().format("delta").save(tablePath);
 
-    // Try to create streaming DataFrame without startingVersion using DSv2 path
+    // Create streaming DataFrame without startingVersion using DSv2 path
     // Using dsv2.delta.`path` syntax to force DSv2 (SparkMicroBatchStream) instead of DSv1
     String dsv2TableRef = String.format("dsv2.delta.`%s`", tablePath);
 
-    // Should throw UnsupportedOperationException when trying to process
-    org.apache.spark.sql.streaming.StreamingQueryException exception =
-        assertThrows(
-            org.apache.spark.sql.streaming.StreamingQueryException.class,
-            () -> {
-              StreamingQuery query =
-                  spark
-                      .readStream()
-                      .table(dsv2TableRef)
-                      .writeStream()
-                      .format("memory")
-                      .queryName("test_no_starting_version")
-                      .outputMode("append")
-                      .start();
-              query.processAllAvailable();
-              query.stop();
-            });
+    StreamingQuery query = null;
+    try {
+      query =
+          spark
+              .readStream()
+              .table(dsv2TableRef) // No startingVersion option
+              .writeStream()
+              .format("memory")
+              .queryName("test_no_starting_version")
+              .outputMode("append")
+              .start();
 
-    // Verify the root cause is UnsupportedOperationException
-    Throwable rootCause = exception.getCause();
-    assertTrue(
-        rootCause instanceof UnsupportedOperationException,
-        "Root cause should be UnsupportedOperationException, but was: "
-            + (rootCause != null ? rootCause.getClass().getName() : "null"));
-    assertTrue(
-        rootCause.getMessage().contains("is not supported"),
-        "Exception message should indicate operation is not supported: " + rootCause.getMessage());
+      query.processAllAvailable();
+
+      // Should successfully read all data from initial snapshot
+      Dataset<Row> results = spark.sql("SELECT * FROM test_no_starting_version");
+      List<Row> actualRows = results.collectAsList();
+
+      assertStreamingDataEquals(actualRows, initialRows);
+    } finally {
+      if (query != null) {
+        query.stop();
+      }
+    }
   }
 
   //////////////////////
