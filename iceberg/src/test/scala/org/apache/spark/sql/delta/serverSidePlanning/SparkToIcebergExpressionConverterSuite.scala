@@ -37,8 +37,12 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assert(expr.op() == expectedOp,
       s"Expected operation $expectedOp but got ${expr.op()}")
 
-    // Validate term (column name) is on left and literal value is on right
+    // Validate term (column name) is on left and literal value is on right.
+    // Note: Spark Filter contract guarantees column is always the first parameter:
+    // LessThan(attribute: String, value: Any) produces "attribute < value", never "value < attribute"
     expr match {
+      // UnboundPredicate: Iceberg's expression representation before binding to a schema.
+      // Once bound, column names are resolved to field IDs and types.
       case unbound: UnboundPredicate[_] =>
         // Extract column name from term string: ref(name="id") -> id
         val termStr = unbound.term().toString
@@ -68,6 +72,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assert(expr.op() == expectedOp,
       s"Expected operation $expectedOp but got ${expr.op()}")
 
+    // UnboundPredicate: Iceberg's expression representation before binding to a schema
     expr match {
       case unbound: UnboundPredicate[_] =>
         // Extract column name from term string: ref(name="id") -> id
