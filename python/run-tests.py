@@ -20,10 +20,37 @@ import os
 import subprocess
 import shutil
 from os import path
+import json
 
 
-# Update this when we upgrade the default to a new released version
-DEFAULT_SPARK = "4.0.1"
+def get_default_spark_version(root_dir):
+    """Get the default Spark short version from CrossSparkVersions via get_spark_version_info.py.
+    
+    The default Spark version is the first non-master version in the list.
+    Returns the short version (e.g., "4.0").
+    """
+    script_path = os.path.join(root_dir, "project", "scripts", "get_spark_version_info.py")
+    try:
+        result = subprocess.run(
+            ["python3", script_path, "--all-spark-versions"],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        versions = json.loads(result.stdout.strip())
+        
+        # The first non-"master" version is the default
+        for version in versions:
+            if version != "master":
+                return version
+        
+        # Fallback if all are master (shouldn't happen)
+        return "4.0"
+    except Exception as e:
+        print(f"Warning: Could not determine default Spark version: {e}")
+        print("Falling back to hardcoded default: 4.0")
+        return "4.0"
 
 
 def test(root_dir, code_dir, packages):
@@ -84,21 +111,31 @@ def prepare(root_dir, spark_version):
     run_cmd(sbt_command + ["clean"] + packages, stream_output=True)
 
 
-def get_local_package(package_name, spark_version):
-    # Get current release which is required to be loaded
+def get_local_package(package_name, spark_version, root_dir):
+    """Get the Maven coordinates for a Delta package.
+    
+    Args:
+        package_name: Name of the package (e.g., "delta-spark", "delta-connect-server")
+        spark_version: Spark version string (e.g., "4.0", "4.1", or "default")
+        root_dir: Root directory of the Delta repository
+        
+    Returns:
+        Maven coordinates string (e.g., "io.delta:delta-spark_2.13:4.1.0-SNAPSHOT")
+    """
+    # Get current release version
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
 
-    # Compare short versions (e.g., "4.0" vs "4.0.1" -> both are "4.0")
-    default_spark_short = DEFAULT_SPARK[0:3]  # "4.0" from "4.0.1"
-    spark_version_short = spark_version[0:3] if len(spark_version) >= 3 else spark_version
+    # Determine if this is the default Spark version
+    default_spark_version = get_default_spark_version(root_dir)
     
-    if spark_version == "default" or spark_version_short == default_spark_short:
+    if spark_version == "default" or spark_version == default_spark_version:
+        # Default Spark version: no suffix (e.g., delta-spark_2.13)
         package_name_suffix = ""
     else:
-        # For non-default spark versions we have suffix _MajorVersion.MinorVersion
-        package_name_suffix = f"_{spark_version[0:3]}"
+        # Non-default Spark versions: add suffix (e.g., delta-spark_4.1_2.13)
+        package_name_suffix = f"_{spark_version}"
 
     return f"io.delta:{package_name}{package_name_suffix}_2.13:" + version
 
@@ -212,7 +249,7 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     spark_version = os.getenv("SPARK_VERSION") or "default"
     prepare(root_dir, spark_version)
-    delta_spark_package = get_local_package("delta-spark", spark_version)
+    delta_spark_package = get_local_package("delta-spark", spark_version, root_dir)
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
@@ -225,6 +262,6 @@ if __name__ == "__main__":
     # packages locally instead of downloading from Maven.
     delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
                               "org.apache.spark:spark-connect_2.13:4.0.0",
-                              get_local_package("delta-connect-server", spark_version)]
+                              get_local_package("delta-connect-server", spark_version, root_dir)]
 
     test(root_dir, path.join("delta", "connect"), delta_connect_packages)
