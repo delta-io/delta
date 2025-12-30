@@ -148,8 +148,8 @@ def prepare(root_dir, spark_version):
 def get_local_package(package_name, spark_version, root_dir):
     """Get the Maven coordinates for a Delta package.
     
-    Uses get_spark_version_info to determine if Spark suffix is needed
-    based on the isDefault field from CrossSparkVersions.
+    Uses get_spark_version_info to get the packageSuffix directly from
+    CrossSparkVersions (the single source of truth).
     
     Args:
         package_name: Name of the package (e.g., "delta-spark", "delta-connect-server")
@@ -164,20 +164,10 @@ def get_local_package(package_name, spark_version, root_dir):
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
 
-    # Get version info from CrossSparkVersions to check if it's the default
+    # Get the package suffix directly from CrossSparkVersions
+    # This is the ONLY place that determines package naming logic
     version_info = get_spark_version_info(spark_version, root_dir)
-    
-    if version_info and version_info.get("isDefault", False):
-        # Default Spark version: no suffix (e.g., delta-spark_2.13)
-        package_name_suffix = ""
-    else:
-        # Non-default Spark versions: add suffix (e.g., delta-spark_4.1_2.13)
-        # If version_info is None, we fall back to adding the suffix
-        if spark_version == "default":
-            # Shouldn't happen, but fallback to no suffix for safety
-            package_name_suffix = ""
-        else:
-            package_name_suffix = f"_{spark_version}"
+    package_name_suffix = version_info.get("packageSuffix", "") if version_info else ""
 
     return f"io.delta:{package_name}{package_name_suffix}_2.13:" + version
 

@@ -112,16 +112,13 @@ getDeltaArtifactName := {
   if (deltaVersion.charAt(0).asDigit >= 3) "delta-spark" else "delta-core"
 }
 
-val getSparkVersionForCrossBuild = settingKey[Option[String]](
-  s"get spark version for cross-build artifact name from environment variable SPARK_VERSION. " +
-  s"Returns None if SPARK_VERSION is not set or if it matches the default Spark version (4.0)."
+val getSparkPackageSuffix = settingKey[String](
+  s"get package suffix for cross-build artifact name from environment variable SPARK_PACKAGE_SUFFIX. " +
+  s"This is derived from CrossSparkVersions.scala (single source of truth)."
 )
 
-getSparkVersionForCrossBuild := {
-  sys.env.get("SPARK_VERSION") match {
-    case Some(v) if v.nonEmpty && v != "4.0" => Some(v)  // Default Spark is 4.0.x, so don't add suffix for 4.0
-    case _ => None
-  }
+getSparkPackageSuffix := {
+  sys.env.getOrElse("SPARK_PACKAGE_SUFFIX", "")
 }
 
 getIcebergSparkRuntimeArtifactName := {
@@ -145,26 +142,13 @@ def getLibraryDependencies(
     deltaVersion: String,
     deltaArtifactName: String,
     icebergSparkRuntimeArtifactName: String,
-    sparkVersionForCrossBuild: Option[String],
+    sparkPackageSuffix: String,
     scalaBinVersion: String): Seq[ModuleID] = {
   
-  // For cross-Spark builds, we need to use explicit artifact names with Spark version
-  // e.g., delta-spark_4.0_2.13 instead of delta-spark_2.13
-  val deltaCoreDep = sparkVersionForCrossBuild match {
-    case Some(sparkVer) =>
-      // Use explicit cross-build naming: artifactName_sparkVersion_scalaVersion
-      "io.delta" % s"${deltaArtifactName}_${sparkVer}_${scalaBinVersion}" % deltaVersion
-    case None =>
-      // Use standard %% which adds only Scala version
-      "io.delta" %% deltaArtifactName % deltaVersion
-  }
-  
-  val deltaIcebergDep = sparkVersionForCrossBuild match {
-    case Some(sparkVer) =>
-      "io.delta" % s"delta-iceberg_${sparkVer}_${scalaBinVersion}" % deltaVersion
-    case None =>
-      "io.delta" %% "delta-iceberg" % deltaVersion
-  }
+  // Package suffix comes from CrossSparkVersions.scala (single source of truth)
+  // e.g., "" for default Spark, "_4.1" for Spark 4.1
+  val deltaCoreDep = "io.delta" % s"${deltaArtifactName}${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
+  val deltaIcebergDep = "io.delta" % s"delta-iceberg${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
   
   Seq(
     deltaCoreDep,
@@ -196,7 +180,7 @@ lazy val root = (project in file("."))
       getDeltaVersion.value,
       getDeltaArtifactName.value,
       getIcebergSparkRuntimeArtifactName.value,
-      getSparkVersionForCrossBuild.value,
+      getSparkPackageSuffix.value,
       scalaBinaryVersion.value),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
