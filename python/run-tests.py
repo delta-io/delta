@@ -36,7 +36,7 @@ def test(root_dir, code_dir, packages):
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
     extra_class_path = path.join(python_root_dir, path.join(code_dir, "testing"))
-    
+
     # Include Maven local repository to resolve locally published Delta artifacts
     maven_local_repo = "file://" + os.path.expanduser("~/.m2/repository")
 
