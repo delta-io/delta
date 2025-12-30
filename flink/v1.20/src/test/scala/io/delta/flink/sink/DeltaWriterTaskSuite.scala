@@ -22,7 +22,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.time._
 
-import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
+import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsJava, SeqHasAsJava}
 
 import io.delta.flink.TestHelper
 import io.delta.flink.table.HadoopTable
@@ -31,6 +31,8 @@ import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.types._
 
 import org.apache.flink.table.data.{DecimalData, GenericArrayData, GenericMapData, GenericRowData, StringData, TimestampData}
+import org.apache.flink.table.runtime.typeutils.RowDataSerializer
+import org.apache.flink.table.types.logical.{IntType, RowType, VarCharType}
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
@@ -81,6 +83,8 @@ class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
         assert("part" == partitionMap.getKeys.getString(0))
         assert("p0" == partitionMap.getValues.getString(0))
 
+        assert(900 == result.getContext.getHighWatermark)
+        assert(0 == result.getContext.getLowWatermark)
         // check the Parquet file content
         val rows = readParquet(fullPath, schema)
         assert(10 == rows.size)
@@ -129,6 +133,9 @@ class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
         assert(10 == addFile.getNumRecords.get())
         val fullPath = dir.toPath.resolve(addFile.getPath).toAbsolutePath
         assert(Files.exists(fullPath))
+
+        assert(900 == result.getContext.getHighWatermark)
+        assert(0 == result.getContext.getLowWatermark)
 
         val partitionMap = addFile.getPartitionValues
         assert(1 == partitionMap.getSize)
@@ -687,6 +694,130 @@ class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
           assert("w" + idx == values2.getArray(0).getElements.getString(0))
         }
       })
+    }
+  }
+
+  test("file rolling by size") {
+    withTempDir { dir =>
+      val tablePath = dir.getAbsolutePath
+      val flinkSchema = RowType.of(
+        Array(new IntType, new VarCharType(VarCharType.MAX_LENGTH)),
+        Array("id", "part"))
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("part", StringType.STRING)
+
+      val table = new HadoopTable(
+        URI.create(tablePath),
+        Map.empty[String, String].asJava,
+        schema,
+        List().asJava)
+      val partitionValues = Map.empty[String, Literal].asJava
+
+      val rollSize = 500
+      val rowCount = 1000
+
+      val conf = new DeltaSinkConf(
+        schema,
+        Map(
+          "file-rolling-strategy" -> "size",
+          "file-rolling-size" -> s"$rollSize").asJava)
+      val writerTask = new DeltaWriterTask(
+        /* jobId= */ "test-job-id",
+        /* subtaskId= */ 2,
+        /* attemptNumber= */ 0,
+        /* table = */ table,
+        /* conf = */ conf,
+        /* partitionValues= */ partitionValues)
+
+      var fileCounter = 0
+      var sizeCounter = 0L
+
+      for (i <- 0 until rowCount) {
+        val binaryRow = new RowDataSerializer(flinkSchema).toBinaryRow(
+          GenericRowData.of(i, StringData.fromString("p" + i)))
+        sizeCounter += binaryRow.getSizeInBytes
+        if (sizeCounter >= rollSize) {
+          sizeCounter = 0
+          fileCounter += 1
+        }
+        writerTask.write(
+          binaryRow,
+          new TestSinkWriterContext(i * 100, i * 100))
+      }
+      val results = writerTask.complete()
+
+      if (sizeCounter != 0) {
+        fileCounter += 1
+      }
+
+      assert(fileCounter == results.size())
+      val ids = results.asScala.flatMap { result =>
+        assert(1 == result.getDeltaActions.size())
+        val action = result.getDeltaActions.get(0)
+        val addFile = new AddFile(action.getStruct(SingleAction.ADD_FILE_ORDINAL))
+        val fullPath = dir.toPath.resolve(addFile.getPath).toAbsolutePath
+        // check the Parquet file content
+        val rows = readParquet(fullPath, schema)
+        rows.iterator.map(_.getInt(0)).toSeq
+      }.toSet
+      assert(ids.size == rowCount)
+    }
+  }
+
+  test("file rolling by count") {
+    withTempDir { dir =>
+      val tablePath = dir.getAbsolutePath
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("part", StringType.STRING)
+
+      val table = new HadoopTable(
+        URI.create(tablePath),
+        Map.empty[String, String].asJava,
+        schema,
+        List().asJava)
+      val partitionValues = Map.empty[String, Literal].asJava
+
+      val rollSize = 200
+      val rowCount = 1001
+
+      val conf = new DeltaSinkConf(
+        schema,
+        Map(
+          "file-rolling-strategy" -> "count",
+          "file-rolling-count" -> s"$rollSize").asJava)
+      val writerTask = new DeltaWriterTask(
+        /* jobId= */ "test-job-id",
+        /* subtaskId= */ 2,
+        /* attemptNumber= */ 0,
+        /* table = */ table,
+        /* conf = */ conf,
+        /* partitionValues= */ partitionValues)
+
+      for (i <- 0 until rowCount) {
+        writerTask.write(
+          GenericRowData.of(i, StringData.fromString("p0")),
+          new TestSinkWriterContext(i * 100, i * 100))
+      }
+      val results = writerTask.complete()
+
+      val expectedFileCount = rowCount / rollSize + 1
+      assert(expectedFileCount == results.size())
+      assert(results.asScala.flatMap { result =>
+        assert(1 == result.getDeltaActions.size())
+        val action = result.getDeltaActions.get(0)
+        val addFile = new AddFile(action.getStruct(SingleAction.ADD_FILE_ORDINAL))
+        val fullPath = dir.toPath.resolve(addFile.getPath).toAbsolutePath
+
+        assert(
+          result.getContext.getHighWatermark - result.getContext.getLowWatermark ==
+            (addFile.getNumRecords.get() - 1) * 100)
+
+        // check the Parquet file content
+        val rows = readParquet(fullPath, schema)
+        rows.iterator.map(_.getInt(0)).toSeq
+      }.toSet.size == rowCount)
     }
   }
 }

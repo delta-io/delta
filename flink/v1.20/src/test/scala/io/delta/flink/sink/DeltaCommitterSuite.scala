@@ -133,7 +133,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
     }
   }
 
-  test("commit to an existing table with different schema will fail") {
+  test("commit with no schema evolution policy") {
     withTempDir { dir =>
       val engine = DefaultEngine.create(new Configuration())
       val schema = new StructType()
@@ -178,6 +178,51 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
     }
   }
 
+  test("commit with newcolumn schema evolution policy") {
+    withTempDir { dir =>
+      val engine = DefaultEngine.create(new Configuration())
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("part", StringType.STRING)
+      val anotherSchema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("part", StringType.STRING)
+        .add("another", StringType.STRING)
+
+      val table = new HadoopTable(
+        dir.toURI,
+        Map.empty[String, String].asJava,
+        anotherSchema,
+        List().asJava)
+
+      createNonEmptyTable(engine, dir.getAbsolutePath, anotherSchema, Seq())
+
+      val committer = new DeltaCommitter.Builder()
+        .withDeltaTable(table)
+        .withJobId("test-job")
+        .withMetricGroup(metricGroup)
+        .withConf(new DeltaSinkConf(
+          schema,
+          Map("schema-evolution-mode" -> "newcolumn").asJava))
+        .build()
+
+      val commitMessages: List[Committer.CommitRequest[DeltaCommittable]] = Seq({
+        val actions = (0 until 5).map { i =>
+          dummyAddFileRow(schema, i + 10, Map("part" -> Literal.ofString("p" + i)))
+        }.toList.asJava
+        val committable = new DeltaCommittable(
+          "test-job",
+          "test-opr",
+          1000L,
+          actions,
+          new WriterResultContext())
+        new MockCommitRequest(committable)
+      }).toList
+
+      committer.commit(commitMessages.asJava)
+    }
+  }
+
   test("commit writes watermarks") {
     withTempDir { dir =>
       val schema = new StructType()
@@ -198,7 +243,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         .build()
 
       // By the way we direct the stream traffic, we should receive only one committable.
-      val commitMessages: List[Committer.CommitRequest[DeltaCommittable]] = Seq({
+      val commitMessages: List[Committer.CommitRequest[DeltaCommittable]] = List({
         val actions = (0 until 5).map { i =>
           dummyAddFileRow(schema, 10 + i, Map("part" -> Literal.ofString("p" + i)))
         }.toList.asJava
@@ -209,7 +254,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
           actions,
           new WriterResultContext(200, 100))
         new MockCommitRequest(committable)
-      }).toList
+      })
 
       committer.commit(commitMessages.asJava)
 

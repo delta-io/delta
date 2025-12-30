@@ -16,8 +16,6 @@
 
 package io.delta.flink.sink.dynamic
 
-import java.io.File
-
 import scala.jdk.CollectionConverters.MapHasAsJava
 
 import io.delta.flink.TestHelper
@@ -101,6 +99,58 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
           assert((1 to numRecords).toSet == addfiles.flatMap { addfile =>
             readParquet(dir.toPath.resolve(addfile.getPath), schema).map(_.getLong(0))
           }.toSet)
+        })
+    }
+  }
+
+  test("use sql to load partitioned table") {
+    withTempDir { dir =>
+      val settings = EnvironmentSettings.newInstance.inStreamingMode.build
+      val tEnv = TableEnvironment.create(settings)
+      val numRecords = 1000
+      tEnv.executeSql(
+        s"""
+           CREATE TEMPORARY TABLE src (
+           id BIGINT,
+           dt STRING
+           ) WITH (
+           'connector' = 'datagen',
+           'number-of-rows' = '$numRecords',
+           'rows-per-second' = '100',
+           'fields.id.kind' = 'sequence',
+           'fields.id.start' = '1',
+           'fields.id.end' = '$numRecords',
+           'fields.dt.kind' = 'random',
+           'fields.dt.length' = '1'
+           )""".stripMargin)
+
+      tEnv.executeSql(
+        s"""
+          CREATE TEMPORARY TABLE sink (
+            id BIGINT,
+            dt STRING
+          ) WITH (
+            'connector' = 'delta',
+            'table_path' = '${dir.getPath}',
+            'partitions' = 'dt',
+            'uid' = 'someuid'
+          )
+        """.stripMargin)
+
+      tEnv.executeSql("""INSERT INTO sink SELECT id, dt FROM src""".stripMargin).await()
+
+      val schema = new StructType()
+        .add("id", LongType.LONG)
+        .add("dt", StringType.STRING)
+      // Check the table content
+      verifyTableContent(
+        dir.getPath,
+        (_, addfiles, properties) => {
+          assert(numRecords == addfiles.map(_.getNumRecords.get().longValue()).sum)
+          assert((1 to numRecords).toSet == addfiles.flatMap { addfile =>
+            readParquet(dir.toPath.resolve(addfile.getPath), schema).map(_.getLong(0))
+          }.toSet)
+          assert(16 == addfiles.map { a => a.getPartitionValues.getValues.getString(0) }.toSet.size)
         })
     }
   }

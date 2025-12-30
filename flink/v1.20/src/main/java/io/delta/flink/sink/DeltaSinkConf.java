@@ -23,14 +23,18 @@ import java.io.Serializable;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.binary.BinaryRowData;
 
 public class DeltaSinkConf implements Serializable {
 
+  public static String FILE_ROLLING_STRATEGY_KEY = "file-rolling-strategy";
   public static String FILE_ROLLING_SIZE_KEY = "file-rolling-size";
+  public static String FILE_ROLLING_COUNT_KEY = "file-rolling-count";
   public static String SCHEMA_EVOLUTION_MODE_KEY = "schema-evolution-mode";
 
   private final String sinkSchemaString;
-  private final long fileRollingSize;
+  private final Map<String, String> conf;
   private final SchemaEvolutionPolicy schemaEvolutionPolicy;
 
   private transient StructType sinkSchema;
@@ -38,8 +42,7 @@ public class DeltaSinkConf implements Serializable {
   public DeltaSinkConf(StructType sinkSchema, Map<String, String> conf) {
     this.sinkSchemaString = sinkSchema.toJson();
     this.sinkSchema = sinkSchema;
-
-    this.fileRollingSize = Long.parseLong(conf.getOrDefault(FILE_ROLLING_SIZE_KEY, "104857600"));
+    this.conf = conf;
     switch (conf.getOrDefault(SCHEMA_EVOLUTION_MODE_KEY, "no")) {
       case "newcolumn":
         this.schemaEvolutionPolicy = new NewColumnEvolution();
@@ -57,8 +60,14 @@ public class DeltaSinkConf implements Serializable {
     return this.sinkSchema;
   }
 
-  public long getFileRollingSize() {
-    return fileRollingSize;
+  public FileRollingStrategy createFileRollingStrategy() {
+    switch (conf.getOrDefault(FILE_ROLLING_STRATEGY_KEY, "count")) {
+      case "size":
+        return new SizeRolling(Long.parseLong(conf.getOrDefault(FILE_ROLLING_SIZE_KEY, "-1")));
+      case "count":
+      default:
+        return new CountRolling(Integer.parseInt(conf.getOrDefault(FILE_ROLLING_COUNT_KEY, "-1")));
+    }
   }
 
   public SchemaEvolutionPolicy getSchemaEvolutionPolicy() {
@@ -91,6 +100,59 @@ public class DeltaSinkConf implements Serializable {
                     && tableField.getDataType().equivalent(field.getDataType())
                     && tableField.isNullable() == field.isNullable();
               });
+    }
+  }
+
+  public interface FileRollingStrategy {
+    boolean shouldRoll(RowData row);
+  }
+
+  static class SizeRolling implements FileRollingStrategy {
+
+    private long sizeLimit = -1L;
+    private long sizeCounter = 0L;
+
+    public SizeRolling(long sizeLimit) {
+      this.sizeLimit = sizeLimit;
+    }
+
+    @Override
+    public boolean shouldRoll(RowData row) {
+      if (sizeLimit < 0) {
+        return false;
+      }
+      // For efficiency, only BinaryRowData is supported
+      if (row instanceof BinaryRowData) {
+        sizeCounter += ((BinaryRowData) row).getSizeInBytes();
+      }
+      if (sizeCounter >= sizeLimit) {
+        sizeCounter = 0;
+        return true;
+      }
+      return false;
+    }
+  }
+
+  static class CountRolling implements FileRollingStrategy {
+
+    private int countLimit = -1;
+    private int counter = 0;
+
+    public CountRolling(int countLimit) {
+      this.countLimit = countLimit;
+    }
+
+    @Override
+    public boolean shouldRoll(RowData row) {
+      if (countLimit < 0) {
+        return false;
+      }
+      counter++;
+      if (counter >= countLimit) {
+        counter = 0;
+        return true;
+      }
+      return false;
     }
   }
 }

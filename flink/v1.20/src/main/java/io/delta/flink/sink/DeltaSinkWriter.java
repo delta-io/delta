@@ -22,10 +22,10 @@ import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
-import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
 import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.binary.BinaryRowData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,7 +67,6 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
   private final Map<Map<String, String>, DeltaWriterTask> writerTasksByPartition;
 
   private final SinkWriterMetricGroup metricGroup;
-  private final Counter elementCounter;
 
   private DeltaSinkWriter(
       String jobId,
@@ -85,7 +84,13 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
     this.writerTasksByPartition = new HashMap<>();
 
     this.metricGroup = metricGroup;
-    this.elementCounter = metricGroup.counter("elementCounter");
+    metricGroup.gauge(
+        "resultBufferSize",
+        () ->
+            this.writerTasksByPartition.values().stream()
+                .map(DeltaWriterTask::getResultBuffer)
+                .mapToLong(List::size)
+                .sum());
   }
 
   /**
@@ -112,11 +117,16 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
           new DeltaWriterTask(jobId, subtaskId, attemptNumber, deltaTable, conf, partitionValues));
     }
     writerTasksByPartition.get(writerKey).write(element, context);
-    elementCounter.inc();
+
+    // Recording Metrics
+    if (element instanceof BinaryRowData) {
+      this.metricGroup.getNumBytesSendCounter().inc(((BinaryRowData) element).getSizeInBytes());
+    }
+    this.metricGroup.getNumRecordsSendCounter().inc();
   }
 
   @Override
-  public Collection<DeltaWriterResult> prepareCommit() throws IOException, InterruptedException {
+  public Collection<DeltaWriterResult> prepareCommit() throws IOException {
     LOG.debug("Preparing commits");
     final Collection<DeltaWriterResult> output = new ArrayList<>();
 
@@ -128,7 +138,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
   }
 
   @Override
-  public void flush(boolean endOfInput) throws IOException, InterruptedException {}
+  public void flush(boolean endOfInput) {}
 
   @Override
   public void close() throws Exception {

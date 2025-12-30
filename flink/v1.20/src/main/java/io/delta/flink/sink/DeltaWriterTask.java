@@ -64,7 +64,7 @@ public class DeltaWriterTask {
 
   private final List<DeltaWriterResult> resultBuffer;
 
-  private long estimatedWriteSize = 0L;
+  private final DeltaSinkConf.FileRollingStrategy fileRollingStrategy;
 
   private long lowWatermark = Long.MAX_VALUE;
   private long highWatermark = -1;
@@ -87,29 +87,31 @@ public class DeltaWriterTask {
     this.deltaTable = deltaTable;
     this.conf = conf;
     this.writeSchema = conf.getSinkSchema();
+
+    this.fileRollingStrategy = conf.createFileRollingStrategy();
+  }
+
+  protected List<DeltaWriterResult> getResultBuffer() {
+    return resultBuffer;
   }
 
   /** Add a single row to write buffer, and optionally trigger the write to file. */
   public void write(RowData element, SinkWriter.Context context)
       throws IOException, InterruptedException {
-    // TODO upperbound the buffer size
+    // upperbound the buffer size with file rolling strategy
     buffer.add(element);
     highWatermark = Math.max(highWatermark, context.currentWatermark());
     lowWatermark = Math.min(lowWatermark, context.currentWatermark());
 
-    estimatedWriteSize += estimateSize(element);
-    if (estimatedWriteSize >= conf.getFileRollingSize()) {
-      resultBuffer.addAll(dump());
-      estimatedWriteSize = 0L;
+    if (fileRollingStrategy.shouldRoll(element)) {
+      dump();
     }
   }
 
   /**
-   * Write the current buffer content to file
-   *
-   * @return
+   * Write the current buffer content to file and store the generated writer results in resultBuffer
    */
-  private Collection<DeltaWriterResult> dump() throws IOException {
+  private void dump() throws IOException {
     LOG.debug(
         "Writing {} elements to Parquet, partition: {}, jobId: {}, subtaskId: {}, attemptNumber: {}",
         buffer.size(),
@@ -118,7 +120,7 @@ public class DeltaWriterTask {
         subtaskId,
         attemptNumber);
     if (buffer.isEmpty()) {
-      return Collections.emptyList();
+      return;
     }
     final CloseableIterator<FilteredColumnarBatch> logicalData = flinkRowDataAsKernelData();
     // Append job and task information to target directory
@@ -128,18 +130,17 @@ public class DeltaWriterTask {
     final WriterResultContext context = new WriterResultContext(highWatermark, lowWatermark);
     final Collection<DeltaWriterResult> output =
         actions.map(row -> new DeltaWriterResult(List.of(row), context)).toInMemoryList();
+    resultBuffer.addAll(output);
+
+    this.highWatermark = -1L;
+    this.lowWatermark = Long.MAX_VALUE;
     buffer.clear();
-    return output;
   }
 
   /** End the writer task and flush everything still in buffer to file. */
   public Collection<DeltaWriterResult> complete() throws IOException {
-    return dump();
-  }
-
-  private long estimateSize(RowData rowData) {
-    // TODO provide an estimate to the row data
-    return 0;
+    dump();
+    return resultBuffer;
   }
 
   private CloseableIterator<FilteredColumnarBatch> flinkRowDataAsKernelData() {
@@ -156,6 +157,9 @@ public class DeltaWriterTask {
             Optional.empty() /* selectionVector */));
   }
 
+  /* ==================================
+   *     Supporting Classes
+   * ==================================*/
   abstract static class AbstractColumnVectorView implements ColumnVector {
 
     protected final DataType dataType;

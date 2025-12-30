@@ -65,6 +65,8 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
       // Each partition has one action
       results.asScala.foreach { result =>
         assert(1 == result.getDeltaActions.size)
+        assert(1900 == result.getContext.getHighWatermark)
+        assert(0 == result.getContext.getLowWatermark)
       }
     }
   }
@@ -91,17 +93,26 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
         .build()
 
-      for (i <- 0 until 20) {
+      val rowCount = 20
+      val numPartitions = 3
+      for (i <- 0 until rowCount) {
         sinkWriter.write(
-          GenericRowData.of(i, StringData.fromString("p" + (i % 3))),
+          GenericRowData.of(i, StringData.fromString("p" + (i % numPartitions))),
           new TestSinkWriterContext(i * 100, i * 100))
       }
       val results = sinkWriter.prepareCommit()
-      // Three partitions
-      assert(3 == results.size())
+      val expectedWatermarks = (0 until numPartitions).map { i =>
+        val overflow = if (i < rowCount % numPartitions) 0 else 1
+        val hwm = (rowCount / numPartitions - overflow) * numPartitions + i
+        (i * 100L, hwm * 100L)
+      }.toMap
+
+      assert(numPartitions == results.size())
       // Each partition has one action
-      results.asScala.foreach { result =>
+      results.asScala.zipWithIndex.foreach { case (result, idx) =>
         assert(1 == result.getDeltaActions.size)
+        assert(expectedWatermarks(result.getContext.getLowWatermark) ==
+          result.getContext.getHighWatermark)
       }
     }
   }
@@ -131,17 +142,25 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
         .build()
 
-      for (i <- 0 until 20) {
+      val rowCount = 20
+      val numPartitions = 3
+      for (i <- 0 until rowCount) {
         sinkWriter.write(
-          GenericRowData.of(i, StringData.fromString("p" + (i % 3))),
+          GenericRowData.of(i, StringData.fromString("p" + (i % numPartitions))),
           new TestSinkWriterContext(i * 100, i * 100))
       }
       val results = sinkWriter.prepareCommit()
-      // Three partitions
-      assert(3 == results.size())
+      val expectedWatermarks = (0 until numPartitions).map { i =>
+        val overflow = if (i < rowCount % numPartitions) 0 else 1
+        val hwm = (rowCount / numPartitions - overflow) * numPartitions + i
+        (i * 100L, hwm * 100L)
+      }.toMap
+      assert(numPartitions == results.size())
       // Each partition has one action
-      results.asScala.foreach { result =>
+      results.asScala.zipWithIndex.foreach { case (result, idx) =>
         assert(1 == result.getDeltaActions.size)
+        assert(expectedWatermarks(result.getContext.getLowWatermark) ==
+          result.getContext.getHighWatermark)
       }
     }
   }

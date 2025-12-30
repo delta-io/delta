@@ -102,7 +102,7 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
     deltaTable.refresh();
     StructType latestSchema = deltaTable.getSchema();
 
-    if (!conf.getSchemaEvolutionPolicy().allowEvolve(conf.getSinkSchema(), latestSchema)) {
+    if (!conf.getSchemaEvolutionPolicy().allowEvolve(latestSchema, conf.getSinkSchema())) {
       LOG.error(
           "Invalid schema evolution observed. Sink schema: {}, latest table schema: {}",
           conf.getSinkSchema(),
