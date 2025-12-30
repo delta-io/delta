@@ -16,20 +16,22 @@
 
 package org.apache.spark.sql.delta.icebergShaded
 
+import java.nio.ByteBuffer
 import java.sql.Timestamp
 import java.time.{LocalDateTime, OffsetDateTime}
 import java.time.format._
+import java.util.{Base64, List => JList}
 
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat, NoMapping, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
-import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties}
+import org.apache.spark.sql.delta.util.JsonUtils
+import shadedForDelta.org.apache.iceberg.{FileMetadata, PartitionData, PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties}
 import shadedForDelta.org.apache.iceberg.expressions.Literal
-import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
-import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
+import shadedForDelta.org.apache.iceberg.types.{Conversions, Type => IcebergType, Types => IcebergTypes}
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY
@@ -66,6 +68,25 @@ class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable
 object DeltaToIcebergConvert
   extends DeltaLogging
   {
+  object Action
+    extends DeltaLogging
+    {
+      def buildPartitionValues(
+          builder: FileMetadata.Builder,
+          fileAction: FileAction,
+          partitionSpec: PartitionSpec,
+          snapshot: Snapshot,
+          logicalToPhysicalPartitionNames: Map[String, String]): Unit = {
+        if (partitionSpec.isPartitioned) {
+            builder.withPartition(
+              DeltaToIcebergConvert.Partition.convertPartitionValues(
+                snapshot,
+                partitionSpec,
+                fileAction.partitionValues,
+                logicalToPhysicalPartitionNames))
+        }
+      }
+    }
   /**
    * Utils used when converting Delta schema to Iceberg
    */
