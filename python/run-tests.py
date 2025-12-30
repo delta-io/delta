@@ -23,34 +23,68 @@ from os import path
 import json
 
 
-def get_default_spark_version(root_dir):
-    """Get the default Spark short version from CrossSparkVersions via get_spark_version_info.py.
+def get_spark_version_info(spark_version, root_dir):
+    """Get Spark version information from CrossSparkVersions via JSON.
     
-    The default Spark version is the first non-master version in the list.
-    Returns the short version (e.g., "4.0").
+    Args:
+        spark_version: Spark version string (e.g., "4.0", "4.1", or "default")
+        root_dir: Root directory of the Delta repository
+        
+    Returns:
+        Dict with version info including isDefault field, or None if not found
     """
-    script_path = os.path.join(root_dir, "project", "scripts", "get_spark_version_info.py")
+    # If spark_version is "default", find the default version first
+    if spark_version == "default":
+        try:
+            script_path = os.path.join(root_dir, "project", "scripts", "get_spark_version_info.py")
+            result = subprocess.run(
+                ["python3", script_path, "--all-spark-versions"],
+                cwd=root_dir,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            versions = json.loads(result.stdout.strip())
+            # First non-"master" version is the default
+            for version in versions:
+                if version != "master":
+                    spark_version = version
+                    break
+        except Exception as e:
+            print(f"Warning: Could not determine default Spark version: {e}")
+            spark_version = "4.0"
+    
+    # Now get the full info for this version from JSON
     try:
-        result = subprocess.run(
-            ["python3", script_path, "--all-spark-versions"],
-            cwd=root_dir,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        versions = json.loads(result.stdout.strip())
+        # Load the JSON file directly to get all fields including isDefault
+        json_path = os.path.join(root_dir, "target", "spark-versions.json")
         
-        # The first non-"master" version is the default
-        for version in versions:
-            if version != "master":
-                return version
+        # Generate JSON if it doesn't exist
+        if not os.path.exists(json_path):
+            subprocess.run(
+                ["build/sbt", "exportSparkVersionsJson"],
+                cwd=root_dir,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
         
-        # Fallback if all are master (shouldn't happen)
-        return "4.0"
+        with open(json_path, 'r') as f:
+            all_versions = json.load(f)
+        
+        # Find the matching version (by short version or "master")
+        for v in all_versions:
+            if spark_version == "master" and v.get("isMaster", False):
+                return v
+            elif spark_version == v["shortVersion"]:
+                return v
+        
+        print(f"Warning: Spark version {spark_version} not found in JSON")
+        return None
+        
     except Exception as e:
-        print(f"Warning: Could not determine default Spark version: {e}")
-        print("Falling back to hardcoded default: 4.0")
-        return "4.0"
+        print(f"Warning: Could not load Spark version info: {e}")
+        return None
 
 
 def test(root_dir, code_dir, packages):
@@ -114,6 +148,9 @@ def prepare(root_dir, spark_version):
 def get_local_package(package_name, spark_version, root_dir):
     """Get the Maven coordinates for a Delta package.
     
+    Uses get_spark_version_info to determine if Spark suffix is needed
+    based on the isDefault field from CrossSparkVersions.
+    
     Args:
         package_name: Name of the package (e.g., "delta-spark", "delta-connect-server")
         spark_version: Spark version string (e.g., "4.0", "4.1", or "default")
@@ -127,15 +164,20 @@ def get_local_package(package_name, spark_version, root_dir):
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
 
-    # Determine if this is the default Spark version
-    default_spark_version = get_default_spark_version(root_dir)
+    # Get version info from CrossSparkVersions to check if it's the default
+    version_info = get_spark_version_info(spark_version, root_dir)
     
-    if spark_version == "default" or spark_version == default_spark_version:
+    if version_info and version_info.get("isDefault", False):
         # Default Spark version: no suffix (e.g., delta-spark_2.13)
         package_name_suffix = ""
     else:
         # Non-default Spark versions: add suffix (e.g., delta-spark_4.1_2.13)
-        package_name_suffix = f"_{spark_version}"
+        # If version_info is None, we fall back to adding the suffix
+        if spark_version == "default":
+            # Shouldn't happen, but fallback to no suffix for safety
+            package_name_suffix = ""
+        else:
+            package_name_suffix = f"_{spark_version}"
 
     return f"io.delta:{package_name}{package_name_suffix}_2.13:" + version
 
