@@ -18,7 +18,6 @@ package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
 import java.util.Objects;
-import java.util.function.Predicate;
 
 /**
  * Represent {@code array} data type
@@ -80,11 +79,6 @@ public class ArrayType extends DataType {
   @Override
   public boolean isNested() {
     return true;
-  }
-
-  @Override
-  public boolean existsRecursively(Predicate<DataType> predicate) {
-    return super.existsRecursively(predicate) || getElementType().existsRecursively(predicate);
   }
 
   @Override
