@@ -62,7 +62,8 @@ object SparkToIcebergExpressionConverter {
    * @param sparkFilter The Spark filter to convert
    * @return Some(Expression) if the filter is supported, None otherwise
    */
-  def convert(sparkFilter: Filter): Option[Expression] = sparkFilter match {
+  private[serverSidePlanning] def convert(sparkFilter: Filter): Option[Expression] =
+    sparkFilter match {
     // Equality and Comparison Operators
     case EqualTo(attribute, sparkValue) =>
       Some(convertEqualTo(attribute, sparkValue))
