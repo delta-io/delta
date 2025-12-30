@@ -23,8 +23,12 @@ import shadedForDelta.org.apache.iceberg.types.Types
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
-  // Schema for semantic expression comparison (like Iceberg's tests)
-  private val SCHEMA = Types.StructType.of(
+  // Test schema used to bind expressions for semantic comparison.
+  // ExpressionUtil.equivalent() needs a schema to:
+  // 1. Bind unbound expressions (resolve column names to field IDs and types)
+  // 2. Enable type-safe comparison that validates literal types match (e.g., int vs string)
+  // Without binding, we can't verify that "age < 30" (int) isn't incorrectly "age < "30"" (string)
+  private val TEST_STRUCT = Types.StructType.of(
     Types.NestedField.optional(1, "id", Types.LongType.get()),
     Types.NestedField.optional(2, "name", Types.StringType.get()),
     Types.NestedField.optional(3, "age", Types.IntegerType.get()),
@@ -39,8 +43,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assert(result.isDefined, s"Should convert: $sparkFilter")
     
     val actual = result.get
+    // ExpressionUtil.equivalent(left, right, struct, caseSensitive)
+    // caseSensitive=true: column names must match case exactly
     assert(
-      ExpressionUtil.equivalent(expectedIcebergExpr, actual, SCHEMA, true),
+      ExpressionUtil.equivalent(expectedIcebergExpr, actual, TEST_STRUCT, true),
       s"Expressions not equivalent:\n  Expected: $expectedIcebergExpr\n  Actual: $actual"
     )
   }
