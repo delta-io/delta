@@ -336,8 +336,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           Seq("id", "name"),
           Set("id", "name")),
         ("all columns",
-          Seq("id", "name"),
-          Set("id", "name")),
+          Seq("id", "name", "age", "price", "rating", "active"),
+          Set("id", "name", "age", "price", "rating", "active")),
         ("different order",
           Seq("name", "id"),
           Set("name", "id"))
