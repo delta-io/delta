@@ -25,8 +25,7 @@ import shadedForDelta.org.apache.iceberg.types.Types
 object TestSchemas {
   /**
    * Standard test schema with common field types used for testing filters and projections.
-   * Includes: id (long), name (string), age (int), price (double), rating (float), 
-   * active (boolean), timestamp (long)
+   * Includes: id (long), name (string), age (int), price (double), rating (float), active (boolean)
    */
   val defaultSchema = new Schema(
     Types.NestedField.required(1, "id", Types.LongType.get),
@@ -34,7 +33,6 @@ object TestSchemas {
     Types.NestedField.required(3, "age", Types.IntegerType.get),
     Types.NestedField.required(4, "price", Types.DoubleType.get),
     Types.NestedField.required(5, "rating", Types.FloatType.get),
-    Types.NestedField.required(6, "active", Types.BooleanType.get),
-    Types.NestedField.required(7, "timestamp", Types.LongType.get))
+    Types.NestedField.required(6, "active", Types.BooleanType.get))
 }
 

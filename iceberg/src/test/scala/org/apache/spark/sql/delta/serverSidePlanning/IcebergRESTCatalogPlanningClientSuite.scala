@@ -97,8 +97,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       // Write data with 2 partitions to create 2 data files
       spark.sparkContext.parallelize(0 until 250, numSlices = 2)
-        .map(id => (id.toLong, s"test_$id", id, id * 10.0, id.toFloat, id % 2 == 0, id.toLong * 1000))
-        .toDF("id", "name", "age", "price", "rating", "active", "timestamp")
+        .map(id => (id.toLong, s"test_$id", id, id * 10.0, id.toFloat, id % 2 == 0))
+        .toDF("id", "name", "age", "price", "rating", "active")
         .write
         .format("iceberg")
         .mode("append")
@@ -230,13 +230,13 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     withTempTable("filterTest") { table =>
       val tableName = s"rest_catalog.${defaultNamespace}.filterTest"
       sql(s"""
-        INSERT INTO $tableName (id, name, age, price, rating, active, timestamp)
+        INSERT INTO $tableName (id, name, age, price, rating, active)
         VALUES
-          (1, 'alice', 25, 99.99, 4.5, true, 1000),
-          (2, 'bob', 30, 149.50, 4.2, false, 2000),
-          (3, 'charlie', 35, 199.99, 4.8, true, 3000),
-          (10, 'david', 28, 79.99, 3.9, false, 10000),
-          (20, 'eve', 32, 120.00, 4.6, true, 20000)
+          (1, 'alice', 25, 99.99, 4.5, true),
+          (2, 'bob', 30, 149.50, 4.2, false),
+          (3, 'charlie', 35, 199.99, 4.8, true),
+          (10, 'david', 28, 79.99, 3.9, false),
+          (20, 'eve', 32, 120.00, 4.6, true)
       """)
 
       // Spark schema matching the table schema for filter conversion
@@ -247,8 +247,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         StructField("age", IntegerType, nullable = false),
         StructField("price", DoubleType, nullable = false),
         StructField("rating", FloatType, nullable = false),
-        StructField("active", BooleanType, nullable = false),
-        StructField("timestamp", LongType, nullable = false)
+        StructField("active", BooleanType, nullable = false)
       ))
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
