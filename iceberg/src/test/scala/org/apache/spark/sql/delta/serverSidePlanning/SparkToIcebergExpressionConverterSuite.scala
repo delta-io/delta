@@ -19,25 +19,22 @@ package org.apache.spark.sql.delta.serverSidePlanning
 import org.apache.spark.sql.sources._
 import org.scalatest.funsuite.AnyFunSuite
 import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil, Expressions}
-import shadedForDelta.org.apache.iceberg.types.Types
+import shadedForDelta.org.apache.iceberg.types.Types._
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Test schema used to bind expressions for semantic comparison.
-  // ExpressionUtil.equivalent() needs a schema to:
-  // 1. Bind unbound expressions (resolve column names to field IDs and types)
-  // 2. Enable type-safe comparison that validates literal types match (e.g., int vs string)
-  // Without binding, we can't verify that "age < 30" (int) isn't incorrectly "age < "30"" (string)
-  private val TEST_STRUCT = Types.StructType.of(
-    Types.NestedField.optional(1, "id", Types.LongType.get()),
-    Types.NestedField.optional(2, "name", Types.StringType.get()),
-    Types.NestedField.optional(3, "age", Types.IntegerType.get()),
-    Types.NestedField.optional(4, "price", Types.DoubleType.get()),
-    Types.NestedField.optional(5, "timestamp", Types.LongType.get()),
-    Types.NestedField.optional(6, "active", Types.BooleanType.get())
+  // Binding resolves column names to field IDs/types, enabling type-safe comparison
+  // that catches bugs like "age < 30" (int) vs "age < "30"" (string)
+  private val testSchema = StructType.of(
+    NestedField.optional(1, "id", LongType.get()),
+    NestedField.optional(2, "name", StringType.get()),
+    NestedField.optional(3, "age", IntegerType.get()),
+    NestedField.optional(4, "price", DoubleType.get()),
+    NestedField.optional(5, "timestamp", LongType.get()),
+    NestedField.optional(6, "active", BooleanType.get())
   )
 
-  // Helper: Assert conversion using semantic equivalence (catches type mismatches)
   private def assertConvert(sparkFilter: Filter, expectedIcebergExpr: Expression): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(sparkFilter)
     assert(result.isDefined, s"Should convert: $sparkFilter")
@@ -46,12 +43,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     // ExpressionUtil.equivalent(left, right, struct, caseSensitive)
     // caseSensitive=true: column names must match case exactly
     assert(
-      ExpressionUtil.equivalent(expectedIcebergExpr, actual, TEST_STRUCT, true),
+      ExpressionUtil.equivalent(expectedIcebergExpr, actual, testSchema, true),
       s"Expressions not equivalent:\n  Expected: $expectedIcebergExpr\n  Actual: $actual"
     )
   }
 
-  // Helper: Assert filter returns None (unsupported)
   private def assertReturnsNone(filter: Filter): Unit = {
     val result = SparkToIcebergExpressionConverter.convert(filter)
     assert(result.isEmpty, s"Should return None for unsupported filter: $filter")
