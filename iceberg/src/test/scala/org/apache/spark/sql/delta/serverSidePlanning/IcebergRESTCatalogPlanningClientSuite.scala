@@ -40,7 +40,11 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   private val defaultNamespace = Namespace.of("testDatabase")
   private val defaultSchema = new Schema(
     Types.NestedField.required(1, "id", Types.LongType.get),
-    Types.NestedField.required(2, "name", Types.StringType.get))
+    Types.NestedField.required(2, "name", Types.StringType.get),
+    Types.NestedField.required(3, "age", Types.IntegerType.get),
+    Types.NestedField.required(4, "price", Types.DoubleType.get),
+    Types.NestedField.required(5, "rating", Types.FloatType.get),
+    Types.NestedField.required(6, "active", Types.BooleanType.get))
   private val defaultSpec = PartitionSpec.unpartitioned()
 
   private lazy val server = startServer()
@@ -99,8 +103,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       // Write data with 2 partitions to create 2 data files
       spark.sparkContext.parallelize(0 until 250, numSlices = 2)
-        .map(id => (id.toLong, s"test_$id"))
-        .toDF("id", "name")
+        .map(id => (id.toLong, s"test_$id", id, id * 10.0, id.toFloat, id % 2 == 0))
+        .toDF("id", "name", "age", "price", "rating", "active")
         .write
         .format("iceberg")
         .mode("append")
@@ -230,35 +234,42 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
   test("filter sent to IRC server over HTTP") {
     withTempTable("filterTest") { table =>
-      // Create test data with more varied values for comprehensive testing
       val tableName = s"rest_catalog.${defaultNamespace}.filterTest"
       sql(s"""
-        INSERT INTO $tableName (id, name)
+        INSERT INTO $tableName (id, name, age, price, rating, active)
         VALUES
-          (1, 'alice'),
-          (2, 'bob'),
-          (3, 'charlie'),
-          (10, 'david'),
-          (20, 'eve')
+          (1, 'alice', 25, 99.99, 4.5, true),
+          (2, 'bob', 30, 149.50, 4.2, false),
+          (3, 'charlie', 35, 199.99, 4.8, true),
+          (10, 'david', 28, 79.99, 3.9, false),
+          (20, 'eve', 32, 120.00, 4.6, true)
       """)
 
       // Spark schema matching the table schema for filter conversion
       import org.apache.spark.sql.types._
       val sparkSchema = StructType(Seq(
         StructField("id", LongType, nullable = false),
-        StructField("name", StringType, nullable = false)
+        StructField("name", StringType, nullable = false),
+        StructField("age", IntegerType, nullable = false),
+        StructField("price", DoubleType, nullable = false),
+        StructField("rating", FloatType, nullable = false),
+        StructField("active", BooleanType, nullable = false)
       ))
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
-        // Test cases: (filter, description)
+        // Test cases covering all supported data types: (filter, description)
         val testCases = Seq(
-          (EqualTo("id", 2L), "EqualTo numeric"),
+          (EqualTo("id", 2L), "EqualTo numeric (long)"),
+          (EqualTo("age", 30), "EqualTo numeric (int)"),
           (EqualTo("name", "bob"), "EqualTo string"),
-          (LessThan("id", 10L), "LessThan"),
-          (GreaterThan("id", 5L), "GreaterThan"),
-          (LessThanOrEqual("id", 3L), "LessThanOrEqual"),
-          (GreaterThanOrEqual("id", 2L), "GreaterThanOrEqual"),
+          (EqualTo("active", true), "EqualTo boolean"),
+          (LessThan("id", 10L), "LessThan (long)"),
+          (LessThan("rating", 4.5f), "LessThan (float)"),
+          (GreaterThan("id", 5L), "GreaterThan (long)"),
+          (GreaterThan("price", 100.0), "GreaterThan (double)"),
+          (LessThanOrEqual("age", 30), "LessThanOrEqual (int)"),
+          (GreaterThanOrEqual("price", 100.0), "GreaterThanOrEqual (double)"),
           (IsNull("name"), "IsNull"),
           (IsNotNull("name"), "IsNotNull"),
           (And(EqualTo("id", 2L), EqualTo("name", "bob")), "And"),
