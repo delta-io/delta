@@ -40,8 +40,12 @@ import org.scalatest.funsuite.AnyFunSuite
 class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
 
   test("normalize URI") {
-    assert(AbstractKernelTable.normalize(URI.create("file:/var")).toString == "file:///var/")
-    assert(AbstractKernelTable.normalize(URI.create("file:///var")).toString == "file:///var/")
+    assert(AbstractKernelTable.normalize(URI.create("file:/var/char/good")).toString ==
+      "file:///var/char/good/")
+    assert(AbstractKernelTable.normalize(URI.create("/var/char/good")).toString ==
+      "file:///var/char/good/")
+    assert(AbstractKernelTable.normalize(URI.create("file:///var/char/good")).toString ==
+      "file:///var/char/good/")
     assert(AbstractKernelTable.normalize(URI.create("s3://host/var")).toString == "s3://host/var/")
   }
 

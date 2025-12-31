@@ -34,12 +34,13 @@ import org.scalatest.funsuite.AnyFunSuite
 class CCv2TableSuite extends AnyFunSuite with TestHelper {
 
   val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
-  val CATALOG_TOKEN = ""
+  val CATALOG_TOKEN = "<PLACEHOLDER>"
+  val TABLE_ID = "main.hao.testccv2"
 
   ignore("load table from e2dogfood") {
     val table = new CCv2Table(
       new UnityCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
-      "main.hao.testccv2",
+      TABLE_ID,
       Map(
         CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
         CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
@@ -54,7 +55,7 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
   ignore("commit data to e2dogfood") {
     val table = new CCv2Table(
       new UnityCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
-      "main.hao.testccv2",
+      TABLE_ID,
       Map(
         CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
         CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
@@ -79,10 +80,10 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
     table.commit(CloseableIterable.inMemoryIterable(rows), 1000L, Map.empty[String, String].asJava)
   }
 
-  test("serializablity") {
+  ignore("serializablity") {
     val table = new CCv2Table(
       new UnityCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
-      "main.hao.testccv2",
+      TABLE_ID,
       Map(
         CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
         CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)

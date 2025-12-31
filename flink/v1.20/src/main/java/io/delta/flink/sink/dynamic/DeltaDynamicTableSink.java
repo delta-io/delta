@@ -68,7 +68,9 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
 
     String uid = options.getOrDefault(UID.key(), UUID.randomUUID().toString());
     // There is a 80 char limit to operator name.
-    String name = options.getOrDefault(NAME.key(), deltaSink.getTable().getId().substring(0, 60));
+    String tableId = deltaSink.getTable().getId();
+    String name =
+        options.getOrDefault(NAME.key(), tableId.substring(0, Math.min(tableId.length(), 60)));
 
     return new DataStreamSinkProvider() {
       @Override

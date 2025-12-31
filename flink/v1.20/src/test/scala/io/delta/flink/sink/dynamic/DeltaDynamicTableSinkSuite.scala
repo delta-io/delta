@@ -60,7 +60,7 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
     withTempDir { dir =>
       val settings = EnvironmentSettings.newInstance.inStreamingMode.build
       val tEnv = TableEnvironment.create(settings)
-      val numRecords = 1000
+      val numRecords = 5000
       tEnv.executeSql(
         s"""
            CREATE TEMPORARY TABLE src (
@@ -68,7 +68,7 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
            dt STRING
            ) WITH (
            'connector' = 'datagen',
-           'rows-per-second' = '100',
+           'rows-per-second' = '1000',
            'fields.id.kind' = 'sequence',
            'fields.id.start' = '1',
            'fields.id.end' = '$numRecords'
@@ -82,6 +82,7 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
           ) WITH (
             'connector' = 'delta',
             'table_path' = '${dir.getPath}',
+            'sink.parallelism' = '4',
             'uid' = 'someuid'
           )
         """.stripMargin)
@@ -96,9 +97,10 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
         dir.getPath,
         (_, addfiles, properties) => {
           assert(numRecords == addfiles.map(_.getNumRecords.get().longValue()).sum)
-          assert((1 to numRecords).toSet == addfiles.flatMap { addfile =>
+          val records = addfiles.flatMap { addfile =>
             readParquet(dir.toPath.resolve(addfile.getPath), schema).map(_.getLong(0))
-          }.toSet)
+          }.toSet
+          assert((1 to numRecords).toSet == records)
         })
     }
   }

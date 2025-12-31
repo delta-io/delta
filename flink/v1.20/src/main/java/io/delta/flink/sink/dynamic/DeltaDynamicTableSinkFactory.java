@@ -87,6 +87,6 @@ public class DeltaDynamicTableSinkFactory implements DynamicTableSinkFactory {
 
   @Override
   public Set<ConfigOption<?>> optionalOptions() {
-    return Set.of(PARTITIONS, UID, NAME);
+    return Set.of(PARTITIONS, UID, NAME, FactoryUtil.SINK_PARALLELISM);
   }
 }

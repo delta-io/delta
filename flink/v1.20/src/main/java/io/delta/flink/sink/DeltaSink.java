@@ -24,11 +24,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 import jdk.jfr.Experimental;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.connector.sink2.*;
-import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.streaming.api.connector.sink2.*;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -143,15 +141,11 @@ public class DeltaSink
    */
   @Override
   public DataStream<RowData> addPreWriteTopology(DataStream<RowData> inputDataStream) {
+    if (deltaTable.getPartitionColumns().isEmpty()) {
+      return inputDataStream;
+    }
     return inputDataStream.keyBy(
-        (KeySelector<RowData, Integer>)
-            value ->
-                Conversions.FlinkToDelta.partitionValues(
-                        deltaTable.getSchema(), deltaTable.getPartitionColumns(), value)
-                    .entrySet().stream()
-                    .collect(
-                        Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()))
-                    .hashCode());
+        new PartitionKeySelector(conf.getSinkFlinkSchema(), deltaTable.getPartitionColumns()));
   }
 
   @Override
@@ -187,7 +181,7 @@ public class DeltaSink
 
   @Override
   public void addPostCommitTopology(DataStream<CommittableMessage<DeltaCommittable>> committables) {
-    committables.global().process(new PostCommitOperator()).uid("DeltaSink postCommit processor");
+    committables.global().process(new PostCommitOperator()).uid("PostCommit processor");
   }
 
   public static class Builder {
@@ -246,21 +240,19 @@ public class DeltaSink
 
     public DeltaSink build() {
       Objects.requireNonNull(flinkSchema, "flinkSchema must not be null");
-      StructType sinkSchema = Conversions.FlinkToDelta.schema(flinkSchema);
-
       if (configurations == null) {
         configurations = Map.of();
       }
+      DeltaSinkConf sinkConf = new DeltaSinkConf(flinkSchema, configurations);
+      StructType sinkSchema = sinkConf.getSinkSchema();
       if (deltaTable == null) {
         // Can use only one from tablePath or tableId
         Preconditions.checkArgument(
             (tablePath != null) ^ (tableId != null), "Use either tablePath or tableId");
         if (tablePath != null) {
           // File-based table
-          StructType tableSchema = sinkSchema;
           deltaTable =
-              new HadoopTable(
-                  URI.create(tablePath), configurations, tableSchema, partitionColNames);
+              new HadoopTable(URI.create(tablePath), configurations, sinkSchema, partitionColNames);
         } else {
           // Catalog-based table
           Objects.requireNonNull(catalogEndpoint);
@@ -273,7 +265,7 @@ public class DeltaSink
           deltaTable = new CCv2Table(restCatalog, tableId, finalConf);
         }
       }
-      return new DeltaSink(deltaTable, new DeltaSinkConf(sinkSchema, configurations));
+      return new DeltaSink(deltaTable, sinkConf);
     }
   }
 }

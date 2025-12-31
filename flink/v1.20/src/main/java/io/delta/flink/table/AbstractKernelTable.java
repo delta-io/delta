@@ -176,6 +176,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
     Configuration conf = new Configuration();
 
     // Built-in configurations for common file system access
+    conf.set("fs.file.impl", "org.apache.hadoop.fs.LocalFileSystem");
+    conf.set("fs.AbstractFileSystem.file.impl", "org.apache.hadoop.fs.local.LocalFs");
+
     conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
     conf.set("fs.s3a.path.style.access", "true");
     conf.set("fs.s3.impl.disable.cache", "true");
@@ -257,6 +260,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   @Override
   public synchronized void close() throws InterruptedException {
+    LOG.info("Closing table : {}", getId());
     if (threadPool != null) {
       threadPool.shutdownNow();
       // This should return quickly if all tasks are interruptible
@@ -371,6 +375,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
           final DataWriteContext writeContext =
               Transaction.getWriteContext(localEngine, writeState, partitionValues);
+          LOG.info("Writing file to path {} with suffix {}", getTablePath(), pathSuffix);
           final CloseableIterator<DataFileStatus> dataFiles =
               localEngine
                   .getParquetHandler()
@@ -463,23 +468,27 @@ public abstract class AbstractKernelTable implements DeltaTable {
     if (input == null) {
       return null;
     }
-    if (input.getScheme() == null) {
-      return new File(input.toString()).toPath().toUri();
-    }
-    // Normalize "file:/xxx/" to "file:///xxx/"
-    if (input.getScheme().equals("file")) {
-      return new File(input).toPath().toUri();
+    URI target = input;
+    if (target.getScheme() == null) {
+      target = new File(input.toString()).toPath().toUri();
+    } else if (target.getScheme().equals("file")) {
+      // Normalize "file:/xxx/" to "file:///xxx/"
+      target = new File(input).toPath().toUri();
     }
     try {
       // Normalize "abc://def/xxx" to "abc://def/xxx/"
-      if (!input.getPath().endsWith("/")) {
-        return new URI(
-            input.getScheme(), input.getHost(), input.getPath() + "/", input.getFragment());
+      if (!target.getPath().endsWith("/")) {
+        target =
+            new URI(
+                target.getScheme(),
+                Optional.ofNullable(target.getHost()).orElse(""),
+                target.getPath() + "/",
+                target.getFragment());
       }
     } catch (URISyntaxException e) {
       throw new RuntimeException(e);
     }
-    return input;
+    return target;
   }
 
   protected static List<String> normalize(List<String> rawPartitions) {

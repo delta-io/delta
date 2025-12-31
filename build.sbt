@@ -1377,6 +1377,14 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
     scalafmtCheckSettings,
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
 
@@ -1413,7 +1421,6 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
     )
   )
 
-/*
 lazy val flinkV2 = (project in file("flink/v2.0"))
   //  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
@@ -1426,6 +1433,14 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
     scalafmtCheckSettings,
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     Compile / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "main" / "java",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "java",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "scala",
@@ -1446,6 +1461,7 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
       "org.apache.flink" % "flink-core" % flink20Version % "provided",
       "org.apache.flink" % "flink-table-common" % flink20Version % "provided",
       "org.apache.flink" % "flink-streaming-java" % flink20Version % "provided",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flink20Version % "provided",
       "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.google.guava" % "guava" % "33.2.1-jre",
@@ -1463,7 +1479,6 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
     )
   )
-*/
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)

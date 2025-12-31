@@ -32,6 +32,7 @@ import org.apache.flink.streaming.api.datastream.DataStream
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.table.api.DataTypes
 import org.apache.flink.table.data.{GenericRowData, RowData, StringData}
+import org.apache.flink.table.runtime.typeutils.InternalTypeInfo
 import org.apache.flink.table.types.logical.{IntType, RowType, VarCharType}
 import org.apache.flink.util.InstantiationUtil
 import org.apache.hadoop.conf.Configuration
@@ -62,8 +63,9 @@ class DeltaSinkSuite extends AnyFunSuite with TestHelper {
       }.toList.asJava
 
       val dataType = DataTypes.of(flinkSchema);
-      val typeInfo: TypeInformation[RowData] = TypeInformation.of(dataType.getConversionClass)
-        .asInstanceOf[TypeInformation[RowData]]
+      val rowType = dataType.getLogicalType.asInstanceOf[RowType]
+      val rowDataTypeInfo: TypeInformation[RowData] = InternalTypeInfo.of(rowType)
+
       val input: DataStream[RowData] = env
         .addSource(
           // This DataSource will prevent env from turning off before checkpoints containing data
@@ -75,7 +77,7 @@ class DeltaSinkSuite extends AnyFunSuite with TestHelper {
               val parts = value.split(",")
               GenericRowData.of(Integer.valueOf(parts(0)), StringData.fromString(parts(1)))
             }
-          }).returns(typeInfo)
+          }).returns(rowDataTypeInfo)
 
       input.sinkTo(deltaSink).uid("deltaSink")
 

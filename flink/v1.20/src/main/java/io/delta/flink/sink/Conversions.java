@@ -20,6 +20,8 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -164,6 +166,55 @@ public class Conversions {
      */
     public static long timestamp(TimestampData input) {
       return input.getMillisecond() * 1000 + input.getNanoOfMillisecond() / 1000;
+    }
+  }
+
+  public static class FlinkToJava {
+    public static Map<String, Object> partitionValues(
+        RowType rowType, Collection<String> partitionColNames, RowData rowData) {
+      return partitionColNames.stream()
+          .map(
+              name -> {
+                final int partitionValueColIdx = rowType.getFieldIndex(name);
+                return new Object[] {
+                  name, Conversions.FlinkToJava.data(rowType, rowData, partitionValueColIdx)
+                };
+              })
+          .collect(Collectors.toMap(o -> (String) o[0], o -> o[1]));
+    }
+
+    public static Object data(RowType rowType, RowData rowData, int colIdx) {
+      RowType.RowField field = rowType.getFields().get(colIdx);
+
+      switch (field.getType().getTypeRoot()) {
+        case BOOLEAN:
+          return rowData.getBoolean(colIdx);
+        case BINARY:
+        case VARBINARY:
+          return new String(
+              Base64.getEncoder().encode(rowData.getBinary(colIdx)), StandardCharsets.UTF_8);
+        case INTEGER:
+        case DATE:
+          return rowData.getInt(colIdx);
+        case BIGINT:
+        case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+        case TIMESTAMP_WITHOUT_TIME_ZONE:
+          return rowData.getLong(colIdx);
+        case CHAR:
+        case VARCHAR:
+          return rowData.getString(colIdx).toString();
+        case DOUBLE:
+          return rowData.getDouble(colIdx);
+        case FLOAT:
+          return rowData.getFloat(colIdx);
+        case DECIMAL:
+          DecimalType decimalType = (DecimalType) field.getType();
+          int precision = decimalType.getPrecision();
+          int scale = decimalType.getScale();
+          return rowData.getDecimal(colIdx, precision, scale);
+        default:
+          throw new UnsupportedOperationException("Unsupported data type: " + field.getType());
+      }
     }
   }
 }

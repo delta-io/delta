@@ -193,9 +193,9 @@ trait TestHelper {
         Utils.singletonCloseableIterator(fileStatus),
         schema,
         Optional.empty())
-    assert(results.hasNext)
-    val result = results.next()
-    result.getData.getRows.toInMemoryList.asScala.toSeq
+    results.toInMemoryList.asScala.flatMap { result =>
+      result.getData.getRows.toInMemoryList.asScala.toSeq
+    }.toSeq
   }
 
   val random = new Random(System.currentTimeMillis())

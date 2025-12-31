@@ -46,14 +46,14 @@ import org.slf4j.LoggerFactory;
  * logical aggregation and checkpoint scoping of writer results. Exactly-once guarantees are
  * achieved by ensuring that at most one {@code DeltaCommittable} is emitted per checkpoint.
  */
-class DeltaWriterResultAggregator
+public class DeltaWriterResultAggregator
     extends AbstractStreamOperator<CommittableMessage<DeltaCommittable>>
     implements OneInputStreamOperator<
         CommittableMessage<DeltaWriterResult>, CommittableMessage<DeltaCommittable>> {
   private static final Logger LOG = LoggerFactory.getLogger(DeltaWriterResultAggregator.class);
   private final Collection<DeltaWriterResult> results;
 
-  DeltaWriterResultAggregator() {
+  public DeltaWriterResultAggregator() {
     results = new ArrayList<>();
   }
 

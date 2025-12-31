@@ -25,6 +25,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.binary.BinaryRowData;
+import org.apache.flink.table.types.logical.RowType;
 
 public class DeltaSinkConf implements Serializable {
 
@@ -33,6 +34,7 @@ public class DeltaSinkConf implements Serializable {
   public static String FILE_ROLLING_COUNT_KEY = "file-rolling-count";
   public static String SCHEMA_EVOLUTION_MODE_KEY = "schema-evolution-mode";
 
+  private RowType sinkFlinkSchema;
   private final String sinkSchemaString;
   private final Map<String, String> conf;
   private final SchemaEvolutionPolicy schemaEvolutionPolicy;
@@ -51,6 +53,15 @@ public class DeltaSinkConf implements Serializable {
       default:
         this.schemaEvolutionPolicy = new NoEvolution();
     }
+  }
+
+  public DeltaSinkConf(RowType flinkSchema, Map<String, String> conf) {
+    this(Conversions.FlinkToDelta.schema(flinkSchema), conf);
+    this.sinkFlinkSchema = flinkSchema;
+  }
+
+  public RowType getSinkFlinkSchema() {
+    return sinkFlinkSchema;
   }
 
   public StructType getSinkSchema() {
