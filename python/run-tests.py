@@ -83,14 +83,14 @@ def prepare(root_dir, spark_version):
 
 def get_local_package(package_name, spark_version, root_dir):
     """Get the Maven coordinates for a Delta package.
-    
+
     Queries CrossSparkVersions for the packageSuffix (e.g., "", "_4.1").
-    
+
     Args:
         package_name: Name of the package (e.g., "delta-spark", "delta-connect-server")
         spark_version: Spark version string (e.g., "4.0", "4.1", or "default")
         root_dir: Root directory of the Delta repository
-        
+
     Returns:
         Maven coordinates string (e.g., "io.delta:delta-spark_2.13:4.1.0-SNAPSHOT")
     """
