@@ -68,7 +68,8 @@ public abstract class SparkDsv2TestBase {
   protected void createSchemaEvolutionTestTable(String path, String tableName) {
     spark.sql(
         String.format(
-            "CREATE TABLE %s (id INT NOT NULL, name String, value FLOAT) USING delta LOCATION '%s'",
+            "CREATE TABLE %s (id INT NOT NULL, name String, value FLOAT) USING delta LOCATION '%s'"
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
             tableName, path));
     spark.sql(
         String.format("INSERT INTO %s VALUES (1, 'Alice', 10.5), (2,'Bob', NULL)", tableName));
