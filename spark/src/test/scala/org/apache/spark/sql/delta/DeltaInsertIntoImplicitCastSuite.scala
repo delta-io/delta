@@ -174,38 +174,54 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
 
 trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImplicitCastBase {
   override protected val ignoredTestCases: Map[String, Set[Insert]] = Map(
-    "null struct with different field order"
+    "null struct with different field order, preserveNullSourceStructs=true"
+      -> (insertsDataframe.intersect(insertsByName) - StreamingInsert),
+    "null struct with different field order, preserveNullSourceStructs=false"
       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert),
     "cast with dot in column name"
       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert)
   )
 
-  for { (inserts: Set[Insert], expectedAnswer) <- Seq(
-    // Only few INSERT types correctly handle null structs and keep the whole struct null
-    // instead of expanding it to a struct of null fields.
-    Set(SQLInsertColList(SaveMode.Append), StreamingInsert) ->
-      TestData("a long, s struct <x int, y: int>",
-        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": null }""")),
-    Set(SQLInsertColList(SaveMode.Overwrite),
-        SQLInsertOverwritePartitionByPosition,
-        SQLInsertOverwritePartitionColList) ->
-      TestData("a long, s struct <x int, y: int>", Seq("""{ "a": 1, "s": null }""")),
+  for {
+    preserveNullSourceStructs <- BOOLEAN_DOMAIN
+    (inserts: Set[Insert], expectedAnswer) <- Seq(
+      Set(SQLInsertColList(SaveMode.Append), StreamingInsert) ->
+        TestData("a long, s struct <x int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": null }""")),
+      Set(SQLInsertColList(SaveMode.Overwrite),
+          SQLInsertOverwritePartitionByPosition,
+          SQLInsertOverwritePartitionColList) ->
+        TestData("a long, s struct <x int, y: int>", Seq("""{ "a": 1, "s": null }""")),
 
-    // For all other INSERT types, the null struct gets incorrectly expanded to
-    // `struct<null, null>
-    insertsAppend - SQLInsertColList(SaveMode.Append) - StreamingInsert ->
-      TestData("a long, s struct <x int, y: int>",
-        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""",
-        """{ "a": 1, "s": { "x": null, "y": null } }""")),
-    insertsOverwrite
-      - SQLInsertColList(SaveMode.Overwrite)
-      - SQLInsertOverwritePartitionByPosition
-      - SQLInsertOverwritePartitionColList ->
-      TestData("a long, s struct <x int, y: int>",
-        Seq("""{ "a": 1, "s": { "x": null, "y": null } }"""))
+      // For all other INSERT types, the null struct gets incorrectly expanded to
+      // `struct<null, null> unless preserveNullSourceStructs is true.
+      insertsAppend - SQLInsertColList(SaveMode.Append) - StreamingInsert ->
+        TestData("a long, s struct <x int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""",
+            if (preserveNullSourceStructs) {
+              """{ "a": 1, "s": null }"""
+            } else {
+              """{ "a": 1, "s": { "x": null, "y": null } }"""
+            }
+          )
+        ),
+      insertsOverwrite
+        - SQLInsertColList(SaveMode.Overwrite)
+        - SQLInsertOverwritePartitionByPosition
+        - SQLInsertOverwritePartitionColList ->
+        TestData("a long, s struct <x int, y: int>",
+          Seq(
+            if (preserveNullSourceStructs) {
+              """{ "a": 1, "s": null }"""
+            } else {
+              """{ "a": 1, "s": { "x": null, "y": null } }"""
+            }
+          )
+        )
     )
   } {
-   testInserts(s"null struct with different field order")(
+   testInserts("null struct with different field order, " +
+       s"preserveNullSourceStructs=$preserveNullSourceStructs")(
      initialData = TestData(
        "a long, s struct <x: int, y int>",
        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""")),
@@ -216,7 +232,9 @@ trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImpl
      includeInserts = inserts,
      // Dataframe INSERTs by name don't support implicit casting except for streaming
      // writes, no point in testing them.
-     excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert
+     excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+     confs = Seq(DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
+       -> preserveNullSourceStructs.toString)
    )
  }
 
