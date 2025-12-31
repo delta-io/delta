@@ -43,6 +43,37 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // Test schema used to bind expressions for semantic comparison
   private val testSchema = TestSchemas.comprehensiveSchema.asStruct()
 
+  // Pre-generated test data for reuse across multiple tests
+  private val equalToTests = allTypes.map { case (col, value, desc) =>
+    (EqualTo(col, value), Some(Expressions.equal(col, value)), s"EqualTo $desc")
+  }
+
+  private val lessThanTests = numericTypes.map { case (col, value, desc) =>
+    (LessThan(col, value), Some(Expressions.lessThan(col, value)), s"LessThan $desc")
+  }
+
+  private val greaterThanTests = numericTypes.map { case (col, value, desc) =>
+    (GreaterThan(col, value), Some(Expressions.greaterThan(col, value)), s"GreaterThan $desc")
+  }
+
+  private val lessThanOrEqualTests = numericTypes.map { case (col, value, desc) =>
+    (LessThanOrEqual(col, value), Some(Expressions.lessThanOrEqual(col, value)),
+      s"LessThanOrEqual $desc")
+  }
+
+  private val greaterThanOrEqualTests = numericTypes.map { case (col, value, desc) =>
+    (GreaterThanOrEqual(col, value), Some(Expressions.greaterThanOrEqual(col, value)),
+      s"GreaterThanOrEqual $desc")
+  }
+
+  private val isNullTests = allTypes.map { case (col, _, desc) =>
+    (IsNull(col), Some(Expressions.isNull(col)), s"IsNull $desc")
+  }
+
+  private val isNotNullTests = allTypes.map { case (col, _, desc) =>
+    (IsNotNull(col), Some(Expressions.notNull(col)), s"IsNotNull $desc")
+  }
+
   // Helper: assert that a sequence of test cases all convert correctly
   private def assertConvert(testCases: Seq[(Filter, Option[Expression], String)]): Unit = {
     testCases.foreach { case (input, expectedOpt, description) =>
@@ -77,66 +108,21 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // TEST 1: General Operators on All Types
   // ========================================
   test("convert general operators on all types") {
-    val generalTests = allTypes.flatMap { case (col, value, desc) =>
-      Seq(
-        (EqualTo(col, value), Some(Expressions.equal(col, value)), s"EqualTo $desc"),
-        (IsNull(col), Some(Expressions.isNull(col)), s"IsNull $desc"),
-        (IsNotNull(col), Some(Expressions.notNull(col)), s"IsNotNull $desc")
-      )
-    }
-
-    assertConvert(generalTests)
+    assertConvert(equalToTests ++ isNullTests ++ isNotNullTests)
   }
 
   // ========================================
   // TEST 2: Numeric Comparison Operators
   // ========================================
   test("convert numeric comparison operators") {
-    val comparisonOperators = Seq(
-      ("LessThan", (c: String, v: Any) => LessThan(c, v), Expressions.lessThan _),
-      ("GreaterThan", (c: String, v: Any) => GreaterThan(c, v), Expressions.greaterThan _),
-      ("LessThanOrEqual", (c: String, v: Any) => LessThanOrEqual(c, v),
-        Expressions.lessThanOrEqual _),
-      ("GreaterThanOrEqual", (c: String, v: Any) => GreaterThanOrEqual(c, v),
-        Expressions.greaterThanOrEqual _)
-    )
-
-    val comparisonTests = comparisonOperators.flatMap { case (name, sparkOp, icebergOp) =>
-      numericTypes.map { case (col, value, desc) =>
-        (sparkOp(col, value), Some(icebergOp(col, value)), s"$name $desc")
-      }
-    }
-
-    assertConvert(comparisonTests)
+    assertConvert(lessThanTests ++ greaterThanTests ++
+      lessThanOrEqualTests ++ greaterThanOrEqualTests)
   }
 
   // ========================================
   // TEST 3: Logical Operators (All Pairs + Full Cartesian Nesting)
   // ========================================
   test("convert logical operators with diverse type pairs") {
-    // Reuse test data from Test 1 patterns
-    val equalToTests = allTypes.map { case (col, value, desc) =>
-      (EqualTo(col, value), Some(Expressions.equal(col, value)), s"EqualTo $desc")
-    }
-
-    val greaterThanTests = numericTypes.map { case (col, value, desc) =>
-      (GreaterThan(col, value), Some(Expressions.greaterThan(col, value)), s"GreaterThan $desc")
-    }
-
-    val lessThanTests = numericTypes.map { case (col, value, desc) =>
-      (LessThan(col, value), Some(Expressions.lessThan(col, value)), s"LessThan $desc")
-    }
-
-    val greaterThanOrEqualTests = numericTypes.map { case (col, value, desc) =>
-      (GreaterThanOrEqual(col, value), Some(Expressions.greaterThanOrEqual(col, value)),
-        s"GreaterThanOrEqual $desc")
-    }
-
-    val lessThanOrEqualTests = numericTypes.map { case (col, value, desc) =>
-      (LessThanOrEqual(col, value), Some(Expressions.lessThanOrEqual(col, value)),
-        s"LessThanOrEqual $desc")
-    }
-
     // Get first element from each operator type (5 total)
     val representatives = Seq(
       equalToTests.head,
