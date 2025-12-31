@@ -135,6 +135,23 @@ public class StreamingHelper {
             engine, tablePath, commitRange.getDeltaFiles(), actionSet));
   }
 
+  /**
+   * Collects metadata actions from a commit range, mapping each version to its metadata.
+   *
+   * <p>This method is "unsafe" because it uses {@code getActionsFromRangeUnsafe()} which bypasses
+   * the standard snapshot requirement for protocol validation.
+   *
+   * <p>Returns a map preserving version order (via LinkedHashMap) where each version maps to its
+   * metadata action. Throws an exception if multiple metadata actions are found in the same commit.
+   *
+   * @param startVersion the starting version (inclusive) of the commit range
+   * @param endVersionOpt optional ending version (exclusive) of the commit range
+   * @param snapshotManager the Delta snapshot manager
+   * @param engine the Delta engine
+   * @param tablePath the path to the Delta table
+   * @param actionSet the set of actions to read (should include METADATA)
+   * @return a map from version number to metadata action, in version order
+   */
   public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
       long startVersion,
       Optional<Long> endVersionOpt,

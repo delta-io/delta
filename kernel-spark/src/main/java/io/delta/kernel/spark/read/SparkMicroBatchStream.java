@@ -819,7 +819,7 @@ public class SparkMicroBatchStream
    * checks any more.
    *
    * @param batchStartVersion Start version we want to verify read compatibility against
-   * @param batchEndVersion Nullable, if we are checking against an existing constructed batch
+   * @param batchEndVersion Optionally, if we are checking against an existing constructed batch
    *     during streaming initialization, we would also like to verify all schema changes in between
    *     as well before we can lazily initialize the schema log if needed.
    */
