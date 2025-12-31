@@ -23,14 +23,15 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Base data: define once, reuse everywhere
-  private val numericTypes = Seq(
+  // Flat fields
+  private val flatNumericTypes = Seq(
     ("intCol", 42, "Int"),
     ("longCol", 100L, "Long"),
     ("doubleCol", 99.99, "Double"),
     ("floatCol", 10.5f, "Float")
   )
 
-  private val nonNumericTypes = Seq(
+  private val flatNonNumericTypes = Seq(
     ("stringCol", "test", "String"),
     ("boolCol", true, "Boolean"),
     ("decimalCol", BigDecimal("123.45"), "Decimal"),
@@ -38,10 +39,45 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     ("timestampCol", java.sql.Timestamp.valueOf("2023-01-01 00:00:00"), "Timestamp")
   )
 
+  // 2-level nested fields
+  private val nested2LevelNumeric = Seq(
+    ("address.intCol", 42, "Nested2 Int"),
+    ("address.longCol", 100L, "Nested2 Long"),
+    ("address.doubleCol", 99.99, "Nested2 Double"),
+    ("address.floatCol", 10.5f, "Nested2 Float")
+  )
+
+  private val nested2LevelNonNumeric = Seq(
+    ("metadata.stringCol", "test", "Nested2 String"),
+    ("metadata.boolCol", true, "Nested2 Boolean"),
+    ("metadata.decimalCol", BigDecimal("123.45"), "Nested2 Decimal"),
+    ("metadata.dateCol", java.sql.Date.valueOf("2023-12-31"), "Nested2 Date"),
+    ("metadata.timestampCol", java.sql.Timestamp.valueOf("2023-01-01 00:00:00"), "Nested2 Timestamp")
+  )
+
+  // 3-level nested fields
+  private val nested3LevelNumeric = Seq(
+    ("outer.inner.intCol", 42, "Nested3 Int"),
+    ("outer.inner.longCol", 100L, "Nested3 Long"),
+    ("outer.inner.doubleCol", 99.99, "Nested3 Double"),
+    ("outer.inner.floatCol", 10.5f, "Nested3 Float")
+  )
+
+  private val nested3LevelNonNumeric = Seq(
+    ("outer.inner.stringCol", "test", "Nested3 String"),
+    ("outer.inner.boolCol", true, "Nested3 Boolean"),
+    ("outer.inner.decimalCol", BigDecimal("123.45"), "Nested3 Decimal"),
+    ("outer.inner.dateCol", java.sql.Date.valueOf("2023-12-31"), "Nested3 Date"),
+    ("outer.inner.timestampCol", java.sql.Timestamp.valueOf("2023-01-01 00:00:00"), "Nested3 Timestamp")
+  )
+
+  // Combine all types
+  private val numericTypes = flatNumericTypes ++ nested2LevelNumeric ++ nested3LevelNumeric
+  private val nonNumericTypes = flatNonNumericTypes ++ nested2LevelNonNumeric ++ nested3LevelNonNumeric
   private val allTypes = numericTypes ++ nonNumericTypes
 
   // Test schema used to bind expressions for semantic comparison
-  private val testSchema = TestSchemas.comprehensiveSchema.asStruct()
+  private val testSchema = TestSchemas.superSchema.asStruct()
 
   // Pre-generated test data for reuse across multiple tests
   private val equalToTests = allTypes.map { case (col, value, desc) =>
@@ -82,13 +118,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       expectedOpt match {
         case Some(expected) =>
           assert(result.isDefined, s"[$description] Should convert: $input")
-          assert(
+    assert(
             ExpressionUtil.equivalent(expected, result.get, testSchema, true),
             s"[$description] Expected: $expected, got: ${result.get}"
           )
         case None =>
           assert(result.isEmpty, s"[$description] Should return None for: $input")
-      }
+  }
     }
   }
 
@@ -139,7 +175,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
     val orTests = uniquePairs(representatives).map { case ((lf, le, ld), (rf, re, rd)) =>
       (Or(lf, rf), Some(Expressions.or(le.get, re.get)), s"Or($ld, $rd)")
-    }
+  }
 
     // Full cartesian product of all And × all Or for nested tests
     val nestedTests = cartesianProduct(andTests, orTests).map {
@@ -151,56 +187,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================
-  // TEST 4: Nested Column Filters (Dynamically Generated for All Types)
-  // ========================================
-  test("convert filters on nested columns with all data types") {
-    // Dynamically generate nested columns from base types
-    val nestedNumericCols = numericTypes.map { case (col, value, desc) =>
-      (s"address.$col", value, s"nested $desc in address")
-    }
-
-    val nestedNonNumericCols = nonNumericTypes.map { case (col, value, desc) =>
-      (s"metadata.$col", value, s"nested $desc in metadata")
-    }
-
-    val allNestedCols = nestedNumericCols ++ nestedNonNumericCols
-
-    // Basic operators on all nested columns
-    val basicOps = allNestedCols.flatMap { case (col, value, desc) =>
-      Seq(
-        (EqualTo(col, value), Some(Expressions.equal(col, value)), s"EqualTo $desc"),
-        (LessThan(col, value), Some(Expressions.lessThan(col, value)), s"LessThan $desc"),
-        (IsNull(col), Some(Expressions.isNull(col)), s"IsNull $desc")
-      )
-    }
-
-    // All unique pairs for And/Or
-    val logicalOps = uniquePairs(allNestedCols).flatMap {
-      case ((c1, v1, d1), (c2, v2, d2)) =>
-        Seq(
-          (And(EqualTo(c1, v1), EqualTo(c2, v2)),
-           Some(Expressions.and(Expressions.equal(c1, v1), Expressions.equal(c2, v2))),
-           s"And($d1, $d2)"),
-          (Or(EqualTo(c1, v1), EqualTo(c2, v2)),
-           Some(Expressions.or(Expressions.equal(c1, v1), Expressions.equal(c2, v2))),
-           s"Or($d1, $d2)")
-        )
-    }
-
-    // Use nestedSchema for validation
-    val nestedTestSchema = TestSchemas.nestedSchema.asStruct()
-    (basicOps ++ logicalOps).foreach { case (input, expectedOpt, description) =>
-      val result = SparkToIcebergExpressionConverter.convert(input)
-      assert(result.isDefined, s"[$description] Should convert: $input")
-      assert(
-        ExpressionUtil.equivalent(expectedOpt.get, result.get, nestedTestSchema, true),
-        s"[$description] Expected: ${expectedOpt.get}, got: ${result.get}"
-      )
-    }
-  }
-
-  // ========================================
-  // TEST 5: Edge Cases (manual, high-value)
+  // TEST 4: Edge Cases (manual, high-value)
   // ========================================
   test("convert edge cases and special scenarios") {
     val edgeCases = Seq(
@@ -222,7 +209,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================
-  // TEST 6: Unsupported Filters
+  // TEST 5: Unsupported Filters
   // ========================================
   test("unsupported filters return None") {
     val unsupportedFilters = Seq(

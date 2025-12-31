@@ -74,5 +74,63 @@ object TestSchemas {
       Types.NestedField.required(25, "timestampCol", Types.TimestampType.withoutZone)
     ))
   )
+
+  /**
+   * Super comprehensive schema with flat, 2-level nested, and 3-level nested fields.
+   * This schema supports testing all operators on regular columns, nested columns,
+   * and deeply nested columns.
+   *
+   * Structure:
+   * - Flat fields: intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
+   *                decimalCol, dateCol, timestampCol
+   * - 2-level nested: address.{intCol, longCol, doubleCol, floatCol}
+   *                   metadata.{stringCol, boolCol, decimalCol, dateCol, timestampCol}
+   * - 3-level nested: outer.inner.{intCol, longCol, doubleCol, floatCol, stringCol,
+   *                                 boolCol, decimalCol, dateCol, timestampCol}
+   */
+  val superSchema = new Schema(
+    // Flat fields (IDs 1-9)
+    Types.NestedField.required(1, "intCol", Types.IntegerType.get),
+    Types.NestedField.required(2, "longCol", Types.LongType.get),
+    Types.NestedField.required(3, "doubleCol", Types.DoubleType.get),
+    Types.NestedField.required(4, "floatCol", Types.FloatType.get),
+    Types.NestedField.required(5, "stringCol", Types.StringType.get),
+    Types.NestedField.required(6, "boolCol", Types.BooleanType.get),
+    Types.NestedField.required(7, "decimalCol", Types.DecimalType.of(10, 2)),
+    Types.NestedField.required(8, "dateCol", Types.DateType.get),
+    Types.NestedField.required(9, "timestampCol", Types.TimestampType.withoutZone),
+
+    // 2-level nested: address (ID 10)
+    Types.NestedField.required(10, "address", Types.StructType.of(
+      Types.NestedField.required(101, "intCol", Types.IntegerType.get),
+      Types.NestedField.required(102, "longCol", Types.LongType.get),
+      Types.NestedField.required(103, "doubleCol", Types.DoubleType.get),
+      Types.NestedField.required(104, "floatCol", Types.FloatType.get)
+    )),
+
+    // 2-level nested: metadata (ID 11)
+    Types.NestedField.required(11, "metadata", Types.StructType.of(
+      Types.NestedField.required(111, "stringCol", Types.StringType.get),
+      Types.NestedField.required(112, "boolCol", Types.BooleanType.get),
+      Types.NestedField.required(113, "decimalCol", Types.DecimalType.of(10, 2)),
+      Types.NestedField.required(114, "dateCol", Types.DateType.get),
+      Types.NestedField.required(115, "timestampCol", Types.TimestampType.withoutZone)
+    )),
+
+    // 3-level nested: outer.inner (ID 12)
+    Types.NestedField.required(12, "outer", Types.StructType.of(
+      Types.NestedField.required(121, "inner", Types.StructType.of(
+        Types.NestedField.required(1211, "intCol", Types.IntegerType.get),
+        Types.NestedField.required(1212, "longCol", Types.LongType.get),
+        Types.NestedField.required(1213, "doubleCol", Types.DoubleType.get),
+        Types.NestedField.required(1214, "floatCol", Types.FloatType.get),
+        Types.NestedField.required(1215, "stringCol", Types.StringType.get),
+        Types.NestedField.required(1216, "boolCol", Types.BooleanType.get),
+        Types.NestedField.required(1217, "decimalCol", Types.DecimalType.of(10, 2)),
+        Types.NestedField.required(1218, "dateCol", Types.DateType.get),
+        Types.NestedField.required(1219, "timestampCol", Types.TimestampType.withoutZone)
+      ))
+    ))
+  )
 }
 
