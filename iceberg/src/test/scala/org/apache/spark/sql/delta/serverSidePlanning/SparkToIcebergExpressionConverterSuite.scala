@@ -74,15 +74,24 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================
-  // TEST 1: Comparison + Null Operators (Combined)
+  // TEST 1: General Operators on All Types
   // ========================================
-  test("convert comparison and null check operators") {
-    // EqualTo on all types
-    val equalToTests = allTypes.map { case (col, value, desc) =>
-      (EqualTo(col, value), Some(Expressions.equal(col, value)), s"EqualTo $desc")
+  test("convert general operators on all types") {
+    val generalTests = allTypes.flatMap { case (col, value, desc) =>
+      Seq(
+        (EqualTo(col, value), Some(Expressions.equal(col, value)), s"EqualTo $desc"),
+        (IsNull(col), Some(Expressions.isNull(col)), s"IsNull $desc"),
+        (IsNotNull(col), Some(Expressions.notNull(col)), s"IsNotNull $desc")
+      )
     }
 
-    // Comparison operators (only on numeric types)
+    assertConvert(generalTests)
+  }
+
+  // ========================================
+  // TEST 2: Numeric Comparison Operators
+  // ========================================
+  test("convert numeric comparison operators") {
     val comparisonOperators = Seq(
       ("LessThan", (c: String, v: Any) => LessThan(c, v), Expressions.lessThan _),
       ("GreaterThan", (c: String, v: Any) => GreaterThan(c, v), Expressions.greaterThan _),
@@ -98,19 +107,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       }
     }
 
-    // Null checks on all types
-    val nullTests = allTypes.flatMap { case (col, _, desc) =>
-      Seq(
-        (IsNull(col), Some(Expressions.isNull(col)), s"IsNull $desc"),
-        (IsNotNull(col), Some(Expressions.notNull(col)), s"IsNotNull $desc")
-      )
-    }
-
-    assertConvert(equalToTests ++ comparisonTests ++ nullTests)
+    assertConvert(comparisonTests)
   }
 
   // ========================================
-  // TEST 2: Logical Operators (All Pairs + Full Cartesian Nesting)
+  // TEST 3: Logical Operators (All Pairs + Full Cartesian Nesting)
   // ========================================
   test("convert logical operators with diverse type pairs") {
     // Reuse test data from Test 1 patterns
@@ -164,7 +165,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================
-  // TEST 3: Nested Column Filters (Dynamically Generated for All Types)
+  // TEST 4: Nested Column Filters (Dynamically Generated for All Types)
   // ========================================
   test("convert filters on nested columns with all data types") {
     // Dynamically generate nested columns from base types
@@ -213,7 +214,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================
-  // TEST 4: Edge Cases (manual, high-value)
+  // TEST 5: Edge Cases (manual, high-value)
   // ========================================
   test("convert edge cases and special scenarios") {
     val edgeCases = Seq(
@@ -235,7 +236,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================
-  // TEST 5: Unsupported Filters
+  // TEST 6: Unsupported Filters
   // ========================================
   test("unsupported filters return None") {
     val unsupportedFilters = Seq(
