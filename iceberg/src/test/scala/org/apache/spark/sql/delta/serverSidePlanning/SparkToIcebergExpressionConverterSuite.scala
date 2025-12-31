@@ -22,92 +22,233 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
-  // Test schema used to bind expressions for semantic comparison.
-  // Binding resolves column names to field IDs/types, enabling type-safe comparison
-  // that catches bugs like "age < 30" (int) vs "age < "30"" (string)
-  private val testSchema = TestSchemas.defaultSchema.asStruct()
+  // Base data: define once, reuse everywhere
+  private val numericTypes = Seq(
+    ("intCol", 42, "Int"),
+    ("longCol", 100L, "Long"),
+    ("doubleCol", 99.99, "Double"),
+    ("floatCol", 10.5f, "Float")
+  )
 
-  private def assertConvert(sparkFilter: Filter, expectedIcebergExpr: Expression): Unit = {
-    val result = SparkToIcebergExpressionConverter.convert(sparkFilter)
-    assert(result.isDefined, s"Should convert: $sparkFilter")
+  private val nonNumericTypes = Seq(
+    ("stringCol", "test", "String"),
+    ("boolCol", true, "Boolean"),
+    ("decimalCol", BigDecimal("123.45"), "Decimal"),
+    ("dateCol", java.sql.Date.valueOf("2023-12-31"), "Date"),
+    ("timestampCol", java.sql.Timestamp.valueOf("2023-01-01 00:00:00"), "Timestamp")
+  )
 
-    val actual = result.get
-    // ExpressionUtil.equivalent(left, right, struct, caseSensitive)
-    // caseSensitive=true: column names must match case exactly
-    assert(
-      ExpressionUtil.equivalent(expectedIcebergExpr, actual, testSchema, true),
-      s"Expressions not equivalent:\n  Expected: $expectedIcebergExpr\n  Actual: $actual"
+  private val allTypes = numericTypes ++ nonNumericTypes
+
+  // Test schema used to bind expressions for semantic comparison
+  private val testSchema = TestSchemas.comprehensiveSchema.asStruct()
+
+  // Helper: assert that a sequence of test cases all convert correctly
+  private def assertConvert(testCases: Seq[(Filter, Expression, String)]): Unit = {
+    testCases.foreach { case (input, expected, description) =>
+      val result = SparkToIcebergExpressionConverter.convert(input)
+      assert(result.isDefined, s"[$description] Should convert: $input")
+      assert(
+        ExpressionUtil.equivalent(expected, result.get, testSchema, true),
+        s"[$description] Expected: $expected, got: ${result.get}"
+      )
+    }
+  }
+
+  // Helper: assert that a sequence of filters return None
+  private def assertReturnsNone(filters: Seq[(Filter, String)]): Unit = {
+    filters.foreach { case (filter, description) =>
+      val result = SparkToIcebergExpressionConverter.convert(filter)
+      assert(result.isEmpty, s"[$description] Should return None for: $filter")
+    }
+  }
+
+  // Cartesian product helper
+  private def cartesianProduct[T, U](seqA: Seq[T], seqB: Seq[U]): Seq[(T, U)] = {
+    for { a <- seqA; b <- seqB } yield (a, b)
+  }
+
+  // Unique pairs helper (reuses cartesianProduct)
+  private def uniquePairs[T](seq: Seq[T]): Seq[(T, T)] = {
+    cartesianProduct(seq, seq).zipWithIndex.collect {
+      case ((a, b), _) if seq.indexOf(a) < seq.indexOf(b) => (a, b)
+    }
+  }
+
+  // ========================================
+  // TEST 1: Comparison + Null Operators (Combined)
+  // ========================================
+  test("convert comparison and null check operators") {
+    // EqualTo on all types
+    val equalToTests = allTypes.map { case (col, value, desc) =>
+      (EqualTo(col, value), Expressions.equal(col, value), s"EqualTo $desc")
+    }
+
+    // Comparison operators (only on numeric types)
+    val comparisonOperators = Seq(
+      ("LessThan", (c: String, v: Any) => LessThan(c, v), Expressions.lessThan _),
+      ("GreaterThan", (c: String, v: Any) => GreaterThan(c, v), Expressions.greaterThan _),
+      ("LessThanOrEqual", (c: String, v: Any) => LessThanOrEqual(c, v),
+        Expressions.lessThanOrEqual _),
+      ("GreaterThanOrEqual", (c: String, v: Any) => GreaterThanOrEqual(c, v),
+        Expressions.greaterThanOrEqual _)
     )
+
+    val comparisonTests = comparisonOperators.flatMap { case (name, sparkOp, icebergOp) =>
+      numericTypes.map { case (col, value, desc) =>
+        (sparkOp(col, value), icebergOp(col, value), s"$name $desc")
+      }
+    }
+
+    // Null checks on all types
+    val nullTests = allTypes.flatMap { case (col, _, desc) =>
+      Seq(
+        (IsNull(col), Expressions.isNull(col), s"IsNull $desc"),
+        (IsNotNull(col), Expressions.notNull(col), s"IsNotNull $desc")
+      )
+    }
+
+    assertConvert(equalToTests ++ comparisonTests ++ nullTests)
   }
 
-  private def assertReturnsNone(filter: Filter): Unit = {
-    val result = SparkToIcebergExpressionConverter.convert(filter)
-    assert(result.isEmpty, s"Should return None for unsupported filter: $filter")
+  // ========================================
+  // TEST 2: Logical Operators (All Pairs + Full Cartesian Nesting)
+  // ========================================
+  test("convert logical operators with diverse type pairs") {
+    // Reuse test data from Test 1 patterns
+    val equalToTests = allTypes.map { case (col, value, desc) =>
+      (EqualTo(col, value), Expressions.equal(col, value), s"EqualTo $desc")
+    }
+
+    val greaterThanTests = numericTypes.map { case (col, value, desc) =>
+      (GreaterThan(col, value), Expressions.greaterThan(col, value), s"GreaterThan $desc")
+    }
+
+    val lessThanTests = numericTypes.map { case (col, value, desc) =>
+      (LessThan(col, value), Expressions.lessThan(col, value), s"LessThan $desc")
+    }
+
+    val greaterThanOrEqualTests = numericTypes.map { case (col, value, desc) =>
+      (GreaterThanOrEqual(col, value), Expressions.greaterThanOrEqual(col, value),
+        s"GreaterThanOrEqual $desc")
+    }
+
+    val lessThanOrEqualTests = numericTypes.map { case (col, value, desc) =>
+      (LessThanOrEqual(col, value), Expressions.lessThanOrEqual(col, value),
+        s"LessThanOrEqual $desc")
+    }
+
+    // Get first element from each operator type (5 total)
+    val representatives = Seq(
+      equalToTests.head,
+      greaterThanTests.head,
+      lessThanTests.head,
+      greaterThanOrEqualTests.head,
+      lessThanOrEqualTests.head
+    )
+
+    // Generate all unique pairs for And/Or
+    val andTests = uniquePairs(representatives).map { case ((lf, le, ld), (rf, re, rd)) =>
+      (And(lf, rf), Expressions.and(le, re), s"And($ld, $rd)")
+    }
+
+    val orTests = uniquePairs(representatives).map { case ((lf, le, ld), (rf, re, rd)) =>
+      (Or(lf, rf), Expressions.or(le, re), s"Or($ld, $rd)")
+    }
+
+    // Full cartesian product of all And × all Or for nested tests
+    val nestedTests = cartesianProduct(andTests, orTests).map {
+      case ((lf, le, ld), (rf, re, rd)) =>
+        (And(lf, rf), Expressions.and(le, re), s"Nested: And($ld, $rd)")
+    }
+
+    assertConvert(andTests ++ orTests ++ nestedTests)
   }
 
-  // EqualTo tests
-  test("convert EqualTo with various types") {
-    assertConvert(EqualTo("id", 5), Expressions.equal("id", 5))  // integer
-    assertConvert(EqualTo("name", "Alice"), Expressions.equal("name", "Alice"))  // string
-    assertConvert(EqualTo("id", 1234567890L), Expressions.equal("id", 1234567890L))  // long
-    assertConvert(EqualTo("active", true), Expressions.equal("active", true))  // boolean
+  // ========================================
+  // TEST 3: Nested Column Filters (Dynamically Generated for All Types)
+  // ========================================
+  test("convert filters on nested columns with all data types") {
+    // Dynamically generate nested columns from base types
+    val nestedNumericCols = numericTypes.map { case (col, value, desc) =>
+      (s"address.$col", value, s"nested $desc in address")
+    }
 
-    // EqualTo with null becomes IsNull
-    assertConvert(EqualTo("name", null), Expressions.isNull("name"))
+    val nestedNonNumericCols = nonNumericTypes.map { case (col, value, desc) =>
+      (s"metadata.$col", value, s"nested $desc in metadata")
+    }
+
+    val allNestedCols = nestedNumericCols ++ nestedNonNumericCols
+
+    // Basic operators on all nested columns
+    val basicOps = allNestedCols.flatMap { case (col, value, desc) =>
+      Seq(
+        (EqualTo(col, value), Expressions.equal(col, value), s"EqualTo $desc"),
+        (LessThan(col, value), Expressions.lessThan(col, value), s"LessThan $desc"),
+        (IsNull(col), Expressions.isNull(col), s"IsNull $desc")
+      )
+    }
+
+    // All unique pairs for And/Or
+    val logicalOps = uniquePairs(allNestedCols).flatMap {
+      case ((c1, v1, d1), (c2, v2, d2)) =>
+        Seq(
+          (And(EqualTo(c1, v1), EqualTo(c2, v2)),
+           Expressions.and(Expressions.equal(c1, v1), Expressions.equal(c2, v2)),
+           s"And($d1, $d2)"),
+          (Or(EqualTo(c1, v1), EqualTo(c2, v2)),
+           Expressions.or(Expressions.equal(c1, v1), Expressions.equal(c2, v2)),
+           s"Or($d1, $d2)")
+        )
+    }
+
+    // Use nestedSchema for validation
+    val nestedTestSchema = TestSchemas.nestedSchema.asStruct()
+    (basicOps ++ logicalOps).foreach { case (input, expected, description) =>
+      val result = SparkToIcebergExpressionConverter.convert(input)
+      assert(result.isDefined, s"[$description] Should convert: $input")
+      assert(
+        ExpressionUtil.equivalent(expected, result.get, nestedTestSchema, true),
+        s"[$description] Expected: $expected, got: ${result.get}"
+      )
+    }
   }
 
-  // Comparison operator tests
-  test("convert comparison operators") {
-    assertConvert(LessThan("age", 30), Expressions.lessThan("age", 30))
-    assertConvert(GreaterThan("age", 18), Expressions.greaterThan("age", 18))
-    assertConvert(LessThanOrEqual("price", 99.99), Expressions.lessThanOrEqual("price", 99.99))
-    assertConvert(
-      GreaterThanOrEqual("rating", 4.5f),
-      Expressions.greaterThanOrEqual("rating", 4.5f))
+  // ========================================
+  // TEST 4: Edge Cases (manual, high-value)
+  // ========================================
+  test("convert edge cases and special scenarios") {
+    val edgeCases = Seq(
+      (EqualTo("stringCol", null), Expressions.isNull("stringCol"), "EqualTo(col, null) → IsNull"),
+      (EqualTo("intCol", Int.MinValue), Expressions.equal("intCol", Int.MinValue),
+        "Int.MinValue boundary"),
+      (EqualTo("longCol", Long.MaxValue), Expressions.equal("longCol", Long.MaxValue),
+        "Long.MaxValue boundary"),
+      (And(GreaterThan("intCol", 0), LessThan("intCol", 100)),
+       Expressions.and(Expressions.greaterThan("intCol", 0), Expressions.lessThan("intCol", 100)),
+       "Range filter: 0 < intCol < 100"),
+      (EqualTo("doubleCol", Double.NaN), Expressions.equal("doubleCol", Double.NaN),
+        "Double.NaN handling")
+    )
+
+    assertConvert(edgeCases)
   }
 
-  // Null check tests
-  test("convert null check operators") {
-    assertConvert(IsNull("name"), Expressions.isNull("name"))
-    assertConvert(IsNotNull("name"), Expressions.notNull("name"))
-  }
-
-  // Logical operator tests
-  test("convert logical operators") {
-    assertConvert(
-      And(EqualTo("id", 5), GreaterThan("age", 18)),
-      Expressions.and(Expressions.equal("id", 5), Expressions.greaterThan("age", 18)))
-
-    assertConvert(
-      Or(EqualTo("name", "active"), EqualTo("name", "pending")),
-      Expressions.or(Expressions.equal("name", "active"), Expressions.equal("name", "pending")))
-
-    // Nested And/Or
-    assertConvert(
-      And(
-        Or(EqualTo("name", "active"), EqualTo("name", "pending")),
-        GreaterThan("age", 18)
-      ),
-      Expressions.and(
-        Expressions.or(Expressions.equal("name", "active"), Expressions.equal("name", "pending")),
-        Expressions.greaterThan("age", 18)))
-  }
-
-  // Unsupported filter tests
+  // ========================================
+  // TEST 5: Unsupported Filters
+  // ========================================
   test("unsupported filters return None") {
-    assertReturnsNone(StringStartsWith("name", "A"))  // StringStartsWith
-    assertReturnsNone(StringEndsWith("name", "Z"))  // StringEndsWith
-    assertReturnsNone(StringContains("name", "foo"))  // StringContains
-    assertReturnsNone(In("id", Array(1, 2, 3)))  // In
-    assertReturnsNone(Not(EqualTo("id", 5)))  // Not
-  }
+    val unsupportedFilters = Seq(
+      (StringStartsWith("stringCol", "prefix"), "StringStartsWith"),
+      (StringEndsWith("stringCol", "suffix"), "StringEndsWith"),
+      (StringContains("stringCol", "substr"), "StringContains"),
+      (In("intCol", Array(1, 2, 3)), "In"),
+      (Not(EqualTo("intCol", 5)), "Not"),
+      (EqualNullSafe("intCol", 5), "EqualNullSafe"),
+      (AlwaysTrue(), "AlwaysTrue"),
+      (AlwaysFalse(), "AlwaysFalse")
+    )
 
-  // Type conversion tests - validates literal types are preserved correctly
-  test("convert with different numeric types") {
-    assertConvert(EqualTo("age", 42), Expressions.equal("age", 42))  // int
-    assertConvert(EqualTo("id", 1234567890123L), Expressions.equal("id", 1234567890123L))  // long
-    assertConvert(GreaterThan("price", 19.99), Expressions.greaterThan("price", 19.99))  // double
-    // Note: Spark represents floats as doubles in Filter expressions, so 4.5f becomes 4.5 (double)
-    assertConvert(LessThan("price", 4.5), Expressions.lessThan("price", 4.5))
+    assertReturnsNone(unsupportedFilters)
   }
 }

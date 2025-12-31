@@ -34,5 +34,45 @@ object TestSchemas {
     Types.NestedField.required(4, "price", Types.DoubleType.get),
     Types.NestedField.required(5, "rating", Types.FloatType.get),
     Types.NestedField.required(6, "active", Types.BooleanType.get))
+
+  /**
+   * Comprehensive test schema with all major data types for extensive filter testing.
+   * Includes: intCol, longCol, doubleCol, floatCol, stringCol, boolCol, decimalCol,
+   * dateCol, timestampCol
+   */
+  val comprehensiveSchema = new Schema(
+    Types.NestedField.required(1, "intCol", Types.IntegerType.get),
+    Types.NestedField.required(2, "longCol", Types.LongType.get),
+    Types.NestedField.required(3, "doubleCol", Types.DoubleType.get),
+    Types.NestedField.required(4, "floatCol", Types.FloatType.get),
+    Types.NestedField.required(5, "stringCol", Types.StringType.get),
+    Types.NestedField.required(6, "boolCol", Types.BooleanType.get),
+    Types.NestedField.required(7, "decimalCol", Types.DecimalType.of(10, 2)),
+    Types.NestedField.required(8, "dateCol", Types.DateType.get),
+    Types.NestedField.required(9, "timestampCol", Types.TimestampType.withoutZone))
+
+  /**
+   * Nested schema with struct fields for testing nested column access.
+   * Structure:
+   * - address (struct):
+   *   - intCol, longCol, doubleCol, floatCol
+   * - metadata (struct):
+   *   - stringCol, boolCol, decimalCol, dateCol, timestampCol
+   */
+  val nestedSchema = new Schema(
+    Types.NestedField.required(1, "address", Types.StructType.of(
+      Types.NestedField.required(11, "intCol", Types.IntegerType.get),
+      Types.NestedField.required(12, "longCol", Types.LongType.get),
+      Types.NestedField.required(13, "doubleCol", Types.DoubleType.get),
+      Types.NestedField.required(14, "floatCol", Types.FloatType.get)
+    )),
+    Types.NestedField.required(2, "metadata", Types.StructType.of(
+      Types.NestedField.required(21, "stringCol", Types.StringType.get),
+      Types.NestedField.required(22, "boolCol", Types.BooleanType.get),
+      Types.NestedField.required(23, "decimalCol", Types.DecimalType.of(10, 2)),
+      Types.NestedField.required(24, "dateCol", Types.DateType.get),
+      Types.NestedField.required(25, "timestampCol", Types.TimestampType.withoutZone)
+    ))
+  )
 }
 
