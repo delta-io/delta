@@ -91,7 +91,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       (sparkOp, icebergOp, opName) <- comparisonOperators
     } yield FilterConversionCase(
       sparkOp(col, value),
-      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value))),
+      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, false))),
       s"$opName $typeDesc"
     )
 
@@ -119,7 +119,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       (sparkOp, icebergOp, opName) <- generalOperators
     } yield FilterConversionCase(
       sparkOp(col, value),
-      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value))),
+      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, true))),
       s"$opName $typeDesc"
     )
 
@@ -207,7 +207,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     // Test IN operator for all types
     val inTestCases = allTypes.map { case (col, value, typeDesc) =>
       val values = generateInValues(value)
-      val icebergValues = values.map(SparkToIcebergExpressionConverter.toIcebergValue)
+      val icebergValues = values.map(v =>
+        SparkToIcebergExpressionConverter.toIcebergValue(v, supportBoolean = true))
       FilterConversionCase(
         In(col, values),
         Some(Expressions.in(col, icebergValues: _*)),

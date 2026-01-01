@@ -140,50 +140,32 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   }
 
   /**
-   * Convert a value to Iceberg-compatible type.
-   * Date/Timestamp are converted to Int/Long respectively for Iceberg.
-   * All other types are passed through (type coercion happens in buildExpression).
-   */
-  private[serverSidePlanning] def toIcebergValue(value: Any): Any = value match {
-    case v: java.sql.Date =>
-      (v.getTime / (1000L * 60 * 60 * 24)).toInt
-    case v: java.sql.Timestamp =>
-      v.getTime * 1000 + (v.getNanos % 1000000) / 1000
-    case v => v
-  }
-
-  /**
-   * Helper to build expressions with type coercion.
-   * Handles numeric, string, date/time types, and optionally Boolean.
-   * Throws IllegalArgumentException for unsupported types.
+   * Convert a Spark value to Iceberg-compatible type with proper coercion.
+   * - Date/Timestamp are converted to Int/Long (what Iceberg understands)
+   * - Scala primitives are boxed to Java types (what Iceberg API needs)
+   * - Validates supportBoolean flag for boolean values
    *
    * @param supportBoolean if true, also handles Boolean type.
    *        Note: Comparison operators (LessThan, GreaterThan, etc.) don't support Boolean.
    *        Only equality operators (EqualTo, NotEqualTo) should set this to true.
    */
-  private def buildExpression(
-      attribute: String,
-      sparkValue: Any,
-      exprBuilder: (String, Any) => Expression,
-      supportBoolean: Boolean = false): Expression = {
-    if (isNaN(sparkValue)) {
-      throw new IllegalArgumentException("Cannot convert NaN value to Iceberg expression")
-    }
-
-    // Convert Date/Timestamp to Iceberg-compatible types (Int/Long)
-    val icebergValue = toIcebergValue(sparkValue)
-
-    icebergValue match {
-      case v: Int => exprBuilder(attribute, v: Integer)
-      case v: Long => exprBuilder(attribute, v: java.lang.Long)
-      case v: Float => exprBuilder(attribute, v: java.lang.Float)
-      case v: Double => exprBuilder(attribute, v: java.lang.Double)
-      case v: java.math.BigDecimal => exprBuilder(attribute, v)
-      case v: String => exprBuilder(attribute, v)
-      case v: Boolean if supportBoolean => exprBuilder(attribute, v: java.lang.Boolean)
-      case _ =>
-        throw new IllegalArgumentException(s"Unsupported type: ${sparkValue.getClass}")
-    }
+  private[serverSidePlanning] def toIcebergValue(
+      value: Any,
+      supportBoolean: Boolean = false): Any = value match {
+    // Date/Timestamp conversion (semantic change)
+    case v: java.sql.Date =>
+      (v.getTime / (1000L * 60 * 60 * 24)).toInt: Integer
+    case v: java.sql.Timestamp =>
+      (v.getTime * 1000 + (v.getNanos % 1000000) / 1000): java.lang.Long
+    // Type coercion (Scala to Java boxed types)
+    case v: Int => v: Integer
+    case v: Long => v: java.lang.Long
+    case v: Float => v: java.lang.Float
+    case v: Double => v: java.lang.Double
+    case v: java.math.BigDecimal => v
+    case v: String => v
+    case v: Boolean if supportBoolean => v: java.lang.Boolean
+    case _ => value  // Pass through for Iceberg to validate
   }
 
   /*
@@ -197,12 +179,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     sparkValue match {
       case null => Expressions.isNull(attribute)
       case _ if isNaN(sparkValue) => Expressions.isNaN(attribute)
-      case _ => buildExpression(
-        attribute,
-        sparkValue,
-        (a, v) => Expressions.equal(a, v),
-        supportBoolean = true
-      )
+      case _ => Expressions.equal(attribute, toIcebergValue(sparkValue, supportBoolean = true))
     }
   }
 
@@ -214,41 +191,27 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     sparkValue match {
       case null => Expressions.notNull(attribute)
       case _ if isNaN(sparkValue) => Expressions.notNaN(attribute)
-      case _ => buildExpression(
-        attribute,
-        sparkValue,
-        (a, v) => Expressions.notEqual(a, v),
-        supportBoolean = true
-      )
+      case _ => Expressions.notEqual(attribute, toIcebergValue(sparkValue, supportBoolean = true))
     }
   }
 
   private def convertIn(attribute: String, values: Array[Any]): Expression = {
     // Iceberg expects IN to filter out null values and convert Date/Timestamp to Int/Long
-    val nonNullValues = values.filter(_ != null).map { v =>
-      val icebergValue = toIcebergValue(v)
-      icebergValue match {
-        case i: Int => i: Integer
-        case l: Long => l: java.lang.Long
-        case f: Float => f: java.lang.Float
-        case d: Double => d: java.lang.Double
-        case bd: java.math.BigDecimal => bd
-        case b: Boolean => b: java.lang.Boolean
-        case other => other
-      }
-    }
+    val nonNullValues = values.filter(_ != null).map(v =>
+      toIcebergValue(v, supportBoolean = true)
+    )
     Expressions.in(attribute, nonNullValues: _*)
   }
 
   private def convertLessThan(attribute: String, sparkValue: Any): Expression =
-    buildExpression(attribute, sparkValue, (a, v) => Expressions.lessThan(a, v))
+    Expressions.lessThan(attribute, toIcebergValue(sparkValue))
 
   private def convertGreaterThan(attribute: String, sparkValue: Any): Expression =
-    buildExpression(attribute, sparkValue, (a, v) => Expressions.greaterThan(a, v))
+    Expressions.greaterThan(attribute, toIcebergValue(sparkValue))
 
   private def convertLessThanOrEqual(attribute: String, sparkValue: Any): Expression =
-    buildExpression(attribute, sparkValue, (a, v) => Expressions.lessThanOrEqual(a, v))
+    Expressions.lessThanOrEqual(attribute, toIcebergValue(sparkValue))
 
   private def convertGreaterThanOrEqual(attribute: String, sparkValue: Any): Expression =
-    buildExpression(attribute, sparkValue, (a, v) => Expressions.greaterThanOrEqual(a, v))
+    Expressions.greaterThanOrEqual(attribute, toIcebergValue(sparkValue))
 }
