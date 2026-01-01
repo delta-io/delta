@@ -22,7 +22,7 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
-  // Types that support comparison operators (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
+  // Types that support comparison (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
   private val comparableTypes = Seq(
     // (column name, test value, label to identify test case)
     ("intCol", 42, "Int"),
@@ -45,9 +45,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   private val allTypes = comparableTypes ++ equalityOnlyTypes
   private val testSchema = TestSchemas.testSchema.asStruct()
 
-  /**
-   * Verifies that sparkFilter converts to expectedIcebergExpression (or None if unsupported).
-   */
   private def assertConvert(testCases: Seq[(Filter, Option[Expression], String)]): Unit = {
     testCases.foreach { case (input, expectedOpt, description) =>
       val result = SparkToIcebergExpressionConverter.convert(input)
@@ -65,7 +62,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     }
   }
 
-  test("comparison operators on comparable types") {
+  test("operations on comparable types") {
     val comparisonOperators = Seq(
       ("LessThan", // name
         (col: String, v: Any) => LessThan(col, v), // Spark filter
@@ -81,7 +78,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v))
     )
 
-    // Generate all combinations of comparable types x comparison operators
+    // All combinations of comparable types x comparison operators
     val testCases = for {
       (col, value, typeDesc) <- comparableTypes
       (opName, sparkOp, icebergOp) <- comparisonOperators
@@ -168,46 +165,62 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertConvert(testCases)
   }
 
-  test("edge cases and boundary values") {
+  test("special cases and boundary values") {
     val testCases = Seq(
       // Null comparison becomes IsNull
-      (EqualTo("stringCol", null),
-       Some(Expressions.isNull("stringCol")),
-       "EqualTo(col, null) -> IsNull"),
+      (
+        EqualTo("stringCol", null), // input
+        Some(Expressions.isNull("stringCol")), // expected output
+        "EqualTo(col, null) -> IsNull" // label to identify test case
+      ),
 
       // Min and MaxValue boundaries
-      (EqualTo("intCol", Int.MinValue),
-       Some(Expressions.equal("intCol", Int.MinValue)),
-       "Int.MinValue boundary"),
+      (
+        EqualTo("intCol", Int.MinValue), // input
+        Some(Expressions.equal("intCol", Int.MinValue)), // expected output
+        "Int.MinValue boundary" // label to identify test case
+      ),
       
-      (EqualTo("longCol", Long.MaxValue),
-       Some(Expressions.equal("longCol", Long.MaxValue)),
-       "Long.MaxValue boundary"),
+      (
+        EqualTo("longCol", Long.MaxValue), // input
+        Some(Expressions.equal("longCol", Long.MaxValue)), // expected output
+        "Long.MaxValue boundary" // label to identify test case
+      ),
 
       // NaN handling
-      (EqualTo("doubleCol", Double.NaN),
-       Some(Expressions.equal("doubleCol", Double.NaN: java.lang.Double)),
-       "EqualTo with Double.NaN"),
+      (
+        EqualTo("doubleCol", Double.NaN), // input
+        Some(Expressions.equal("doubleCol", Double.NaN: java.lang.Double)), // expected output
+        "EqualTo with Double.NaN" // label to identify test case
+      ),
 
-      (EqualTo("floatCol", Float.NaN),
-       Some(Expressions.equal("floatCol", Float.NaN: java.lang.Float)),
-       "EqualTo with Float.NaN"),
+      (
+        EqualTo("floatCol", Float.NaN), // input
+        Some(Expressions.equal("floatCol", Float.NaN: java.lang.Float)), // expected output
+        "EqualTo with Float.NaN" // label to identify test case
+      ),
 
-      (Not(EqualTo("doubleCol", Double.NaN)),
-       Some(Expressions.notEqual("doubleCol", Double.NaN: java.lang.Double)),
-       "NotEqualTo with Double.NaN"),
+      (
+        Not(EqualTo("doubleCol", Double.NaN)), // input
+        Some(Expressions.notEqual("doubleCol", Double.NaN: java.lang.Double)), // expected output
+        "NotEqualTo with Double.NaN" // label to identify test case
+      ),
 
-      (Not(EqualTo("floatCol", Float.NaN)),
-       Some(Expressions.notEqual("floatCol", Float.NaN: java.lang.Float)),
-       "NotEqualTo with Float.NaN"),
+      (
+        Not(EqualTo("floatCol", Float.NaN)), // input
+        Some(Expressions.notEqual("floatCol", Float.NaN: java.lang.Float)), // expected output
+        "NotEqualTo with Float.NaN" // label to identify test case
+      ),
 
       // Range filter (same column used twice)
-      (And(GreaterThan("intCol", 0), LessThan("intCol", 100)),
-       Some(Expressions.and(
-         Expressions.greaterThan("intCol", 0),
-         Expressions.lessThan("intCol", 100)
-       )),
-       "Range filter: 0 < intCol < 100")
+      (
+        And(GreaterThan("intCol", 0), LessThan("intCol", 100)), // input
+        Some(Expressions.and(
+          Expressions.greaterThan("intCol", 0),
+          Expressions.lessThan("intCol", 100)
+        )), // expected output
+        "Range filter: 0 < intCol < 100" // label to identify test case
+      )
     )
 
     assertConvert(testCases)
