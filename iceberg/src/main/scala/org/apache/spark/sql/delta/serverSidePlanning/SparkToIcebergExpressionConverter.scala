@@ -162,11 +162,16 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
       case v: Long => exprBuilder(attribute, v: java.lang.Long)
       case v: Float => exprBuilder(attribute, v: java.lang.Float)
       case v: Double => exprBuilder(attribute, v: java.lang.Double)
-      case v: BigDecimal => exprBuilder(attribute, v.bigDecimal)
       case v: java.math.BigDecimal => exprBuilder(attribute, v)
       case v: String => exprBuilder(attribute, v)
-      case v: java.sql.Date => exprBuilder(attribute, v)
-      case v: java.sql.Timestamp => exprBuilder(attribute, v)
+      case v: java.sql.Date =>
+        // Iceberg expects days since epoch (1970-01-01) as Int
+        val daysFromEpoch = (v.getTime / (1000L * 60 * 60 * 24)).toInt
+        exprBuilder(attribute, daysFromEpoch: Integer)
+      case v: java.sql.Timestamp =>
+        // Iceberg expects microseconds since epoch as Long
+        val microsFromEpoch = v.getTime * 1000 + (v.getNanos % 1000000) / 1000
+        exprBuilder(attribute, microsFromEpoch: java.lang.Long)
       case v: Boolean if supportBoolean => exprBuilder(attribute, v: java.lang.Boolean)
       case _ =>
         throw new IllegalArgumentException(s"Unsupported type: ${sparkValue.getClass}")
@@ -217,7 +222,6 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
       case v: Long => v: java.lang.Long
       case v: Float => v: java.lang.Float
       case v: Double => v: java.lang.Double
-      case v: BigDecimal => v.bigDecimal
       case v: java.math.BigDecimal => v
       case v: Boolean => v: java.lang.Boolean
       case v => v

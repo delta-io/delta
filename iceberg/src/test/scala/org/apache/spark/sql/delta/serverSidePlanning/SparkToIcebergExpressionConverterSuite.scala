@@ -29,8 +29,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   )
 
   // Types that support ordering operations (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
-  // Note: Spark converts Date to Int and Timestamp to Long before filters reach the converter,
-  // so Date/Timestamp columns are implicitly tested via Int/Long types.
+  // Note: Spark Filter API sends Date/Timestamp as java.sql.Date/Timestamp, but our converter
+  // transforms them to Int (days since epoch) and Long (microseconds since epoch) for Iceberg.
   private val orderableTypes = Seq(
     ("intCol", 42, "Int"), // (column name, test value, label to identify test case)
     ("longCol", 100L, "Long"),
@@ -384,6 +384,19 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         EqualTo("longCol", Long.MaxValue),
         Some(Expressions.equal("longCol", Long.MaxValue)),
         "Long.MaxValue boundary"
+      ),
+
+      // Date/Timestamp: Spark sends java.sql types, but we convert to Int/Long for Iceberg
+      FilterTest(
+        EqualTo("dateCol", java.sql.Date.valueOf("2024-01-01")),
+        Some(Expressions.equal("dateCol", 19723: Integer)), // 2024-01-01 = 19723 days since epoch
+        "Date converted to days since epoch"
+      ),
+
+      FilterTest(
+        EqualTo("timestampCol", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")),
+        Some(Expressions.equal("timestampCol", 1704067200000000L: java.lang.Long)), // microseconds since epoch
+        "Timestamp converted to microseconds since epoch"
       )
     )
 
