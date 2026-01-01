@@ -112,22 +112,22 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     case AlwaysFalse() =>
       Some(Expressions.alwaysFalse())
 
-    // Unsupported Filters:
-    // - StringEndsWith, StringContains: Iceberg API doesn't provide these predicates
-    // - EqualNullSafe: Iceberg's equal() is not null-safe; no equivalent operator
-    // - Not (general): Iceberg doesn't support arbitrary NOT expressions
-    //   (We convert Not(EqualTo) as a special case to NotEqualTo)
-    // - Complex type comparisons (Array, Map, Struct): Not yet implemented
+    /*
+     * Unsupported Filters:
+     * - StringEndsWith, StringContains: Iceberg API doesn't provide these predicates
+     * - Not (general): Iceberg doesn't support arbitrary NOT expressions. We convert Not(EqualTo)
+     * as a special case to NotEqualTo.
+     */
     case _ =>
       None
     }
   } catch {
     case _: IllegalArgumentException =>
-      // Cannot convert this filter:
-      // - NaN in comparison operators (LessThan, GreaterThan, etc.): Mathematically undefined
-      //   (Note: EqualTo/NotEqualTo with NaN are converted to isNaN/notNaN predicates)
-      // - Unsupported types (e.g., Array, Map, binary types)
-      // - NotEqualTo with null: Ambiguous semantics (use IsNotNull instead)
+      /*
+       * The filter is supported but conversion failed as the type or value is unsupported.
+       * - NaN in comparison operators (LessThan, GreaterThan, etc.)
+       * - Unsupported types (e.g., Array, Map, binary types)
+       */
       None
   }
 
@@ -153,9 +153,8 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
       sparkValue: Any,
       exprBuilder: (String, Any) => Expression,
       supportBoolean: Boolean = false): Expression = {
-    // Check NaN before type matching (handles Float/Double uniformly)
     if (isNaN(sparkValue)) {
-      throw new IllegalArgumentException("Cannot convert NaN to Iceberg expression")
+      throw new IllegalArgumentException("Cannot convert NaN value to Iceberg expression")
     }
 
     sparkValue match {
@@ -174,6 +173,13 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     }
   }
 
+  /*
+   * Convert EqualTo with special handling for null and NaN.
+   * Note: We cannot use Expressions.equal(col, null/NaN) because Iceberg models these
+   * with specialized predicates (isNull/isNaN) that have different evaluation semantics:
+   * - SQL: col = NULL returns NULL (unknown), but col IS NULL returns TRUE/FALSE
+   * - Iceberg distinguishes these cases with separate predicate types
+   */
   private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
     sparkValue match {
       case null => Expressions.isNull(attribute)
@@ -187,11 +193,13 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     }
   }
 
+  /*
+   * Convert NotEqualTo with special handling for null and NaN.
+   * Note: Not(EqualTo(col, null)) from Spark (representing IS NOT NULL) is converted here.
+   */
   private def convertNotEqualTo(attribute: String, sparkValue: Any): Expression = {
     sparkValue match {
-      case null =>
-        throw new IllegalArgumentException(
-          "NotEqualTo with null is unsupported. Use IsNotNull instead.")
+      case null => Expressions.notNull(attribute)
       case _ if isNaN(sparkValue) => Expressions.notNaN(attribute)
       case _ => buildExpression(
         attribute,
@@ -203,7 +211,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   }
 
   private def convertIn(attribute: String, values: Array[Any]): Expression = {
-    // Iceberg expects IN to filter out null values and coerce types
+    // Iceberg expects IN to filter out null values
     val nonNullValues = values.filter(_ != null).map {
       case v: Int => v: Integer
       case v: Long => v: java.lang.Long

@@ -331,8 +331,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
       FilterTest(
         Not(EqualTo("stringCol", null)),
-        None,
-        "NotEqualTo(col, null) returns None (not null-safe)"
+        Some(Expressions.notNull("stringCol")),
+        "NotEqualTo(col, null) converts to notNull (IS NOT NULL)"
       ),
 
       // NaN handling: EqualTo/NotEqualTo convert to isNaN/notNaN predicates
