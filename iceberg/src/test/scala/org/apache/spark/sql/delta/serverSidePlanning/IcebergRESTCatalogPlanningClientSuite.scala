@@ -290,7 +290,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
    */
   private def populateTestData(tableName: String): Unit = {
     import org.apache.spark.sql.Row
-    
+
     val data = spark.sparkContext.parallelize(0 until 250, numSlices = 2)
       .map(i => Row(
         i, // intCol
@@ -305,7 +305,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         Row(i * 100), // address.intCol
         Row(s"meta_$i") // metadata.stringCol
       ))
-    
+
+
     spark.createDataFrame(data, TestSchemas.sparkSchema)
       .write
       .format("iceberg")

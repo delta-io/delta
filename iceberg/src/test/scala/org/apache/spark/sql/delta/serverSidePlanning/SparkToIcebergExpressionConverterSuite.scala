@@ -28,7 +28,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     label: String
   )
 
-  // Types that support ordering operations (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
+  // Types that support ordering operations
+  // (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
   // Note: Spark Filter API sends Date/Timestamp as java.sql.Date/Timestamp, but our converter
   // transforms them to Int (days since epoch) and Long (microseconds since epoch) for Iceberg.
   private val orderableTypes = Seq(
@@ -131,7 +132,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val testCases = Seq(
       FilterConversionCase(
         And(
-          EqualTo("intCol", 42), 
+          EqualTo("intCol", 42),
           GreaterThan("longCol", 100L)
         ),
         Some(
@@ -194,12 +195,12 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       case v: Float => Array(v, v + 1.0f, v + 2.0f)
       case v: Double => Array(v, v + 1.0, v + 2.0)
       case v: String => Array(v, s"${v}_2", s"${v}_3")
-      case v: java.math.BigDecimal => 
+      case v: java.math.BigDecimal =>
         Array(v, v.add(java.math.BigDecimal.ONE), v.add(java.math.BigDecimal.TEN))
       case v: Boolean => Array(v, !v)
-      case v: java.sql.Date => 
+      case v: java.sql.Date =>
         Array(v, new java.sql.Date(v.getTime + 86400000L)) // +1 day in millis
-      case v: java.sql.Timestamp => 
+      case v: java.sql.Timestamp =>
         Array(v, new java.sql.Timestamp(v.getTime + 3600000L)) // +1 hour in millis
       case _ => Array(value)
     }
@@ -217,7 +218,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     }
 
     val nullHandlingTests = Seq(
-      // Null handling: nulls are filtered out 
+      // Null handling: nulls are filtered out
       FilterConversionCase(
         In("stringCol", Array(null, "value1", "value2")),
         Some(Expressions.in("stringCol", "value1", "value2")),
@@ -315,7 +316,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       FilterConversionCase(
         And(
           validFilter, Or(
-            validFilter, 
+            validFilter,
             unsupportedFilter
           )
         ),
@@ -403,7 +404,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
       FilterConversionCase(
         EqualTo("timestampCol", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")),
-        Some(Expressions.equal("timestampCol", 1704067200000000L: java.lang.Long)), // microseconds since epoch
+        // microseconds since epoch
+        Some(Expressions.equal("timestampCol", 1704067200000000L: java.lang.Long)),
         "Timestamp converted to microseconds since epoch"
       )
     )
@@ -416,7 +418,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val unsupportedFilters = Seq(
       FilterConversionCase(StringEndsWith("stringCol", "suffix"), None, "StringEndsWith"),
       FilterConversionCase(StringContains("stringCol", "substr"), None, "StringContains"),
-      FilterConversionCase(Not(LessThan("intCol", 5)), None, "Not(LessThan) - only NOT IN is supported"),
+      FilterConversionCase(
+        Not(LessThan("intCol", 5)),
+        None,
+        "Not(LessThan) - only NOT IN is supported"),
       FilterConversionCase(EqualNullSafe("intCol", 5), None, "EqualNullSafe")
     )
 
