@@ -66,10 +66,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   test("comparison operators on numeric types") {
-    // Operator format: (name, sparkFilterConstructor, icebergExpressionConstructor)
-    // Tests: Spark.LessThan(col, v) → Iceberg.lessThan(col, v)
-    //        Spark.GreaterThan(col, v) → Iceberg.greaterThan(col, v)
-    //        etc.
+    // Operator format: (
+    // name,
+                          // sparkFilterConstructor, 
+                          // icebergExpressionConstructor)
     val comparisonOperators = Seq(
       ("LessThan",
         (col: String, v: Any) => LessThan(col, v),           // Spark filter
@@ -85,9 +85,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v))
     )
 
-    // Generate all combinations: 5 numeric types × 4 comparison operators = 20 test cases
-    // Example: LessThan("intCol", 42) → Expressions.lessThan("intCol", 42)
-    //          GreaterThan("longCol", 100L) → Expressions.greaterThan("longCol", 100L)
+    // Generate all combinations of numeric types × comparison operators
     val testCases = for {
       (col, value, typeDesc) <- numericTypes
       (opName, sparkOp, icebergOp) <- comparisonOperators
@@ -98,13 +96,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("general operators on all types") {
     // Operator format: (name, sparkFilterConstructor, icebergExpressionConstructor)
-    // Tests: Spark.EqualTo(col, v) → Iceberg.equal(col, v)
-    //        Spark.IsNull(col) → Iceberg.isNull(col)
-    //        Spark.IsNotNull(col) → Iceberg.notNull(col)
     val generalOperators = Seq(
       ("EqualTo",
         (col: String, v: Any) => EqualTo(col, v),           // Spark filter
         (col: String, v: Any) => Expressions.equal(col, v)),    // Expected Iceberg expression
+      ("NotEqualTo",
+        (col: String, v: Any) => Not(EqualTo(col, v)),
+        (col: String, v: Any) => Expressions.notEqual(col, v)),
       ("IsNull",
         (col: String, _: Any) => IsNull(col),
         (col: String, _: Any) => Expressions.isNull(col)),
@@ -113,8 +111,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, _: Any) => Expressions.notNull(col))
     )
 
-    // Generate all combinations: 11 types × 3 operators = 33 test cases
+    // Generate all combinations: 11 types × 4 operators = 44 test cases
     // Example: EqualTo("intCol", 42) → Expressions.equal("intCol", 42)
+    //          NotEqualTo("intCol", 42) → Expressions.notEqual("intCol", 42)
     //          IsNull("stringCol") → Expressions.isNull("stringCol")
     val testCases = for {
       (col, value, typeDesc) <- allTypes
@@ -197,14 +196,128 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertConvert(testCases)
   }
 
+  test("In operator") {
+    val testCases = Seq(
+      // Spark: In("intCol", [1, 2, 3]) → Iceberg: in("intCol", 1, 2, 3)
+      (In("intCol", Array(1, 2, 3)),
+       Some(Expressions.in("intCol", 1: Integer, 2: Integer, 3: Integer)),
+       "In with integers"),
+
+      // Spark: In("stringCol", ["a", "b"]) → Iceberg: in("stringCol", "a", "b")
+      (In("stringCol", Array("a", "b", "c")),
+       Some(Expressions.in("stringCol", "a", "b", "c")),
+       "In with strings"),
+
+      // Spark: In("longCol", [100L]) → Iceberg: in("longCol", 100L)
+      (In("longCol", Array(100L, 200L)),
+       Some(Expressions.in("longCol", 100L: java.lang.Long, 200L: java.lang.Long)),
+       "In with longs"),
+
+      // Nested column
+      (In("address.intCol", Array(42, 43)),
+       Some(Expressions.in("address.intCol", 42: Integer, 43: Integer)),
+       "In with nested column")
+    )
+
+    assertConvert(testCases)
+  }
+
+  test("In operator with null values") {
+    // Following Iceberg OSS behavior: null values are filtered out
+    val testCases = Seq(
+      // Spark: In("stringCol", [null, "a", "b"]) → Iceberg: in("stringCol", "a", "b")
+      // Nulls are removed
+      (In("stringCol", Array(null, "value1", "value2")),
+       Some(Expressions.in("stringCol", "value1", "value2")),
+       "In with null values (nulls filtered out)"),
+
+      // Spark: In("intCol", [null, 1, 2]) → Iceberg: in("intCol", 1, 2)
+      (In("intCol", Array(null, 1, 2)),
+       Some(Expressions.in("intCol", 1: Integer, 2: Integer)),
+       "In with null and integers"),
+
+      // Spark: In("stringCol", [null]) → Iceberg: in("stringCol") (empty)
+      (In("stringCol", Array(null)),
+       Some(Expressions.in("stringCol")),
+       "In with only null")
+    )
+
+    assertConvert(testCases)
+  }
+
+  test("NaN handling") {
+    val testCases = Seq(
+      // Spark: EqualTo("doubleCol", Double.NaN) → Iceberg: equal("doubleCol", Double.NaN)
+      (EqualTo("doubleCol", Double.NaN),
+       Some(Expressions.equal("doubleCol", Double.NaN: java.lang.Double)),
+       "EqualTo with Double.NaN"),
+
+      // Spark: EqualTo("floatCol", Float.NaN) → Iceberg: equal("floatCol", Float.NaN)
+      (EqualTo("floatCol", Float.NaN),
+       Some(Expressions.equal("floatCol", Float.NaN: java.lang.Float)),
+       "EqualTo with Float.NaN"),
+
+      // Spark: NotEqualTo("doubleCol", Double.NaN) → Iceberg: notEqual("doubleCol", Double.NaN)
+      (Not(EqualTo("doubleCol", Double.NaN)),
+       Some(Expressions.notEqual("doubleCol", Double.NaN: java.lang.Double)),
+       "NotEqualTo with Double.NaN"),
+
+      // Spark: NotEqualTo("floatCol", Float.NaN) → Iceberg: notEqual("floatCol", Float.NaN)
+      (Not(EqualTo("floatCol", Float.NaN)),
+       Some(Expressions.notEqual("floatCol", Float.NaN: java.lang.Float)),
+       "NotEqualTo with Float.NaN")
+    )
+
+    assertConvert(testCases)
+  }
+
+  test("NotEqualTo with null throws exception") {
+    // Following Iceberg OSS behavior: NotEqualTo with null should throw
+    // because it's always false in SQL (3-value logic)
+    val filter = Not(EqualTo("stringCol", null))
+    val exception = intercept[IllegalArgumentException] {
+      SparkToIcebergExpressionConverter.convert(filter)
+    }
+    assert(exception.getMessage.contains("NotEqualTo with null"))
+  }
+
+  test("invalid filter combinations return None") {
+    // When AND/OR have one side that fails conversion, the whole expression returns None
+    val validFilter = EqualTo("intCol", 42)
+    val unsupportedFilter = StringStartsWith("stringCol", "prefix")
+
+    val testCases = Seq(
+      // Spark: And(validFilter, unsupportedFilter) → None
+      (And(validFilter, unsupportedFilter), None,
+        "AND with unsupported right side"),
+
+      // Spark: And(unsupportedFilter, validFilter) → None
+      (And(unsupportedFilter, validFilter), None,
+        "AND with unsupported left side"),
+
+      // Spark: Or(validFilter, unsupportedFilter) → None
+      (Or(validFilter, unsupportedFilter), None,
+        "OR with unsupported right side"),
+
+      // Spark: Or(unsupportedFilter, validFilter) → None
+      (Or(unsupportedFilter, validFilter), None,
+        "OR with unsupported left side"),
+
+      // Nested: And(valid, Or(valid, unsupported)) → None
+      (And(validFilter, Or(validFilter, unsupportedFilter)), None,
+        "Nested AND with unsupported in OR")
+    )
+
+    assertConvert(testCases)
+  }
+
   test("unsupported filters return None") {
     // These Spark filters have no Iceberg equivalent and should return None
     val unsupportedFilters = Seq(
       (StringStartsWith("stringCol", "prefix"), None, "StringStartsWith"),  // Spark only
       (StringEndsWith("stringCol", "suffix"), None, "StringEndsWith"),      // Spark only
       (StringContains("stringCol", "substr"), None, "StringContains"),      // Spark only
-      (In("intCol", Array(1, 2, 3)), None, "In"),                          // Spark only
-      (Not(EqualTo("intCol", 5)), None, "Not"),                            // Spark only
+      (Not(LessThan("intCol", 5)), None, "Not(LessThan)"),                 // Spark only
       (EqualNullSafe("intCol", 5), None, "EqualNullSafe"),                 // Spark only
       (AlwaysTrue(), None, "AlwaysTrue"),                                   // Spark only
       (AlwaysFalse(), None, "AlwaysFalse")                                  // Spark only
