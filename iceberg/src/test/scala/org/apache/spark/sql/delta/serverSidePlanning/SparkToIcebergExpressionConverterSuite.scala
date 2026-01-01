@@ -41,7 +41,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   )
 
   private val allTypes = numericTypes ++ nonNumericTypes
-  private val testSchema = TestSchemas.comprehensiveSchemaWithNesting.asStruct()
+  private val testSchema = TestSchemas.testSchema.asStruct()
 
   /**
    * Verifies that sparkFilter converts to expectedIcebergExpression (or None if unsupported).

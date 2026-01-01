@@ -38,7 +38,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   import testImplicits._
 
   private val defaultNamespace = Namespace.of("testDatabase")
-  private val defaultSchema = TestSchemas.defaultSchema
+  private val defaultSchema = TestSchemas.testSchema
   private val defaultSpec = PartitionSpec.unpartitioned()
 
   private lazy val server = startServer()
@@ -97,8 +97,11 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       // Write data with 2 partitions to create 2 data files
       spark.sparkContext.parallelize(0 until 250, numSlices = 2)
-        .map(id => (id.toLong, s"test_$id", id, id * 10.0, id.toFloat, id % 2 == 0))
-        .toDF("id", "name", "age", "price", "rating", "active")
+        .map(i => (i, i.toLong, i * 10.0, i.toFloat, s"test_$i", i % 2 == 0,
+                   BigDecimal(i), java.sql.Date.valueOf(s"2024-01-01"),
+                   java.sql.Timestamp.valueOf(s"2024-01-01 00:00:00")))
+        .toDF("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
+              "decimalCol", "dateCol", "timestampCol")
         .write
         .format("iceberg")
         .mode("append")
@@ -230,44 +233,48 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     withTempTable("filterTest") { table =>
       val tableName = s"rest_catalog.${defaultNamespace}.filterTest"
       sql(s"""
-        INSERT INTO $tableName (id, name, age, price, rating, active)
+        INSERT INTO $tableName (intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
+                                 decimalCol, dateCol, timestampCol)
         VALUES
-          (1, 'alice', 25, 99.99, 4.5, true),
-          (2, 'bob', 30, 149.50, 4.2, false),
-          (3, 'charlie', 35, 199.99, 4.8, true),
-          (10, 'david', 28, 79.99, 3.9, false),
-          (20, 'eve', 32, 120.00, 4.6, true)
+          (25, 1, 99.99, 4.5, 'alice', true, 10.00, DATE'2024-01-01', TIMESTAMP'2024-01-01 00:00:00'),
+          (30, 2, 149.50, 4.2, 'bob', false, 20.00, DATE'2024-01-02', TIMESTAMP'2024-01-02 00:00:00'),
+          (35, 3, 199.99, 4.8, 'charlie', true, 30.00, DATE'2024-01-03', TIMESTAMP'2024-01-03 00:00:00'),
+          (28, 10, 79.99, 3.9, 'david', false, 15.00, DATE'2024-01-04', TIMESTAMP'2024-01-04 00:00:00'),
+          (32, 20, 120.00, 4.6, 'eve', true, 25.00, DATE'2024-01-05', TIMESTAMP'2024-01-05 00:00:00')
       """)
 
       // Spark schema matching the table schema for filter conversion
       import org.apache.spark.sql.types._
       val sparkSchema = StructType(Seq(
-        StructField("id", LongType, nullable = false),
-        StructField("name", StringType, nullable = false),
-        StructField("age", IntegerType, nullable = false),
-        StructField("price", DoubleType, nullable = false),
-        StructField("rating", FloatType, nullable = false),
-        StructField("active", BooleanType, nullable = false)
+        StructField("intCol", IntegerType, nullable = false),
+        StructField("longCol", LongType, nullable = false),
+        StructField("doubleCol", DoubleType, nullable = false),
+        StructField("floatCol", FloatType, nullable = false),
+        StructField("stringCol", StringType, nullable = false),
+        StructField("boolCol", BooleanType, nullable = false),
+        StructField("decimalCol", DecimalType(10, 2), nullable = false),
+        StructField("dateCol", DateType, nullable = false),
+        StructField("timestampCol", TimestampType, nullable = false)
       ))
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
         // Test cases covering all supported data types: (filter, description)
         val testCases = Seq(
-          (EqualTo("id", 2L), "EqualTo numeric (long)"),
-          (EqualTo("age", 30), "EqualTo numeric (int)"),
-          (EqualTo("name", "bob"), "EqualTo string"),
-          (EqualTo("active", true), "EqualTo boolean"),
-          (LessThan("id", 10L), "LessThan (long)"),
-          (LessThan("rating", 4.5f), "LessThan (float)"),
-          (GreaterThan("id", 5L), "GreaterThan (long)"),
-          (GreaterThan("price", 100.0), "GreaterThan (double)"),
-          (LessThanOrEqual("age", 30), "LessThanOrEqual (int)"),
-          (GreaterThanOrEqual("price", 100.0), "GreaterThanOrEqual (double)"),
-          (IsNull("name"), "IsNull"),
-          (IsNotNull("name"), "IsNotNull"),
-          (And(EqualTo("id", 2L), EqualTo("name", "bob")), "And"),
-          (Or(EqualTo("id", 1L), EqualTo("id", 3L)), "Or")
+          (EqualTo("longCol", 2L), "EqualTo numeric (long)"),
+          (EqualTo("intCol", 30), "EqualTo numeric (int)"),
+          (EqualTo("stringCol", "bob"), "EqualTo string"),
+          (EqualTo("boolCol", true), "EqualTo boolean"),
+          (LessThan("longCol", 10L), "LessThan (long)"),
+          (LessThan("floatCol", 4.5f), "LessThan (float)"),
+          (GreaterThan("longCol", 5L), "GreaterThan (long)"),
+          (GreaterThan("doubleCol", 100.0), "GreaterThan (double)"),
+          (LessThanOrEqual("intCol", 30), "LessThanOrEqual (int)"),
+          (GreaterThanOrEqual("doubleCol", 100.0), "GreaterThanOrEqual (double)"),
+          (IsNull("stringCol"), "IsNull"),
+          (IsNotNull("stringCol"), "IsNotNull"),
+          (And(EqualTo("longCol", 2L), EqualTo("stringCol", "bob")), "And"),
+          (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or")
         )
 
         testCases.foreach { case (filter, description) =>
