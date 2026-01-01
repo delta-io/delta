@@ -341,15 +341,16 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       )
     )
 
-    assertConvert(testCases)
+    // NotEqualTo with null returns None (Iceberg's notEqual is not null-safe)
+    val extraTestCases = Seq(
+      (
+        Not(EqualTo("stringCol", null)), // input
+        None, // expected: cannot convert
+        "NotEqualTo with null returns None"
+      )
+    )
 
-    // NotEqualTo with null throws exception
-    // Iceberg's notEqual is not null-safe, so this is explicitly rejected
-    val filter = Not(EqualTo("stringCol", null))
-    val exception = intercept[IllegalArgumentException] {
-      SparkToIcebergExpressionConverter.convert(filter)
-    }
-    assert(exception.getMessage.contains("NotEqualTo with null"))
+    assertConvert(testCases ++ extraTestCases)
   }
 
   test("Date and Timestamp handling") {

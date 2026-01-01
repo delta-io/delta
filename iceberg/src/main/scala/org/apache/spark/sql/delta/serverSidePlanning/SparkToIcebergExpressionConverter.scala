@@ -117,8 +117,10 @@ object SparkToIcebergExpressionConverter {
       None
     }
   } catch {
-    case e: IllegalArgumentException if e.getMessage.contains("Cannot convert NaN") =>
-      // Return None for NaN values which Iceberg cannot represent
+    case _: IllegalArgumentException =>
+      // Cannot convert this filter (NaN, unsupported types, null in NotEqual, etc.)
+      // Return None to let Spark handle it as a residual filter.
+      // Correctness is preserved because Spark re-applies all filters as residuals.
       None
   }
 
