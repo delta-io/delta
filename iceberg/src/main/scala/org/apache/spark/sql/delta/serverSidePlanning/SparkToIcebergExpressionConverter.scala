@@ -120,7 +120,11 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     }
   } catch {
     case _: IllegalArgumentException =>
-      // Cannot convert this filter (NaN, null in NotEqual, etc.)
+      // Cannot convert this filter:
+      // - NaN values (Float.NaN, Double.NaN): Not supported in our implementation
+      //   (Note: OSS Iceberg supports isNaN/notNaN predicates, but we reject them)
+      // - Unsupported types (e.g., Array, Map, binary types)
+      // - NotEqualTo with null: Ambiguous semantics (use IsNotNull instead)
       None
   }
 
