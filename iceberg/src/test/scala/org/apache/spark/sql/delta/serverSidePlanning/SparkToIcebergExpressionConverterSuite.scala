@@ -68,8 +68,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   test("comparison operators on numeric types") {
     // Operator format: (
     // name,
-                          // sparkFilterConstructor, 
-                          // icebergExpressionConstructor)
+    // sparkFilterConstructor,
+    // icebergExpressionConstructor)
     val comparisonOperators = Seq(
       ("LessThan",
         (col: String, v: Any) => LessThan(col, v),           // Spark filter
@@ -85,7 +85,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v))
     )
 
-    // Generate all combinations of numeric types × comparison operators
+    // Generate all combinations of numeric types x comparison operators
     val testCases = for {
       (col, value, typeDesc) <- numericTypes
       (opName, sparkOp, icebergOp) <- comparisonOperators
@@ -111,10 +111,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, _: Any) => Expressions.notNull(col))
     )
 
-    // Generate all combinations: 11 types × 4 operators = 44 test cases
-    // Example: EqualTo("intCol", 42) → Expressions.equal("intCol", 42)
-    //          NotEqualTo("intCol", 42) → Expressions.notEqual("intCol", 42)
-    //          IsNull("stringCol") → Expressions.isNull("stringCol")
+    // Generate all combinations: 11 types x 4 operators = 44 test cases
+    // Example: EqualTo("intCol", 42) -> Expressions.equal("intCol", 42)
+    //          NotEqualTo("intCol", 42) -> Expressions.notEqual("intCol", 42)
+    //          IsNull("stringCol") -> Expressions.isNull("stringCol")
     val testCases = for {
       (col, value, typeDesc) <- allTypes
       (opName, sparkOp, icebergOp) <- generalOperators
@@ -152,7 +152,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
            And(GreaterThan("longCol", 0L), LessThan("longCol", 100L))),
        Some(Expressions.and(
          Expressions.or(Expressions.equal("intCol", 1), Expressions.equal("intCol", 2)),
-         Expressions.and(Expressions.greaterThan("longCol", 0L), Expressions.lessThan("longCol", 100L))
+         Expressions.and(Expressions.greaterThan("longCol", 0L),
+           Expressions.lessThan("longCol", 100L))
        )),
        "Nested logical operators")
     )
@@ -162,29 +163,29 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("edge cases and boundary values") {
     val testCases = Seq(
-      // Spark: EqualTo("stringCol", null) → Iceberg: isNull("stringCol")
+      // Spark: EqualTo("stringCol", null) -> Iceberg: isNull("stringCol")
       // Special case: null comparison becomes IsNull
       (EqualTo("stringCol", null),
        Some(Expressions.isNull("stringCol")),
-       "EqualTo(col, null) → IsNull"),
+       "EqualTo(col, null) -> IsNull"),
 
-      // Spark: EqualTo("intCol", Int.MinValue) → Iceberg: equal("intCol", Int.MinValue)
+      // Spark: EqualTo("intCol", Int.MinValue) -> Iceberg: equal("intCol", Int.MinValue)
       (EqualTo("intCol", Int.MinValue),
        Some(Expressions.equal("intCol", Int.MinValue)),
        "Int.MinValue boundary"),
 
-      // Spark: EqualTo("longCol", Long.MaxValue) → Iceberg: equal("longCol", Long.MaxValue)
+      // Spark: EqualTo("longCol", Long.MaxValue) -> Iceberg: equal("longCol", Long.MaxValue)
       (EqualTo("longCol", Long.MaxValue),
        Some(Expressions.equal("longCol", Long.MaxValue)),
        "Long.MaxValue boundary"),
 
-      // Spark: EqualTo("doubleCol", Double.NaN) → Iceberg: equal("doubleCol", Double.NaN)
+      // Spark: EqualTo("doubleCol", Double.NaN) -> Iceberg: equal("doubleCol", Double.NaN)
       (EqualTo("doubleCol", Double.NaN),
        Some(Expressions.equal("doubleCol", Double.NaN)),
        "Double.NaN handling"),
 
       // Spark: And(GreaterThan("intCol", 0), LessThan("intCol", 100))
-      // → Iceberg: and(greaterThan("intCol", 0), lessThan("intCol", 100))
+      // -> Iceberg: and(greaterThan("intCol", 0), lessThan("intCol", 100))
       (And(GreaterThan("intCol", 0), LessThan("intCol", 100)),
        Some(Expressions.and(
          Expressions.greaterThan("intCol", 0),
