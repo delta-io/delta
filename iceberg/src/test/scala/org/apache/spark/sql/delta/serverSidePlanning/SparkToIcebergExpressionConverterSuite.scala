@@ -115,12 +115,12 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     // Verify we recursively call convert() on left/right and combine with AND/OR
     val testCases = Seq(
       ( // AND of two different types
-        And(
+          And(
           EqualTo("intCol", 42), 
           GreaterThan("longCol", 100L)
         ), // Spark filter is AND(Equal, Greater)
        Some(
-        Expressions.and(
+          Expressions.and(
           Expressions.equal("intCol", 42),
           Expressions.greaterThan("longCol", 100L))
         ), // Expected Iceberg expression is also AND(Equal, Greater)
@@ -132,7 +132,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
           LessThan("doubleCol", 99.99), IsNull("stringCol")
         ),
         Some(
-          Expressions.or(
+            Expressions.or(
             Expressions.lessThan("doubleCol", 99.99),
             Expressions.isNull("stringCol")
           )
@@ -150,13 +150,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
           )
         ), 
         Some(
-          Expressions.and(
-            Expressions.or(
-              Expressions.equal("intCol", 1), Expressions.equal("intCol", 2)
-            ),
             Expressions.and(
-              Expressions.greaterThan("longCol", 0L), Expressions.lessThan("longCol", 100L)
-            )
+              Expressions.or(
+                Expressions.equal("intCol", 1), Expressions.equal("intCol", 2)
+              ),
+              Expressions.and(
+                Expressions.greaterThan("longCol", 0L), Expressions.lessThan("longCol", 100L)
+              )
           )
         ), 
         "Nested logical operators")
@@ -165,77 +165,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertConvert(testCases)
   }
 
-  test("special cases and boundary values") {
-    val testCases = Seq(
-      // Null comparison becomes IsNull
-      (
-        EqualTo("stringCol", null), // input
-        Some(Expressions.isNull("stringCol")), // expected output
-        "EqualTo(col, null) -> IsNull" // label to identify test case
-      ),
-
-      // Min and MaxValue boundaries
-      (
-        EqualTo("intCol", Int.MinValue),
-        Some(Expressions.equal("intCol", Int.MinValue)), 
-        "Int.MinValue boundary"
-      ),
-      
-      (
-        EqualTo("longCol", Long.MaxValue),
-        Some(Expressions.equal("longCol", Long.MaxValue)),
-        "Long.MaxValue boundary"
-      ),
-
-      // NaN handling
-      (
-        EqualTo("doubleCol", Double.NaN),
-        Some(Expressions.equal("doubleCol", Double.NaN: java.lang.Double)),
-        "EqualTo with Double.NaN"
-      ),
-
-      (
-        EqualTo("floatCol", Float.NaN),
-        Some(Expressions.equal("floatCol", Float.NaN: java.lang.Float)),
-        "EqualTo with Float.NaN"
-      ),
-
-      (
-        Not(EqualTo("doubleCol", Double.NaN)),
-        Some(Expressions.notEqual("doubleCol", Double.NaN: java.lang.Double)),
-        "NotEqualTo with Double.NaN"
-      ),
-
-      (
-        Not(EqualTo("floatCol", Float.NaN)),
-        Some(Expressions.notEqual("floatCol", Float.NaN: java.lang.Float)),
-        "NotEqualTo with Float.NaN"
-      ),
-
-      // Range filter (same column used twice)
-      (
-        And(
-          GreaterThan("intCol", 0), LessThan("intCol", 100)
-        ), // input
-        Some(Expressions.and(
-          Expressions.greaterThan("intCol", 0), Expressions.lessThan("intCol", 100)
-        )), // expected output
-        "Range filter: 0 < intCol < 100" // label to identify test case
-      )
-    )
-
-    assertConvert(testCases)
-
-    // NotEqualTo with null throws exception
-    // Iceberg's notEqual is not null-safe, so this is explicitly rejected
-    val filter = Not(EqualTo("stringCol", null))
-    val exception = intercept[IllegalArgumentException] {
-      SparkToIcebergExpressionConverter.convert(filter)
-    }
-    assert(exception.getMessage.contains("NotEqualTo with null"))
-  }
-
-  // In operator requires special handling because:
+  // IN operator requires special handling because:
   // 1. It accepts arrays of values, requiring per-element type coercion
   // 2. Null values must be filtered out (SQL semantics: col IN (1, NULL) = col IN (1))
   // 3. Empty arrays after null filtering result in always-false predicates
@@ -335,6 +265,77 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     )
 
     assertConvert(testCases)
+  }
+
+
+  test("special cases and boundary values") {
+    val testCases = Seq(
+      // Null comparison becomes IsNull
+      (
+        EqualTo("stringCol", null), // input
+        Some(Expressions.isNull("stringCol")), // expected output
+        "EqualTo(col, null) -> IsNull" // label to identify test case
+      ),
+
+      // Min and MaxValue boundaries
+      (
+        EqualTo("intCol", Int.MinValue),
+        Some(Expressions.equal("intCol", Int.MinValue)), 
+        "Int.MinValue boundary"
+      ),
+      
+      (
+        EqualTo("longCol", Long.MaxValue),
+        Some(Expressions.equal("longCol", Long.MaxValue)),
+        "Long.MaxValue boundary"
+      ),
+
+      // NaN handling
+      (
+        EqualTo("doubleCol", Double.NaN),
+        Some(Expressions.equal("doubleCol", Double.NaN: java.lang.Double)),
+        "EqualTo with Double.NaN"
+      ),
+
+      (
+        EqualTo("floatCol", Float.NaN),
+        Some(Expressions.equal("floatCol", Float.NaN: java.lang.Float)),
+        "EqualTo with Float.NaN"
+      ),
+
+      (
+        Not(EqualTo("doubleCol", Double.NaN)),
+        Some(Expressions.notEqual("doubleCol", Double.NaN: java.lang.Double)),
+        "NotEqualTo with Double.NaN"
+      ),
+
+      (
+        Not(EqualTo("floatCol", Float.NaN)),
+        Some(Expressions.notEqual("floatCol", Float.NaN: java.lang.Float)),
+        "NotEqualTo with Float.NaN"
+      ),
+
+      // Range filter (same column used twice)
+      (
+        And(
+          GreaterThan("intCol", 0), LessThan("intCol", 100)
+        ), // input
+        Some(Expressions.and(
+          Expressions.greaterThan("intCol", 0), Expressions.lessThan("intCol", 100)
+        )), // expected output
+        "Range filter: 0 < intCol < 100" // label to identify test case
+      )
+    )
+
+    assertConvert(testCases)
+
+    // NotEqualTo with null throws exception
+    // Iceberg's notEqual is not null-safe, so this is explicitly rejected
+    val filter = Not(EqualTo("stringCol", null))
+    val exception = intercept[IllegalArgumentException] {
+      SparkToIcebergExpressionConverter.convert(filter)
+    }
+    assert(exception.getMessage.contains("NotEqualTo with null"))
   }
 
   test("unsupported filters return None") {
