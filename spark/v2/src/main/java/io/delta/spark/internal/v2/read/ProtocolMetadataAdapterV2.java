@@ -38,7 +38,8 @@ import scala.jdk.javaapi.CollectionConverters;
  * Implementation of ProtocolMetadataAdapter for Delta Kernel's Protocol and Metadata.
  *
  * <p>This class adapts Kernel's Protocol and Metadata to the ProtocolMetadataAdapter interface,
- * enabling the V2 connector to reuse delta-spark-v1's DeltaParquetFileFormat for reading Parquet files.
+ * enabling the V2 connector to reuse delta-spark-v1's DeltaParquetFileFormat for reading Parquet
+ * files.
  *
  * <p>Key responsibilities:
  *
