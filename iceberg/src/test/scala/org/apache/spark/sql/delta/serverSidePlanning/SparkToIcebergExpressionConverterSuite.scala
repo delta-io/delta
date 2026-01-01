@@ -209,6 +209,23 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
        )),
        "Range filter: 0 < intCol < 100"),
 
+      // In operator - basic functionality
+      (In("intCol", Array(1, 2, 3)),
+       Some(Expressions.in("intCol", 1: Integer, 2: Integer, 3: Integer)),
+       "In with integers"),
+
+      (In("stringCol", Array("a", "b", "c")),
+       Some(Expressions.in("stringCol", "a", "b", "c")),
+       "In with strings"),
+
+      (In("longCol", Array(100L, 200L)),
+       Some(Expressions.in("longCol", 100L: java.lang.Long, 200L: java.lang.Long)),
+       "In with longs"),
+
+      (In("address.intCol", Array(42, 43)),
+       Some(Expressions.in("address.intCol", 42: Integer, 43: Integer)),
+       "In with nested column"),
+
       // In operator with nulls (nulls are filtered out)
       (In("stringCol", Array(null, "value1", "value2")),
        Some(Expressions.in("stringCol", "value1", "value2")),
@@ -234,32 +251,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       SparkToIcebergExpressionConverter.convert(filter)
     }
     assert(exception.getMessage.contains("NotEqualTo with null"))
-  }
-
-  test("In operator") {
-    val testCases = Seq(
-      // Spark: In("intCol", [1, 2, 3]) → Iceberg: in("intCol", 1, 2, 3)
-      (In("intCol", Array(1, 2, 3)),
-       Some(Expressions.in("intCol", 1: Integer, 2: Integer, 3: Integer)),
-       "In with integers"),
-
-      // Spark: In("stringCol", ["a", "b"]) → Iceberg: in("stringCol", "a", "b")
-      (In("stringCol", Array("a", "b", "c")),
-       Some(Expressions.in("stringCol", "a", "b", "c")),
-       "In with strings"),
-
-      // Spark: In("longCol", [100L]) → Iceberg: in("longCol", 100L)
-      (In("longCol", Array(100L, 200L)),
-       Some(Expressions.in("longCol", 100L: java.lang.Long, 200L: java.lang.Long)),
-       "In with longs"),
-
-      // Nested column
-      (In("address.intCol", Array(42, 43)),
-       Some(Expressions.in("address.intCol", 42: Integer, 43: Integer)),
-       "In with nested column")
-    )
-
-    assertConvert(testCases)
   }
 
   test("string operations and special filters") {
