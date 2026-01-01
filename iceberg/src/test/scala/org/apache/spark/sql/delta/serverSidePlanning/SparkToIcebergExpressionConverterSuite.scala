@@ -69,24 +69,24 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("operations on orderable types") {
     val comparisonOperators = Seq(
-      ("LessThan", // name
-        (col: String, v: Any) => LessThan(col, v), // Spark filter
-        (col: String, v: Any) => Expressions.lessThan(col, v)), // Expected Iceberg expression
-      ("GreaterThan",
-        (col: String, v: Any) => GreaterThan(col, v),
-        (col: String, v: Any) => Expressions.greaterThan(col, v)),
-      ("LessThanOrEqual",
-        (col: String, v: Any) => LessThanOrEqual(col, v),
-        (col: String, v: Any) => Expressions.lessThanOrEqual(col, v)),
-      ("GreaterThanOrEqual",
-        (col: String, v: Any) => GreaterThanOrEqual(col, v),
-        (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v))
+      ((col: String, v: Any) => LessThan(col, v), // Spark filter
+        (col: String, v: Any) => Expressions.lessThan(col, v), // Expected Iceberg expression
+        "LessThan"), // label
+      ((col: String, v: Any) => GreaterThan(col, v),
+        (col: String, v: Any) => Expressions.greaterThan(col, v),
+        "GreaterThan"),
+      ((col: String, v: Any) => LessThanOrEqual(col, v),
+        (col: String, v: Any) => Expressions.lessThanOrEqual(col, v),
+        "LessThanOrEqual"),
+      ((col: String, v: Any) => GreaterThanOrEqual(col, v),
+        (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v),
+        "GreaterThanOrEqual")
     )
 
     // All combinations of orderable types x comparison operators
     val testCases = for {
       (col, value, typeDesc) <- orderableTypes
-      (opName, sparkOp, icebergOp) <- comparisonOperators
+      (sparkOp, icebergOp, opName) <- comparisonOperators
     } yield FilterTest(sparkOp(col, value), Some(icebergOp(col, value)), s"$opName $typeDesc")
 
     assertConvert(testCases)
@@ -94,23 +94,23 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("general operators on all types") {
     val generalOperators = Seq(
-      ("EqualTo", // name
-        (col: String, v: Any) => EqualTo(col, v), // Spark filter
-        (col: String, v: Any) => Expressions.equal(col, v)), // Expected Iceberg expression
-      ("NotEqualTo",
-        (col: String, v: Any) => Not(EqualTo(col, v)),
-        (col: String, v: Any) => Expressions.notEqual(col, v)),
-      ("IsNull",
-        (col: String, _: Any) => IsNull(col),
-        (col: String, _: Any) => Expressions.isNull(col)),
-      ("IsNotNull",
-        (col: String, _: Any) => IsNotNull(col),
-        (col: String, _: Any) => Expressions.notNull(col))
+      ((col: String, v: Any) => EqualTo(col, v), // Spark filter
+        (col: String, v: Any) => Expressions.equal(col, v), // Expected Iceberg expression
+        "EqualTo"), // label
+      ((col: String, v: Any) => Not(EqualTo(col, v)),
+        (col: String, v: Any) => Expressions.notEqual(col, v),
+        "NotEqualTo"),
+      ((col: String, _: Any) => IsNull(col),
+        (col: String, _: Any) => Expressions.isNull(col),
+        "IsNull"),
+      ((col: String, _: Any) => IsNotNull(col),
+        (col: String, _: Any) => Expressions.notNull(col),
+        "IsNotNull")
     )
 
     val testCases = for {
       (col, value, typeDesc) <- allTypes
-      (opName, sparkOp, icebergOp) <- generalOperators
+      (sparkOp, icebergOp, opName) <- generalOperators
     } yield FilterTest(sparkOp(col, value), Some(icebergOp(col, value)), s"$opName $typeDesc")
 
     assertConvert(testCases)
