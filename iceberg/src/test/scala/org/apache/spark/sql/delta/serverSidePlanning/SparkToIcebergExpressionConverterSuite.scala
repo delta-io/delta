@@ -52,13 +52,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       expectedOpt match {
         case Some(expected) =>
           assert(result.isDefined, s"[$description] Should convert: $input")
-    assert(
+          assert(
             ExpressionUtil.equivalent(expected, result.get, testSchema, true),
             s"[$description] Expected: $expected, got: ${result.get}"
           )
         case None =>
           assert(result.isEmpty, s"[$description] Should return None for: $input")
-  }
+      }
     }
   }
 
@@ -176,48 +176,49 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
       // Min and MaxValue boundaries
       (
-        EqualTo("intCol", Int.MinValue), // input
-        Some(Expressions.equal("intCol", Int.MinValue)), // expected output
-        "Int.MinValue boundary" // label to identify test case
+        EqualTo("intCol", Int.MinValue),
+        Some(Expressions.equal("intCol", Int.MinValue)), 
+        "Int.MinValue boundary"
       ),
       
       (
-        EqualTo("longCol", Long.MaxValue), // input
-        Some(Expressions.equal("longCol", Long.MaxValue)), // expected output
-        "Long.MaxValue boundary" // label to identify test case
+        EqualTo("longCol", Long.MaxValue),
+        Some(Expressions.equal("longCol", Long.MaxValue)),
+        "Long.MaxValue boundary"
       ),
 
       // NaN handling
       (
-        EqualTo("doubleCol", Double.NaN), // input
-        Some(Expressions.equal("doubleCol", Double.NaN: java.lang.Double)), // expected output
-        "EqualTo with Double.NaN" // label to identify test case
+        EqualTo("doubleCol", Double.NaN),
+        Some(Expressions.equal("doubleCol", Double.NaN: java.lang.Double)),
+        "EqualTo with Double.NaN"
       ),
 
       (
-        EqualTo("floatCol", Float.NaN), // input
-        Some(Expressions.equal("floatCol", Float.NaN: java.lang.Float)), // expected output
-        "EqualTo with Float.NaN" // label to identify test case
+        EqualTo("floatCol", Float.NaN),
+        Some(Expressions.equal("floatCol", Float.NaN: java.lang.Float)),
+        "EqualTo with Float.NaN"
       ),
 
       (
-        Not(EqualTo("doubleCol", Double.NaN)), // input
-        Some(Expressions.notEqual("doubleCol", Double.NaN: java.lang.Double)), // expected output
-        "NotEqualTo with Double.NaN" // label to identify test case
+        Not(EqualTo("doubleCol", Double.NaN)),
+        Some(Expressions.notEqual("doubleCol", Double.NaN: java.lang.Double)),
+        "NotEqualTo with Double.NaN"
       ),
 
       (
-        Not(EqualTo("floatCol", Float.NaN)), // input
-        Some(Expressions.notEqual("floatCol", Float.NaN: java.lang.Float)), // expected output
-        "NotEqualTo with Float.NaN" // label to identify test case
+        Not(EqualTo("floatCol", Float.NaN)),
+        Some(Expressions.notEqual("floatCol", Float.NaN: java.lang.Float)),
+        "NotEqualTo with Float.NaN"
       ),
 
       // Range filter (same column used twice)
       (
-        And(GreaterThan("intCol", 0), LessThan("intCol", 100)), // input
+        And(
+          GreaterThan("intCol", 0), LessThan("intCol", 100)
+        ), // input
         Some(Expressions.and(
-          Expressions.greaterThan("intCol", 0),
-          Expressions.lessThan("intCol", 100)
+          Expressions.greaterThan("intCol", 0), Expressions.lessThan("intCol", 100)
         )), // expected output
         "Range filter: 0 < intCol < 100" // label to identify test case
       )
@@ -225,8 +226,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
     assertConvert(testCases)
 
-    // NotEqualTo with null throws exception (matches Iceberg OSS behavior)
-    // In SQL 3-value logic: col <> NULL returns NULL (unknown), treated as false in WHERE
+    // NotEqualTo with null throws exception
     // Iceberg's notEqual is not null-safe, so this is explicitly rejected
     val filter = Not(EqualTo("stringCol", null))
     val exception = intercept[IllegalArgumentException] {
@@ -259,7 +259,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
        Some(Expressions.in("address.intCol", 42: Integer, 43: Integer)),
        "In with nested column"),
 
-      // Null handling: nulls are filtered out (SQL semantics)
+      // Null handling: nulls are filtered out 
       (In("stringCol", Array(null, "value1", "value2")),
        Some(Expressions.in("stringCol", "value1", "value2")),
        "In with null values (nulls filtered)"),
@@ -279,25 +279,29 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("string operations and special filters") {
     val testCases = Seq(
-      // Spark: StringStartsWith("stringCol", "prefix") → Iceberg: startsWith("stringCol", "prefix")
-      (StringStartsWith("stringCol", "prefix"),
-       Some(Expressions.startsWith("stringCol", "prefix")),
-       "StringStartsWith"),
+      (
+        StringStartsWith("stringCol", "prefix"), // input
+        Some(Expressions.startsWith("stringCol", "prefix")), // expected output
+        "StringStartsWith" // label to identify test case
+      ),
 
-      // Spark: StringStartsWith("metadata.stringCol", "test") → Iceberg: startsWith("metadata.stringCol", "test")
-      (StringStartsWith("metadata.stringCol", "test"),
-       Some(Expressions.startsWith("metadata.stringCol", "test")),
-       "StringStartsWith on nested column"),
+      (
+        StringStartsWith("metadata.stringCol", "test"),
+        Some(Expressions.startsWith("metadata.stringCol", "test")),
+        "StringStartsWith on nested column"
+      ),
 
-      // Spark: AlwaysTrue() → Iceberg: alwaysTrue()
-      (AlwaysTrue(),
-       Some(Expressions.alwaysTrue()),
-       "AlwaysTrue"),
+      (
+        AlwaysTrue(),
+        Some(Expressions.alwaysTrue()),
+        "AlwaysTrue"
+      ),
 
-      // Spark: AlwaysFalse() → Iceberg: alwaysFalse()
-      (AlwaysFalse(),
-       Some(Expressions.alwaysFalse()),
-       "AlwaysFalse")
+      (
+        AlwaysFalse(),
+        Some(Expressions.alwaysFalse()),
+        "AlwaysFalse"
+      )
     )
 
     assertConvert(testCases)
