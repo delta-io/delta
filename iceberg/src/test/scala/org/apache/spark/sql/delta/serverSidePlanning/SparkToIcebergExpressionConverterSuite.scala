@@ -23,7 +23,7 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Types that support comparison (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
-  // Note: Spark converts Date→Int and Timestamp→Long before filters reach the converter,
+  // Note: Spark converts Date to Int and Timestamp to Long before filters reach the converter,
   // so Date/Timestamp columns are tested via Int/Long types.
   private val comparableTypes = Seq(
     ("intCol", 42, "Int"), // (column name, test value, label to identify test case)
@@ -169,7 +169,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // - Null values must be filtered out (SQL semantics: col IN (1, NULL) = col IN (1))
   // - Empty arrays after null filtering result in always-false predicates
   // - Type conversion needed for each array element (Scala -> Java types)
-  test("In operator with type coercion and null handling") {
+  test("IN Operator with Type Coercion and Null Handling") {
     val testCases = Seq(
       // Basic In with different types
       (In("intCol", Array(1, 2, 3)),
@@ -206,12 +206,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertConvert(testCases)
   }
 
-  test("string operations and special filters") {
+  test("string operations and boolean literals") {
     val testCases = Seq(
+      // String operations
       (
-        StringStartsWith("stringCol", "prefix"), // input
-        Some(Expressions.startsWith("stringCol", "prefix")), // expected output
-        "StringStartsWith" // label to identify test case
+        StringStartsWith("stringCol", "prefix"),
+        Some(Expressions.startsWith("stringCol", "prefix")),
+        "StringStartsWith"
       ),
 
       (
@@ -220,6 +221,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "StringStartsWith on nested column"
       ),
 
+      // Boolean literals
       (
         AlwaysTrue(),
         Some(Expressions.alwaysTrue()),
@@ -230,6 +232,15 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         AlwaysFalse(),
         Some(Expressions.alwaysFalse()),
         "AlwaysFalse"
+      ),
+
+      // Logical combinations
+      (
+        And(GreaterThan("intCol", 0), LessThan("intCol", 100)),
+        Some(Expressions.and(
+          Expressions.greaterThan("intCol", 0), Expressions.lessThan("intCol", 100)
+        )),
+        "Range filter: 0 < intCol < 100"
       )
     )
 
@@ -278,29 +289,22 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
 
-  test("special cases and boundary values") {
+  test("edge cases: null, NaN, and boundaries") {
     val testCases = Seq(
-      // Null comparison becomes IsNull
+      // Null handling
       (
-        EqualTo("stringCol", null), // input
-        Some(Expressions.isNull("stringCol")), // expected output
-        "EqualTo(col, null) -> IsNull" // label to identify test case
+        EqualTo("stringCol", null),
+        Some(Expressions.isNull("stringCol")),
+        "EqualTo(col, null) converts to IsNull"
       ),
 
-      // Min and MaxValue boundaries
       (
-        EqualTo("intCol", Int.MinValue),
-        Some(Expressions.equal("intCol", Int.MinValue)), 
-        "Int.MinValue boundary"
-      ),
-      
-      (
-        EqualTo("longCol", Long.MaxValue),
-        Some(Expressions.equal("longCol", Long.MaxValue)),
-        "Long.MaxValue boundary"
+        Not(EqualTo("stringCol", null)),
+        None,
+        "NotEqualTo(col, null) returns None (not null-safe)"
       ),
 
-      // NaN handling: Iceberg does not support NaN literals, so these should return None
+      // NaN handling: Iceberg does not support NaN literals
       (
         EqualTo("doubleCol", Double.NaN),
         None,
@@ -325,28 +329,21 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "NotEqualTo with Float.NaN returns None"
       ),
 
-      // Same column used twice
+      // Boundary values
       (
-        And(
-          GreaterThan("intCol", 0), LessThan("intCol", 100)
-        ), // input
-        Some(Expressions.and(
-          Expressions.greaterThan("intCol", 0), Expressions.lessThan("intCol", 100)
-        )), // expected output
-        "Range filter: 0 < intCol < 100" // label to identify test case
+        EqualTo("intCol", Int.MinValue),
+        Some(Expressions.equal("intCol", Int.MinValue)),
+        "Int.MinValue boundary"
+      ),
+
+      (
+        EqualTo("longCol", Long.MaxValue),
+        Some(Expressions.equal("longCol", Long.MaxValue)),
+        "Long.MaxValue boundary"
       )
     )
 
-    // NotEqualTo with null returns None (Iceberg's notEqual is not null-safe)
-    val extraTestCases = Seq(
-      (
-        Not(EqualTo("stringCol", null)), // input
-        None, // expected: cannot convert
-        "NotEqualTo with null returns None"
-      )
-    )
-
-    assertConvert(testCases ++ extraTestCases)
+    assertConvert(testCases)
   }
 
   test("unsupported filters return None") {
