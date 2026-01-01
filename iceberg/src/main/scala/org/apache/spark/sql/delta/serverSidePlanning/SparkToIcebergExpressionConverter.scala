@@ -140,6 +140,19 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   }
 
   /**
+   * Convert a value to Iceberg-compatible type.
+   * Date/Timestamp are converted to Int/Long respectively for Iceberg.
+   * All other types are passed through (type coercion happens in buildExpression).
+   */
+  private[serverSidePlanning] def toIcebergValue(value: Any): Any = value match {
+    case v: java.sql.Date =>
+      (v.getTime / (1000L * 60 * 60 * 24)).toInt
+    case v: java.sql.Timestamp =>
+      v.getTime * 1000 + (v.getNanos % 1000000) / 1000
+    case v => v
+  }
+
+  /**
    * Helper to build expressions with type coercion.
    * Handles numeric, string, date/time types, and optionally Boolean.
    * Throws IllegalArgumentException for unsupported types.
@@ -157,21 +170,16 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
       throw new IllegalArgumentException("Cannot convert NaN value to Iceberg expression")
     }
 
-    sparkValue match {
+    // Convert Date/Timestamp to Iceberg-compatible types (Int/Long)
+    val icebergValue = toIcebergValue(sparkValue)
+
+    icebergValue match {
       case v: Int => exprBuilder(attribute, v: Integer)
       case v: Long => exprBuilder(attribute, v: java.lang.Long)
       case v: Float => exprBuilder(attribute, v: java.lang.Float)
       case v: Double => exprBuilder(attribute, v: java.lang.Double)
       case v: java.math.BigDecimal => exprBuilder(attribute, v)
       case v: String => exprBuilder(attribute, v)
-      case v: java.sql.Date =>
-        // Iceberg expects days since epoch (1970-01-01) as Int (see Iceberg Literals.java)
-        val daysFromEpoch = (v.getTime / (1000L * 60 * 60 * 24)).toInt
-        exprBuilder(attribute, daysFromEpoch: Integer)
-      case v: java.sql.Timestamp =>
-        // Iceberg expects microseconds since epoch as Long (see Iceberg Literals.java)
-        val microsFromEpoch = v.getTime * 1000 + (v.getNanos % 1000000) / 1000
-        exprBuilder(attribute, microsFromEpoch: java.lang.Long)
       case v: Boolean if supportBoolean => exprBuilder(attribute, v: java.lang.Boolean)
       case _ =>
         throw new IllegalArgumentException(s"Unsupported type: ${sparkValue.getClass}")
@@ -216,18 +224,18 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   }
 
   private def convertIn(attribute: String, values: Array[Any]): Expression = {
-    // Iceberg expects IN to filter out null values
-    val nonNullValues = values.filter(_ != null).map {
-      case v: Int => v: Integer
-      case v: Long => v: java.lang.Long
-      case v: Float => v: java.lang.Float
-      case v: Double => v: java.lang.Double
-      case v: java.math.BigDecimal => v
-      case v: java.sql.Date => (v.getTime / (1000L * 60 * 60 * 24)).toInt: Integer
-      case v: java.sql.Timestamp =>
-        (v.getTime * 1000 + (v.getNanos % 1000000) / 1000): java.lang.Long
-      case v: Boolean => v: java.lang.Boolean
-      case v => v
+    // Iceberg expects IN to filter out null values and convert Date/Timestamp to Int/Long
+    val nonNullValues = values.filter(_ != null).map { v =>
+      val icebergValue = toIcebergValue(v)
+      icebergValue match {
+        case i: Int => i: Integer
+        case l: Long => l: java.lang.Long
+        case f: Float => f: java.lang.Float
+        case d: Double => d: java.lang.Double
+        case bd: java.math.BigDecimal => bd
+        case b: Boolean => b: java.lang.Boolean
+        case other => other
+      }
     }
     Expressions.in(attribute, nonNullValues: _*)
   }

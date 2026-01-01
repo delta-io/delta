@@ -52,18 +52,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   private val allTypes = orderableTypes ++ equalityOnlyTypes
   private val testSchema = TestSchemas.testSchema.asStruct()
 
-  /**
-   * Convert test values to Iceberg-compatible types.
-   * Date/Timestamp need to be converted to Int/Long for Iceberg expressions.
-   */
-  private def toIcebergValue(value: Any): Any = value match {
-    case v: java.sql.Date =>
-      (v.getTime / (1000L * 60 * 60 * 24)).toInt
-    case v: java.sql.Timestamp =>
-      v.getTime * 1000 + (v.getNanos % 1000000) / 1000
-    case v => v
-  }
-
   private def assertConvert(testCases: Seq[FilterConversionCase]): Unit = {
     testCases.foreach { tc =>
       val result = SparkToIcebergExpressionConverter.convert(tc.spark)
@@ -103,7 +91,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       (sparkOp, icebergOp, opName) <- comparisonOperators
     } yield FilterConversionCase(
       sparkOp(col, value),
-      Some(icebergOp(col, toIcebergValue(value))),
+      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value))),
       s"$opName $typeDesc"
     )
 
@@ -131,7 +119,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       (sparkOp, icebergOp, opName) <- generalOperators
     } yield FilterConversionCase(
       sparkOp(col, value),
-      Some(icebergOp(col, toIcebergValue(value))),
+      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value))),
       s"$opName $typeDesc"
     )
 
@@ -219,7 +207,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     // Test IN operator for all types
     val inTestCases = allTypes.map { case (col, value, typeDesc) =>
       val values = generateInValues(value)
-      val icebergValues = values.map(toIcebergValue)
+      val icebergValues = values.map(SparkToIcebergExpressionConverter.toIcebergValue)
       FilterConversionCase(
         In(col, values),
         Some(Expressions.in(col, icebergValues: _*)),
