@@ -143,7 +143,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "OR with two different types"
       ),
 
-      ( // Nested ANDs and ORs
+      ( // AND of OR and AND (nested logical operators)
         And(
           Or(
               EqualTo("intCol", 1), EqualTo("intCol", 2)
@@ -170,7 +170,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("edge cases and boundary values") {
     val testCases = Seq(
-      // Special case: null comparison becomes IsNull
+      // Null comparison becomes IsNull
       (EqualTo("stringCol", null),
        Some(Expressions.isNull("stringCol")),
        "EqualTo(col, null) -> IsNull"),
@@ -179,12 +179,12 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       (EqualTo("intCol", Int.MinValue),
        Some(Expressions.equal("intCol", Int.MinValue)),
        "Int.MinValue boundary"),
-
+      
       (EqualTo("longCol", Long.MaxValue),
        Some(Expressions.equal("longCol", Long.MaxValue)),
        "Long.MaxValue boundary"),
 
-      // NaN handling (only Float and Double have NaN, integer types don't)
+      // NaN handling
       (EqualTo("doubleCol", Double.NaN),
        Some(Expressions.equal("doubleCol", Double.NaN: java.lang.Double)),
        "EqualTo with Double.NaN"),
@@ -209,7 +209,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
        )),
        "Range filter: 0 < intCol < 100"),
 
-      // In operator with nulls: nulls are filtered out
+      // In operator with nulls (nulls are filtered out)
       (In("stringCol", Array(null, "value1", "value2")),
        Some(Expressions.in("stringCol", "value1", "value2")),
        "In with null values (nulls filtered)"),
@@ -226,7 +226,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
     assertConvert(testCases)
 
-    // NotEqualTo with null throws exception (3-value logic: col <> NULL is always false)
+    // NotEqualTo with null throws exception (matches Iceberg OSS behavior)
+    // In SQL 3-value logic: col <> NULL returns NULL (unknown), treated as false in WHERE
+    // Iceberg's notEqual is not null-safe, so this is explicitly rejected
     val filter = Not(EqualTo("stringCol", null))
     val exception = intercept[IllegalArgumentException] {
       SparkToIcebergExpressionConverter.convert(filter)
