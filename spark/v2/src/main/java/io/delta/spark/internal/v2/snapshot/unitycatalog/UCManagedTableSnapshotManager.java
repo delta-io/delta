@@ -23,9 +23,9 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
-import io.delta.kernel.spark.exception.VersionNotFoundException;
-import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.spark.internal.v2.exception.VersionNotFoundException;
+import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.List;
 import java.util.Optional;
 

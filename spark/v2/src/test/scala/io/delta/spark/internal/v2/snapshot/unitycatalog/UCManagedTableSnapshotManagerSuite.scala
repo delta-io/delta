@@ -20,8 +20,8 @@ import java.util.Optional
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.spark.exception.VersionNotFoundException
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils}
+import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
 import org.scalatest.funsuite.AnyFunSuite
