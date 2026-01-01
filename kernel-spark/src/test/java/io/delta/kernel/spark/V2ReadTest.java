@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.kernel.spark;
 
 import java.io.File;
@@ -28,12 +29,11 @@ public class V2ReadTest extends V2TestBase {
     spark.sql(
         str("CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)", nameSpace));
 
-    // Select and validate the data (empty table)
     check(str("SELECT * FROM dsv2.%s.batch_read_test", nameSpace), List.of());
   }
 
   @Test
-  public void testReadWithColumnMapping(@TempDir File deltaTablePath) {
+  public void testColumnMappingRead(@TempDir File deltaTablePath) {
     String tablePath = deltaTablePath.getAbsolutePath();
 
     // Create a Delta table with column mapping enabled using name mode

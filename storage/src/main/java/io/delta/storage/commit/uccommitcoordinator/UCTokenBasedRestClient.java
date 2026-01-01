@@ -36,6 +36,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Metadata;
 import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Protocol;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.unitycatalog.client.auth.TokenProvider;
 import org.apache.hadoop.fs.Path;
 import org.apache.http.client.methods.*;
 import org.apache.http.entity.StringEntity;
@@ -45,20 +46,18 @@ import org.apache.http.HttpHeaders;
 import org.apache.http.HttpStatus;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.util.EntityUtils;
-import org.apache.http.message.BasicHeader;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
  * A REST client implementation of [[UCClient]] for interacting with Unity Catalog's commit
- * coordination service. This client uses token-based authentication to make HTTP requests to the
- * Unity Catalog API for managing Delta table commits and metadata.
+ * coordination service. This client uses TokenProvider-based authentication to make HTTP requests
+ * to the Unity Catalog API for managing Delta table commits and metadata.
  *
  * <p>The client handles the following primary operations:
  * <ul>
@@ -67,12 +66,14 @@ import java.util.Optional;
  *   <li>Fetching unbackfilled commit histories</li>
  * </ul>
  *
- * <p>All requests are authenticated using a Bearer token and communicate using JSON payloads.
- * The client automatically handles JSON serialization/deserialization and HTTP header management.
+ * <p>All requests are authenticated using a TokenProvider that generates Bearer tokens dynamically,
+ * and communicate using JSON payloads. The client automatically handles JSON
+ * serialization/deserialization and HTTP header management.
  *
  * <p>Usage example:
  * <pre>{@code
- * try (UCTokenBasedRestClient client = new UCTokenBasedRestClient(baseUri, token)) {
+ * TokenProvider tokenProvider = ... // Create or configure TokenProvider
+ * try (UCTokenBasedRestClient client = new UCTokenBasedRestClient(baseUri, tokenProvider)) {
  *     String metastoreId = client.getMetastoreId();
  *     // Perform operations with the client...
  * }
@@ -81,30 +82,30 @@ import java.util.Optional;
  * @see UCClient
  * @see Commit
  * @see GetCommitsResponse
+ * @see TokenProvider
  */
 public class UCTokenBasedRestClient implements UCClient {
   private final String baseUri;
+  private final TokenProvider tokenProvider;
   private final ObjectMapper mapper;
   private final CloseableHttpClient httpClient;
 
-  public UCTokenBasedRestClient(String baseUri, String token) {
+  /**
+   * Constructs a new UCTokenBasedRestClient with the specified base URI and TokenProvider.
+   *
+   * @param baseUri The base URI of the Unity Catalog server
+   * @param tokenProvider The TokenProvider to use for authentication
+   */
+  public UCTokenBasedRestClient(String baseUri, TokenProvider tokenProvider) {
     this.baseUri = resolve(baseUri, "/api/2.1/unity-catalog");
+    this.tokenProvider = Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
     this.mapper = new ObjectMapper()
       .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
       .setSerializationInclusion(JsonInclude.Include.NON_ABSENT)
       .setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
       .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-    this.httpClient =
-      HttpClientBuilder
-        .create()
-        .setDefaultHeaders(Arrays.asList(
-          // Authorization header: Provides the Bearer token for authentication
-          new BasicHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token),
-          // Accept header: Indicates that the client expects JSON responses from the server
-          new BasicHeader(HttpHeaders.ACCEPT, ContentType.APPLICATION_JSON.getMimeType()),
-          // Content-Type header: Indicates that the client sends JSON payloads to the server
-          new BasicHeader(HttpHeaders.CONTENT_TYPE, ContentType.APPLICATION_JSON.getMimeType())))
-        .build();
+    // Create HttpClient without default headers - we'll add the Authorization header per request
+    this.httpClient = HttpClientBuilder.create().build();
   }
 
   private static String resolve(String baseUri, String child) {
@@ -142,6 +143,12 @@ public class UCTokenBasedRestClient implements UCClient {
     HttpUriRequest request,
     Object payload,
     Class<T> responseClass) throws IOException, HttpError {
+
+    // Get the current token from the TokenProvider and set the Authorization header
+    String token = tokenProvider.accessToken();
+    request.setHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+    request.setHeader(HttpHeaders.ACCEPT, ContentType.APPLICATION_JSON.getMimeType());
+    request.setHeader(HttpHeaders.CONTENT_TYPE, ContentType.APPLICATION_JSON.getMimeType());
 
     if (payload != null && request instanceof HttpEntityEnclosingRequestBase) {
       String jsonPayload = toJson(payload);

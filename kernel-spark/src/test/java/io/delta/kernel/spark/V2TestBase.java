@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.kernel.spark;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,17 +22,19 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.*;
+import org.apache.spark.sql.streaming.StreamingQuery;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Base class for V2 tests providing common setup and helper methods.
+ * Base class for V2 tests with common SparkSession setup and helper methods.
  *
- * <p>This test setup configures a SparkSession that uses V2 for reading (via the "dsv2" catalog)
- * and V1 for writing (via spark_catalog with DeltaCatalogV1). This hybrid configuration is
+ * <p>This base class configures the Spark session with the V2 catalog and provides utility methods
+ * for assertions. The V1 catalog is still used for write operations because this is currently
  * necessary until V2 supports write operations.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -40,16 +43,21 @@ public abstract class V2TestBase {
   protected SparkSession spark;
   protected String nameSpace;
 
+  protected static final StructType TEST_SCHEMA =
+      DataTypes.createStructType(
+          Arrays.asList(
+              DataTypes.createStructField("id", DataTypes.IntegerType, false),
+              DataTypes.createStructField("name", DataTypes.StringType, false),
+              DataTypes.createStructField("value", DataTypes.DoubleType, false)));
+
   @BeforeAll
   public void setUp(@TempDir File tempDir) {
     // Spark doesn't allow '-'
     nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
-            // V2 catalog for reading
             .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
-            // V1 extensions and catalog for writing (until V2 supports write operations)
             .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
             .set(
                 "spark.sql.catalog.spark_catalog",
@@ -78,17 +86,27 @@ public abstract class V2TestBase {
    * Executes a SQL query and verifies the result matches the expected rows.
    *
    * @param sql the SQL query to execute
-   * @param expectedRows list of expected rows, where each row is a list of column values
+   * @param expectedRows the expected rows as a list of lists (each inner list is a row)
    */
   protected void check(String sql, List<List<Object>> expectedRows) {
     Dataset<Row> result = spark.sql(sql);
+    List<Row> actualRows = result.collectAsList();
     List<Row> expected =
         expectedRows.stream()
             .map(row -> RowFactory.create(row.toArray()))
-            .collect(Collectors.toList());
-    assertDatasetEquals(result, expected);
+            .collect(java.util.stream.Collectors.toList());
+    assertEquals(
+        expected,
+        actualRows,
+        () -> "Query: " + sql + "\nExpected: " + expected + "\nActual: " + actualRows);
   }
 
+  /** Creates a row representation as a list of values. */
+  protected static List<Object> row(Object... values) {
+    return Arrays.asList(values);
+  }
+
+  /** Asserts that a dataset equals the expected rows. */
   protected void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
     List<Row> actualRows = actual.collectAsList();
     assertEquals(
@@ -97,8 +115,61 @@ public abstract class V2TestBase {
         () -> "Datasets differ: expected=" + expectedRows + "\nactual=" + actualRows);
   }
 
-  /** Helper to create a row as a list. */
-  protected static List<Object> row(Object... values) {
-    return Arrays.asList(values);
+  /**
+   * Processes a streaming query and returns the collected rows.
+   *
+   * @param streamingDF the streaming DataFrame to process
+   * @param queryName the name for the memory sink query
+   * @return the list of rows collected from the stream
+   * @throws Exception if the streaming query fails
+   */
+  protected List<Row> processStreamingQuery(Dataset<Row> streamingDF, String queryName)
+      throws Exception {
+    StreamingQuery query = null;
+    try {
+      query =
+          streamingDF
+              .writeStream()
+              .format("memory")
+              .queryName(queryName)
+              .outputMode("append")
+              .start();
+
+      query.processAllAvailable();
+
+      // Query the memory sink to get results
+      Dataset<Row> results = spark.sql("SELECT * FROM " + queryName);
+      return results.collectAsList();
+    } finally {
+      if (query != null) {
+        query.stop();
+      }
+    }
+  }
+
+  /**
+   * Asserts that streaming data equals the expected rows (order-independent).
+   *
+   * @param actualRows the actual rows from the stream
+   * @param expectedRows the expected rows
+   */
+  protected void assertStreamingDataEquals(List<Row> actualRows, List<Row> expectedRows) {
+    assertEquals(
+        expectedRows.size(),
+        actualRows.size(),
+        () ->
+            "Row count differs: expected="
+                + expectedRows.size()
+                + " actual="
+                + actualRows.size()
+                + "\nExpected rows: "
+                + expectedRows
+                + "\nActual rows: "
+                + actualRows);
+
+    // Compare rows (order-independent for robustness)
+    assertTrue(
+        actualRows.containsAll(expectedRows) && expectedRows.containsAll(actualRows),
+        () -> "Streaming data differs:\nExpected: " + expectedRows + "\nActual: " + actualRows);
   }
 }

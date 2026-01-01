@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.kernel.spark;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -35,15 +36,20 @@ public class V2DDLTest extends V2TestBase {
             "CREATE TABLE dsv2.%s.create_table_test (id INT, name STRING, value DOUBLE)",
             nameSpace));
 
-    check(
-        str("DESCRIBE TABLE dsv2.%s.create_table_test", nameSpace),
-        List.of(row("id", "int", null), row("name", "string", null), row("value", "double", null)));
+    Dataset<Row> actual = spark.sql(str("DESCRIBE TABLE dsv2.%s.create_table_test", nameSpace));
+
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create("id", "int", null),
+            RowFactory.create("name", "string", null),
+            RowFactory.create("value", "double", null));
+    assertDatasetEquals(actual, expectedRows);
   }
 
   @Test
   public void testQueryTableNotExist() {
     AnalysisException e =
-        assertThrows(
+        org.junit.jupiter.api.Assertions.assertThrows(
             AnalysisException.class,
             () -> spark.sql(str("SELECT * FROM dsv2.%s.not_found_test", nameSpace)));
     assertEquals(
@@ -71,10 +77,16 @@ public class V2DDLTest extends V2TestBase {
 
     testData.write().format("delta").save(tablePath);
 
-    // TODO: [delta-io/delta#5001] change to select query after batch read is supported for V2
+    // TODO: [delta-io/delta#5001] change to select query after batch read is supported for dsv2
     // path.
-    check(
-        str("DESCRIBE TABLE dsv2.delta.`%s`", tablePath),
-        List.of(row("id", "int", null), row("name", "string", null), row("value", "double", null)));
+    Dataset<Row> actual = spark.sql(str("DESCRIBE TABLE dsv2.delta.`%s`", tablePath));
+
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create("id", "int", null),
+            RowFactory.create("name", "string", null),
+            RowFactory.create("value", "double", null));
+
+    assertDatasetEquals(actual, expectedRows);
   }
 }
