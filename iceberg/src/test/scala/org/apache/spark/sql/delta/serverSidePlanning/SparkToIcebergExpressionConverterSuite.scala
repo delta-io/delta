@@ -335,29 +335,42 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "NotEqualTo(col, null) returns None (not null-safe)"
       ),
 
-      // NaN handling: Iceberg does not support NaN literals
+      // NaN handling: EqualTo/NotEqualTo convert to isNaN/notNaN predicates
       FilterTest(
         EqualTo("doubleCol", Double.NaN),
-        None,
-        "EqualTo with Double.NaN returns None"
+        Some(Expressions.isNaN("doubleCol")),
+        "EqualTo with Double.NaN converts to isNaN"
       ),
 
       FilterTest(
         EqualTo("floatCol", Float.NaN),
-        None,
-        "EqualTo with Float.NaN returns None"
+        Some(Expressions.isNaN("floatCol")),
+        "EqualTo with Float.NaN converts to isNaN"
       ),
 
       FilterTest(
         Not(EqualTo("doubleCol", Double.NaN)),
-        None,
-        "NotEqualTo with Double.NaN returns None"
+        Some(Expressions.notNaN("doubleCol")),
+        "NotEqualTo with Double.NaN converts to notNaN"
       ),
 
       FilterTest(
         Not(EqualTo("floatCol", Float.NaN)),
+        Some(Expressions.notNaN("floatCol")),
+        "NotEqualTo with Float.NaN converts to notNaN"
+      ),
+
+      // NaN with comparison operators returns None (mathematically undefined)
+      FilterTest(
+        LessThan("doubleCol", Double.NaN),
         None,
-        "NotEqualTo with Float.NaN returns None"
+        "LessThan with NaN returns None"
+      ),
+
+      FilterTest(
+        GreaterThan("floatCol", Float.NaN),
+        None,
+        "GreaterThan with NaN returns None"
       ),
 
       // Boundary values

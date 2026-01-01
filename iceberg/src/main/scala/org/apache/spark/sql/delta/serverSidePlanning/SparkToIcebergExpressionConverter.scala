@@ -28,7 +28,10 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  * | Spark Filter          | Iceberg Expression             |
  * +-----------------------+--------------------------------+
  * | EqualTo               | Expressions.equal()            |
+ * |   EqualTo(col, null)  | Expressions.isNull()           |
+ * |   EqualTo(col, NaN)   | Expressions.isNaN()            |
  * | NotEqualTo            | Expressions.notEqual()         |
+ * |   NotEqualTo(col, NaN)| Expressions.notNaN()           |
  * | LessThan              | Expressions.lessThan()         |
  * | GreaterThan           | Expressions.greaterThan()      |
  * | LessThanOrEqual       | Expressions.lessThanOrEqual()  |
@@ -121,8 +124,8 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   } catch {
     case _: IllegalArgumentException =>
       // Cannot convert this filter:
-      // - NaN values (Float.NaN, Double.NaN): Not supported in our implementation
-      //   (Note: OSS Iceberg supports isNaN/notNaN predicates, but we reject them)
+      // - NaN in comparison operators (LessThan, GreaterThan, etc.): Mathematically undefined
+      //   (Note: EqualTo/NotEqualTo with NaN are converted to isNaN/notNaN predicates)
       // - Unsupported types (e.g., Array, Map, binary types)
       // - NotEqualTo with null: Ambiguous semantics (use IsNotNull instead)
       None
@@ -174,6 +177,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
     sparkValue match {
       case null => Expressions.isNull(attribute)
+      case _ if isNaN(sparkValue) => Expressions.isNaN(attribute)
       case _ => buildExpression(
         attribute,
         sparkValue,
@@ -188,6 +192,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
       case null =>
         throw new IllegalArgumentException(
           "NotEqualTo with null is unsupported. Use IsNotNull instead.")
+      case _ if isNaN(sparkValue) => Expressions.notNaN(attribute)
       case _ => buildExpression(
         attribute,
         sparkValue,
