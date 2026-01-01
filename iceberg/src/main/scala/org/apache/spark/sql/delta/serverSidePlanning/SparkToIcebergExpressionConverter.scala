@@ -132,14 +132,12 @@ object SparkToIcebergExpressionConverter {
   /**
    * Base helper to build expressions with type coercion.
    * Handles common numeric, string, date/time types.
-   *
-   * @param handleUnsupported by-name parameter for custom handling of unsupported types
+   * Throws IllegalArgumentException for unsupported types.
    */
   private def buildExpression(
       attribute: String,
       sparkValue: Any,
-      exprBuilder: (String, Any) => Expression,
-      handleUnsupported: => Expression): Expression = sparkValue match {
+      exprBuilder: (String, Any) => Expression): Expression = sparkValue match {
     case v: Int => exprBuilder(attribute, v: Integer)
     case v: Long => exprBuilder(attribute, v: java.lang.Long)
     case v: Float => exprBuilder(attribute, v: java.lang.Float)
@@ -149,40 +147,30 @@ object SparkToIcebergExpressionConverter {
     case v: String => exprBuilder(attribute, v)
     case v: java.sql.Date => exprBuilder(attribute, v)
     case v: java.sql.Timestamp => exprBuilder(attribute, v)
-    case _ => handleUnsupported
+    case _ =>
+      throw new IllegalArgumentException(s"Unsupported type: ${sparkValue.getClass}")
   }
 
   /**
    * Helper to build comparison expressions (LessThan, GreaterThan, etc.).
-   * Throws on unsupported types.
+   * Delegates to buildExpression for common types.
    */
   private def buildComparisonExpression(
       attribute: String,
       sparkValue: Any,
       exprBuilder: (String, Any) => Expression): Expression =
-    buildExpression(
-      attribute,
-      sparkValue,
-      exprBuilder,
-      throw new IllegalArgumentException(s"Unsupported type: ${sparkValue.getClass}")
-    )
+    buildExpression(attribute, sparkValue, exprBuilder)
 
   /**
    * Helper to build equality expressions (EqualTo, NotEqualTo).
-   * Adds Boolean support and uses toString as fallback for unsupported types.
+   * Adds Boolean support beyond buildExpression's common types.
    */
   private def buildEqualityExpression(
       attribute: String,
       sparkValue: Any,
       exprBuilder: (String, Any) => Expression): Expression = sparkValue match {
     case v: Boolean => exprBuilder(attribute, v: java.lang.Boolean)
-    case _ =>
-      buildExpression(
-        attribute,
-        sparkValue,
-        exprBuilder,
-        exprBuilder(attribute, sparkValue.toString)
-      )
+    case _ => buildExpression(attribute, sparkValue, exprBuilder)
   }
 
   private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
