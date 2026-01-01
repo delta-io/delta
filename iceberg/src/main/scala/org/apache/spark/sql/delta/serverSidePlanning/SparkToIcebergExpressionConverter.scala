@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  *   }
  * }}}
  */
-object SparkToIcebergExpressionConverter {
+private[serverSidePlanning] object SparkToIcebergExpressionConverter {
 
   /**
    * Convert a Spark Filter to an Iceberg Expression.
@@ -109,10 +109,13 @@ object SparkToIcebergExpressionConverter {
     case AlwaysFalse() =>
       Some(Expressions.alwaysFalse())
 
-    // Unsupported Filters
+    // Unsupported Filters:
+    // - StringEndsWith, StringContains: Iceberg API doesn't provide these predicates
+    // - EqualNullSafe: Iceberg's equal() is not null-safe; no equivalent operator
+    // - Not (general): Iceberg doesn't support arbitrary NOT expressions
+    //   (We convert Not(EqualTo) as a special case to NotEqualTo)
+    // - Complex type comparisons (Array, Map, Struct): Not yet implemented
     case _ =>
-      // Unsupported filter types (e.g., StringEndsWith, StringContains, EqualNullSafe, etc.)
-      // Return None to indicate this filter cannot be pushed down to the server.
       None
     }
   } catch {
@@ -142,27 +145,29 @@ object SparkToIcebergExpressionConverter {
       attribute: String,
       sparkValue: Any,
       exprBuilder: (String, Any) => Expression,
-      supportBoolean: Boolean = false): Expression = sparkValue match {
-    case v: Int => exprBuilder(attribute, v: Integer)
-    case v: Long => exprBuilder(attribute, v: java.lang.Long)
-    case v: Float => exprBuilder(attribute, v: java.lang.Float)
-    case v: Double => exprBuilder(attribute, v: java.lang.Double)
-    case v: BigDecimal => exprBuilder(attribute, v.bigDecimal)
-    case v: java.math.BigDecimal => exprBuilder(attribute, v)
-    case v: String => exprBuilder(attribute, v)
-    case v: java.sql.Date => exprBuilder(attribute, v)
-    case v: java.sql.Timestamp => exprBuilder(attribute, v)
-    case v: Boolean if supportBoolean => exprBuilder(attribute, v: java.lang.Boolean)
-    case _ =>
-      throw new IllegalArgumentException(s"Unsupported type: ${sparkValue.getClass}")
-  }
-
-  private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
-    // NaN values cannot be represented in Iceberg
+      supportBoolean: Boolean = false): Expression = {
+    // Check NaN before type matching (handles Float/Double uniformly)
     if (isNaN(sparkValue)) {
       throw new IllegalArgumentException("Cannot convert NaN to Iceberg expression")
     }
 
+    sparkValue match {
+      case v: Int => exprBuilder(attribute, v: Integer)
+      case v: Long => exprBuilder(attribute, v: java.lang.Long)
+      case v: Float => exprBuilder(attribute, v: java.lang.Float)
+      case v: Double => exprBuilder(attribute, v: java.lang.Double)
+      case v: BigDecimal => exprBuilder(attribute, v.bigDecimal)
+      case v: java.math.BigDecimal => exprBuilder(attribute, v)
+      case v: String => exprBuilder(attribute, v)
+      case v: java.sql.Date => exprBuilder(attribute, v)
+      case v: java.sql.Timestamp => exprBuilder(attribute, v)
+      case v: Boolean if supportBoolean => exprBuilder(attribute, v: java.lang.Boolean)
+      case _ =>
+        throw new IllegalArgumentException(s"Unsupported type: ${sparkValue.getClass}")
+    }
+  }
+
+  private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
     sparkValue match {
       case null => Expressions.isNull(attribute)
       case _ => buildExpression(
@@ -175,11 +180,6 @@ object SparkToIcebergExpressionConverter {
   }
 
   private def convertNotEqualTo(attribute: String, sparkValue: Any): Expression = {
-    // NaN values cannot be represented in Iceberg
-    if (isNaN(sparkValue)) {
-      throw new IllegalArgumentException("Cannot convert NaN to Iceberg expression")
-    }
-
     sparkValue match {
       case null =>
         throw new IllegalArgumentException(
@@ -200,6 +200,8 @@ object SparkToIcebergExpressionConverter {
       case v: Long => v: java.lang.Long
       case v: Float => v: java.lang.Float
       case v: Double => v: java.lang.Double
+      case v: BigDecimal => v.bigDecimal
+      case v: java.math.BigDecimal => v
       case v: Boolean => v: java.lang.Boolean
       case v => v
     }

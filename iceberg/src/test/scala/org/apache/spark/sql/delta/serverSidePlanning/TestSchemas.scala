@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import org.apache.spark.sql.types._
  *                decimalCol, dateCol, timestampCol
  * - Nested examples: address.intCol, metadata.stringCol
  */
-object TestSchemas {
+private[serverSidePlanning] object TestSchemas {
   /**
    * Universal test schema with comprehensive type coverage for all server-side planning tests.
    *
