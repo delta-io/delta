@@ -62,7 +62,7 @@ object SparkToIcebergExpressionConverter {
    * @param sparkFilter The Spark filter to convert
    * @return Some(Expression) if the filter is supported, None otherwise
    */
-  private[serverSidePlanning] def convert(sparkFilter: Filter): Option[Expression] =
+  private[serverSidePlanning] def convert(sparkFilter: Filter): Option[Expression] = try {
     sparkFilter match {
     // Equality and Comparison Operators
     case EqualTo(attribute, sparkValue) =>
@@ -115,38 +115,65 @@ object SparkToIcebergExpressionConverter {
       // Return None to indicate this filter cannot be pushed down to the server.
       // Correctness is preserved because Spark re-applies all filters as residuals.
       None
+    }
+  } catch {
+    case e: IllegalArgumentException if e.getMessage.contains("Cannot convert NaN") =>
+      // Return None for NaN values which Iceberg cannot represent
+      None
   }
 
   // Private helper methods for type-specific conversions
 
-  private def convertEqualTo(attribute: String, sparkValue: Any): Expression = sparkValue match {
-    case v: Int => Expressions.equal(attribute, v: Integer)
-    case v: Long => Expressions.equal(attribute, v: java.lang.Long)
-    case v: Float => Expressions.equal(attribute, v: java.lang.Float)
-    case v: Double => Expressions.equal(attribute, v: java.lang.Double)
-    case v: BigDecimal => Expressions.equal(attribute, v.bigDecimal)
-    case v: String => Expressions.equal(attribute, v)
-    case v: Boolean => Expressions.equal(attribute, v: java.lang.Boolean)
-    case v: java.sql.Date => Expressions.equal(attribute, v)
-    case v: java.sql.Timestamp => Expressions.equal(attribute, v)
-    case null => Expressions.isNull(attribute)
-    case _ => Expressions.equal(attribute, sparkValue.toString)
+  private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
+    // NaN values cannot be represented in Iceberg, return None to skip pushdown
+    if (isNaN(sparkValue)) {
+      throw new IllegalArgumentException("Cannot convert NaN to Iceberg expression")
+    }
+
+    sparkValue match {
+      case v: Int => Expressions.equal(attribute, v: Integer)
+      case v: Long => Expressions.equal(attribute, v: java.lang.Long)
+      case v: Float => Expressions.equal(attribute, v: java.lang.Float)
+      case v: Double => Expressions.equal(attribute, v: java.lang.Double)
+      case v: BigDecimal => Expressions.equal(attribute, v.bigDecimal)
+      case v: java.math.BigDecimal => Expressions.equal(attribute, v)
+      case v: String => Expressions.equal(attribute, v)
+      case v: Boolean => Expressions.equal(attribute, v: java.lang.Boolean)
+      case v: java.sql.Date => Expressions.equal(attribute, v)
+      case v: java.sql.Timestamp => Expressions.equal(attribute, v)
+      case null => Expressions.isNull(attribute)
+      case _ => Expressions.equal(attribute, sparkValue.toString)
+    }
   }
 
-  private def convertNotEqualTo(attribute: String, sparkValue: Any): Expression = sparkValue match {
-    case v: Int => Expressions.notEqual(attribute, v: Integer)
-    case v: Long => Expressions.notEqual(attribute, v: java.lang.Long)
-    case v: Float => Expressions.notEqual(attribute, v: java.lang.Float)
-    case v: Double => Expressions.notEqual(attribute, v: java.lang.Double)
-    case v: BigDecimal => Expressions.notEqual(attribute, v.bigDecimal)
-    case v: String => Expressions.notEqual(attribute, v)
-    case v: Boolean => Expressions.notEqual(attribute, v: java.lang.Boolean)
-    case v: java.sql.Date => Expressions.notEqual(attribute, v)
-    case v: java.sql.Timestamp => Expressions.notEqual(attribute, v)
-    case null =>
-      throw new IllegalArgumentException(
-        "NotEqualTo with null is always false. Use IsNotNull instead.")
-    case _ => Expressions.notEqual(attribute, sparkValue.toString)
+  private def isNaN(value: Any): Boolean = value match {
+    case v: Float => v.isNaN
+    case v: Double => v.isNaN
+    case _ => false
+  }
+
+  private def convertNotEqualTo(attribute: String, sparkValue: Any): Expression = {
+    // NaN values cannot be represented in Iceberg, return None to skip pushdown
+    if (isNaN(sparkValue)) {
+      throw new IllegalArgumentException("Cannot convert NaN to Iceberg expression")
+    }
+
+    sparkValue match {
+      case v: Int => Expressions.notEqual(attribute, v: Integer)
+      case v: Long => Expressions.notEqual(attribute, v: java.lang.Long)
+      case v: Float => Expressions.notEqual(attribute, v: java.lang.Float)
+      case v: Double => Expressions.notEqual(attribute, v: java.lang.Double)
+      case v: BigDecimal => Expressions.notEqual(attribute, v.bigDecimal)
+      case v: java.math.BigDecimal => Expressions.notEqual(attribute, v)
+      case v: String => Expressions.notEqual(attribute, v)
+      case v: Boolean => Expressions.notEqual(attribute, v: java.lang.Boolean)
+      case v: java.sql.Date => Expressions.notEqual(attribute, v)
+      case v: java.sql.Timestamp => Expressions.notEqual(attribute, v)
+      case null =>
+        throw new IllegalArgumentException(
+          "NotEqualTo with null is unsupported. Use IsNotNull instead.")
+      case _ => Expressions.notEqual(attribute, sparkValue.toString)
+    }
   }
 
   private def convertIn(attribute: String, values: Array[Any]): Expression = {
@@ -169,6 +196,7 @@ object SparkToIcebergExpressionConverter {
     case v: Float => Expressions.lessThan(attribute, v: java.lang.Float)
     case v: Double => Expressions.lessThan(attribute, v: java.lang.Double)
     case v: BigDecimal => Expressions.lessThan(attribute, v.bigDecimal)
+    case v: java.math.BigDecimal => Expressions.lessThan(attribute, v)
     case v: String => Expressions.lessThan(attribute, v)
     case v: java.sql.Date => Expressions.lessThan(attribute, v)
     case v: java.sql.Timestamp => Expressions.lessThan(attribute, v)
@@ -183,6 +211,7 @@ object SparkToIcebergExpressionConverter {
     case v: Float => Expressions.greaterThan(attribute, v: java.lang.Float)
     case v: Double => Expressions.greaterThan(attribute, v: java.lang.Double)
     case v: BigDecimal => Expressions.greaterThan(attribute, v.bigDecimal)
+    case v: java.math.BigDecimal => Expressions.greaterThan(attribute, v)
     case v: String => Expressions.greaterThan(attribute, v)
     case v: java.sql.Date => Expressions.greaterThan(attribute, v)
     case v: java.sql.Timestamp => Expressions.greaterThan(attribute, v)
@@ -198,6 +227,7 @@ object SparkToIcebergExpressionConverter {
     case v: Float => Expressions.lessThanOrEqual(attribute, v: java.lang.Float)
     case v: Double => Expressions.lessThanOrEqual(attribute, v: java.lang.Double)
     case v: BigDecimal => Expressions.lessThanOrEqual(attribute, v.bigDecimal)
+    case v: java.math.BigDecimal => Expressions.lessThanOrEqual(attribute, v)
     case v: String => Expressions.lessThanOrEqual(attribute, v)
     case v: java.sql.Date => Expressions.lessThanOrEqual(attribute, v)
     case v: java.sql.Timestamp => Expressions.lessThanOrEqual(attribute, v)
@@ -213,6 +243,7 @@ object SparkToIcebergExpressionConverter {
     case v: Float => Expressions.greaterThanOrEqual(attribute, v: java.lang.Float)
     case v: Double => Expressions.greaterThanOrEqual(attribute, v: java.lang.Double)
     case v: BigDecimal => Expressions.greaterThanOrEqual(attribute, v.bigDecimal)
+    case v: java.math.BigDecimal => Expressions.greaterThanOrEqual(attribute, v)
     case v: String => Expressions.greaterThanOrEqual(attribute, v)
     case v: java.sql.Date => Expressions.greaterThanOrEqual(attribute, v)
     case v: java.sql.Timestamp => Expressions.greaterThanOrEqual(attribute, v)
