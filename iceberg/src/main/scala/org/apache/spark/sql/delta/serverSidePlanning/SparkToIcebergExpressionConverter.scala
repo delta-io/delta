@@ -30,10 +30,12 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  * | Spark Filter          | Iceberg Expression             |
  * +-----------------------+--------------------------------+
  * | EqualTo               | Expressions.equal()            |
+ * | NotEqualTo            | Expressions.notEqual()         |
  * | LessThan              | Expressions.lessThan()         |
  * | GreaterThan           | Expressions.greaterThan()      |
  * | LessThanOrEqual       | Expressions.lessThanOrEqual()  |
  * | GreaterThanOrEqual    | Expressions.greaterThanOrEqual()|
+ * | In                    | Expressions.in()               |
  * | IsNull                | Expressions.isNull()           |
  * | IsNotNull             | Expressions.notNull()          |
  * | And                   | Expressions.and()              |
@@ -67,6 +69,8 @@ object SparkToIcebergExpressionConverter {
     // Equality and Comparison Operators
     case EqualTo(attribute, sparkValue) =>
       Some(convertEqualTo(attribute, sparkValue))
+    case Not(EqualTo(attribute, sparkValue)) =>
+      Some(convertNotEqualTo(attribute, sparkValue))
     case LessThan(attribute, sparkValue) =>
       Some(convertLessThan(attribute, sparkValue))
     case GreaterThan(attribute, sparkValue) =>
@@ -75,6 +79,8 @@ object SparkToIcebergExpressionConverter {
       Some(convertLessThanOrEqual(attribute, sparkValue))
     case GreaterThanOrEqual(attribute, sparkValue) =>
       Some(convertGreaterThanOrEqual(attribute, sparkValue))
+    case In(attribute, values) =>
+      Some(convertIn(attribute, values))
 
     // Null Checks
     case IsNull(attribute) =>
@@ -114,6 +120,33 @@ object SparkToIcebergExpressionConverter {
     case v: Boolean => Expressions.equal(attribute, v: java.lang.Boolean)
     case null => Expressions.isNull(attribute)
     case _ => Expressions.equal(attribute, sparkValue.toString)
+  }
+
+  private def convertNotEqualTo(attribute: String, sparkValue: Any): Expression = sparkValue match {
+    case v: Int => Expressions.notEqual(attribute, v: Integer)
+    case v: Long => Expressions.notEqual(attribute, v: java.lang.Long)
+    case v: Float => Expressions.notEqual(attribute, v: java.lang.Float)
+    case v: Double => Expressions.notEqual(attribute, v: java.lang.Double)
+    case v: String => Expressions.notEqual(attribute, v)
+    case v: Boolean => Expressions.notEqual(attribute, v: java.lang.Boolean)
+    case null =>
+      throw new IllegalArgumentException(
+        "NotEqualTo with null is always false. Use IsNotNull instead.")
+    case _ => Expressions.notEqual(attribute, sparkValue.toString)
+  }
+
+  private def convertIn(attribute: String, values: Array[Any]): Expression = {
+    // Filter out null values (following Iceberg OSS behavior)
+    val nonNullValues = values.filter(_ != null).map {
+      case v: Int => v: Integer
+      case v: Long => v: java.lang.Long
+      case v: Float => v: java.lang.Float
+      case v: Double => v: java.lang.Double
+      case v: String => v
+      case v: Boolean => v: java.lang.Boolean
+      case v => v
+    }
+    Expressions.in(attribute, nonNullValues: _*)
   }
 
   private def convertLessThan(attribute: String, sparkValue: Any): Expression = sparkValue match {
