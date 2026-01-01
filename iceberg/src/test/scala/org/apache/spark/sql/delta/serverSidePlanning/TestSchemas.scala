@@ -20,19 +20,9 @@ import shadedForDelta.org.apache.iceberg.Schema
 import shadedForDelta.org.apache.iceberg.types.Types
 import org.apache.spark.sql.types._
 
-/**
- * Shared test schema used across all server-side planning test suites.
- *
- * This is the single source of truth for test data structure, providing:
- * - Comprehensive type coverage (9 flat types + nested examples)
- * - Flat fields: intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
- *                decimalCol, dateCol, timestampCol
- * - Nested examples: address.intCol, metadata.stringCol
- */
 private[serverSidePlanning] object TestSchemas {
   /**
-   * Universal test schema with comprehensive type coverage for all server-side planning tests.
-   *
+   * Shared test schema used across all server-side planning test suites.
    * Structure:
    * - Flat fields (9 types): intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
    *                          decimalCol, dateCol, timestampCol

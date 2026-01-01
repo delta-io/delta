@@ -223,6 +223,9 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
       case v: Float => v: java.lang.Float
       case v: Double => v: java.lang.Double
       case v: java.math.BigDecimal => v
+      case v: java.sql.Date => (v.getTime / (1000L * 60 * 60 * 24)).toInt: Integer
+      case v: java.sql.Timestamp =>
+        (v.getTime * 1000 + (v.getNanos % 1000000) / 1000): java.lang.Long
       case v: Boolean => v: java.lang.Boolean
       case v => v
     }

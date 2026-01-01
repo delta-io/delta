@@ -38,6 +38,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     ("floatCol", 10.5f, "Float"),
     ("decimalCol", BigDecimal("123.45").bigDecimal, "Decimal"),
     ("stringCol", "test", "String"),
+    ("dateCol", java.sql.Date.valueOf("2024-01-01"), "Date"),
+    ("timestampCol", java.sql.Timestamp.valueOf("2024-01-01 12:00:00"), "Timestamp"),
     ("address.intCol", 42, "Nested Int"),
     ("metadata.stringCol", "test", "Nested String")
   )
@@ -49,6 +51,18 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   private val allTypes = orderableTypes ++ equalityOnlyTypes
   private val testSchema = TestSchemas.testSchema.asStruct()
+
+  /**
+   * Convert test values to Iceberg-compatible types.
+   * Date/Timestamp need to be converted to Int/Long for Iceberg expressions.
+   */
+  private def toIcebergValue(value: Any): Any = value match {
+    case v: java.sql.Date =>
+      (v.getTime / (1000L * 60 * 60 * 24)).toInt
+    case v: java.sql.Timestamp =>
+      v.getTime * 1000 + (v.getNanos % 1000000) / 1000
+    case v => v
+  }
 
   private def assertConvert(testCases: Seq[FilterTest]): Unit = {
     testCases.foreach { tc =>
@@ -87,7 +101,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val testCases = for {
       (col, value, typeDesc) <- orderableTypes
       (sparkOp, icebergOp, opName) <- comparisonOperators
-    } yield FilterTest(sparkOp(col, value), Some(icebergOp(col, value)), s"$opName $typeDesc")
+    } yield FilterTest(
+      sparkOp(col, value),
+      Some(icebergOp(col, toIcebergValue(value))),
+      s"$opName $typeDesc"
+    )
 
     assertConvert(testCases)
   }
@@ -111,7 +129,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val testCases = for {
       (col, value, typeDesc) <- allTypes
       (sparkOp, icebergOp, opName) <- generalOperators
-    } yield FilterTest(sparkOp(col, value), Some(icebergOp(col, value)), s"$opName $typeDesc")
+    } yield FilterTest(
+      sparkOp(col, value),
+      Some(icebergOp(col, toIcebergValue(value))),
+      s"$opName $typeDesc"
+    )
 
     assertConvert(testCases)
   }
@@ -177,38 +199,35 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // - Empty arrays after null filtering result in always-false predicates
   // - Type conversion needed for each array element (Scala -> Java types)
   test("IN Operator with Type Coercion and Null Handling") {
-    val testCases = Seq(
-      // Basic In with different types
-      FilterTest(
-        In("intCol", Array(1, 2, 3)),
-        Some(Expressions.in("intCol", 1: Integer, 2: Integer, 3: Integer)),
-        "In with integers"
-      ),
+    // Helper to generate multiple test values for IN operator
+    def generateInValues(value: Any): Array[Any] = value match {
+      case v: Int => Array(v, v + 1, v + 2)
+      case v: Long => Array(v, v + 1L, v + 2L)
+      case v: Float => Array(v, v + 1.0f, v + 2.0f)
+      case v: Double => Array(v, v + 1.0, v + 2.0)
+      case v: String => Array(v, s"${v}_2", s"${v}_3")
+      case v: java.math.BigDecimal => 
+        Array(v, v.add(java.math.BigDecimal.ONE), v.add(java.math.BigDecimal.TEN))
+      case v: Boolean => Array(v, !v)
+      case v: java.sql.Date => 
+        Array(v, new java.sql.Date(v.getTime + 86400000L)) // +1 day in millis
+      case v: java.sql.Timestamp => 
+        Array(v, new java.sql.Timestamp(v.getTime + 3600000L)) // +1 hour in millis
+      case _ => Array(value)
+    }
 
+    // Test IN operator for all types
+    val inTestCases = allTypes.map { case (col, value, typeDesc) =>
+      val values = generateInValues(value)
+      val icebergValues = values.map(toIcebergValue)
       FilterTest(
-        In("stringCol", Array("a", "b", "c")),
-        Some(Expressions.in("stringCol", "a", "b", "c")),
-        "In with strings"
-      ),
+        In(col, values),
+        Some(Expressions.in(col, icebergValues: _*)),
+        s"In with $typeDesc"
+      )
+    }
 
-      FilterTest(
-        In("longCol", Array(100L, 200L)),
-        Some(Expressions.in("longCol", 100L: java.lang.Long, 200L: java.lang.Long)),
-        "In with longs"
-      ),
-
-      FilterTest(
-        In("address.intCol", Array(42, 43)),
-        Some(Expressions.in("address.intCol", 42: Integer, 43: Integer)),
-        "In with nested column"
-      ),
-
-      FilterTest(
-        In("decimalCol", Array(BigDecimal("10.00").bigDecimal, BigDecimal("20.00").bigDecimal)),
-        Some(Expressions.in("decimalCol", BigDecimal("10.00").bigDecimal, BigDecimal("20.00").bigDecimal)),
-        "In with BigDecimal"
-      ),
-
+    val nullHandlingTests = Seq(
       // Null handling: nulls are filtered out 
       FilterTest(
         In("stringCol", Array(null, "value1", "value2")),
@@ -230,7 +249,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       )
     )
 
-    assertConvert(testCases)
+    assertConvert(inTestCases ++ nullHandlingTests)
   }
 
   test("string operations and boolean literals") {
