@@ -259,20 +259,26 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
-        // Test cases covering all supported data types: (filter, description)
         val testCases = Seq(
           (EqualTo("longCol", 2L), "EqualTo numeric (long)"),
           (EqualTo("intCol", 30), "EqualTo numeric (int)"),
           (EqualTo("stringCol", "bob"), "EqualTo string"),
           (EqualTo("boolCol", true), "EqualTo boolean"),
+          (Not(EqualTo("longCol", 2L)), "NotEqualTo numeric (long)"),
+          (Not(EqualTo("stringCol", "bob")), "NotEqualTo string"),
           (LessThan("longCol", 10L), "LessThan (long)"),
           (LessThan("floatCol", 4.5f), "LessThan (float)"),
           (GreaterThan("longCol", 5L), "GreaterThan (long)"),
           (GreaterThan("doubleCol", 100.0), "GreaterThan (double)"),
           (LessThanOrEqual("intCol", 30), "LessThanOrEqual (int)"),
           (GreaterThanOrEqual("doubleCol", 100.0), "GreaterThanOrEqual (double)"),
+          (In("longCol", Array(1L, 2L, 3L)), "In numeric (long)"),
+          (In("stringCol", Array("alice", "bob", "charlie")), "In string"),
           (IsNull("stringCol"), "IsNull"),
           (IsNotNull("stringCol"), "IsNotNull"),
+          (StringStartsWith("stringCol", "ali"), "StringStartsWith"),
+          (AlwaysTrue(), "AlwaysTrue"),
+          (AlwaysFalse(), "AlwaysFalse"),
           (And(EqualTo("longCol", 2L), EqualTo("stringCol", "bob")), "And"),
           (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or")
         )

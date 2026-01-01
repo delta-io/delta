@@ -51,7 +51,7 @@ object TestSchemas {
     Types.NestedField.required(8, "dateCol", Types.DateType.get),
     Types.NestedField.required(9, "timestampCol", Types.TimestampType.withoutZone),
 
-    // Minimal nested examples (IDs 10-11)
+    // Nested examples (IDs 10-11)
     Types.NestedField.required(10, "address", Types.StructType.of(
       Types.NestedField.required(101, "intCol", Types.IntegerType.get)
     )),
