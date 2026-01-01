@@ -16,23 +16,24 @@
 
 package io.delta.flink.table;
 
+import dev.failsafe.function.CheckedSupplier;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
+import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.api.TemporaryCredentialsApi;
-import io.unitycatalog.client.model.GenerateTemporaryTableCredential;
-import io.unitycatalog.client.model.TableInfo;
-import io.unitycatalog.client.model.TableOperation;
-import io.unitycatalog.client.model.TemporaryCredentials;
+import io.unitycatalog.client.model.*;
 import java.net.URI;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * A {@code UnityCatalog} is a {@link Catalog} implementation that interacts with an external
+ * A {@code UnityCatalog} is a {@link DeltaCatalog} implementation that interacts with an external
  * catalog service via UnityCatalog OSS APIs.
  *
  * <p>This catalog resolves table metadata and access credentials by communicating with a remote
@@ -50,15 +51,13 @@ import org.slf4j.LoggerFactory;
  * <p>Authentication to the catalog service is performed using a bearer token supplied at
  * construction time. The token is attached to all outgoing REST requests.
  */
-public class UnityCatalog implements Catalog {
+public class UnityCatalog implements DeltaCatalog {
 
   private static Logger LOG = LoggerFactory.getLogger(UnityCatalog.class);
 
-  public static String CATALOG_ENDPOINT = "catalog.endpoint";
-  public static String CATALOG_TOKEN = "catalog.token";
-
-  private final URI catalogEndpoint;
-  private final String catalogToken;
+  private final String name;
+  private final URI endpoint;
+  private final String token;
 
   /**
    * Lazily initialized API client used to communicate with the catalog service. This field is
@@ -72,9 +71,19 @@ public class UnityCatalog implements Catalog {
    * @param endpoint the catalog REST endpoint URI as a string
    * @param token a bearer token used to authenticate REST requests
    */
-  public UnityCatalog(String endpoint, String token) {
-    this.catalogEndpoint = URI.create(endpoint);
-    this.catalogToken = token;
+  public UnityCatalog(String name, String endpoint, String token) {
+    this.name = name;
+    this.endpoint = URI.create(endpoint);
+    this.token = token;
+  }
+
+  /**
+   * Returns the catalog name.
+   *
+   * @return the catalog name
+   */
+  public String getName() {
+    return name;
   }
 
   /**
@@ -82,8 +91,8 @@ public class UnityCatalog implements Catalog {
    *
    * @return the catalog endpoint URI
    */
-  public URI getCatalogEndpoint() {
-    return catalogEndpoint;
+  public URI getEndpoint() {
+    return endpoint;
   }
 
   /**
@@ -91,8 +100,8 @@ public class UnityCatalog implements Catalog {
    *
    * @return the catalog bearer token
    */
-  public String getCatalogToken() {
-    return catalogToken;
+  public String getToken() {
+    return token;
   }
 
   /**
@@ -104,13 +113,28 @@ public class UnityCatalog implements Catalog {
     if (apiClient == null) {
       apiClient =
           new ApiClient()
-              .setScheme(catalogEndpoint.getScheme())
-              .setHost(catalogEndpoint.getHost())
-              .setPort(catalogEndpoint.getPort())
-              .setRequestInterceptor(
-                  request -> request.header("Authorization", "Bearer " + catalogToken));
+              .setScheme(endpoint.getScheme())
+              .setHost(endpoint.getHost())
+              .setPort(endpoint.getPort())
+              .setRequestInterceptor(request -> request.header("Authorization", "Bearer " + token));
     }
     return apiClient;
+  }
+
+  protected <RET> RET withRetry(CheckedSupplier<RET> body) {
+    // TODO implement retry
+    try {
+      return body.get();
+    } catch (Throwable e) {
+      if (e instanceof ApiException) {
+        int code = ((ApiException) e).getCode();
+        if (code < 500 && code > 300) {
+          throw new ExceptionUtils.ResourceNotFoundException(e.getMessage());
+        }
+        throw new RuntimeException(e);
+      }
+      throw new RuntimeException(e);
+    }
   }
 
   /**
@@ -125,19 +149,18 @@ public class UnityCatalog implements Catalog {
    */
   @Override
   public TableBrief getTable(String tableId) {
-    TablesApi tablesApi = new TablesApi(getApiClient());
-    try {
-      TableInfo tableInfo = tablesApi.getTable(tableId, null, null);
-      TableBrief brief = new TableBrief();
-      brief.tablePath =
-          AbstractKernelTable.normalize(
-              URI.create(Objects.requireNonNull(tableInfo.getStorageLocation())));
-      brief.uuid = tableInfo.getTableId();
-      LOG.debug("Loaded table with UUID {} at {}", brief.uuid, brief.tablePath);
-      return brief;
-    } catch (ApiException e) {
-      throw new RuntimeException(e);
-    }
+    return withRetry(
+        () -> {
+          TablesApi tablesApi = new TablesApi(getApiClient());
+          TableInfo tableInfo = tablesApi.getTable(tableId, null, null);
+          TableBrief brief = new TableBrief();
+          brief.tablePath =
+              AbstractKernelTable.normalize(
+                  URI.create(Objects.requireNonNull(tableInfo.getStorageLocation())));
+          brief.uuid = tableInfo.getTableId();
+          LOG.debug("Loaded table with UUID {} at {}", brief.uuid, brief.tablePath);
+          return brief;
+        });
   }
 
   /**
@@ -146,8 +169,7 @@ public class UnityCatalog implements Catalog {
    * <p>This implementation requests short-lived credentials from the catalog service that are
    * scoped to the specified table and operation type (read/write).
    *
-   * <p>TODO: Currently, only AWS temporary credentials are supported. The returned configuration
-   * map contains Hadoop-compatible S3A credential keys.
+   * <p>The returned configuration map contains Hadoop-compatible S3A credential keys.
    *
    * @param tableId the table identifier for which credentials are requested
    * @return a map of filesystem configuration properties containing temporary credentials
@@ -155,31 +177,72 @@ public class UnityCatalog implements Catalog {
    */
   @Override
   public Map<String, String> getCredentials(String tableId) {
-    try {
-      TemporaryCredentialsApi credentialsApi = new TemporaryCredentialsApi(getApiClient());
-      TemporaryCredentials credentials =
-          credentialsApi.generateTemporaryTableCredentials(
-              new GenerateTemporaryTableCredential()
-                  .tableId(tableId)
-                  .operation(TableOperation.READ_WRITE));
+    return withRetry(
+        () -> {
+          TemporaryCredentialsApi credentialsApi = new TemporaryCredentialsApi(getApiClient());
+          TemporaryCredentials credentials =
+              credentialsApi.generateTemporaryTableCredentials(
+                  new GenerateTemporaryTableCredential()
+                      .tableId(tableId)
+                      .operation(TableOperation.READ_WRITE));
 
-      Map<String, String> result = new HashMap<>();
+          Map<String, String> result = new HashMap<>();
 
-      // AWS credentials
-      // TODO: Add Azure and GCP credential support
-      if (credentials.getAwsTempCredentials() != null) {
-        result.put("fs.s3a.access.key", credentials.getAwsTempCredentials().getAccessKeyId());
-        result.put("fs.s3a.secret.key", credentials.getAwsTempCredentials().getSecretAccessKey());
-        result.put("fs.s3a.session.token", credentials.getAwsTempCredentials().getSessionToken());
-        if (credentials.getExpirationTime() != null) {
-          result.put(
-              CredentialManager.CREDENTIAL_EXPIRATION_KEY,
-              credentials.getExpirationTime().toString());
-        }
-      }
-      return result;
-    } catch (ApiException e) {
-      throw new RuntimeException(e);
-    }
+          // AWS credentials
+          // TODO: Add Azure and GCP credential support
+          if (credentials.getAwsTempCredentials() != null) {
+            result.put("fs.s3a.access.key", credentials.getAwsTempCredentials().getAccessKeyId());
+            result.put(
+                "fs.s3a.secret.key", credentials.getAwsTempCredentials().getSecretAccessKey());
+            result.put(
+                "fs.s3a.session.token", credentials.getAwsTempCredentials().getSessionToken());
+            if (credentials.getExpirationTime() != null) {
+              result.put(
+                  CredentialManager.CREDENTIAL_EXPIRATION_KEY,
+                  credentials.getExpirationTime().toString());
+            }
+          }
+          return result;
+        });
+  }
+
+  /* ===================================
+   *     Extra UnityCatalog Operations
+   * ==================================*/
+
+  public List<String> listSchemas() {
+    return withRetry(
+        () -> {
+          SchemasApi schemasApi = new SchemasApi(getApiClient());
+          return schemasApi.listSchemas(this.name, Integer.MAX_VALUE, null).getSchemas().stream()
+              .map(SchemaInfo::getName)
+              .collect(Collectors.toList());
+        });
+  }
+
+  public SchemaInfo getSchema(String name) {
+    return withRetry(
+        () -> {
+          SchemasApi schemasApi = new SchemasApi(getApiClient());
+          return schemasApi.getSchema(String.format("%s.%s", getName(), name));
+        });
+  }
+
+  public List<String> listTables(String schema) {
+    return withRetry(
+        () -> {
+          TablesApi tablesApi = new TablesApi(getApiClient());
+          return tablesApi.listTables(getName(), schema, Integer.MAX_VALUE, "").getTables().stream()
+              .map(TableInfo::getName)
+              .collect(Collectors.toList());
+        });
+  }
+
+  public TableInfo getTableDetail(String tableId) {
+    return withRetry(
+        () -> {
+          TablesApi tablesApi = new TablesApi(getApiClient());
+          return tablesApi.getTable(tableId, false, false);
+        });
   }
 }

@@ -79,7 +79,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
    */
   protected transient String uuid;
 
-  protected final Catalog catalog;
+  protected final DeltaCatalog catalog;
   protected String tableId;
   protected String tableUUID;
   protected URI tablePath;
@@ -100,7 +100,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
   protected transient ExecutorService threadPool = null;
 
   public AbstractKernelTable(
-      Catalog catalog,
+      DeltaCatalog catalog,
       String tableId,
       Map<String, String> conf,
       StructType schema,
@@ -113,12 +113,12 @@ public abstract class AbstractKernelTable implements DeltaTable {
     initialize();
   }
 
-  public AbstractKernelTable(Catalog catalog, String tableId, Map<String, String> conf) {
+  public AbstractKernelTable(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
     this(catalog, tableId, conf, null, null);
   }
 
   protected void initialize() {
-    Catalog.TableBrief info = catalog.getTable(tableId);
+    DeltaCatalog.TableBrief info = catalog.getTable(tableId);
     tableUUID = info.uuid;
     tablePath = info.tablePath;
     // With an existing table, partitions loaded from the table take precedence
@@ -207,7 +207,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return credentialManager;
   }
 
-  public Catalog getCatalog() {
+  public DeltaCatalog getCatalog() {
     return catalog;
   }
 

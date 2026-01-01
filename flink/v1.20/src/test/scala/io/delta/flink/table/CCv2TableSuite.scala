@@ -35,17 +35,17 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
 
   val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
   val CATALOG_TOKEN = "<PLACEHOLDER>"
-  val TABLE_ID = "main.hao.testccv2"
+  val TABLE_ID = "main.hao.writetest"
 
   ignore("load table from e2dogfood") {
     val table = new CCv2Table(
-      new UnityCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
+      new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
       Map(
         CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
         CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
 
-    assert(table.getId == "main.hao.testccv2")
+    assert(table.getId == "main.hao.writetest")
     assert(table.getTablePath == URI.create("s3://us-west-2-extstaging-managed-" +
       "catalog-test-bucket-1/" +
       "19a85dee-54bc-43a2-87ab-023d0ec16013/tables/b7c3e881-4f7f-40f2-88c1-dff715835a81/"))
@@ -54,7 +54,7 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
 
   ignore("commit data to e2dogfood") {
     val table = new CCv2Table(
-      new UnityCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
+      new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
       Map(
         CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
@@ -77,12 +77,12 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
     val data = toCloseableIterator(Seq(filteredColumnarBatchData).asJava.iterator())
     val rows = table.writeParquet("abc", data, partitionValues)
 
-    table.commit(CloseableIterable.inMemoryIterable(rows), 1000L, Map.empty[String, String].asJava)
+    table.commit(CloseableIterable.inMemoryIterable(rows), 1000L, Map("a" -> "b").asJava)
   }
 
   ignore("serializablity") {
     val table = new CCv2Table(
-      new UnityCatalog(CATALOG_ENDPOINT, CATALOG_TOKEN),
+      new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
       Map(
         CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,

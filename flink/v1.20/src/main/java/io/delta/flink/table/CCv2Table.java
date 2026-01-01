@@ -17,7 +17,9 @@
 package io.delta.flink.table;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.kernel.utils.CloseableIterable;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import java.util.Map;
@@ -45,7 +47,7 @@ public class CCv2Table extends AbstractKernelTable {
   public static final String CATALOG_ENDPOINT = "catalog.endpoint";
   public static final String CATALOG_TOKEN = "catalog.token";
 
-  public CCv2Table(Catalog catalog, String tableId, Map<String, String> conf) {
+  public CCv2Table(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
     super(catalog, tableId, conf);
   }
 
@@ -72,5 +74,14 @@ public class CCv2Table extends AbstractKernelTable {
                     tablePath.toString(),
                     Optional.empty(),
                     Optional.empty()));
+  }
+
+  @Override
+  public Optional<Snapshot> commit(
+      CloseableIterable<Row> actions, Long txnId, Map<String, String> properties) {
+    // TODO remove this when CCv2 client supports update properties.
+    //      currently updating properties from outside encounters
+    //      "A table's Delta metadata can only be changed from a cluster or warehouse"
+    return super.commit(actions, txnId, Map.of());
   }
 }

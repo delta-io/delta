@@ -1,62 +1,30 @@
 /*
  *  Copyright (2021) The Delta Lake Project Authors.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  */
 
-package io.delta.flink.sink.dynamic
-
-import scala.jdk.CollectionConverters.MapHasAsJava
+package io.delta.flink.sink.sql
 
 import io.delta.flink.TestHelper
 import io.delta.kernel.types.{LongType, StringType, StructType}
 
-import org.apache.flink.table.api.{DataTypes, EnvironmentSettings, Schema, TableEnvironment}
-import org.apache.flink.table.catalog.{CatalogTable, ResolvedCatalogTable, ResolvedSchema}
+import org.apache.flink.table.api.{EnvironmentSettings, TableEnvironment}
 import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
+class FlinkSqlSuite extends AnyFunSuite with TestHelper {
 
-  test("load table") {
-    withTempDir { dir =>
-      val options = Map(
-        "connector" -> "delta",
-        "table_path" -> s"${dir.getPath}")
-
-      val table = CatalogTable.of(
-        Schema.newBuilder
-          .column("id", DataTypes.BIGINT)
-          .column("dt", DataTypes.STRING).build,
-        "test table",
-        java.util.List.of,
-        options.asJava)
-
-      val resolvedTable = new ResolvedCatalogTable(
-        table,
-        ResolvedSchema.physical(
-          Array("id", "dt"),
-          Array(DataTypes.BIGINT, DataTypes.STRING)))
-
-      val context = new TestDynamicTableSinkContext(resolvedTable);
-
-      val factory = new DeltaDynamicTableSinkFactory
-      val sink = factory.createDynamicTableSink(context)
-
-      assert(sink.isInstanceOf[DeltaDynamicTableSink])
-    }
-  }
-
-  test("use sql to load table") {
+  test("load hadoop table") {
     withTempDir { dir =>
       val settings = EnvironmentSettings.newInstance.inStreamingMode.build
       val tEnv = TableEnvironment.create(settings)
@@ -105,7 +73,7 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
     }
   }
 
-  test("use sql to load partitioned table") {
+  test("load partitioned hadoop table") {
     withTempDir { dir =>
       val settings = EnvironmentSettings.newInstance.inStreamingMode.build
       val tEnv = TableEnvironment.create(settings)
@@ -155,5 +123,35 @@ class DeltaDynamicTableSinkSuite extends AnyFunSuite with TestHelper {
           assert(16 == addfiles.map { a => a.getPartitionValues.getValues.getString(0) }.toSet.size)
         })
     }
+  }
+
+  ignore("load uc table") {
+    val settings = EnvironmentSettings.newInstance.inStreamingMode.build
+    val tEnv = TableEnvironment.create(settings)
+    val numRecords = 5000
+    tEnv.executeSql(
+      s"""
+           CREATE TEMPORARY TABLE src (
+           id INT,
+           name STRING
+           ) WITH (
+           'connector' = 'datagen',
+           'rows-per-second' = '1000',
+           'fields.id.kind' = 'sequence',
+           'fields.id.start' = '1',
+           'fields.id.end' = '$numRecords'
+           )""".stripMargin)
+
+    tEnv.executeSql(
+      s"""
+         CREATE CATALOG main WITH (
+            'type' = 'unitycatalog',
+            'endpoint' = 'https://e2-dogfood.staging.cloud.databricks.com/',
+            'token' = '<REMOVED>'
+         )""".stripMargin)
+
+    tEnv.executeSql("""INSERT INTO main.hao.writetest SELECT id, name FROM src"""
+      .stripMargin).await()
+
   }
 }

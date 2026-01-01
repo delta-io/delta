@@ -37,7 +37,7 @@ import java.util.Map;
  *   <li>supplying credential or configuration information required for table access.
  * </ul>
  */
-public interface Catalog extends Serializable {
+public interface DeltaCatalog extends Serializable {
 
   /**
    * Loads metadata for a table identified by the given table identifier.
@@ -67,7 +67,7 @@ public interface Catalog extends Serializable {
   Map<String, String> getCredentials(String uuid);
 
   /**
-   * A container for table metadata resolved by a {@link Catalog}.
+   * A container for table metadata resolved by a {@link DeltaCatalog}.
    *
    * <p>{@code TableInfo} describes the essential properties needed to locate and access a table,
    * independent of the underlying catalog implementation.

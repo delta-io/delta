@@ -42,7 +42,7 @@ import java.util.Map;
  * <p>The catalog does not perform validation of table existence or schema during lookup; it simply
  * resolves the table path and returns the corresponding {@link TableBrief}.
  */
-public class HadoopCatalog implements Catalog {
+public class HadoopCatalog implements DeltaCatalog {
 
   private final Map<String, String> configurations;
 

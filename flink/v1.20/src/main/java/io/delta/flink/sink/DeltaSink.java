@@ -261,7 +261,7 @@ public class DeltaSink
           finalConf.put(CCv2Table.CATALOG_ENDPOINT, catalogEndpoint);
           finalConf.put(CCv2Table.CATALOG_TOKEN, catalogToken);
           // TODO Support separated endpoints for catalog and table
-          Catalog restCatalog = new UnityCatalog(catalogEndpoint, catalogToken);
+          DeltaCatalog restCatalog = new UnityCatalog("main", catalogEndpoint, catalogToken);
           deltaTable = new CCv2Table(restCatalog, tableId, finalConf);
         }
       }
