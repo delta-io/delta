@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.spark;
+package io.delta.spark.internal.v2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -56,7 +56,7 @@ public abstract class V2TestBase {
     nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
-            .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
+            .set("spark.sql.catalog.dsv2", "io.delta.spark.internal.v2.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
             .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
             .set(

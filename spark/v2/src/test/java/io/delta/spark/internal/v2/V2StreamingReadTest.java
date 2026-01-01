@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.spark;
+package io.delta.spark.internal.v2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
