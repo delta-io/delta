@@ -96,12 +96,25 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       val tableName = s"rest_catalog.${defaultNamespace}.tableWithData"
 
       // Write data with 2 partitions to create 2 data files
-      spark.sparkContext.parallelize(0 until 250, numSlices = 2)
-        .map(i => (i, i.toLong, i * 10.0, i.toFloat, s"test_$i", i % 2 == 0,
-                   BigDecimal(i), java.sql.Date.valueOf(s"2024-01-01"),
-                   java.sql.Timestamp.valueOf(s"2024-01-01 00:00:00")))
-        .toDF("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
-              "decimalCol", "dateCol", "timestampCol")
+      import org.apache.spark.sql.Row
+      import org.apache.spark.sql.types._
+      
+      val data = spark.sparkContext.parallelize(0 until 250, numSlices = 2)
+        .map(i => Row(
+          i, // intCol
+          i.toLong, // longCol
+          i * 10.0, // doubleCol
+          i.toFloat, // floatCol
+          s"test_$i", // stringCol
+          i % 2 == 0, // boolCol
+          BigDecimal(i).bigDecimal, // decimalCol
+          java.sql.Date.valueOf("2024-01-01"), // dateCol
+          java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
+          Row(i * 100), // address.intCol
+          Row(s"meta_$i") // metadata.stringCol
+        ))
+      
+      spark.createDataFrame(data, TestSchemas.sparkSchema)
         .write
         .format("iceberg")
         .mode("append")
