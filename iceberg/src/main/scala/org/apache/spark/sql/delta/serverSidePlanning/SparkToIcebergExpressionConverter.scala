@@ -22,8 +22,6 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
 /**
  * Converts Spark Filter expressions to Iceberg Expression objects for server-side planning.
  *
- * This is a pure utility class with no side effects. All methods are thread-safe and stateless.
- *
  * Filter Mapping Table:
  * {{{
  * +-----------------------+--------------------------------+
@@ -46,9 +44,6 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  * +-----------------------+--------------------------------+
  * }}}
  *
- * Unsupported filters return None and are not pushed to the server.
- * This only affects performance (server returns more data), not correctness
- * (Spark always re-applies all filters locally as residuals).
  *
  * Example usage:
  * {{{
@@ -132,6 +127,8 @@ object SparkToIcebergExpressionConverter {
     case v: BigDecimal => Expressions.equal(attribute, v.bigDecimal)
     case v: String => Expressions.equal(attribute, v)
     case v: Boolean => Expressions.equal(attribute, v: java.lang.Boolean)
+    case v: java.sql.Date => Expressions.equal(attribute, v)
+    case v: java.sql.Timestamp => Expressions.equal(attribute, v)
     case null => Expressions.isNull(attribute)
     case _ => Expressions.equal(attribute, sparkValue.toString)
   }
@@ -144,6 +141,8 @@ object SparkToIcebergExpressionConverter {
     case v: BigDecimal => Expressions.notEqual(attribute, v.bigDecimal)
     case v: String => Expressions.notEqual(attribute, v)
     case v: Boolean => Expressions.notEqual(attribute, v: java.lang.Boolean)
+    case v: java.sql.Date => Expressions.notEqual(attribute, v)
+    case v: java.sql.Timestamp => Expressions.notEqual(attribute, v)
     case null =>
       throw new IllegalArgumentException(
         "NotEqualTo with null is always false. Use IsNotNull instead.")
@@ -171,8 +170,8 @@ object SparkToIcebergExpressionConverter {
     case v: Double => Expressions.lessThan(attribute, v: java.lang.Double)
     case v: BigDecimal => Expressions.lessThan(attribute, v.bigDecimal)
     case v: String => Expressions.lessThan(attribute, v)
-    case v: java.sql.Date => Expressions.lessThan(attribute, v.toString)
-    case v: java.sql.Timestamp => Expressions.lessThan(attribute, v.toString)
+    case v: java.sql.Date => Expressions.lessThan(attribute, v)
+    case v: java.sql.Timestamp => Expressions.lessThan(attribute, v)
     case _ =>
       throw new IllegalArgumentException(s"Unsupported type for LessThan: ${sparkValue.getClass}")
   }
@@ -185,8 +184,8 @@ object SparkToIcebergExpressionConverter {
     case v: Double => Expressions.greaterThan(attribute, v: java.lang.Double)
     case v: BigDecimal => Expressions.greaterThan(attribute, v.bigDecimal)
     case v: String => Expressions.greaterThan(attribute, v)
-    case v: java.sql.Date => Expressions.greaterThan(attribute, v.toString)
-    case v: java.sql.Timestamp => Expressions.greaterThan(attribute, v.toString)
+    case v: java.sql.Date => Expressions.greaterThan(attribute, v)
+    case v: java.sql.Timestamp => Expressions.greaterThan(attribute, v)
     case _ =>
       throw new IllegalArgumentException(
         s"Unsupported type for GreaterThan: ${sparkValue.getClass}")
@@ -200,8 +199,8 @@ object SparkToIcebergExpressionConverter {
     case v: Double => Expressions.lessThanOrEqual(attribute, v: java.lang.Double)
     case v: BigDecimal => Expressions.lessThanOrEqual(attribute, v.bigDecimal)
     case v: String => Expressions.lessThanOrEqual(attribute, v)
-    case v: java.sql.Date => Expressions.lessThanOrEqual(attribute, v.toString)
-    case v: java.sql.Timestamp => Expressions.lessThanOrEqual(attribute, v.toString)
+    case v: java.sql.Date => Expressions.lessThanOrEqual(attribute, v)
+    case v: java.sql.Timestamp => Expressions.lessThanOrEqual(attribute, v)
     case _ =>
       throw new IllegalArgumentException(
         s"Unsupported type for LessThanOrEqual: ${sparkValue.getClass}")
@@ -215,8 +214,8 @@ object SparkToIcebergExpressionConverter {
     case v: Double => Expressions.greaterThanOrEqual(attribute, v: java.lang.Double)
     case v: BigDecimal => Expressions.greaterThanOrEqual(attribute, v.bigDecimal)
     case v: String => Expressions.greaterThanOrEqual(attribute, v)
-    case v: java.sql.Date => Expressions.greaterThanOrEqual(attribute, v.toString)
-    case v: java.sql.Timestamp => Expressions.greaterThanOrEqual(attribute, v.toString)
+    case v: java.sql.Date => Expressions.greaterThanOrEqual(attribute, v)
+    case v: java.sql.Timestamp => Expressions.greaterThanOrEqual(attribute, v)
     case _ =>
       throw new IllegalArgumentException(
         s"Unsupported type for GreaterThanOrEqual: ${sparkValue.getClass}")
