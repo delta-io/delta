@@ -498,6 +498,36 @@ public class TableFeatures {
     }
   }
 
+  /** This feature was replaced with its stable version, `collations`. */
+  public static final TableFeature COLLATIONS_PREVIEW_W_FEATURE = new CollationsPreview();
+
+  private static class CollationsPreview extends TableFeature.WriterFeature {
+    CollationsPreview() {
+      super("collations-preview", /* minWriterVersion = */ 7);
+    }
+
+    /** This feature is still not supported by Kernel for writes. */
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false;
+    }
+  }
+
+  /** The stable collation feature. */
+  public static final TableFeature COLLATIONS_W_FEATURE = new Collations();
+
+  private static class Collations extends TableFeature.WriterFeature {
+    Collations() {
+      super("collations", /* minWriterVersion = */ 7);
+    }
+
+    /** This feature is still not supported by Kernel for writes. */
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false;
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -539,7 +569,9 @@ public class TableFeatures {
               VARIANT_RW_PREVIEW_FEATURE,
               VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
               ICEBERG_WRITER_COMPAT_V1,
-              ICEBERG_WRITER_COMPAT_V3));
+              ICEBERG_WRITER_COMPAT_V3,
+              COLLATIONS_PREVIEW_W_FEATURE,
+              COLLATIONS_W_FEATURE));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(
