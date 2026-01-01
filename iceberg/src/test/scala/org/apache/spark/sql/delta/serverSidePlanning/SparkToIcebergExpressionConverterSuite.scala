@@ -22,8 +22,8 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
-  // Types that support comparison operators (LessThan, GreaterThan, etc.)
-  private val numericTypes = Seq(
+  // Types that support comparison operators (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
+  private val comparableTypes = Seq(
     // (column name, test value, label to identify test case)
     ("intCol", 42, "Int"),
     ("longCol", 100L, "Long"),
@@ -38,11 +38,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   )
 
   // Types that only support equality operators (EqualTo, NotEqualTo, IsNull, IsNotNull)
-  private val nonNumericTypes = Seq(
+  private val equalityOnlyTypes = Seq(
     ("boolCol", true, "Boolean")
   )
 
-  private val allTypes = numericTypes ++ nonNumericTypes
+  private val allTypes = comparableTypes ++ equalityOnlyTypes
   private val testSchema = TestSchemas.testSchema.asStruct()
 
   /**
@@ -81,9 +81,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v))
     )
 
-    // Generate all combinations of numeric types x comparison operators
+    // Generate all combinations of comparable types x comparison operators
     val testCases = for {
-      (col, value, typeDesc) <- numericTypes
+      (col, value, typeDesc) <- comparableTypes
       (opName, sparkOp, icebergOp) <- comparisonOperators
     } yield (sparkOp(col, value), Some(icebergOp(col, value)), s"$opName $typeDesc")
 
