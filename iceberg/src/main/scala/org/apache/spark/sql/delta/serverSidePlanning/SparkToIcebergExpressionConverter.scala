@@ -166,10 +166,16 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
       case v: String => exprBuilder(attribute, v)
       case v: java.sql.Date =>
         // Iceberg expects days since epoch (1970-01-01) as Int
+        // See: Iceberg Literals.java - Literals.from() doesn't accept java.sql.Date
+        // Reference: https://github.com/apache/iceberg/blob/main/api/src/main/java/
+        //   org/apache/iceberg/expressions/Literals.java
         val daysFromEpoch = (v.getTime / (1000L * 60 * 60 * 24)).toInt
         exprBuilder(attribute, daysFromEpoch: Integer)
       case v: java.sql.Timestamp =>
         // Iceberg expects microseconds since epoch as Long
+        // See: Iceberg Literals.java - Literals.from() doesn't accept java.sql.Timestamp
+        // Reference: https://github.com/apache/iceberg/blob/main/api/src/main/java/
+        //   org/apache/iceberg/expressions/Literals.java
         val microsFromEpoch = v.getTime * 1000 + (v.getNanos % 1000000) / 1000
         exprBuilder(attribute, microsFromEpoch: java.lang.Long)
       case v: Boolean if supportBoolean => exprBuilder(attribute, v: java.lang.Boolean)
@@ -184,6 +190,9 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
    * with specialized predicates (isNull/isNaN) that have different evaluation semantics:
    * - SQL: col = NULL returns NULL (unknown), but col IS NULL returns TRUE/FALSE
    * - Iceberg distinguishes these cases with separate predicate types
+   * Reference: Iceberg SparkV2Filters.handleEqual() and handleNotEqual()
+   * https://github.com/apache/iceberg/blob/main/spark/v4.0/spark/src/main/java/
+   *   org/apache/iceberg/spark/SparkV2Filters.java#L388-L404
    */
   private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
     sparkValue match {

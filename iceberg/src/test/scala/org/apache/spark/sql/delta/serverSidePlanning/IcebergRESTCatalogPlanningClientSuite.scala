@@ -134,6 +134,111 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   // This will test the client's partition validation logic at
   // IcebergRESTCatalogPlanningClient:160-164
 
+  test("UnityCatalogMetadata uses prefix from /v1/config endpoint") {
+    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+
+    // Configure server to return prefix
+    server.setCatalogPrefix("catalogs/test-catalog")
+
+    val metadata = UnityCatalogMetadata(
+      catalogName = "test_catalog",
+      ucUri = serverUri,
+      ucToken = "test-token",
+      tableProps = Map.empty)
+
+    // Verify endpoint includes prefix from /v1/config response
+    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest/v1/catalogs/test-catalog"
+    assert(
+      metadata.planningEndpointUri == expectedEndpoint,
+      s"Expected endpoint to include prefix: ${metadata.planningEndpointUri}")
+  }
+
+  test("UnityCatalogMetadata falls back when /v1/config returns no prefix") {
+    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+
+    // Configure server to return no prefix (fallback case)
+    server.setCatalogPrefix(null)
+
+    val metadata = UnityCatalogMetadata(
+      catalogName = "test_catalog",
+      ucUri = serverUri,
+      ucToken = "test-token",
+      tableProps = Map.empty)
+
+    // Verify endpoint uses simple path without prefix
+    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
+    assert(
+      metadata.planningEndpointUri == expectedEndpoint,
+      s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
+  }
+
+  test("filter sent to IRC server over HTTP") {
+    withTempTable("filterTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.filterTest")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        val testCases = Seq(
+          (EqualTo("longCol", 2L), "EqualTo numeric (long)"),
+          (EqualTo("intCol", 30), "EqualTo numeric (int)"),
+          (EqualTo("stringCol", "bob"), "EqualTo string"),
+          (EqualTo("boolCol", true), "EqualTo boolean"),
+          (Not(EqualTo("longCol", 2L)), "NotEqualTo numeric (long)"),
+          (Not(EqualTo("stringCol", "bob")), "NotEqualTo string"),
+          (LessThan("longCol", 10L), "LessThan (long)"),
+          (LessThan("floatCol", 4.5f), "LessThan (float)"),
+          (GreaterThan("longCol", 5L), "GreaterThan (long)"),
+          (GreaterThan("doubleCol", 100.0), "GreaterThan (double)"),
+          (LessThanOrEqual("intCol", 30), "LessThanOrEqual (int)"),
+          (GreaterThanOrEqual("doubleCol", 100.0), "GreaterThanOrEqual (double)"),
+          (In("longCol", Array(1L, 2L, 3L)), "In numeric (long)"),
+          (In("stringCol", Array("alice", "bob", "charlie")), "In string"),
+          (IsNull("stringCol"), "IsNull"),
+          (IsNotNull("stringCol"), "IsNotNull"),
+          (StringStartsWith("stringCol", "ali"), "StringStartsWith"),
+          (AlwaysTrue(), "AlwaysTrue"),
+          (AlwaysFalse(), "AlwaysFalse"),
+          (And(EqualTo("longCol", 2L), EqualTo("stringCol", "bob")), "And"),
+          (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or"),
+          (EqualTo("address.intCol", 200), "EqualTo on nested numeric field"),
+          (EqualTo("metadata.stringCol", "meta_bob"), "EqualTo on nested string field"),
+          (GreaterThan("address.intCol", 500), "GreaterThan on nested numeric field"))
+
+        testCases.foreach { case (filter, description) =>
+          // Clear previous captured filter
+          server.clearCaptured()
+
+          // Convert Spark filter to expected Iceberg expression
+          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter)
+          assert(
+            expectedExpr.isDefined,
+            s"[$description] Filter conversion should succeed for: $filter")
+
+          // Call client with filter
+          client.planScan(
+            defaultNamespace.toString,
+            "filterTest",
+            sparkFilterOption = Some(filter))
+
+          // Verify server captured the filter
+          val capturedFilter = server.getCapturedFilter
+          assert(capturedFilter != null, s"[$description] Server should have captured filter")
+
+          // isEquivalentTo() only works on bound expressions, so bind both to schema for comparison
+          // Binding resolves field references from names to schema-specific field IDs and types
+          val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
+          val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
+
+          assert(
+            boundCaptured.isEquivalentTo(boundExpected),
+            s"[$description] Expected expression: $boundExpected, got: $boundCaptured")
+        }
+      } finally {
+        client.close()
+      }
+    }
+  }
+
   private def startServer(): IcebergRESTServer = {
     val config = Map(IcebergRESTServer.REST_PORT -> "0").asJava
     val newServer = new IcebergRESTServer(config)
@@ -207,110 +312,4 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       .mode("append")
       .save(tableName)
   }
-
-  test("UnityCatalogMetadata uses prefix from /v1/config endpoint") {
-    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
-
-    // Configure server to return prefix
-    server.setCatalogPrefix("catalogs/test-catalog")
-
-    val metadata = UnityCatalogMetadata(
-      catalogName = "test_catalog",
-      ucUri = serverUri,
-      ucToken = "test-token",
-      tableProps = Map.empty
-    )
-
-    // Verify endpoint includes prefix from /v1/config response
-    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest/v1/catalogs/test-catalog"
-    assert(metadata.planningEndpointUri == expectedEndpoint,
-      s"Expected endpoint to include prefix: ${metadata.planningEndpointUri}")
-  }
-
-  test("UnityCatalogMetadata falls back when /v1/config returns no prefix") {
-    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
-
-    // Configure server to return no prefix (fallback case)
-    server.setCatalogPrefix(null)
-
-    val metadata = UnityCatalogMetadata(
-      catalogName = "test_catalog",
-      ucUri = serverUri,
-      ucToken = "test-token",
-      tableProps = Map.empty
-    )
-
-    // Verify endpoint uses simple path without prefix
-    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
-    assert(metadata.planningEndpointUri == expectedEndpoint,
-      s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
-  }
-
-  test("filter sent to IRC server over HTTP") {
-    withTempTable("filterTest") { table =>
-      populateTestData(s"rest_catalog.${defaultNamespace}.filterTest")
-
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
-      try {
-        val testCases = Seq(
-          (EqualTo("longCol", 2L), "EqualTo numeric (long)"),
-          (EqualTo("intCol", 30), "EqualTo numeric (int)"),
-          (EqualTo("stringCol", "bob"), "EqualTo string"),
-          (EqualTo("boolCol", true), "EqualTo boolean"),
-          (Not(EqualTo("longCol", 2L)), "NotEqualTo numeric (long)"),
-          (Not(EqualTo("stringCol", "bob")), "NotEqualTo string"),
-          (LessThan("longCol", 10L), "LessThan (long)"),
-          (LessThan("floatCol", 4.5f), "LessThan (float)"),
-          (GreaterThan("longCol", 5L), "GreaterThan (long)"),
-          (GreaterThan("doubleCol", 100.0), "GreaterThan (double)"),
-          (LessThanOrEqual("intCol", 30), "LessThanOrEqual (int)"),
-          (GreaterThanOrEqual("doubleCol", 100.0), "GreaterThanOrEqual (double)"),
-          (In("longCol", Array(1L, 2L, 3L)), "In numeric (long)"),
-          (In("stringCol", Array("alice", "bob", "charlie")), "In string"),
-          (IsNull("stringCol"), "IsNull"),
-          (IsNotNull("stringCol"), "IsNotNull"),
-          (StringStartsWith("stringCol", "ali"), "StringStartsWith"),
-          (AlwaysTrue(), "AlwaysTrue"),
-          (AlwaysFalse(), "AlwaysFalse"),
-          (And(EqualTo("longCol", 2L), EqualTo("stringCol", "bob")), "And"),
-          (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or"),
-          (EqualTo("address.intCol", 200), "EqualTo on nested numeric field"),
-          (EqualTo("metadata.stringCol", "meta_bob"), "EqualTo on nested string field"),
-          (GreaterThan("address.intCol", 500), "GreaterThan on nested numeric field")
-        )
-
-        testCases.foreach { case (filter, description) =>
-          // Clear previous captured filter
-          server.clearCaptured()
-
-          // Convert Spark filter to expected Iceberg expression
-          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter)
-          assert(expectedExpr.isDefined,
-            s"[$description] Filter conversion should succeed for: $filter")
-
-          // Call client with filter
-          client.planScan(
-            defaultNamespace.toString,
-            "filterTest",
-            sparkFilterOption = Some(filter))
-
-          // Verify server captured the filter
-          val capturedFilter = server.getCapturedFilter
-          assert(capturedFilter != null,
-            s"[$description] Server should have captured filter")
-
-          // isEquivalentTo() only works on bound expressions, so bind both to schema for comparison
-          // Binding resolves field references from names to schema-specific field IDs and types
-          val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
-          val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
-
-          assert(boundCaptured.isEquivalentTo(boundExpected),
-            s"[$description] Expected expression: $boundExpected, got: $boundCaptured")
-        }
-      } finally {
-        client.close()
-      }
-    }
-  }
-
 }
