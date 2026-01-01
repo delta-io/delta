@@ -234,13 +234,18 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       val tableName = s"rest_catalog.${defaultNamespace}.filterTest"
       sql(s"""
         INSERT INTO $tableName (intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
-                                 decimalCol, dateCol, timestampCol)
+                                 decimalCol, dateCol, timestampCol, address, metadata)
         VALUES
-          (25, 1, 99.99, 4.5, 'alice', true, 10.00, DATE'2024-01-01', TIMESTAMP'2024-01-01 00:00:00'),
-          (30, 2, 149.50, 4.2, 'bob', false, 20.00, DATE'2024-01-02', TIMESTAMP'2024-01-02 00:00:00'),
-          (35, 3, 199.99, 4.8, 'charlie', true, 30.00, DATE'2024-01-03', TIMESTAMP'2024-01-03 00:00:00'),
-          (28, 10, 79.99, 3.9, 'david', false, 15.00, DATE'2024-01-04', TIMESTAMP'2024-01-04 00:00:00'),
-          (32, 20, 120.00, 4.6, 'eve', true, 25.00, DATE'2024-01-05', TIMESTAMP'2024-01-05 00:00:00')
+          (25, 1, 99.99, 4.5, 'alice', true, 10.00, DATE'2024-01-01', TIMESTAMP'2024-01-01 00:00:00',
+           NAMED_STRUCT('intCol', 100), NAMED_STRUCT('stringCol', 'meta_alice')),
+          (30, 2, 149.50, 4.2, 'bob', false, 20.00, DATE'2024-01-02', TIMESTAMP'2024-01-02 00:00:00',
+           NAMED_STRUCT('intCol', 200), NAMED_STRUCT('stringCol', 'meta_bob')),
+          (35, 3, 199.99, 4.8, 'charlie', true, 30.00, DATE'2024-01-03', TIMESTAMP'2024-01-03 00:00:00',
+           NAMED_STRUCT('intCol', 300), NAMED_STRUCT('stringCol', 'meta_charlie')),
+          (28, 10, 79.99, 3.9, 'david', false, 15.00, DATE'2024-01-04', TIMESTAMP'2024-01-04 00:00:00',
+           NAMED_STRUCT('intCol', 1000), NAMED_STRUCT('stringCol', 'meta_david')),
+          (32, 20, 120.00, 4.6, 'eve', true, 25.00, DATE'2024-01-05', TIMESTAMP'2024-01-05 00:00:00',
+           NAMED_STRUCT('intCol', 2000), NAMED_STRUCT('stringCol', 'meta_eve'))
       """)
 
       // Spark schema matching the table schema for filter conversion
@@ -254,7 +259,13 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         StructField("boolCol", BooleanType, nullable = false),
         StructField("decimalCol", DecimalType(10, 2), nullable = false),
         StructField("dateCol", DateType, nullable = false),
-        StructField("timestampCol", TimestampType, nullable = false)
+        StructField("timestampCol", TimestampType, nullable = false),
+        StructField("address", StructType(Seq(
+          StructField("intCol", IntegerType, nullable = false)
+        )), nullable = false),
+        StructField("metadata", StructType(Seq(
+          StructField("stringCol", StringType, nullable = false)
+        )), nullable = false)
       ))
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
@@ -280,7 +291,10 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           (AlwaysTrue(), "AlwaysTrue"),
           (AlwaysFalse(), "AlwaysFalse"),
           (And(EqualTo("longCol", 2L), EqualTo("stringCol", "bob")), "And"),
-          (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or")
+          (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or"),
+          (EqualTo("address.intCol", 200), "EqualTo on nested numeric field"),
+          (EqualTo("metadata.stringCol", "meta_bob"), "EqualTo on nested string field"),
+          (GreaterThan("address.intCol", 500), "GreaterThan on nested numeric field")
         )
 
         testCases.foreach { case (filter, description) =>
