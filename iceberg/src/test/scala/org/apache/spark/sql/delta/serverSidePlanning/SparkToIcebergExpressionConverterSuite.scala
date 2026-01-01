@@ -243,24 +243,36 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val unsupportedFilter = StringEndsWith("stringCol", "suffix")
 
     val testCases = Seq(
-      // Spark: And(validFilter, unsupportedFilter) → None
-      (And(validFilter, unsupportedFilter), None,
-        "AND with unsupported right side"),
+      
+      (
+        And(validFilter, unsupportedFilter), // Spark: And(validFilter, unsupportedFilter)
+        None, // Right side is unsupported so whole Iceberg expression becomes None
+        "AND with unsupported right side" // label to identify test case
+      ),
 
-      // Spark: And(unsupportedFilter, validFilter) → None
-      (And(unsupportedFilter, validFilter), None,
-        "AND with unsupported left side"),
+      (
+        And(unsupportedFilter, validFilter), 
+        None, // Left side is unsupported so whole Iceberg expression becomes None
+        "AND with unsupported left side"
+      ),
 
-      // Spark: Or(validFilter, unsupportedFilter) → None
-      (Or(validFilter, unsupportedFilter), None,
+      (
+        Or(validFilter, unsupportedFilter), 
+        None,
         "OR with unsupported right side"),
 
-      // Spark: Or(unsupportedFilter, validFilter) → None
-      (Or(unsupportedFilter, validFilter), None,
+      (
+        Or(unsupportedFilter, validFilter), 
+        None,
         "OR with unsupported left side"),
 
-      // Nested: And(valid, Or(valid, unsupported)) → None
-      (And(validFilter, Or(validFilter, unsupportedFilter)), None,
+      (
+        And(
+          validFilter, Or(
+            validFilter, 
+            unsupportedFilter // even when unsupported filter is nested, whole Iceberg expression becomes None
+          )
+        ), None,
         "Nested AND with unsupported in OR")
     )
 
@@ -315,7 +327,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "NotEqualTo with Float.NaN"
       ),
 
-      // Range filter (same column used twice)
+      // Same column used twice
       (
         And(
           GreaterThan("intCol", 0), LessThan("intCol", 100)
