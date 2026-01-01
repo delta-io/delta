@@ -23,18 +23,18 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   private val numericTypes = Seq(
-    // (columnName, testValue, label to identify test cases)
+    // (column name, test value, label to identify test case)
     ("intCol", 42, "Int"),
     ("longCol", 100L, "Long"),
     ("doubleCol", 99.99, "Double"),
     ("floatCol", 10.5f, "Float"),
+    ("decimalCol", BigDecimal("123.45"), "Decimal"),
     ("address.intCol", 42, "Nested Int")
   )
 
   private val nonNumericTypes = Seq(
     ("stringCol", "test", "String"),
     ("boolCol", true, "Boolean"),
-    ("decimalCol", BigDecimal("123.45"), "Decimal"),
     ("dateCol", java.sql.Date.valueOf("2023-12-31"), "Date"),
     ("timestampCol", java.sql.Timestamp.valueOf("2023-01-01 00:00:00"), "Timestamp"),
     ("metadata.stringCol", "test", "Nested String")

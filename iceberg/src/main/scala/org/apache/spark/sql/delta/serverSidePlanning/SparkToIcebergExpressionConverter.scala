@@ -129,6 +129,7 @@ object SparkToIcebergExpressionConverter {
     case v: Long => Expressions.equal(attribute, v: java.lang.Long)
     case v: Float => Expressions.equal(attribute, v: java.lang.Float)
     case v: Double => Expressions.equal(attribute, v: java.lang.Double)
+    case v: BigDecimal => Expressions.equal(attribute, v.bigDecimal)
     case v: String => Expressions.equal(attribute, v)
     case v: Boolean => Expressions.equal(attribute, v: java.lang.Boolean)
     case null => Expressions.isNull(attribute)
@@ -140,6 +141,7 @@ object SparkToIcebergExpressionConverter {
     case v: Long => Expressions.notEqual(attribute, v: java.lang.Long)
     case v: Float => Expressions.notEqual(attribute, v: java.lang.Float)
     case v: Double => Expressions.notEqual(attribute, v: java.lang.Double)
+    case v: BigDecimal => Expressions.notEqual(attribute, v.bigDecimal)
     case v: String => Expressions.notEqual(attribute, v)
     case v: Boolean => Expressions.notEqual(attribute, v: java.lang.Boolean)
     case null =>
@@ -167,6 +169,7 @@ object SparkToIcebergExpressionConverter {
     case v: Long => Expressions.lessThan(attribute, v: java.lang.Long)
     case v: Float => Expressions.lessThan(attribute, v: java.lang.Float)
     case v: Double => Expressions.lessThan(attribute, v: java.lang.Double)
+    case v: BigDecimal => Expressions.lessThan(attribute, v.bigDecimal)
     case v: String => Expressions.lessThan(attribute, v)
     case _ =>
       throw new IllegalArgumentException(s"Unsupported type for LessThan: ${sparkValue.getClass}")
@@ -178,6 +181,7 @@ object SparkToIcebergExpressionConverter {
     case v: Long => Expressions.greaterThan(attribute, v: java.lang.Long)
     case v: Float => Expressions.greaterThan(attribute, v: java.lang.Float)
     case v: Double => Expressions.greaterThan(attribute, v: java.lang.Double)
+    case v: BigDecimal => Expressions.greaterThan(attribute, v.bigDecimal)
     case v: String => Expressions.greaterThan(attribute, v)
     case _ =>
       throw new IllegalArgumentException(
@@ -190,6 +194,7 @@ object SparkToIcebergExpressionConverter {
     case v: Long => Expressions.lessThanOrEqual(attribute, v: java.lang.Long)
     case v: Float => Expressions.lessThanOrEqual(attribute, v: java.lang.Float)
     case v: Double => Expressions.lessThanOrEqual(attribute, v: java.lang.Double)
+    case v: BigDecimal => Expressions.lessThanOrEqual(attribute, v.bigDecimal)
     case v: String => Expressions.lessThanOrEqual(attribute, v)
     case _ =>
       throw new IllegalArgumentException(
@@ -202,6 +207,7 @@ object SparkToIcebergExpressionConverter {
     case v: Long => Expressions.greaterThanOrEqual(attribute, v: java.lang.Long)
     case v: Float => Expressions.greaterThanOrEqual(attribute, v: java.lang.Float)
     case v: Double => Expressions.greaterThanOrEqual(attribute, v: java.lang.Double)
+    case v: BigDecimal => Expressions.greaterThanOrEqual(attribute, v.bigDecimal)
     case v: String => Expressions.greaterThanOrEqual(attribute, v)
     case _ =>
       throw new IllegalArgumentException(
