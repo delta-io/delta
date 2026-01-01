@@ -40,6 +40,9 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  * | IsNotNull             | Expressions.notNull()          |
  * | And                   | Expressions.and()              |
  * | Or                    | Expressions.or()               |
+ * | StringStartsWith      | Expressions.startsWith()       |
+ * | AlwaysTrue            | Expressions.alwaysTrue()       |
+ * | AlwaysFalse           | Expressions.alwaysFalse()      |
  * +-----------------------+--------------------------------+
  * }}}
  *
@@ -101,9 +104,19 @@ object SparkToIcebergExpressionConverter {
         rightIcebergExpr <- convert(right)
       } yield Expressions.or(leftIcebergExpr, rightIcebergExpr)
 
+    // String Operations
+    case StringStartsWith(attribute, value) =>
+      Some(Expressions.startsWith(attribute, value))
+
+    // Always True/False
+    case AlwaysTrue() =>
+      Some(Expressions.alwaysTrue())
+    case AlwaysFalse() =>
+      Some(Expressions.alwaysFalse())
+
     // Unsupported Filters
     case _ =>
-      // Unsupported filter type (e.g., StringStartsWith, In, Not, etc.)
+      // Unsupported filter types (e.g., StringEndsWith, StringContains, EqualNullSafe, etc.)
       // Return None to indicate this filter cannot be pushed down to the server.
       // Correctness is preserved because Spark re-applies all filters as residuals.
       None
@@ -136,7 +149,7 @@ object SparkToIcebergExpressionConverter {
   }
 
   private def convertIn(attribute: String, values: Array[Any]): Expression = {
-    // Filter out null values (following Iceberg OSS behavior)
+    // Iceberg expects IN to filter out null values
     val nonNullValues = values.filter(_ != null).map {
       case v: Int => v: Integer
       case v: Long => v: java.lang.Long
