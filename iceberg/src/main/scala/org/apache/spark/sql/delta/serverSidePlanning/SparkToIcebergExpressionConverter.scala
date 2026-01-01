@@ -171,19 +171,6 @@ object SparkToIcebergExpressionConverter {
     case _ => exprBuilder(attribute, sparkValue.toString)
   }
 
-  /**
-   * Helper to convert a value for use in IN clauses.
-   * Coerces Spark types to Iceberg-compatible types.
-   */
-  private def coerceValue(value: Any): Any = value match {
-    case v: Int => v: Integer
-    case v: Long => v: java.lang.Long
-    case v: Float => v: java.lang.Float
-    case v: Double => v: java.lang.Double
-    case v: Boolean => v: java.lang.Boolean
-    case v => v
-  }
-
   private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
     // NaN values cannot be represented in Iceberg
     if (isNaN(sparkValue)) {
@@ -211,8 +198,15 @@ object SparkToIcebergExpressionConverter {
   }
 
   private def convertIn(attribute: String, values: Array[Any]): Expression = {
-    // Iceberg expects IN to filter out null values
-    val nonNullValues = values.filter(_ != null).map(coerceValue)
+    // Iceberg expects IN to filter out null values and coerce types
+    val nonNullValues = values.filter(_ != null).map {
+      case v: Int => v: Integer
+      case v: Long => v: java.lang.Long
+      case v: Float => v: java.lang.Float
+      case v: Double => v: java.lang.Double
+      case v: Boolean => v: java.lang.Boolean
+      case v => v
+    }
     Expressions.in(attribute, nonNullValues: _*)
   }
 
