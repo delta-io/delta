@@ -26,6 +26,8 @@ object DeltaSQLConfV2 extends DeltaSQLConfUtils {
    *
    * Valid values:
    * - NONE: V2 connector is disabled, always use V1 connector (DeltaTableV2) - default
+   * - AUTO: Automatically use V2 connector (SparkTable) for Unity Catalog managed tables
+   *         in streaming queries and V1 connector (DeltaTableV2) for all other tables
    * - STRICT: V2 connector is strictly enforced, always use V2 connector (Kernel SparkTable).
    *           Intended for testing V2 connector capabilities
    *
@@ -39,9 +41,10 @@ object DeltaSQLConfV2 extends DeltaSQLConfUtils {
     buildConf("v2.enableMode")
       .doc(
         "Controls the Delta V2 connector enable mode. " +
-        "Valid values: NONE (disabled, default), STRICT (should ONLY be enabled for testing).")
+        "Valid values: NONE (disabled, default), AUTO (use V2 for Unity Catalog managed tables), " +
+        "STRICT (should ONLY be enabled for testing).")
       .stringConf
-      .checkValues(Set("NONE", "STRICT"))
+      .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("NONE")
 }
 

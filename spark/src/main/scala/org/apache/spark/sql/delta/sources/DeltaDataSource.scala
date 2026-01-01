@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.sources
 
+import java.util.Locale
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
@@ -29,7 +31,7 @@ import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.{PartitionUtils, Utils}
+import org.apache.spark.sql.delta.util.{DeltaCatalogUtils, PartitionUtils, Utils}
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
 import org.json4s.jackson.Serialization
@@ -38,7 +40,6 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Expression, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{Table, TableProvider}
 import org.apache.spark.sql.connector.expressions.Transform
@@ -111,6 +112,14 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
+    // Only bypass schema loading for catalog-managed tables in V2 streaming mode.
+    // When V2_ENABLE_MODE is AUTO or STRICT, the schema comes from SparkTable (Kernel)
+    // which has already validated the table. For NONE mode, we must go through the
+    // normal DeltaLog schema loading path to ensure proper validation.
+    if (schema.isDefined &&
+        shouldUseProvidedSchemaForStreaming(sqlContext.sparkSession, parameters)) {
+      return (shortName(), schema.get)
+    }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
@@ -156,6 +165,40 @@ class DeltaDataSource
       (shortName(), CDCReader.cdcReadSchema(schemaToUse))
     } else {
       (shortName(), schemaToUse)
+    }
+  }
+
+  /**
+   * Determines whether to use the provided schema for streaming queries.
+   *
+   * NOTE: This method is only called from `sourceSchema`, which is part of the
+   * StreamSourceProvider interface, so we are guaranteed to be in a streaming context.
+   *
+   * The check determines which streaming path we're in:
+   * - STRICT mode: DeltaCatalog always returns SparkTable for catalog tables. If we have a schema
+   *   and catalogTableOpt is defined, it came from SparkTable/Kernel via DeltaCatalog, so trust it.
+   * - AUTO mode: Schema comes from SparkTable (Kernel) via ApplyV2Streaming rule for Unity Catalog
+   *   tables. Check marker (in parameters) to ensure it's not user-provided.
+   * - NONE mode: V1 streaming path, must load schema via DeltaLog for validation.
+   *
+   * @param parameters The streaming options, which may contain a marker set by ApplyV2Streaming
+   * @return true if we should use the provided schema (V2 path with SparkTable), false if we
+   *         should load it from DeltaLog (V1 path or user-provided schema)
+   */
+  private def shouldUseProvidedSchemaForStreaming(
+      spark: SparkSession,
+      parameters: Map[String, String]): Boolean = {
+    // NOTE: DeltaSQLConfV2 lives in kernel-spark, which sparkV1 cannot depend on. Use the shared
+    // key constant from DeltaSQLConfUtils instead.
+    val mode = spark.conf.get(DeltaSQLConf.V2_ENABLE_MODE_KEY, "NONE")
+
+    mode.toUpperCase(Locale.ROOT) match {
+      case "STRICT" | "AUTO" =>
+        // In STRICT or AUTO mode, we trust the schema if it's a Unity Catalog managed table.
+        catalogTableOpt.exists(DeltaCatalogUtils.isUnityCatalogManagedTable)
+      case _ =>
+        // NONE or unknown: V1 streaming or fallback, must load schema via DeltaLog
+        false
     }
   }
 
