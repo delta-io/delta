@@ -92,33 +92,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   // them.
   test("plan scan on non-empty table with data files") {
     withTempTable("tableWithData") { table =>
-      // Write data to the table using Spark
       val tableName = s"rest_catalog.${defaultNamespace}.tableWithData"
-
-      // Write data with 2 partitions to create 2 data files
-      import org.apache.spark.sql.Row
-      import org.apache.spark.sql.types._
-      
-      val data = spark.sparkContext.parallelize(0 until 250, numSlices = 2)
-        .map(i => Row(
-          i, // intCol
-          i.toLong, // longCol
-          i * 10.0, // doubleCol
-          i.toFloat, // floatCol
-          s"test_$i", // stringCol
-          i % 2 == 0, // boolCol
-          BigDecimal(i).bigDecimal, // decimalCol
-          java.sql.Date.valueOf("2024-01-01"), // dateCol
-          java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
-          Row(i * 100), // address.intCol
-          Row(s"meta_$i") // metadata.stringCol
-        ))
-      
-      spark.createDataFrame(data, TestSchemas.sparkSchema)
-        .write
-        .format("iceberg")
-        .mode("append")
-        .save(tableName)
+      populateTestData(tableName)
 
       // Get the actual data files from the table metadata to verify against scan plan
       val expectedFiles = spark.sql(
@@ -206,23 +181,31 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
   /**
    * Populates a table with sample test data covering all schema types.
+   * Uses parallelize with 2 partitions to create 2 data files.
    */
   private def populateTestData(tableName: String): Unit = {
-    sql(s"""
-      INSERT INTO $tableName (intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
-                               decimalCol, dateCol, timestampCol, address, metadata)
-      VALUES
-        (25, 1, 99.99, 4.5, 'alice', true, 10.00, DATE'2024-01-01', TIMESTAMP'2024-01-01 00:00:00',
-         NAMED_STRUCT('intCol', 100), NAMED_STRUCT('stringCol', 'meta_alice')),
-        (30, 2, 149.50, 4.2, 'bob', false, 20.00, DATE'2024-01-02', TIMESTAMP'2024-01-02 00:00:00',
-         NAMED_STRUCT('intCol', 200), NAMED_STRUCT('stringCol', 'meta_bob')),
-        (35, 3, 199.99, 4.8, 'charlie', true, 30.00, DATE'2024-01-03', TIMESTAMP'2024-01-03 00:00:00',
-         NAMED_STRUCT('intCol', 300), NAMED_STRUCT('stringCol', 'meta_charlie')),
-        (28, 10, 79.99, 3.9, 'david', false, 15.00, DATE'2024-01-04', TIMESTAMP'2024-01-04 00:00:00',
-         NAMED_STRUCT('intCol', 1000), NAMED_STRUCT('stringCol', 'meta_david')),
-        (32, 20, 120.00, 4.6, 'eve', true, 25.00, DATE'2024-01-05', TIMESTAMP'2024-01-05 00:00:00',
-         NAMED_STRUCT('intCol', 2000), NAMED_STRUCT('stringCol', 'meta_eve'))
-    """)
+    import org.apache.spark.sql.Row
+    
+    val data = spark.sparkContext.parallelize(0 until 250, numSlices = 2)
+      .map(i => Row(
+        i, // intCol
+        i.toLong, // longCol
+        i * 10.0, // doubleCol
+        i.toFloat, // floatCol
+        s"test_$i", // stringCol
+        i % 2 == 0, // boolCol
+        BigDecimal(i).bigDecimal, // decimalCol
+        java.sql.Date.valueOf("2024-01-01"), // dateCol
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
+        Row(i * 100), // address.intCol
+        Row(s"meta_$i") // metadata.stringCol
+      ))
+    
+    spark.createDataFrame(data, TestSchemas.sparkSchema)
+      .write
+      .format("iceberg")
+      .mode("append")
+      .save(tableName)
   }
 
   test("UnityCatalogMetadata uses prefix from /v1/config endpoint") {
