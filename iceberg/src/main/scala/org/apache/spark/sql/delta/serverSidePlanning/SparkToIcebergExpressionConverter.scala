@@ -131,13 +131,18 @@ object SparkToIcebergExpressionConverter {
 
   /**
    * Base helper to build expressions with type coercion.
-   * Handles common numeric, string, date/time types.
+   * Handles numeric, string, date/time types, and optionally Boolean.
    * Throws IllegalArgumentException for unsupported types.
+   *
+   * @param supportBoolean if true, also handles Boolean type.
+   *        Note: Comparison operators (LessThan, GreaterThan, etc.) don't support Boolean.
+   *        Only equality operators (EqualTo, NotEqualTo) should set this to true.
    */
   private def buildExpression(
       attribute: String,
       sparkValue: Any,
-      exprBuilder: (String, Any) => Expression): Expression = sparkValue match {
+      exprBuilder: (String, Any) => Expression,
+      supportBoolean: Boolean = false): Expression = sparkValue match {
     case v: Int => exprBuilder(attribute, v: Integer)
     case v: Long => exprBuilder(attribute, v: java.lang.Long)
     case v: Float => exprBuilder(attribute, v: java.lang.Float)
@@ -147,30 +152,9 @@ object SparkToIcebergExpressionConverter {
     case v: String => exprBuilder(attribute, v)
     case v: java.sql.Date => exprBuilder(attribute, v)
     case v: java.sql.Timestamp => exprBuilder(attribute, v)
+    case v: Boolean if supportBoolean => exprBuilder(attribute, v: java.lang.Boolean)
     case _ =>
       throw new IllegalArgumentException(s"Unsupported type: ${sparkValue.getClass}")
-  }
-
-  /**
-   * Helper to build comparison expressions (LessThan, GreaterThan, etc.).
-   * Delegates to buildExpression for common types.
-   */
-  private def buildComparisonExpression(
-      attribute: String,
-      sparkValue: Any,
-      exprBuilder: (String, Any) => Expression): Expression =
-    buildExpression(attribute, sparkValue, exprBuilder)
-
-  /**
-   * Helper to build equality expressions (EqualTo, NotEqualTo).
-   * Adds Boolean support beyond buildExpression's common types.
-   */
-  private def buildEqualityExpression(
-      attribute: String,
-      sparkValue: Any,
-      exprBuilder: (String, Any) => Expression): Expression = sparkValue match {
-    case v: Boolean => exprBuilder(attribute, v: java.lang.Boolean)
-    case _ => buildExpression(attribute, sparkValue, exprBuilder)
   }
 
   private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
@@ -181,7 +165,12 @@ object SparkToIcebergExpressionConverter {
 
     sparkValue match {
       case null => Expressions.isNull(attribute)
-      case _ => buildEqualityExpression(attribute, sparkValue, (a, v) => Expressions.equal(a, v))
+      case _ => buildExpression(
+        attribute,
+        sparkValue,
+        (a, v) => Expressions.equal(a, v),
+        supportBoolean = true
+      )
     }
   }
 
@@ -195,7 +184,12 @@ object SparkToIcebergExpressionConverter {
       case null =>
         throw new IllegalArgumentException(
           "NotEqualTo with null is unsupported. Use IsNotNull instead.")
-      case _ => buildEqualityExpression(attribute, sparkValue, (a, v) => Expressions.notEqual(a, v))
+      case _ => buildExpression(
+        attribute,
+        sparkValue,
+        (a, v) => Expressions.notEqual(a, v),
+        supportBoolean = true
+      )
     }
   }
 
@@ -213,14 +207,14 @@ object SparkToIcebergExpressionConverter {
   }
 
   private def convertLessThan(attribute: String, sparkValue: Any): Expression =
-    buildComparisonExpression(attribute, sparkValue, (a, v) => Expressions.lessThan(a, v))
+    buildExpression(attribute, sparkValue, (a, v) => Expressions.lessThan(a, v))
 
   private def convertGreaterThan(attribute: String, sparkValue: Any): Expression =
-    buildComparisonExpression(attribute, sparkValue, (a, v) => Expressions.greaterThan(a, v))
+    buildExpression(attribute, sparkValue, (a, v) => Expressions.greaterThan(a, v))
 
   private def convertLessThanOrEqual(attribute: String, sparkValue: Any): Expression =
-    buildComparisonExpression(attribute, sparkValue, (a, v) => Expressions.lessThanOrEqual(a, v))
+    buildExpression(attribute, sparkValue, (a, v) => Expressions.lessThanOrEqual(a, v))
 
   private def convertGreaterThanOrEqual(attribute: String, sparkValue: Any): Expression =
-    buildComparisonExpression(attribute, sparkValue, (a, v) => Expressions.greaterThanOrEqual(a, v))
+    buildExpression(attribute, sparkValue, (a, v) => Expressions.greaterThanOrEqual(a, v))
 }
