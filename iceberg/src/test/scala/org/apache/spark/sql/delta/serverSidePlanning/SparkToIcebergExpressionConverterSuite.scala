@@ -22,6 +22,7 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
+  // Types that support comparison operators (LessThan, GreaterThan, etc.)
   private val numericTypes = Seq(
     // (column name, test value, label to identify test case)
     ("intCol", 42, "Int"),
@@ -29,15 +30,16 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     ("doubleCol", 99.99, "Double"),
     ("floatCol", 10.5f, "Float"),
     ("decimalCol", BigDecimal("123.45"), "Decimal"),
-    ("address.intCol", 42, "Nested Int")
-  )
-
-  private val nonNumericTypes = Seq(
     ("stringCol", "test", "String"),
-    ("boolCol", true, "Boolean"),
     ("dateCol", java.sql.Date.valueOf("2023-12-31"), "Date"),
     ("timestampCol", java.sql.Timestamp.valueOf("2023-01-01 00:00:00"), "Timestamp"),
+    ("address.intCol", 42, "Nested Int"),
     ("metadata.stringCol", "test", "Nested String")
+  )
+
+  // Types that only support equality operators (EqualTo, NotEqualTo, IsNull, IsNotNull)
+  private val nonNumericTypes = Seq(
+    ("boolCol", true, "Boolean")
   )
 
   private val allTypes = numericTypes ++ nonNumericTypes
@@ -63,7 +65,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     }
   }
 
-  test("comparison operators on numeric types") {
+  test("comparison operators on comparable types") {
     val comparisonOperators = Seq(
       ("LessThan", // name
         (col: String, v: Any) => LessThan(col, v), // Spark filter
