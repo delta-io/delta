@@ -130,7 +130,7 @@ object SparkToIcebergExpressionConverter {
   }
 
   /**
-   * Base helper to build expressions with type coercion.
+   * Helper to build expressions with type coercion.
    * Handles numeric, string, date/time types, and optionally Boolean.
    * Throws IllegalArgumentException for unsupported types.
    *

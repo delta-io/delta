@@ -23,18 +23,15 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Types that support comparison (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
+  // Note: Spark converts Date→Int and Timestamp→Long before filters reach the converter,
+  // so Date/Timestamp columns are tested via Int/Long types.
   private val comparableTypes = Seq(
-    // (column name, test value, label to identify test case)
-    ("intCol", 42, "Int"),
+    ("intCol", 42, "Int"), // (column name, test value, label to identify test case)
     ("longCol", 100L, "Long"),
     ("doubleCol", 99.99, "Double"),
     ("floatCol", 10.5f, "Float"),
     ("decimalCol", BigDecimal("123.45").bigDecimal, "Decimal"),
     ("stringCol", "test", "String"),
-    // Note: Date and Timestamp columns are tested separately because:
-    // 1. Spark internally represents them as Int (days since epoch) and Long (microseconds)
-    // 2. Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp directly
-    // 3. In real usage, Spark filters pass numeric values, not Date/Timestamp objects
     ("address.intCol", 42, "Nested Int"),
     ("metadata.stringCol", "test", "Nested String")
   )
@@ -168,10 +165,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // IN operator requires special handling because:
-  // 1. It accepts arrays of values, requiring per-element type coercion
-  // 2. Null values must be filtered out (SQL semantics: col IN (1, NULL) = col IN (1))
-  // 3. Empty arrays after null filtering result in always-false predicates
-  // 4. Type conversion needed for each array element (Scala -> Java types)
+  // - It accepts arrays of values, requiring per-element type coercion
+  // - Null values must be filtered out (SQL semantics: col IN (1, NULL) = col IN (1))
+  // - Empty arrays after null filtering result in always-false predicates
+  // - Type conversion needed for each array element (Scala -> Java types)
   test("In operator with type coercion and null handling") {
     val testCases = Seq(
       // Basic In with different types
@@ -245,7 +242,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val unsupportedFilter = StringEndsWith("stringCol", "suffix")
 
     val testCases = Seq(
-      
       (
         And(validFilter, unsupportedFilter), // Spark: And(validFilter, unsupportedFilter)
         None, // Right side is unsupported so whole Iceberg expression becomes None
@@ -351,42 +347,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     )
 
     assertConvert(testCases ++ extraTestCases)
-  }
-
-  test("Date and Timestamp handling") {
-    // Spark internally represents Date as Int (days since epoch) and Timestamp as Long (microseconds)
-    // When Date/Timestamp values appear in Spark filters, they're already converted to these numeric types
-    // by Spark's type coercion. The converter handles these as regular Int/Long values.
-    
-    // Date: represented as Int (days since 1970-01-01)
-    val dateDaysSinceEpoch = 19722 // 2023-12-31
-    
-    val testCases = Seq(
-      (
-        EqualTo("dateCol", dateDaysSinceEpoch),
-        Some(Expressions.equal("dateCol", dateDaysSinceEpoch)),
-        "Date EqualTo (as Int)"
-      ),
-      (
-        LessThan("dateCol", dateDaysSinceEpoch),
-        Some(Expressions.lessThan("dateCol", dateDaysSinceEpoch)),
-        "Date LessThan (as Int)"
-      ),
-      
-      // Timestamp: represented as Long (microseconds since epoch)
-      (
-        EqualTo("timestampCol", 1672531200000000L),
-        Some(Expressions.equal("timestampCol", 1672531200000000L)),
-        "Timestamp EqualTo (as Long)"
-      ),
-      (
-        GreaterThan("timestampCol", 1672531200000000L),
-        Some(Expressions.greaterThan("timestampCol", 1672531200000000L)),
-        "Timestamp GreaterThan (as Long)"
-      )
-    )
-    
-    assertConvert(testCases)
   }
 
   test("unsupported filters return None") {
