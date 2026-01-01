@@ -191,6 +191,27 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  /**
+   * Populates a table with sample test data covering all schema types.
+   */
+  private def populateTestData(tableName: String): Unit = {
+    sql(s"""
+      INSERT INTO $tableName (intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
+                               decimalCol, dateCol, timestampCol, address, metadata)
+      VALUES
+        (25, 1, 99.99, 4.5, 'alice', true, 10.00, DATE'2024-01-01', TIMESTAMP'2024-01-01 00:00:00',
+         NAMED_STRUCT('intCol', 100), NAMED_STRUCT('stringCol', 'meta_alice')),
+        (30, 2, 149.50, 4.2, 'bob', false, 20.00, DATE'2024-01-02', TIMESTAMP'2024-01-02 00:00:00',
+         NAMED_STRUCT('intCol', 200), NAMED_STRUCT('stringCol', 'meta_bob')),
+        (35, 3, 199.99, 4.8, 'charlie', true, 30.00, DATE'2024-01-03', TIMESTAMP'2024-01-03 00:00:00',
+         NAMED_STRUCT('intCol', 300), NAMED_STRUCT('stringCol', 'meta_charlie')),
+        (28, 10, 79.99, 3.9, 'david', false, 15.00, DATE'2024-01-04', TIMESTAMP'2024-01-04 00:00:00',
+         NAMED_STRUCT('intCol', 1000), NAMED_STRUCT('stringCol', 'meta_david')),
+        (32, 20, 120.00, 4.6, 'eve', true, 25.00, DATE'2024-01-05', TIMESTAMP'2024-01-05 00:00:00',
+         NAMED_STRUCT('intCol', 2000), NAMED_STRUCT('stringCol', 'meta_eve'))
+    """)
+  }
+
   test("UnityCatalogMetadata uses prefix from /v1/config endpoint") {
     import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
 
@@ -231,42 +252,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
   test("filter sent to IRC server over HTTP") {
     withTempTable("filterTest") { table =>
-      val tableName = s"rest_catalog.${defaultNamespace}.filterTest"
-      sql(s"""
-        INSERT INTO $tableName (intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
-                                 decimalCol, dateCol, timestampCol, address, metadata)
-        VALUES
-          (25, 1, 99.99, 4.5, 'alice', true, 10.00, DATE'2024-01-01', TIMESTAMP'2024-01-01 00:00:00',
-           NAMED_STRUCT('intCol', 100), NAMED_STRUCT('stringCol', 'meta_alice')),
-          (30, 2, 149.50, 4.2, 'bob', false, 20.00, DATE'2024-01-02', TIMESTAMP'2024-01-02 00:00:00',
-           NAMED_STRUCT('intCol', 200), NAMED_STRUCT('stringCol', 'meta_bob')),
-          (35, 3, 199.99, 4.8, 'charlie', true, 30.00, DATE'2024-01-03', TIMESTAMP'2024-01-03 00:00:00',
-           NAMED_STRUCT('intCol', 300), NAMED_STRUCT('stringCol', 'meta_charlie')),
-          (28, 10, 79.99, 3.9, 'david', false, 15.00, DATE'2024-01-04', TIMESTAMP'2024-01-04 00:00:00',
-           NAMED_STRUCT('intCol', 1000), NAMED_STRUCT('stringCol', 'meta_david')),
-          (32, 20, 120.00, 4.6, 'eve', true, 25.00, DATE'2024-01-05', TIMESTAMP'2024-01-05 00:00:00',
-           NAMED_STRUCT('intCol', 2000), NAMED_STRUCT('stringCol', 'meta_eve'))
-      """)
-
-      // Spark schema matching the table schema for filter conversion
-      import org.apache.spark.sql.types._
-      val sparkSchema = StructType(Seq(
-        StructField("intCol", IntegerType, nullable = false),
-        StructField("longCol", LongType, nullable = false),
-        StructField("doubleCol", DoubleType, nullable = false),
-        StructField("floatCol", FloatType, nullable = false),
-        StructField("stringCol", StringType, nullable = false),
-        StructField("boolCol", BooleanType, nullable = false),
-        StructField("decimalCol", DecimalType(10, 2), nullable = false),
-        StructField("dateCol", DateType, nullable = false),
-        StructField("timestampCol", TimestampType, nullable = false),
-        StructField("address", StructType(Seq(
-          StructField("intCol", IntegerType, nullable = false)
-        )), nullable = false),
-        StructField("metadata", StructType(Seq(
-          StructField("stringCol", StringType, nullable = false)
-        )), nullable = false)
-      ))
+      populateTestData(s"rest_catalog.${defaultNamespace}.filterTest")
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {

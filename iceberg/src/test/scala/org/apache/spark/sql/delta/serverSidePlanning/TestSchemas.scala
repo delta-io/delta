@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import shadedForDelta.org.apache.iceberg.Schema
 import shadedForDelta.org.apache.iceberg.types.Types
+import org.apache.spark.sql.types._
 
 /**
  * Shared test schema used across all server-side planning test suites.
@@ -60,5 +61,27 @@ object TestSchemas {
       Types.NestedField.required(111, "stringCol", Types.StringType.get)
     ))
   )
+
+  /**
+   * Spark StructType corresponding to the testSchema above.
+   * Used for filter conversion in tests.
+   */
+  val sparkSchema: StructType = StructType(Seq(
+    StructField("intCol", IntegerType, nullable = false),
+    StructField("longCol", LongType, nullable = false),
+    StructField("doubleCol", DoubleType, nullable = false),
+    StructField("floatCol", FloatType, nullable = false),
+    StructField("stringCol", StringType, nullable = false),
+    StructField("boolCol", BooleanType, nullable = false),
+    StructField("decimalCol", DecimalType(10, 2), nullable = false),
+    StructField("dateCol", DateType, nullable = false),
+    StructField("timestampCol", TimestampType, nullable = false),
+    StructField("address", StructType(Seq(
+      StructField("intCol", IntegerType, nullable = false)
+    )), nullable = false),
+    StructField("metadata", StructType(Seq(
+      StructField("stringCol", StringType, nullable = false)
+    )), nullable = false)
+  ))
 }
 
