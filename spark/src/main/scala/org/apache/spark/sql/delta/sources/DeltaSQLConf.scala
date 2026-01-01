@@ -667,6 +667,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |structs are expanded.""".stripMargin)
       .fallbackConf(DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)
 
+  val DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS =
+    buildConf("insert.preserveNullSourceStructs")
+      .internal()
+      .doc(
+        """Fixes the null expansion issue by preserving NULL structs in INSERT operations. When set
+          |to true, a NULL struct in the source will be preserved as NULL in the target after
+          |INSERT, rather than being incorrectly expanded to a struct with NULL fields. When set to
+          |false, NULL structs are expanded. This fix addresses null expansion caused by struct
+          |type cast during INSERT operations.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
+
   val DELTA_SCHEMA_TYPE_CHECK =
     buildConf("schema.typeCheck.enabled")
       .doc(
