@@ -141,10 +141,6 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
 
   /**
    * Convert a Spark value to Iceberg-compatible type with proper coercion.
-   * - Date/Timestamp are converted to Int/Long (what Iceberg understands)
-   * - Scala primitives are boxed to Java types (what Iceberg API needs)
-   * - Validates supportBoolean flag for boolean values
-   *
    * @param supportBoolean if true, also handles Boolean type.
    *        Note: Comparison operators (LessThan, GreaterThan, etc.) don't support Boolean.
    *        Only equality operators (EqualTo, NotEqualTo) should set this to true.
@@ -152,10 +148,13 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   private[serverSidePlanning] def toIcebergValue(
       value: Any,
       supportBoolean: Boolean = false): Any = value match {
-    // Date/Timestamp conversion (semantic change)
+    // Date/Timestamp conversion (semantic change) because
+    // Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp, expects Int/Long
     case v: java.sql.Date =>
+      // Iceberg expects days since epoch (1970-01-01) as Int
       (v.getTime / (1000L * 60 * 60 * 24)).toInt: Integer
     case v: java.sql.Timestamp =>
+      // Iceberg expects microseconds since epoch as Long
       (v.getTime * 1000 + (v.getNanos % 1000000) / 1000): java.lang.Long
     // Type coercion (Scala to Java boxed types)
     case v: Int => v: Integer
@@ -165,7 +164,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     case v: java.math.BigDecimal => v
     case v: String => v
     case v: Boolean if supportBoolean => v: java.lang.Boolean
-    case _ => value  // Pass through for Iceberg to validate
+    case _ => value
   }
 
   /*
