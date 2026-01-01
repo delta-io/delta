@@ -63,8 +63,7 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
               + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported') "
               + "AS SELECT CAST(0 AS INT) AS id, CAST('seed' AS STRING) AS value",
           fullTableName);
-      long expectedVersion = 0L;
-      waitForUcCommitVisibility(fullTableName, expectedVersion);
+      long expectedVersion = waitForUcCommitVisibility(fullTableName, 0L);
 
       File checkpointDir = Files.createTempDirectory("uc-streaming-checkpoint-").toFile();
       String queryName = "uc_streaming_" + UUID.randomUUID().toString().replace("-", "");
@@ -92,7 +91,7 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
                 .outputMode("append")
                 .start();
 
-        waitForUcCommitVisibility(fullTableName, expectedVersion);
+        expectedVersion = waitForUcCommitVisibility(fullTableName, expectedVersion);
 
         query.processAllAvailable();
 
@@ -109,8 +108,7 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
           writerSpark
               .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", fullTableName, i, value))
               .collect();
-          expectedVersion += 1;
-          waitForUcCommitVisibility(fullTableName, expectedVersion);
+          expectedVersion = waitForUcCommitVisibility(fullTableName, expectedVersion + 1);
 
           query.processAllAvailable();
 
@@ -148,7 +146,7 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
    * <p>This is test-only waiting to avoid flakiness in streaming offset resolution when UC commit
    * metadata is slightly behind. It does not mutate UC state, which matches production behavior.
    */
-  private void waitForUcCommitVisibility(String fullTableName, long expectedVersion)
+  private long waitForUcCommitVisibility(String fullTableName, long expectedVersion)
       throws Exception {
     ApiClient apiClient = createClient();
     TablesApi tablesApi = new TablesApi(apiClient);
@@ -177,7 +175,7 @@ public class UCDeltaTableStreamingTest extends UCDeltaTableIntegrationBaseTest {
         lastLatest = latest;
         lastMaxCommit = maxCommitVersion;
         if (visibleVersion >= expectedVersion) {
-          return;
+          return visibleVersion;
         }
         Thread.sleep(UC_COMMIT_POLL_SLEEP_MS);
       }

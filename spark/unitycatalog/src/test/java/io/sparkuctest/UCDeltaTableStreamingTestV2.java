@@ -18,11 +18,10 @@ package io.sparkuctest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import java.io.File;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -38,9 +37,8 @@ public class UCDeltaTableStreamingTestV2 extends UCDeltaTableIntegrationBaseTest
   private static final String V2_ENABLE_MODE_STRICT = "STRICT";
   private static final int STREAM_INSERTS = 100;
   private static final long STREAM_TRIGGER_MS = 1_500L;
-  private static final int WRITER_BURST_SIZE = 10;
   private static final long WRITER_INSERT_PAUSE_MS = 100L;
-  private static final long WRITER_BURST_PAUSE_MS = 2_000L;
+  private static final long WRITER_INSERT_JITTER_MS = 50L;
   private static final long SINK_POLL_SLEEP_MS = 200L;
   private static final long SINK_POLL_TIMEOUT_MS = 120_000L;
 
@@ -59,101 +57,105 @@ public class UCDeltaTableStreamingTestV2 extends UCDeltaTableIntegrationBaseTest
               + "AS SELECT CAST(0 AS INT) AS id, CAST('seed' AS STRING) AS value",
           fullTableName);
 
-      File checkpointDir = Files.createTempDirectory("uc-streaming-checkpoint-").toFile();
-      String queryName = "uc_streaming_prod_" + UUID.randomUUID().toString().replace("-", "");
-      StreamingQuery query = null;
-      Thread writerThread = null;
-      AtomicReference<Throwable> writerError = new AtomicReference<>();
+      withTempDir(
+          checkpointDir -> {
+            String queryName = "uc_streaming_prod_" + UUID.randomUUID().toString().replace("-", "");
+            StreamingQuery query = null;
+            Thread writerThread = null;
+            AtomicReference<Throwable> writerError = new AtomicReference<>();
 
-      try {
-        spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
-        assertEquals(V2_ENABLE_MODE_STRICT, spark.conf().get(V2_ENABLE_MODE_KEY));
+            try {
+              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
+              assertEquals(V2_ENABLE_MODE_STRICT, spark.conf().get(V2_ENABLE_MODE_KEY));
 
-        // Use a separate session with the original mode for batch inserts.
-        final SparkSession writerSpark = spark.newSession();
-        restoreV2Mode(writerSpark, originalMode);
+              // Use a separate session with the original mode for batch inserts.
+              final SparkSession writerSpark = spark.newSession();
+              restoreV2Mode(writerSpark, originalMode);
 
-        // Step 2: Start the streaming reader (DSv2 STRICT) with a processing-time trigger.
-        Dataset<Row> input =
-            spark.readStream().format("delta").option("startingVersion", "0").table(fullTableName);
+              // Step 2: Start the streaming reader (DSv2 STRICT) with a processing-time trigger.
+              Dataset<Row> input =
+                  spark
+                      .readStream()
+                      .format("delta")
+                      .option("startingVersion", "0")
+                      .table(fullTableName);
 
-        query =
-            input
-                .writeStream()
-                .format("memory")
-                .queryName(queryName)
-                .option("checkpointLocation", checkpointDir.getAbsolutePath())
-                .outputMode("append")
-                .trigger(Trigger.ProcessingTime(STREAM_TRIGGER_MS))
-                .start();
+              query =
+                  input
+                      .writeStream()
+                      .format("memory")
+                      .queryName(queryName)
+                      .option("checkpointLocation", checkpointDir.getAbsolutePath())
+                      .outputMode("append")
+                      .trigger(Trigger.ProcessingTime(STREAM_TRIGGER_MS))
+                      .start();
 
-        // Step 3: Start a background writer that emits bursts of commits.
-        writerThread =
-            new Thread(
-                () -> {
-                  try {
-                    System.out.println("[UCDeltaTableStreamingTestV2] Writer thread started");
-                    int burstCount = 0;
-                    for (int i = 1; i <= STREAM_INSERTS; i++) {
-                      String value = "value_" + i;
-                      writerSpark
-                          .sql(
-                              String.format(
-                                  "INSERT INTO %s VALUES (%d, '%s')", fullTableName, i, value))
-                          .collect();
-                      System.out.println(
-                          "[UCDeltaTableStreamingTestV2] Inserted row id=" + i + " value=" + value);
-                      burstCount++;
-                      if (burstCount == WRITER_BURST_SIZE) {
-                        System.out.println(
-                            "[UCDeltaTableStreamingTestV2] Writer burst pause after "
-                                + i
-                                + " inserts");
-                        burstCount = 0;
-                        Thread.sleep(WRITER_BURST_PAUSE_MS);
-                      } else {
-                        Thread.sleep(WRITER_INSERT_PAUSE_MS);
-                      }
-                    }
-                    System.out.println("[UCDeltaTableStreamingTestV2] Writer thread completed");
-                  } catch (Throwable t) {
-                    writerError.set(t);
-                  }
-                },
-                "uc-streaming-writer");
-        writerThread.start();
+              // Step 3: Start a background writer that appends commits.
+              writerThread =
+                  new Thread(
+                      () -> {
+                        try {
+                          System.out.println("[UCDeltaTableStreamingTestV2] Writer thread started");
+                          for (int i = 1; i <= STREAM_INSERTS; i++) {
+                            String value = "value_" + i;
+                            writerSpark
+                                .sql(
+                                    String.format(
+                                        "INSERT INTO %s VALUES (%d, '%s')",
+                                        fullTableName, i, value))
+                                .collect();
+                            System.out.println(
+                                "[UCDeltaTableStreamingTestV2] Inserted row id="
+                                    + i
+                                    + " value="
+                                    + value);
+                            long jitterMs =
+                                ThreadLocalRandom.current()
+                                    .nextLong(
+                                        -WRITER_INSERT_JITTER_MS, WRITER_INSERT_JITTER_MS + 1);
+                            long sleepMs = Math.max(0L, WRITER_INSERT_PAUSE_MS + jitterMs);
+                            Thread.sleep(sleepMs);
+                          }
+                          System.out.println(
+                              "[UCDeltaTableStreamingTestV2] Writer thread completed");
+                        } catch (Throwable t) {
+                          writerError.set(t);
+                        }
+                      },
+                      "uc-streaming-writer");
+              writerThread.start();
 
-        // Step 4: Wait until the reader observes all expected rows in the memory sink.
-        int expectedRows = 1 + STREAM_INSERTS;
-        awaitMemorySinkRows(spark, queryName, expectedRows, SINK_POLL_TIMEOUT_MS);
+              // Step 4: Wait until the reader observes all expected rows in the memory sink.
+              int expectedRows = 1 + STREAM_INSERTS;
+              awaitMemorySinkRows(spark, queryName, expectedRows, SINK_POLL_TIMEOUT_MS);
 
-        if (writerThread != null) {
-          writerThread.join(SINK_POLL_TIMEOUT_MS);
-          if (writerThread.isAlive()) {
-            throw new IllegalStateException("Writer thread did not finish within timeout");
-          }
-        }
-        if (writerError.get() != null) {
-          throw new RuntimeException("Writer thread failed", writerError.get());
-        }
+              if (writerThread != null) {
+                writerThread.join(SINK_POLL_TIMEOUT_MS);
+                if (writerThread.isAlive()) {
+                  throw new IllegalStateException("Writer thread did not finish within timeout");
+                }
+              }
+              if (writerError.get() != null) {
+                throw new RuntimeException("Writer thread failed", writerError.get());
+              }
 
-        // Step 5: Validate the complete contents of the memory sink.
-        List<List<String>> expected = new ArrayList<>();
-        expected.add(List.of("0", "seed"));
-        for (int i = 1; i <= STREAM_INSERTS; i++) {
-          expected.add(List.of(String.valueOf(i), "value_" + i));
-        }
-        check(queryName, expected);
-      } finally {
-        if (query != null) {
-          query.stop();
-        }
-        if (writerThread != null && writerThread.isAlive()) {
-          writerThread.interrupt();
-        }
-        spark.sql("DROP VIEW IF EXISTS " + queryName);
-        deleteRecursively(checkpointDir);
-      }
+              // Step 5: Validate the complete contents of the memory sink.
+              List<List<String>> expected = new ArrayList<>();
+              expected.add(List.of("0", "seed"));
+              for (int i = 1; i <= STREAM_INSERTS; i++) {
+                expected.add(List.of(String.valueOf(i), "value_" + i));
+              }
+              check(queryName, expected);
+            } finally {
+              if (query != null) {
+                query.stop();
+              }
+              if (writerThread != null && writerThread.isAlive()) {
+                writerThread.interrupt();
+              }
+              spark.sql("DROP VIEW IF EXISTS " + queryName);
+            }
+          });
     } finally {
       sql("DROP TABLE IF EXISTS %s", fullTableName);
       restoreV2Mode(spark, originalMode);
@@ -194,20 +196,5 @@ public class UCDeltaTableStreamingTestV2 extends UCDeltaTableIntegrationBaseTest
     } else {
       spark.conf().unset(V2_ENABLE_MODE_KEY);
     }
-  }
-
-  private static void deleteRecursively(File file) {
-    if (file == null || !file.exists()) {
-      return;
-    }
-    if (file.isDirectory()) {
-      File[] files = file.listFiles();
-      if (files != null) {
-        for (File child : files) {
-          deleteRecursively(child);
-        }
-      }
-    }
-    file.delete();
   }
 }
