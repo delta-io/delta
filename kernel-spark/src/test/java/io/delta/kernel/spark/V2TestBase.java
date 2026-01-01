@@ -148,12 +148,12 @@ public abstract class V2TestBase {
   }
 
   /**
-   * Asserts that streaming data equals the expected rows (order-independent).
+   * Asserts that rows equal the expected rows (order-independent).
    *
-   * @param actualRows the actual rows from the stream
+   * @param actualRows the actual rows
    * @param expectedRows the expected rows
    */
-  protected void assertStreamingDataEquals(List<Row> actualRows, List<Row> expectedRows) {
+  protected void assertDataEquals(List<Row> actualRows, List<Row> expectedRows) {
     assertEquals(
         expectedRows.size(),
         actualRows.size(),
@@ -170,6 +170,6 @@ public abstract class V2TestBase {
     // Compare rows (order-independent for robustness)
     assertTrue(
         actualRows.containsAll(expectedRows) && expectedRows.containsAll(actualRows),
-        () -> "Streaming data differs:\nExpected: " + expectedRows + "\nActual: " + actualRows);
+        () -> "Data differs:\nExpected: " + expectedRows + "\nActual: " + actualRows);
   }
 }

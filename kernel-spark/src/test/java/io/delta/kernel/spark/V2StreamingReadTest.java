@@ -70,7 +70,7 @@ public class V2StreamingReadTest extends V2TestBase {
             RowFactory.create(2, "Bob", 200.0),
             RowFactory.create(3, "Charlie", 300.0));
 
-    assertStreamingDataEquals(actualRows, expectedRows);
+    assertDataEquals(actualRows, expectedRows);
   }
 
   @Test
