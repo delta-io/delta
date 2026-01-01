@@ -201,15 +201,35 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
        Some(Expressions.notEqual("floatCol", Float.NaN: java.lang.Float)),
        "NotEqualTo with Float.NaN"),
 
-      // Same column used twice
+      // Range filter (same column used twice)
       (And(GreaterThan("intCol", 0), LessThan("intCol", 100)),
        Some(Expressions.and(
          Expressions.greaterThan("intCol", 0),
          Expressions.lessThan("intCol", 100)
        )),
-       "Range filter: 0 < intCol < 100"),
+       "Range filter: 0 < intCol < 100")
+    )
 
-      // In operator - basic functionality
+    assertConvert(testCases)
+
+    // NotEqualTo with null throws exception (matches Iceberg OSS behavior)
+    // In SQL 3-value logic: col <> NULL returns NULL (unknown), treated as false in WHERE
+    // Iceberg's notEqual is not null-safe, so this is explicitly rejected
+    val filter = Not(EqualTo("stringCol", null))
+    val exception = intercept[IllegalArgumentException] {
+      SparkToIcebergExpressionConverter.convert(filter)
+    }
+    assert(exception.getMessage.contains("NotEqualTo with null"))
+  }
+
+  // In operator requires special handling because:
+  // 1. It accepts arrays of values, requiring per-element type coercion
+  // 2. Null values must be filtered out (SQL semantics: col IN (1, NULL) = col IN (1))
+  // 3. Empty arrays after null filtering result in always-false predicates
+  // 4. Type conversion needed for each array element (Scala -> Java types)
+  test("In operator with type coercion and null handling") {
+    val testCases = Seq(
+      // Basic In with different types
       (In("intCol", Array(1, 2, 3)),
        Some(Expressions.in("intCol", 1: Integer, 2: Integer, 3: Integer)),
        "In with integers"),
@@ -226,7 +246,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
        Some(Expressions.in("address.intCol", 42: Integer, 43: Integer)),
        "In with nested column"),
 
-      // In operator with nulls (nulls are filtered out)
+      // Null handling: nulls are filtered out (SQL semantics)
       (In("stringCol", Array(null, "value1", "value2")),
        Some(Expressions.in("stringCol", "value1", "value2")),
        "In with null values (nulls filtered)"),
@@ -235,22 +255,13 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
        Some(Expressions.in("intCol", 1: Integer, 2: Integer)),
        "In with null and integers"),
 
-      // In with only null becomes empty In
+      // Edge case: In with only null becomes empty In (always false)
       (In("stringCol", Array(null)),
        Some(Expressions.in("stringCol")),
        "In with only null")
     )
 
     assertConvert(testCases)
-
-    // NotEqualTo with null throws exception (matches Iceberg OSS behavior)
-    // In SQL 3-value logic: col <> NULL returns NULL (unknown), treated as false in WHERE
-    // Iceberg's notEqual is not null-safe, so this is explicitly rejected
-    val filter = Not(EqualTo("stringCol", null))
-    val exception = intercept[IllegalArgumentException] {
-      SparkToIcebergExpressionConverter.convert(filter)
-    }
-    assert(exception.getMessage.contains("NotEqualTo with null"))
   }
 
   test("string operations and special filters") {
@@ -310,7 +321,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   test("unsupported filters return None") {
-    // Filters with no Iceberg equivalent (verified against Iceberg OSS SparkV2Filters.java)
+    // Filters with no Iceberg equivalent
     val unsupportedFilters = Seq(
       (StringEndsWith("stringCol", "suffix"), None, "StringEndsWith"),
       (StringContains("stringCol", "substr"), None, "StringContains"),
