@@ -56,8 +56,8 @@ object ServerSidePlannedTable extends DeltaLogging {
    * credential availability, and configuration.
    *
    * Decision logic:
-   * - Use server-side planning if forceServerSidePlanning is true (config override)
-   * - Use server-side planning if Unity Catalog table lacks credentials
+   * - Use server-side planning if Unity Catalog table lacks credentials AND forceServerSidePlanning
+   *   is enabled (requires both conditions)
    * - Otherwise use normal table loading path
    *
    * @param isUnityCatalog Whether this is a Unity Catalog instance
@@ -69,7 +69,7 @@ object ServerSidePlannedTable extends DeltaLogging {
       isUnityCatalog: Boolean,
       hasCredentials: Boolean,
       forceServerSidePlanning: Boolean): Boolean = {
-    (isUnityCatalog && !hasCredentials) || forceServerSidePlanning
+    (isUnityCatalog && !hasCredentials) && forceServerSidePlanning
   }
 
   /**
