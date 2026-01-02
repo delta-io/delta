@@ -60,7 +60,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       tc.iceberg match {
         case Some(expected) =>
           assert(result.isDefined, s"[${tc.label}] Should convert: ${tc.spark}")
-          assert(
+    assert(
             ExpressionUtil.equivalent(expected, result.get, testSchema, true),
             s"[${tc.label}] Expected: $expected, got: ${result.get}"
           )
@@ -330,6 +330,15 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
 
   test("edge cases: null, NaN, and boundaries") {
+    // For Date/Timestamp tests, compute expected values from the actual objects
+    // to avoid timezone-dependent hardcoded values
+    val testDate = java.sql.Date.valueOf("2024-01-01")
+    val expectedDateDays = (testDate.getTime / (1000L * 60 * 60 * 24)).toInt
+
+    val testTimestamp = java.sql.Timestamp.valueOf("2024-01-01 00:00:00")
+    val expectedTimestampMicros =
+      testTimestamp.getTime * 1000 + (testTimestamp.getNanos % 1000000) / 1000
+
     val testCases = Seq(
       // Null handling
       FilterConversionCase(
@@ -397,15 +406,14 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
       // Date/Timestamp: Spark sends java.sql types, but we convert to Int/Long for Iceberg
       FilterConversionCase(
-        EqualTo("dateCol", java.sql.Date.valueOf("2024-01-01")),
-        Some(Expressions.equal("dateCol", 19723: Integer)), // 2024-01-01 = 19723 days since epoch
+        EqualTo("dateCol", testDate),
+        Some(Expressions.equal("dateCol", expectedDateDays: Integer)),
         "Date converted to days since epoch"
       ),
 
       FilterConversionCase(
-        EqualTo("timestampCol", java.sql.Timestamp.valueOf("2024-01-01 00:00:00")),
-        // microseconds since epoch
-        Some(Expressions.equal("timestampCol", 1704067200000000L: java.lang.Long)),
+        EqualTo("timestampCol", testTimestamp),
+        Some(Expressions.equal("timestampCol", expectedTimestampMicros: java.lang.Long)),
         "Timestamp converted to microseconds since epoch"
       )
     )
