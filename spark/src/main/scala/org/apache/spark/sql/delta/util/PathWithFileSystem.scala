@@ -34,7 +34,7 @@ case class PathWithFileSystem private (path: Path, fs: FileSystem) {
   def withSuffix(s: String): PathWithFileSystem = new PathWithFileSystem(new Path(path, s), fs)
 
   /**
-   * Qualify `path`` using `fs`
+   * Qualify `path` using `fs`
    */
   def makeQualified(): PathWithFileSystem = {
     val qualifiedPath = fs.makeQualified(path)

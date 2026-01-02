@@ -22,7 +22,7 @@ import java.util.regex.Pattern
 
 import scala.annotation.tailrec
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaTestUtils, TypeWideningMode}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWideningMode}
 import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -49,8 +49,7 @@ class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaSQLCommandTest {
   import SchemaUtils._
   import TypeWideningMode._
   import testImplicits._
@@ -2640,7 +2639,7 @@ class SchemaUtilsSuite extends QueryTest
     MapType(IntegerType, IntegerType) -> MapType(LongType, LongType),
     ArrayType(IntegerType) -> ArrayType(LongType)
   ))
-  testSparkMasterOnly(s"typeWideningMode ${fromType.sql} -> ${toType.sql}") {
+  test(s"typeWideningMode ${fromType.sql} -> ${toType.sql}") {
     val narrow = new StructType().add("a", fromType)
     val wide = new StructType().add("a", toType)
 
@@ -2687,7 +2686,7 @@ class SchemaUtilsSuite extends QueryTest
     ShortType -> DoubleType,
     IntegerType -> DecimalType(10, 0)
   ))
-  testSparkMasterOnly(
+  test(
     s"typeWideningMode - blocked type evolution ${fromType.sql} -> ${toType.sql}") {
     val narrow = new StructType().add("a", fromType)
     val wide = new StructType().add("a", toType)
@@ -2721,7 +2720,7 @@ class SchemaUtilsSuite extends QueryTest
     DateType -> TimestampNTZType,
     DecimalType(10, 2) -> DecimalType(12, 4)
   ))
-  testSparkMasterOnly(
+  test(
       s"typeWideningMode - Uniform Iceberg compatibility ${fromType.sql} -> ${toType.sql}") {
     val narrow = new StructType().add("a", fromType)
     val wide = new StructType().add("a", toType)
@@ -2776,7 +2775,7 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
-  testSparkMasterOnly(
+  test(
     s"typeWideningMode - widen to common wider decimal") {
     val left = new StructType().add("a", DecimalType(10, 2))
     val right = new StructType().add("a", DecimalType(5, 4))
@@ -2813,7 +2812,7 @@ class SchemaUtilsSuite extends QueryTest
 
   }
 
-  testSparkMasterOnly(
+  test(
     s"typeWideningMode - widen to common wider decimal exceeds max decimal precision") {
     // We'd need a DecimalType(40, 19) to fit both types, which exceeds max decimal precision of 38.
     val left = new StructType().add("a", DecimalType(20, 19))

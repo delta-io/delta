@@ -28,7 +28,6 @@ import scala.language.implicitConversions
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
-import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
@@ -541,8 +540,7 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 }
 
-abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
-  {
+abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
   test("cannot time travel target tables of insert/delete/update/merge") {
     val tblName = "delta_table"
     withTable(tblName) {
@@ -615,14 +613,14 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       }
       assert(e1.getMessage.contains("[0, 2]"))
 
-      val e2 = intercept[MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_TYPE] {
+      val e2 = intercept[org.apache.spark.sql.AnalysisException] {
         spark.read.format("delta")
           .option("versionAsOf", 3)
           .option("timestampAsOf", "2020-10-22 23:20:11")
           .table(tblName).collect()
       }
 
-      assert(e2.getMessage.contains(MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_MSG))
+      assert(e2.getMessage.contains("Cannot specify both version and timestamp"))
 
     }
   }

@@ -20,7 +20,7 @@ import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
@@ -649,8 +649,7 @@ trait ClusteredTableCreateOrReplaceDDLSuite
 
 trait ClusteredTableDDLSuiteBase
   extends ClusteredTableCreateOrReplaceDDLSuite
-    with DeltaSQLCommandTest
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -825,6 +824,55 @@ trait ClusteredTableDDLSuiteBase
       }
     }
   }
+
+  Seq("true", "false").foreach { checkEnabled =>
+    test(s"Alter column after statement with stats schema update - checkEnabled=$checkEnabled") {
+      withTable(testTable) {
+        withSQLConf(
+          DeltaSQLConf.DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK.key -> checkEnabled) {
+          val tableSchema = "c1 int, c2 int, c3 int, c4 int"
+          val indexedColumns = 2
+
+          testStatsCollectionHelper(
+            tableSchema = tableSchema,
+            numberOfIndexedCols = indexedColumns) {
+
+            createTableWithStatsColumns(
+              "CREATE",
+              testTable,
+              Seq("c1", "c2"),
+              indexedColumns,
+              Some(tableSchema))
+
+            // Insert data to ensure stats are collected
+            sql(s"INSERT INTO $testTable VALUES(1, 2, 3, 4), (5, 6, 7, 8)")
+
+            // ALTER TABLE ALTER COLUMN should succeed when checkEnabled=false
+            sql(s"ALTER TABLE $testTable ALTER COLUMN c1 AFTER c3")
+
+            // Verify the column order changed
+            val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTable))
+            assert(snapshot.schema.fieldNames.toSeq === Seq("c2", "c3", "c1", "c4"))
+
+            // Try another ALTER - behavior depends on checkEnabled
+            if (checkEnabled == "true") {
+              // Should fail when validation is enabled
+              val e = intercept[DeltaAnalysisException] {
+                sql(s"ALTER TABLE $testTable ALTER COLUMN c2 AFTER c3")
+              }
+              assert(e.errorClass.contains("DELTA_CLUSTERING_COLUMN_MISSING_STATS"))
+            } else {
+              // Should succeed when validation is disabled
+              sql(s"ALTER TABLE $testTable ALTER COLUMN c2 AFTER c3")
+              val (_, snapshot2) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTable))
+              assert(snapshot2.schema.fieldNames.toSeq === Seq("c3", "c2", "c1", "c4"))
+            }
+          }
+        }
+      }
+    }
+  }
+
 
   test("validate CLONE on clustered table") {
     import testImplicits._
@@ -1002,7 +1050,7 @@ trait ClusteredTableDDLSuiteBase
     }
   }
 
-  testSparkMasterOnly("Variant is not supported") {
+  test("Variant is not supported") {
     val e = intercept[DeltaAnalysisException] {
       createOrReplaceClusteredTable("CREATE", testTable, "id long, v variant", "v")
     }
