@@ -17,6 +17,7 @@
 package io.delta.kernel
 
 import scala.collection.JavaConverters._
+import scala.util.Using
 
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.utils.CloseableIterator
@@ -250,5 +251,104 @@ class CloseableIteratorSuite extends AnyFunSuite {
     assert(result.isPresent)
     assert(result.get() === 3)
     assert(closed === true)
+  }
+
+  test("flatMap -- basic functionality") {
+    val input = toCloseableIter(Seq(1, 2, 3))
+    val result = input.flatMap { x: Int =>
+      toCloseableIter(Seq(x, x * 10))
+    }
+    assert(toList(result) === List(1, 10, 2, 20, 3, 30))
+  }
+
+  test("flatMap -- properly closes all resources") {
+    var outerClosed = false
+    var innerClosedCount = 0
+
+    val outer = new TrackingCloseableIterator(Seq(1, 2, 3), () => outerClosed = true)
+
+    val result = outer.flatMap { x: Int =>
+      new TrackingCloseableIterator(
+        Seq(x, x * 10),
+        () => innerClosedCount += 1): CloseableIterator[Int]
+    }
+
+    assert(toList(result) === List(1, 10, 2, 20, 3, 30))
+
+    // 3 inner iterators, one per outer element
+    assert(innerClosedCount === 3)
+    assert(outerClosed === true)
+  }
+
+  test("flatMap -- closes resources when mapper function throws") {
+    var outerClosed = false
+    val outer = new TrackingCloseableIterator(Seq(1, 2, 3), () => outerClosed = true)
+
+    val result = outer.flatMap { x: Int =>
+      (throw new RuntimeException("Error in mapper")): CloseableIterator[Int]
+    }
+
+    // Use scala's equivalent of java's try-with-resources
+    val exception = intercept[RuntimeException] {
+      Using.resource(result) { r =>
+        r.hasNext
+      }
+    }
+    assert(exception.getMessage === "Error in mapper")
+    assert(outerClosed === true)
+  }
+
+  test("flatMap -- closes resources when inner iterator throws during consumption") {
+    var outerClosed = false
+    var innerClosedCount = 0
+
+    val outer = new TrackingCloseableIterator(Seq(1, 2, 3), () => outerClosed = true)
+
+    val result = outer.flatMap { x: Int =>
+      (new TrackingCloseableIterator(Seq(x, x * 10), () => innerClosedCount += 1) {
+        override def next(): Int = {
+          val value = super.next()
+          if (value == 20) {
+            throw new RuntimeException("Error reading value 20")
+          }
+          value
+        }
+      }): CloseableIterator[Int]
+    }
+
+    // Use scala's equivalent of java's try-with-resources
+    val exception = intercept[RuntimeException] {
+      Using.resource(result) { r =>
+        // First inner iterator
+        assert(r.next() === 1)
+        assert(r.next() === 10)
+
+        // Second inner iterator
+        assert(r.next() === 2)
+
+        // Second inner iterator -- throws on next value (20)
+        r.next()
+      }
+    }
+    assert(exception.getMessage === "Error reading value 20")
+
+    assert(outerClosed === true)
+    assert(innerClosedCount === 2) // Both inner iterators that were created should be closed
+  }
+
+  test("flatMap -- mapper returns null") {
+    var outerClosed = false
+    val outer = new TrackingCloseableIterator(Seq(1, 2, 3), () => outerClosed = true)
+
+    val result = outer.flatMap { x: Int =>
+      if (x % 2 == 0) {
+        null.asInstanceOf[CloseableIterator[Int]]
+      } else {
+        toCloseableIter(Seq(x, x * 10))
+      }
+    }
+
+    assert(toList(result) === List(1, 10, 3, 30))
+    assert(outerClosed === true)
   }
 }
