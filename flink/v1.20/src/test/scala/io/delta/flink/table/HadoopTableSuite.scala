@@ -16,6 +16,10 @@
 
 package io.delta.flink.table
 
+import java.net.URI
+
+import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
+
 import io.delta.flink.TestHelper
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
@@ -23,11 +27,9 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
+
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.net.URI
-import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 
 class HadoopTableSuite extends AnyFunSuite with TestHelper {
 

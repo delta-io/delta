@@ -1454,6 +1454,7 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
       }
     },
     Compile / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "main" / "java",
+    Compile / unmanagedResourceDirectories += file("flink/v1.20") / "src" / "main" / "resources",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "java",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "scala",
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
