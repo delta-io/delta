@@ -2834,8 +2834,7 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
-  testSparkMasterOnly(
-    s"typeWideningMode - widen integral type to common wider decimal") {
+  test(s"typeWideningMode - widen integral type to common wider decimal") {
     val left = new StructType()
       .add("a", ByteType)
       .add("b", ShortType)
