@@ -16,10 +16,6 @@
 
 package io.delta.flink.table
 
-import java.net.URI
-
-import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
-
 import io.delta.flink.TestHelper
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
@@ -27,9 +23,11 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
-
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
+
+import java.net.URI
+import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 
 class HadoopTableSuite extends AnyFunSuite with TestHelper {
 
@@ -62,6 +60,35 @@ class HadoopTableSuite extends AnyFunSuite with TestHelper {
       // There should be only one version
       assert(table.loadLatestSnapshot().getVersion == 1)
     }
+  }
+
+  ignore("commit to s3 path") {
+    val tablePath = "s3://hao-extstaging/flinksink/dest2"
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("part", StringType.STRING)
+
+    val table = new HadoopTable(
+      URI.create(tablePath),
+      Map.empty[String, String].asJava,
+      schema,
+      List("part").asJava)
+
+    for (i <- 0 until 10) {
+      val actions = (0 until 5).map { i =>
+        dummyAddFileRow(schema, 10 + i, Map("part" -> Literal.ofString("p" + i)))
+      }.toList.asJava
+      val dataActions = new CloseableIterable[Row]() {
+        override def iterator: CloseableIterator[Row] =
+          Utils.toCloseableIterator(actions.iterator())
+        override def close(): Unit = {
+          // Nothing to close
+        }
+      }
+      table.commit(dataActions, 100, Map.empty[String, String].asJava)
+    }
+    // There should be only one version
+    assert(table.loadLatestSnapshot().getVersion == 1)
   }
 
   ignore("load table latency") {

@@ -1385,6 +1385,13 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     },
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      cp.filter { entry =>
+        entry.data.getName.startsWith("bundle-") &&
+          entry.data.getName.endsWith(".jar")
+      }
+    },
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
 
@@ -1406,6 +1413,7 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
       "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.google.guava" % "guava" % "33.2.1-jre",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
 
       "org.apache.flink" % "flink-test-utils" % flink120Version % "test",
       "org.scalatest" %% "scalatest" % "3.2.19" % "test",
@@ -1415,9 +1423,6 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
       "org.apache.flink" % "flink-table-runtime" % flink120Version % Test,
       "org.apache.flink" % "flink-test-utils-junit" % flink120Version % Test,
       "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
-      // The below test dependencies are only needed for real E2E integration tests against a real
-      // UC endpoint.
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
     )
   )
 
@@ -1440,6 +1445,13 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
+    },
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      cp.filter { entry =>
+        entry.data.getName.startsWith("bundle-") &&
+          entry.data.getName.endsWith(".jar")
+      }
     },
     Compile / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "main" / "java",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "java",
@@ -1465,6 +1477,7 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
       "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.google.guava" % "guava" % "33.2.1-jre",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
 
       "org.apache.flink" % "flink-test-utils" % flink20Version % "test",
       "org.scalatest" %% "scalatest" % "3.2.19" % "test",
@@ -1474,9 +1487,6 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
       "org.apache.flink" % "flink-table-runtime" % flink20Version % Test,
       "org.apache.flink" % "flink-test-utils-junit" % flink20Version % Test,
       "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
-      // The below test dependencies are only needed for real E2E integration tests against a real
-      // UC endpoint.
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
     )
   )
 

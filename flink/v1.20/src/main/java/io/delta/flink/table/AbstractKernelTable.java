@@ -52,6 +52,7 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -180,7 +181,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
     conf.set("fs.AbstractFileSystem.file.impl", "org.apache.hadoop.fs.local.LocalFs");
 
     conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
-    conf.set("fs.s3a.path.style.access", "true");
+    conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+    conf.set("fs.s3a.path.style.access", "false");
     conf.set("fs.s3.impl.disable.cache", "true");
     conf.set("fs.s3a.impl.disable.cache", "true");
 
@@ -194,6 +196,10 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     this.configuration.forEach(conf::set);
     this.getCredentialManager().getCredentials().forEach(conf::set);
+
+    // Explicitly load external conf files
+    // TODO this is because Flink does not auto load this file in Docker
+    conf.addResource(new Path("/opt/flink/conf/core-site.xml"));
 
     return DefaultEngine.create(conf);
   }
