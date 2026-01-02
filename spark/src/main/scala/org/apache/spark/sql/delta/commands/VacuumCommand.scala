@@ -727,16 +727,29 @@ trait VacuumCommandImpl extends DeltaCommand {
       }.getOrElse(Seq.empty)
 
     val deletionVectorPath =
-      if (dvDiscoveryDisabled) None else getDeletionVectorRelativePathAndSize(action).map(_._1)
+      if (dvDiscoveryDisabled) None else getDeletionVectorRelativePathAndSize(
+        action,
+        fs,
+        basePath,
+        relativizeIgnoreError
+      ).map(_._1)
 
     paths ++ deletionVectorPath.toSeq
   }
 
   /**
    * Returns the path of the on-disk deletion vector if it is stored relative to the
-   * `basePath` and it's size otherwise `None`.
+   * `basePath` and its size otherwise `None`.
+   * If a deletion vector is stored as an absolute path, we attempt to relativize the path
+   * with respect to the basePath. `relativizeIgnoreError` is passed to control whether
+   * errors during relativization should be ignored.
    */
-  protected def getDeletionVectorRelativePathAndSize(action: FileAction): Option[(String, Long)] = {
+  protected def getDeletionVectorRelativePathAndSize(
+    action: FileAction,
+    fs: FileSystem,
+    basePath: Path,
+    relativizeIgnoreError: Boolean
+  ): Option[(String, Long)] = {
     val dv = action match {
       case a: AddFile if a.deletionVector != null =>
         Some(a.deletionVector)
@@ -752,8 +765,10 @@ trait VacuumCommandImpl extends DeltaCommand {
           Some((pathToUrlEncodedString(dv.absolutePath(new Path("."))), dv.sizeInBytes))
         } else {
           assert(dv.isAbsolute)
-          // This is never going to be a path relative to `basePath` for DVs.
-          None
+          // Note that for DVs path is not relative to the base path, we still return None here.
+          getRelativePath(dv.pathOrInlineDv, fs, basePath, relativizeIgnoreError).map { relPath =>
+            (relPath, dv.sizeInBytes)
+          }
         }
       case None => None
     }
@@ -844,6 +859,9 @@ trait VacuumCommandImpl extends DeltaCommand {
       Seq.empty
     }
 
+    val relativizeIgnoreErrorValue = relativizeIgnoreError.getOrElse {
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
+    }
     val allDeltaLogFilesOutsideTheRetentionWindow = eligibleDeltaLogFilesFromDeltaLogDirectory ++
       eligibleDeltaLogFilesFromCommitDirectory
     val deltaLogFileIndex = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT,
@@ -856,10 +874,13 @@ trait VacuumCommandImpl extends DeltaCommand {
       .as[RemoveFile])
       .mapPartitions { iter =>
         iter.flatMap { r =>
+          val tableBasePath = new Path(basePath)
+          val fs = tableBasePath.getFileSystem(hadoopConf.value.value)
           val modificationTime = r.deletionTimestamp.getOrElse(0L)
-          val dv = getDeletionVectorRelativePathAndSize(r).map { case (path, length) =>
-            SerializableFileStatus(path, length, isDir = false, modificationTime)
-          }
+          val dv = getDeletionVectorRelativePathAndSize(
+            r, fs, tableBasePath, relativizeIgnoreErrorValue).map { case (path, length) =>
+              SerializableFileStatus(path, length, isDir = false, modificationTime)
+            }
           dv.iterator ++ Iterator.single(SerializableFileStatus(
             r.path, r.size.getOrElse(0L), isDir = false, modificationTime))
         }
@@ -871,9 +892,6 @@ trait VacuumCommandImpl extends DeltaCommand {
       .as[AddCDCFile])
       .map(cdc => SerializableFileStatus(cdc.path, cdc.size, isDir = false, modificationTime = 0L))
 
-    val relativizeIgnoreErrorValue = relativizeIgnoreError.getOrElse(
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
-    )
     nonCDFFiles.union(cdfFiles).mapPartitions { iter =>
       val tableBasePath = new Path(basePath)
       val fs = tableBasePath.getFileSystem(hadoopConf.value.value)
