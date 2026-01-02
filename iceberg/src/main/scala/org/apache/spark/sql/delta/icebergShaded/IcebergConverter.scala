@@ -414,8 +414,8 @@ class IcebergConverter(spark: SparkSession)
 
       val icebergTxn = new IcebergConversionTransaction(
         spark, catalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
-        lastConvertedIcebergSnapshotId, lastDeltaVersionConverted, baseMetadataLocation,
-        conversionMode = conversionMode)
+        lastConvertedIcebergSnapshotId, lastDeltaVersionConverted, baseMetadataLocation
+      )
 
       val convertedCommits: Seq[Option[CommitInfo]] = prevConvertedSnapshotOpt match {
         case Some(prevSnapshot) =>
