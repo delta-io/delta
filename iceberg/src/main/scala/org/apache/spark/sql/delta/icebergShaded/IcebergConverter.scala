@@ -414,7 +414,7 @@ class IcebergConverter(spark: SparkSession)
 
       val icebergTxn = new IcebergConversionTransaction(
         spark, catalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
-        lastConvertedIcebergSnapshotId, lastDeltaVersionConverted, baseMetadataLocation
+        lastConvertedIcebergSnapshotId, lastDeltaVersionConverted
       )
 
       val convertedCommits: Seq[Option[CommitInfo]] = prevConvertedSnapshotOpt match {
@@ -524,36 +524,6 @@ class IcebergConverter(spark: SparkSession)
 
       icebergTxn
     }
-
-  private def getSnapshotForUncommitedTxn(
-      deltaLog: DeltaLog,
-      txnInfo: CurrentTransactionInfo,
-      deltaVersion: Long): Snapshot = {
-    val rowTrackingHighWaterMark = if (IcebergCompat.isGeqEnabled(txnInfo.metadata, 3)) {
-      txnInfo.finalActionsToCommit.collectFirst {
-        case RowTrackingMetadataDomain(domain) => domain.rowIdHighWaterMark
-      }.orElse(Some(txnInfo.readRowIdHighWatermark))
-    } else {
-      None
-    }
-    val domainMetadata = if (IcebergCompat.isGeqEnabled(txnInfo.metadata, 3)) {
-      rowTrackingHighWaterMark.map { highWaterMark =>
-        Seq(RowTrackingMetadataDomain(rowIdHighWaterMark = highWaterMark).toDomainMetadata)
-      }
-    } else {
-      None
-    }
-
-    new DummySnapshotWithAllFilesSupport(
-      deltaLog.logPath,
-      deltaLog,
-      txnInfo.metadata,
-      deltaVersion,
-      domainMetadata,
-      Some(txnInfo.protocol),
-      txnInfo
-    )
-  }
 
   /**
    * Helper function to execute and commit Iceberg snapshot expiry
