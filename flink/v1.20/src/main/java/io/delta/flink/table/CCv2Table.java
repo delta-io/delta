@@ -22,6 +22,7 @@ import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
+import io.unitycatalog.client.auth.TokenProvider;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -57,7 +58,9 @@ public class CCv2Table extends AbstractKernelTable {
     if (ccv2Client == null) {
       String endpointUri = configuration.get(CATALOG_ENDPOINT);
       String token = configuration.get(CATALOG_TOKEN);
-      UCClient storageClient = new UCTokenBasedRestClient(endpointUri, token);
+      UCClient storageClient =
+          new UCTokenBasedRestClient(
+              endpointUri, TokenProvider.create(Map.of("type", "static", "token", token)));
       ccv2Client = new UCCatalogManagedClient(storageClient);
     }
     return ccv2Client;

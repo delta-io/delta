@@ -34,7 +34,7 @@ import org.scalatest.funsuite.AnyFunSuite
 class CCv2TableSuite extends AnyFunSuite with TestHelper {
 
   val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
-  val CATALOG_TOKEN = "<PLACEHOLDER>"
+  val CATALOG_TOKEN = "<PAT>"
   val TABLE_ID = "main.hao.writetest"
 
   ignore("load table from e2dogfood") {
@@ -52,7 +52,7 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
     assert(table.getSchema.equivalent(new StructType().add("id", IntegerType.INTEGER)))
   }
 
-  ignore("commit data to e2dogfood") {
+  test("commit data to e2dogfood via ccv2") {
     val table = new CCv2Table(
       new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,

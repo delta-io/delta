@@ -17,15 +17,18 @@
 package io.delta.flink.table
 
 import java.net.URI
+import java.util.{Collections, Optional}
 
 import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 
 import io.delta.flink.TestHelper
-import io.delta.kernel.data.Row
+import io.delta.kernel.data.{ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.types.{IntegerType, StringType, StructType}
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.types.{DataType, IntegerType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
 
 import org.apache.hadoop.conf.Configuration
@@ -33,7 +36,11 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class HadoopTableSuite extends AnyFunSuite with TestHelper {
 
-  test("commit with same txn id") {
+  val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
+  val CATALOG_TOKEN = "<PAT>"
+  val TABLE_ID = "main.hao.writetest"
+
+  ignore("commit with same txn id") {
     withTempDir { dir =>
       val tablePath = dir.getAbsolutePath
       val schema = new StructType()
@@ -91,6 +98,34 @@ class HadoopTableSuite extends AnyFunSuite with TestHelper {
     }
     // There should be only one version
     assert(table.loadLatestSnapshot().getVersion == 1)
+  }
+
+  ignore("commit data to e2dogfood via path") {
+    val table = new HadoopTable(
+      new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
+      TABLE_ID,
+      Map(
+        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
+        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+
+    val values = (0 until 100)
+    val colVector = new ColumnVector() {
+      override def getDataType: DataType = IntegerType.INTEGER
+      override def getSize: Int = values.length
+      override def close(): Unit = {}
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+      override def getInt(rowId: Int): Int = values(rowId)
+    }
+
+    val columnarBatchData =
+      new DefaultColumnarBatch(values.size, table.getSchema, Array(colVector))
+    val filteredColumnarBatchData = new FilteredColumnarBatch(columnarBatchData, Optional.empty())
+    val partitionValues = Collections.emptyMap[String, Literal]()
+
+    val data = toCloseableIterator(Seq(filteredColumnarBatchData).asJava.iterator())
+    val rows = table.writeParquet("abc", data, partitionValues)
+
+    table.commit(CloseableIterable.inMemoryIterable(rows), 1000L, Map("a" -> "b").asJava)
   }
 
   ignore("load table latency") {

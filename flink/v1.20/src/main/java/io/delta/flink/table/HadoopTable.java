@@ -58,9 +58,26 @@ public class HadoopTable extends AbstractKernelTable {
     this(tablePath, conf, null, null);
   }
 
+  /** Default constructor that works with a HadoopCatalog */
   public HadoopTable(
       URI tablePath, Map<String, String> conf, StructType schema, List<String> partitionColumns) {
-    super(new HadoopCatalog(conf), tablePath.toString(), conf, schema, partitionColumns);
+    this(new HadoopCatalog(conf), tablePath.toString(), conf, schema, partitionColumns);
+  }
+
+  /**
+   * HadoopTable also works with non-Hadoop catalogs (e.g., UnityCatalog) and do path-based access.
+   */
+  public HadoopTable(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
+    this(catalog, tableId, conf, null, null);
+  }
+
+  HadoopTable(
+      DeltaCatalog catalog,
+      String tableId,
+      Map<String, String> conf,
+      StructType schema,
+      List<String> partitionColumns) {
+    super(catalog, tableId, conf, schema, partitionColumns);
   }
 
   @Override
