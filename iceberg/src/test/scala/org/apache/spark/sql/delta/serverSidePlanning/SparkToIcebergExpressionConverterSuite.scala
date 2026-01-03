@@ -76,12 +76,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("equality operators (=, !=) on all types including null and NaN handling") {
     val equalityOpMappings = Seq(
-      (
       ("EqualTo",  // Test case label
         (col: String, v: Any) => EqualTo(col, v),         // Spark filter builder
         (col: String, v: Any) => Expressions.equal(col, v)),  // Iceberg expression builder
-      (
-        "NotEqualTo", 
+      ("NotEqualTo", 
         (col: String, v: Any) => Not(EqualTo(col, v)),  
         (col: String, v: Any) => Expressions.notEqual(col, v)) 
     )
