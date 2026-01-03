@@ -23,9 +23,9 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil
 class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   private case class ExprConvTestCase(
+    label: String,
     spark: Filter,
-    iceberg: Option[Expression],
-    label: String
+    iceberg: Option[Expression]
   )
 
   // Types that support equality and ordering operations
@@ -76,62 +76,62 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("equality operators (=, !=) on all types including null and NaN handling") {
     // Parameterize test to avoid duplication: test equality ops × all types.
-    // Each tuple: (Spark Filter builder, Iceberg Expression builder, operation label)
+    // Each tuple: (operation label, Spark Filter builder, Iceberg Expression builder)
     val equalityOperators = Seq(
-      ((col: String, v: Any) => EqualTo(col, v),         // Spark filter builder
-        (col: String, v: Any) => Expressions.equal(col, v),  // Iceberg expression builder
-        "EqualTo"),  // Operator name
-      ((col: String, v: Any) => Not(EqualTo(col, v)),    // Spark filter builder
-        (col: String, v: Any) => Expressions.notEqual(col, v),  // Iceberg expression builder
-        "NotEqualTo")  // Operator name
+      ("EqualTo",  // Operator name
+        (col: String, v: Any) => EqualTo(col, v),         // Spark filter builder
+        (col: String, v: Any) => Expressions.equal(col, v)),  // Iceberg expression builder
+      ("NotEqualTo",  // Operator name
+        (col: String, v: Any) => Not(EqualTo(col, v)),    // Spark filter builder
+        (col: String, v: Any) => Expressions.notEqual(col, v))  // Iceberg expression builder
     )
 
     // Generate all combinations: all types × equality operators
     val standardTests = for {
       (col, value, typeDesc) <- allTypes
-      (sparkOp, icebergOp, opName) <- equalityOperators
+      (opName, sparkOp, icebergOp) <- equalityOperators
     } yield ExprConvTestCase(
+      s"$opName $typeDesc",
       sparkOp(col, value),
       // supportBoolean=true because equality operators work on all types including Boolean
-      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, true))),
-      s"$opName $typeDesc"
+      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, true)))
     )
 
     // Null handling: EqualTo(col, null) -> isNull, Not(EqualTo(col, null)) -> notNull
     val nullHandlingTests = Seq(
       ExprConvTestCase(
+        "EqualTo(col, null) converts to isNull",
         EqualTo("stringCol", null),
-        Some(Expressions.isNull("stringCol")),
-        "EqualTo(col, null) converts to isNull"
+        Some(Expressions.isNull("stringCol"))
       ),
       ExprConvTestCase(
+        "Not(EqualTo(col, null)) converts to notNull (IS NOT NULL)",
         Not(EqualTo("stringCol", null)),
-        Some(Expressions.notNull("stringCol")),
-        "Not(EqualTo(col, null)) converts to notNull (IS NOT NULL)"
+        Some(Expressions.notNull("stringCol"))
       )
     )
 
     // NaN handling: EqualTo/NotEqualTo with NaN convert to isNaN/notNaN predicates
     val nanHandlingTests = Seq(
       ExprConvTestCase(
+        "EqualTo with Double.NaN converts to isNaN",
         EqualTo("doubleCol", Double.NaN),
-        Some(Expressions.isNaN("doubleCol")),
-        "EqualTo with Double.NaN converts to isNaN"
+        Some(Expressions.isNaN("doubleCol"))
       ),
       ExprConvTestCase(
+        "EqualTo with Float.NaN converts to isNaN",
         EqualTo("floatCol", Float.NaN),
-        Some(Expressions.isNaN("floatCol")),
-        "EqualTo with Float.NaN converts to isNaN"
+        Some(Expressions.isNaN("floatCol"))
       ),
       ExprConvTestCase(
+        "Not(EqualTo) with Double.NaN converts to notNaN",
         Not(EqualTo("doubleCol", Double.NaN)),
-        Some(Expressions.notNaN("doubleCol")),
-        "Not(EqualTo) with Double.NaN converts to notNaN"
+        Some(Expressions.notNaN("doubleCol"))
       ),
       ExprConvTestCase(
+        "Not(EqualTo) with Float.NaN converts to notNaN",
         Not(EqualTo("floatCol", Float.NaN)),
-        Some(Expressions.notNaN("floatCol")),
-        "Not(EqualTo) with Float.NaN converts to notNaN"
+        Some(Expressions.notNaN("floatCol"))
       )
     )
 
@@ -144,55 +144,55 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("ordering comparison operators (<, >, <=, >=) on orderable types") {
     // Parameterize test to avoid duplication: test all ordering comparison ops × all orderable
-    // types. Each tuple: (Spark Filter builder, Iceberg Expression builder, operation label)
+    // types. Each tuple: (operation label, Spark Filter builder, Iceberg Expression builder)
     // Note: This tests ordering comparisons (<, >, <=, >=), not equality or other operations
     val comparisonOpMappings = Seq(
-      ((col: String, v: Any) => LessThan(col, v),
-        (col: String, v: Any) => Expressions.lessThan(col, v),
-        "LessThan"),
-      ((col: String, v: Any) => GreaterThan(col, v),
-        (col: String, v: Any) => Expressions.greaterThan(col, v),
-        "GreaterThan"),
-      ((col: String, v: Any) => LessThanOrEqual(col, v),
-        (col: String, v: Any) => Expressions.lessThanOrEqual(col, v),
-        "LessThanOrEqual"),
-      ((col: String, v: Any) => GreaterThanOrEqual(col, v),
-        (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v),
-        "GreaterThanOrEqual")
+      ("LessThan",
+        (col: String, v: Any) => LessThan(col, v),
+        (col: String, v: Any) => Expressions.lessThan(col, v)),
+      ("GreaterThan",
+        (col: String, v: Any) => GreaterThan(col, v),
+        (col: String, v: Any) => Expressions.greaterThan(col, v)),
+      ("LessThanOrEqual",
+        (col: String, v: Any) => LessThanOrEqual(col, v),
+        (col: String, v: Any) => Expressions.lessThanOrEqual(col, v)),
+      ("GreaterThanOrEqual",
+        (col: String, v: Any) => GreaterThanOrEqual(col, v),
+        (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v))
     )
 
     // Generate all combinations: orderable types × comparison operators
     val supportedTests = for {
       (col, value, typeDesc) <- orderableTypeTestCases
-      (sparkOp, icebergOp, opName) <- comparisonOpMappings
+      (opName, sparkOp, icebergOp) <- comparisonOpMappings
     } yield ExprConvTestCase(
+      s"$opName $typeDesc",
       sparkOp(col, value),
       // supportBoolean=false because ordering operators don't work on Boolean type
-      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, false))),
-      s"$opName $typeDesc"
+      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, false)))
     )
 
     // NaN with comparison operators returns None (mathematically undefined)
     val nanRejectionTests = Seq(
       ExprConvTestCase(
+        "LessThan with NaN returns None (undefined)",
         LessThan("doubleCol", Double.NaN),
-        None,
-        "LessThan with NaN returns None (undefined)"
+        None
       ),
       ExprConvTestCase(
+        "GreaterThan with NaN returns None (undefined)",
         GreaterThan("floatCol", Float.NaN),
-        None,
-        "GreaterThan with NaN returns None (undefined)"
+        None
       ),
       ExprConvTestCase(
+        "LessThanOrEqual with NaN returns None (undefined)",
         LessThanOrEqual("doubleCol", Double.NaN),
-        None,
-        "LessThanOrEqual with NaN returns None (undefined)"
+        None
       ),
       ExprConvTestCase(
+        "GreaterThanOrEqual with NaN returns None (undefined)",
         GreaterThanOrEqual("floatCol", Float.NaN),
-        None,
-        "GreaterThanOrEqual with NaN returns None (undefined)"
+        None
       )
     )
 
@@ -204,24 +204,24 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // ========================================================================
 
   test("null check operators (IsNull, IsNotNull) on all types") {
-    // Each tuple: (Spark Filter builder, Iceberg Expression builder, operation label)
+    // Each tuple: (operation label, Spark Filter builder, Iceberg Expression builder)
     val nullCheckOperators = Seq(
-      ((col: String, _: Any) => IsNull(col),              // Spark filter builder
-        (col: String, _: Any) => Expressions.isNull(col),  // Iceberg expression builder
-        "IsNull"),  // Operator name
-      ((col: String, _: Any) => IsNotNull(col),           // Spark filter builder
-        (col: String, _: Any) => Expressions.notNull(col),  // Iceberg expression builder
-        "IsNotNull")  // Operator name
+      ("IsNull",  // Operator name
+        (col: String, _: Any) => IsNull(col),              // Spark filter builder
+        (col: String, _: Any) => Expressions.isNull(col)),  // Iceberg expression builder
+      ("IsNotNull",  // Operator name
+        (col: String, _: Any) => IsNotNull(col),           // Spark filter builder
+        (col: String, _: Any) => Expressions.notNull(col))  // Iceberg expression builder
     )
 
     // Generate all combinations: all types × null check operators
     val testCases = for {
       (col, value, typeDesc) <- allTypes
-      (sparkOp, icebergOp, opName) <- nullCheckOperators
+      (opName, sparkOp, icebergOp) <- nullCheckOperators
     } yield ExprConvTestCase(
+      s"$opName $typeDesc",
       sparkOp(col, value),
-      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, true))),
-      s"$opName $typeDesc"
+      Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, true)))
     )
 
     assertConvert(testCases)
@@ -260,29 +260,29 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       val icebergValues = values.map(v =>
         SparkToIcebergExpressionConverter.toIcebergValue(v, supportBoolean = true))
       ExprConvTestCase(
+        s"In with $typeDesc",
         In(col, values),
-        Some(Expressions.in(col, icebergValues: _*)),
-        s"In with $typeDesc"
+        Some(Expressions.in(col, icebergValues: _*))
       )
     }
 
     val nullHandlingTests = Seq(
       // Null handling: nulls are filtered out
       ExprConvTestCase(
+        "In with null values (nulls filtered)",
         In("stringCol", Array(null, "value1", "value2")),
-        Some(Expressions.in("stringCol", "value1", "value2")),
-        "In with null values (nulls filtered)"
+        Some(Expressions.in("stringCol", "value1", "value2"))
       ),
       ExprConvTestCase(
+        "In with null and integers",
         In("intCol", Array(null, 1, 2)),
-        Some(Expressions.in("intCol", 1: Integer, 2: Integer)),
-        "In with null and integers"
+        Some(Expressions.in("intCol", 1: Integer, 2: Integer))
       ),
       // Edge case: In with only null becomes empty In (always false)
       ExprConvTestCase(
+        "In with only null",
         In("stringCol", Array(null)),
-        Some(Expressions.in("stringCol")),
-        "In with only null"
+        Some(Expressions.in("stringCol"))
       )
     )
 
@@ -297,26 +297,26 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val testCases = Seq(
       // Supported: StringStartsWith
       ExprConvTestCase(
+        "StringStartsWith on top-level column",
         StringStartsWith("stringCol", "prefix"),
-        Some(Expressions.startsWith("stringCol", "prefix")),
-        "StringStartsWith on top-level column"
+        Some(Expressions.startsWith("stringCol", "prefix"))
       ),
       ExprConvTestCase(
+        "StringStartsWith on nested column",
         StringStartsWith("metadata.stringCol", "test"),
-        Some(Expressions.startsWith("metadata.stringCol", "test")),
-        "StringStartsWith on nested column"
+        Some(Expressions.startsWith("metadata.stringCol", "test"))
       ),
 
       // Unsupported: StringEndsWith, StringContains
       ExprConvTestCase(
+        "StringEndsWith (unsupported)",
         StringEndsWith("stringCol", "suffix"),
-        None,
-        "StringEndsWith (unsupported)"
+        None
       ),
       ExprConvTestCase(
+        "StringContains (unsupported)",
         StringContains("stringCol", "substr"),
-        None,
-        "StringContains (unsupported)"
+        None
       )
     )
 
@@ -331,6 +331,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     // Valid combinations: both sides convert successfully
     val validCombinations = Seq(
       ExprConvTestCase(
+        "AND with two different types",
         And(
           EqualTo("intCol", 42),
           GreaterThan("longCol", 100L)
@@ -339,10 +340,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
           Expressions.and(
             Expressions.equal("intCol", 42),
             Expressions.greaterThan("longCol", 100L))
-        ),
-        "AND with two different types"
+        )
       ),
       ExprConvTestCase(
+        "OR with two different types",
         Or(
           LessThan("doubleCol", 99.99), IsNull("stringCol")
         ),
@@ -351,10 +352,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
             Expressions.lessThan("doubleCol", 99.99),
             Expressions.isNull("stringCol")
           )
-        ),
-        "OR with two different types"
+        )
       ),
       ExprConvTestCase(
+        "Nested logical operators",
         And(
           Or(
             EqualTo("intCol", 1), EqualTo("intCol", 2)
@@ -367,20 +368,19 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
           Expressions.and(
             Expressions.or(
               Expressions.equal("intCol", 1), Expressions.equal("intCol", 2)
-            ),
-            Expressions.and(
+      ),
+      Expressions.and(
               Expressions.greaterThan("longCol", 0L), Expressions.lessThan("longCol", 100L)
             )
           )
-        ),
-        "Nested logical operators"
+        )
       ),
       ExprConvTestCase(
+        "Range filter: 0 < intCol < 100",
         And(GreaterThan("intCol", 0), LessThan("intCol", 100)),
         Some(Expressions.and(
           Expressions.greaterThan("intCol", 0), Expressions.lessThan("intCol", 100)
-        )),
-        "Range filter: 0 < intCol < 100"
+        ))
       )
     )
 
@@ -390,34 +390,34 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
     val invalidCombinations = Seq(
       ExprConvTestCase(
+        "AND with unsupported right side",
         And(validFilter, unsupportedFilter),
-        None,
-        "AND with unsupported right side"
+        None
       ),
       ExprConvTestCase(
+        "AND with unsupported left side",
         And(unsupportedFilter, validFilter),
-        None,
-        "AND with unsupported left side"
+        None
       ),
       ExprConvTestCase(
+        "OR with unsupported right side",
         Or(validFilter, unsupportedFilter),
-        None,
-        "OR with unsupported right side"
+        None
       ),
       ExprConvTestCase(
+        "OR with unsupported left side",
         Or(unsupportedFilter, validFilter),
-        None,
-        "OR with unsupported left side"
+        None
       ),
       ExprConvTestCase(
+        "Nested AND with unsupported in OR",
         And(
           validFilter, Or(
             validFilter,
             unsupportedFilter
           )
         ),
-        None,
-        "Nested AND with unsupported in OR"
+        None
       )
     )
 
@@ -433,26 +433,26 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       // Supported: Not(EqualTo) - covered in equality operators test, but included here for
       // completeness
       ExprConvTestCase(
+        "Not(EqualTo) converts to NotEqualTo (supported)",
         Not(EqualTo("intCol", 42)),
-        Some(Expressions.notEqual("intCol", 42)),
-        "Not(EqualTo) converts to NotEqualTo (supported)"
+        Some(Expressions.notEqual("intCol", 42))
       ),
 
       // Unsupported: Not with other operators
       ExprConvTestCase(
+        "Not(LessThan) is unsupported",
         Not(LessThan("intCol", 5)),
-        None,
-        "Not(LessThan) is unsupported"
+        None
       ),
       ExprConvTestCase(
+        "Not(GreaterThan) is unsupported",
         Not(GreaterThan("longCol", 100L)),
-        None,
-        "Not(GreaterThan) is unsupported"
+        None
       ),
       ExprConvTestCase(
+        "Not(IsNull) is unsupported (use IsNotNull instead)",
         Not(IsNull("stringCol")),
-        None,
-        "Not(IsNull) is unsupported (use IsNotNull instead)"
+        None
       )
     )
 
@@ -466,14 +466,14 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   test("boolean literals (AlwaysTrue, AlwaysFalse)") {
     val testCases = Seq(
       ExprConvTestCase(
+        "AlwaysTrue",
         AlwaysTrue(),
-        Some(Expressions.alwaysTrue()),
-        "AlwaysTrue"
+        Some(Expressions.alwaysTrue())
       ),
       ExprConvTestCase(
+        "AlwaysFalse",
         AlwaysFalse(),
-        Some(Expressions.alwaysFalse()),
-        "AlwaysFalse"
+        Some(Expressions.alwaysFalse())
       )
     )
 
@@ -497,36 +497,36 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val testCases = Seq(
       // Date/Timestamp: Spark sends java.sql types, but we convert to Int/Long for Iceberg
       ExprConvTestCase(
+        "Date converted to days since epoch",
         EqualTo("dateCol", testDate),
-        Some(Expressions.equal("dateCol", expectedDateDays: Integer)),
-        "Date converted to days since epoch"
+        Some(Expressions.equal("dateCol", expectedDateDays: Integer))
       ),
       ExprConvTestCase(
+        "Timestamp converted to microseconds since epoch",
         EqualTo("timestampCol", testTimestamp),
-        Some(Expressions.equal("timestampCol", expectedTimestampMicros: java.lang.Long)),
-        "Timestamp converted to microseconds since epoch"
+        Some(Expressions.equal("timestampCol", expectedTimestampMicros: java.lang.Long))
       ),
 
       // Boundary values
       ExprConvTestCase(
+        "Int.MinValue boundary",
         EqualTo("intCol", Int.MinValue),
-        Some(Expressions.equal("intCol", Int.MinValue)),
-        "Int.MinValue boundary"
+        Some(Expressions.equal("intCol", Int.MinValue))
       ),
       ExprConvTestCase(
+        "Int.MaxValue boundary",
         EqualTo("intCol", Int.MaxValue),
-        Some(Expressions.equal("intCol", Int.MaxValue)),
-        "Int.MaxValue boundary"
+        Some(Expressions.equal("intCol", Int.MaxValue))
       ),
       ExprConvTestCase(
+        "Long.MinValue boundary",
         EqualTo("longCol", Long.MinValue),
-        Some(Expressions.equal("longCol", Long.MinValue)),
-        "Long.MinValue boundary"
+        Some(Expressions.equal("longCol", Long.MinValue))
       ),
       ExprConvTestCase(
+        "Long.MaxValue boundary",
         EqualTo("longCol", Long.MaxValue),
-        Some(Expressions.equal("longCol", Long.MaxValue)),
-        "Long.MaxValue boundary"
+        Some(Expressions.equal("longCol", Long.MaxValue))
       )
     )
 
@@ -540,9 +540,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   test("unsupported filters (EqualNullSafe, etc.)") {
     val testCases = Seq(
       ExprConvTestCase(
+        "EqualNullSafe (unsupported)",
         EqualNullSafe("intCol", 5),
-        None,
-        "EqualNullSafe (unsupported)"
+        None
       )
     )
 
