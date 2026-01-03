@@ -28,8 +28,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     label: String
   )
 
-  // Types that support ordering operations
-  // (LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
+  // Types that support equality and ordering operations
+  // (EqualTo, NotEqualTo, LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
   // Note: Spark Filter API sends Date/Timestamp as java.sql.Date/Timestamp, but our converter
   // transforms them to Int (days since epoch) and Long (microseconds since epoch) for Iceberg.
   private val orderableTypes = Seq(
