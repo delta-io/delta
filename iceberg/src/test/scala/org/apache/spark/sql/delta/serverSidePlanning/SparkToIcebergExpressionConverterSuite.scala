@@ -79,9 +79,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       ("EqualTo",  // Test case label
         (col: String, v: Any) => EqualTo(col, v),         // Spark filter builder
         (col: String, v: Any) => Expressions.equal(col, v)),  // Iceberg expression builder
-      ("NotEqualTo", 
-        (col: String, v: Any) => Not(EqualTo(col, v)),  
-        (col: String, v: Any) => Expressions.notEqual(col, v)) 
+      ("NotEqualTo",
+        (col: String, v: Any) => Not(EqualTo(col, v)),
+        (col: String, v: Any) => Expressions.notEqual(col, v))
     )
 
     // Generate all combinations: all types x equality operators
@@ -206,9 +206,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       ("IsNull",  // Test case label
         (col: String, _: Any) => IsNull(col),              // Spark filter builder
         (col: String, _: Any) => Expressions.isNull(col)),  // Iceberg expression builder
-      ("IsNotNull",  
-        (col: String, _: Any) => IsNotNull(col),  
-        (col: String, _: Any) => Expressions.notNull(col)) 
+      ("IsNotNull",
+        (col: String, _: Any) => IsNotNull(col),
+        (col: String, _: Any) => Expressions.notNull(col))
     )
 
     // Generate all combinations: all types x null check operators
@@ -332,7 +332,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "AND with two different types", // Test case label
         And( // Spark filter builder
           EqualTo("intCol", 42),
-          GreaterThan("longCol", 100L) 
+          GreaterThan("longCol", 100L)
         ),
         Some( // Iceberg expression builder
           Expressions.and(
@@ -429,7 +429,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   test("NOT operator (only NOT EqualTo is supported)") {
     val testCases = Seq(
       // Supported: Not(EqualTo) with regular values, null, and NaN are all tested in the
-      // equality operators test. This test case is included for completeness of the NOT operator test.
+      // equality operators test. This test case is included for completeness of the NOT
+      // operator test.
       ExprConvTestCase(
         "Not(EqualTo) converts to NotEqualTo (supported)", // Test case label
         Not(EqualTo("intCol", 42)), // Spark filter builder
