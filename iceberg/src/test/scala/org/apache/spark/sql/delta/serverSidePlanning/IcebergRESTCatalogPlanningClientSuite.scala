@@ -25,9 +25,11 @@ import org.apache.http.entity.ContentType
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.SharedSparkSession
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
+import shadedForDelta.org.apache.iceberg.expressions.Binder
 import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
 import shadedForDelta.org.apache.iceberg.types.Types
 
@@ -36,9 +38,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   import testImplicits._
 
   private val defaultNamespace = Namespace.of("testDatabase")
-  private val defaultSchema = new Schema(
-    Types.NestedField.required(1, "id", Types.LongType.get),
-    Types.NestedField.required(2, "name", Types.StringType.get))
+  private val defaultSchema = TestSchemas.testSchema
   private val defaultSpec = PartitionSpec.unpartitioned()
 
   private lazy val server = startServer()
@@ -63,6 +63,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   override def afterAll(): Unit = {
     try {
       if (server != null) {
+        server.clearCaptured()
         server.stop()
       }
     } finally {
@@ -91,17 +92,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   // them.
   test("plan scan on non-empty table with data files") {
     withTempTable("tableWithData") { table =>
-      // Write data to the table using Spark
       val tableName = s"rest_catalog.${defaultNamespace}.tableWithData"
-
-      // Write data with 2 partitions to create 2 data files
-      spark.sparkContext.parallelize(0 until 250, numSlices = 2)
-        .map(id => (id.toLong, s"test_$id"))
-        .toDF("id", "name")
-        .write
-        .format("iceberg")
-        .mode("append")
-        .save(tableName)
+      populateTestData(tableName)
 
       // Get the actual data files from the table metadata to verify against scan plan
       val expectedFiles = spark.sql(
@@ -141,6 +133,111 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   // 3. Verifies exception message contains "partition data"
   // This will test the client's partition validation logic at
   // IcebergRESTCatalogPlanningClient:160-164
+
+  test("UnityCatalogMetadata uses prefix from /v1/config endpoint") {
+    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+
+    // Configure server to return prefix
+    server.setCatalogPrefix("catalogs/test-catalog")
+
+    val metadata = UnityCatalogMetadata(
+      catalogName = "test_catalog",
+      ucUri = serverUri,
+      ucToken = "test-token",
+      tableProps = Map.empty)
+
+    // Verify endpoint includes prefix from /v1/config response
+    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest/v1/catalogs/test-catalog"
+    assert(
+      metadata.planningEndpointUri == expectedEndpoint,
+      s"Expected endpoint to include prefix: ${metadata.planningEndpointUri}")
+  }
+
+  test("UnityCatalogMetadata falls back when /v1/config returns no prefix") {
+    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+
+    // Configure server to return no prefix (fallback case)
+    server.setCatalogPrefix(null)
+
+    val metadata = UnityCatalogMetadata(
+      catalogName = "test_catalog",
+      ucUri = serverUri,
+      ucToken = "test-token",
+      tableProps = Map.empty)
+
+    // Verify endpoint uses simple path without prefix
+    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
+    assert(
+      metadata.planningEndpointUri == expectedEndpoint,
+      s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
+  }
+
+  test("filter sent to IRC server over HTTP") {
+    withTempTable("filterTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.filterTest")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        val testCases = Seq(
+          (EqualTo("longCol", 2L), "EqualTo numeric (long)"),
+          (EqualTo("intCol", 30), "EqualTo numeric (int)"),
+          (EqualTo("stringCol", "bob"), "EqualTo string"),
+          (EqualTo("boolCol", true), "EqualTo boolean"),
+          (Not(EqualTo("longCol", 2L)), "NotEqualTo numeric (long)"),
+          (Not(EqualTo("stringCol", "bob")), "NotEqualTo string"),
+          (LessThan("longCol", 10L), "LessThan (long)"),
+          (LessThan("floatCol", 4.5f), "LessThan (float)"),
+          (GreaterThan("longCol", 5L), "GreaterThan (long)"),
+          (GreaterThan("doubleCol", 100.0), "GreaterThan (double)"),
+          (LessThanOrEqual("intCol", 30), "LessThanOrEqual (int)"),
+          (GreaterThanOrEqual("doubleCol", 100.0), "GreaterThanOrEqual (double)"),
+          (In("longCol", Array(1L, 2L, 3L)), "In numeric (long)"),
+          (In("stringCol", Array("alice", "bob", "charlie")), "In string"),
+          (IsNull("stringCol"), "IsNull"),
+          (IsNotNull("stringCol"), "IsNotNull"),
+          (StringStartsWith("stringCol", "ali"), "StringStartsWith"),
+          (AlwaysTrue(), "AlwaysTrue"),
+          (AlwaysFalse(), "AlwaysFalse"),
+          (And(EqualTo("longCol", 2L), EqualTo("stringCol", "bob")), "And"),
+          (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or"),
+          (EqualTo("address.intCol", 200), "EqualTo on nested numeric field"),
+          (EqualTo("metadata.stringCol", "meta_bob"), "EqualTo on nested string field"),
+          (GreaterThan("address.intCol", 500), "GreaterThan on nested numeric field"))
+
+        testCases.foreach { case (filter, description) =>
+          // Clear previous captured filter
+          server.clearCaptured()
+
+          // Convert Spark filter to expected Iceberg expression
+          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter)
+          assert(
+            expectedExpr.isDefined,
+            s"[$description] Filter conversion should succeed for: $filter")
+
+          // Call client with filter
+          client.planScan(
+            defaultNamespace.toString,
+            "filterTest",
+            sparkFilterOption = Some(filter))
+
+          // Verify server captured the filter
+          val capturedFilter = server.getCapturedFilter
+          assert(capturedFilter != null, s"[$description] Server should have captured filter")
+
+          // isEquivalentTo() only works on bound expressions, so bind both to schema for comparison
+          // Binding resolves field references from names to schema-specific field IDs and types
+          val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
+          val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
+
+          assert(
+            boundCaptured.isEquivalentTo(boundExpected),
+            s"[$description] Expected expression: $boundExpected, got: $boundCaptured")
+        }
+      } finally {
+        client.close()
+      }
+    }
+  }
 
   private def startServer(): IcebergRESTServer = {
     val config = Map(IcebergRESTServer.REST_PORT -> "0").asJava
@@ -183,45 +280,37 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       func(table)
     } finally {
       catalog.dropTable(tableId, false)
+      server.clearCaptured()
     }
   }
 
-  test("UnityCatalogMetadata uses prefix from /v1/config endpoint") {
-    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+  /**
+   * Populates a table with sample test data covering all schema types.
+   * Uses parallelize with 2 partitions to create 2 data files.
+   */
+  private def populateTestData(tableName: String): Unit = {
+    import org.apache.spark.sql.Row
 
-    // Configure server to return prefix
-    server.setCatalogPrefix("catalogs/test-catalog")
+    val data = spark.sparkContext.parallelize(0 until 250, numSlices = 2)
+      .map(i => Row(
+        i, // intCol
+        i.toLong, // longCol
+        i * 10.0, // doubleCol
+        i.toFloat, // floatCol
+        s"test_$i", // stringCol
+        i % 2 == 0, // boolCol
+        BigDecimal(i).bigDecimal, // decimalCol
+        java.sql.Date.valueOf("2024-01-01"), // dateCol
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
+        Row(i * 100), // address.intCol
+        Row(s"meta_$i") // metadata.stringCol
+      ))
 
-    val metadata = UnityCatalogMetadata(
-      catalogName = "test_catalog",
-      ucUri = serverUri,
-      ucToken = "test-token",
-      tableProps = Map.empty
-    )
 
-    // Verify endpoint includes prefix from /v1/config response
-    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest/v1/catalogs/test-catalog"
-    assert(metadata.planningEndpointUri == expectedEndpoint,
-      s"Expected endpoint to include prefix: ${metadata.planningEndpointUri}")
+    spark.createDataFrame(data, TestSchemas.sparkSchema)
+      .write
+      .format("iceberg")
+      .mode("append")
+      .save(tableName)
   }
-
-  test("UnityCatalogMetadata falls back when /v1/config returns no prefix") {
-    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
-
-    // Configure server to return no prefix (fallback case)
-    server.setCatalogPrefix(null)
-
-    val metadata = UnityCatalogMetadata(
-      catalogName = "test_catalog",
-      ucUri = serverUri,
-      ucToken = "test-token",
-      tableProps = Map.empty
-    )
-
-    // Verify endpoint uses simple path without prefix
-    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
-    assert(metadata.planningEndpointUri == expectedEndpoint,
-      s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
-  }
-
 }
