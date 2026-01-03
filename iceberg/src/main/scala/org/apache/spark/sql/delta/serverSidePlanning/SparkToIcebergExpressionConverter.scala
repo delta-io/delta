@@ -170,9 +170,9 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   /*
    * Convert EqualTo with special handling for null and NaN.
    * Note: We cannot use Expressions.equal(col, null/NaN) because Iceberg models these
-   * with specialized predicates (isNull/isNaN) that have different evaluation semantics
-   * (from Iceberg SparkV2Filters):
+   * with specialized predicates (isNull/isNaN) that have different evaluation semantics:
    * - SQL: col = NULL returns NULL (unknown), but col IS NULL returns TRUE/FALSE
+   * Reference: OSS Iceberg SparkV2Filters.handleEqual()
    */
   private def convertEqualTo(attribute: String, sparkValue: Any): Expression = {
     sparkValue match {
@@ -216,14 +216,14 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   }
 
   private def convertLessThan(attribute: String, sparkValue: Any): Expression =
-    Expressions.lessThan(attribute, toIcebergValue(sparkValue))
+    Expressions.lessThan(attribute, toIcebergValue(sparkValue, supportBoolean = false))
 
   private def convertGreaterThan(attribute: String, sparkValue: Any): Expression =
-    Expressions.greaterThan(attribute, toIcebergValue(sparkValue))
+    Expressions.greaterThan(attribute, toIcebergValue(sparkValue, supportBoolean = false))
 
   private def convertLessThanOrEqual(attribute: String, sparkValue: Any): Expression =
-    Expressions.lessThanOrEqual(attribute, toIcebergValue(sparkValue))
+    Expressions.lessThanOrEqual(attribute, toIcebergValue(sparkValue, supportBoolean = false))
 
   private def convertGreaterThanOrEqual(attribute: String, sparkValue: Any): Expression =
-    Expressions.greaterThanOrEqual(attribute, toIcebergValue(sparkValue))
+    Expressions.greaterThanOrEqual(attribute, toIcebergValue(sparkValue, supportBoolean = false))
 }
