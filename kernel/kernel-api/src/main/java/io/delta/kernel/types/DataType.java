@@ -27,12 +27,28 @@ import io.delta.kernel.annotation.Evolving;
 public abstract class DataType {
 
   /**
-   * Are the data types same? The metadata or column names could be different.
+   * Are the data types same? The metadata, collations or column names could be different.
+   *
+   * <p>Should be used for schema comparisons during schema evolution.
    *
    * @param dataType
    * @return
    */
   public boolean equivalent(DataType dataType) {
+    return equals(dataType);
+  }
+
+  /**
+   * Checks whether the given {@code dataType} is compatible as an input for this type. The
+   * collations could be different.
+   *
+   * <p>This method should be used for schema comparisons when validating input type compatibility.
+   * It should not be used in other contexts, such as during the read path.
+   *
+   * @param dataType
+   * @return
+   */
+  public boolean isInputCompatible(DataType dataType) {
     return equals(dataType);
   }
 

@@ -55,6 +55,27 @@ public class ArrayType extends DataType {
         && ((ArrayType) dataType).getElementType().equivalent(getElementType());
   }
 
+  /**
+   * Is `dataType` compatible input type for this type? The collations could be different.
+   *
+   * <p>Should be used for schema comparisons when checking input type compatibility.
+   *
+   * @param dataType
+   * @return
+   */
+  @Override
+  public boolean isInputCompatible(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    ArrayType arrayType = (ArrayType) dataType;
+    return (elementField == null && arrayType.elementField == null)
+        || (elementField != null && elementField.isInputCompatible(arrayType.elementField));
+  }
+
   @Override
   public boolean isNested() {
     return true;

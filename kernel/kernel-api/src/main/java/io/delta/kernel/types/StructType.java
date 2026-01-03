@@ -175,6 +175,30 @@ public final class StructType extends DataType {
             .allMatch(result -> result);
   }
 
+  /**
+   * Is `dataType` compatible input type for this type? The collations could be different.
+   *
+   * <p>Should be used for schema comparisons when checking input type compatibility.
+   *
+   * @param dataType
+   * @return
+   */
+  @Override
+  public boolean isInputCompatible(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    StructType structType = (StructType) dataType;
+    return this.length() == structType.length()
+        && fieldNames.equals(structType.fieldNames)
+        && IntStream.range(0, this.length())
+            .mapToObj(i -> this.at(i).isInputCompatible(structType.at(i)))
+            .allMatch(result -> result);
+  }
+
   @Override
   public boolean isNested() {
     return true;

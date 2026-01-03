@@ -133,6 +133,36 @@ public final class FieldMetadata {
         .collect(Collectors.joining(", ", "{", "}"));
   }
 
+  /** Are the metadata same, ignoring the specified keys? */
+  public boolean equalsIgnoreKeys(FieldMetadata other, Set<String> keys) {
+    if (this == other) {
+      return true;
+    }
+    if (other == null) {
+      return false;
+    }
+
+    Map<String, Object> filteredMetadata =
+        this.metadata.entrySet().stream()
+            .filter(e -> !keys.contains(e.getKey()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    Map<String, Object> otherFilteredMetadata =
+        other.metadata.entrySet().stream()
+            .filter(e -> !keys.contains(e.getKey()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    if (filteredMetadata.size() != otherFilteredMetadata.size()) {
+      return false;
+    }
+    return filteredMetadata.entrySet().stream()
+        .allMatch(
+            e -> {
+              Object value = e.getValue();
+              Object otherValue = otherFilteredMetadata.get(e.getKey());
+              return Objects.deepEquals(value, otherValue);
+            });
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -141,13 +171,11 @@ public final class FieldMetadata {
     if (this.metadata.size() != that.metadata.size()) return false;
     return this.metadata.entrySet().stream()
         .allMatch(
-            e ->
-                Objects.equals(e.getValue(), that.metadata.get(e.getKey()))
-                    || (e.getValue() != null
-                        && e.getValue().getClass().isArray()
-                        && that.metadata.get(e.getKey()).getClass().isArray()
-                        && Arrays.equals(
-                            (Object[]) e.getValue(), (Object[]) that.metadata.get(e.getKey()))));
+            e -> {
+              Object value = e.getValue();
+              Object otherValue = that.metadata.get(e.getKey());
+              return Objects.deepEquals(value, otherValue);
+            });
   }
 
   @Override
