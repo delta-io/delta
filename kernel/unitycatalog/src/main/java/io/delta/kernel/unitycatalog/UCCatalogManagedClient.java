@@ -126,7 +126,13 @@ public class UCCatalogManagedClient {
 
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
-                final long maxUcTableVersion = response.getLatestTableVersion();
+                final long latestTableVersion = response.getLatestTableVersion();
+                final long maxCommitVersion =
+                    response.getCommits().stream()
+                        .mapToLong(Commit::getVersion)
+                        .max()
+                        .orElse(latestTableVersion);
+                final long maxUcTableVersion = Math.max(latestTableVersion, maxCommitVersion);
 
                 versionOpt.ifPresent(
                     version ->
@@ -282,15 +288,24 @@ public class UCCatalogManagedClient {
         endVersionOpt.filter(v -> !startTimestampOpt.isPresent());
     final GetCommitsResponse response =
         getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
-    final long ucTableVersion = response.getLatestTableVersion();
-    validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
+    final long latestTableVersion = response.getLatestTableVersion();
+    final long maxCommitVersion =
+        response.getCommits().stream()
+            .mapToLong(Commit::getVersion)
+            .max()
+            .orElse(latestTableVersion);
+    final long maxUcTableVersion = Math.max(latestTableVersion, maxCommitVersion);
+    final long maxVersionForValidation =
+        endVersionOpt.map(v -> Math.max(maxUcTableVersion, v)).orElse(maxUcTableVersion);
+    validateVersionBoundariesExist(
+        ucTableId, startVersionOpt, endVersionOpt, maxVersionForValidation);
     final List<ParsedLogData> logData =
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
     final Lazy<Snapshot> latestSnapshot =
         new Lazy<>(
             () ->
                 loadLatestSnapshotForTimestampResolution(
-                    engine, ucTableId, tablePath, logData, ucTableVersion));
+                    engine, ucTableId, tablePath, logData, maxUcTableVersion));
 
     return timeUncheckedOperation(
         logger,
@@ -445,7 +460,6 @@ public class UCCatalogManagedClient {
                     ucTableId, type, version, maxRatifiedVersion));
           }
         };
-    startVersion.ifPresent(v -> validateVersion.accept(v, "start"));
     endVersion.ifPresent(v -> validateVersion.accept(v, "end"));
   }
 

@@ -19,7 +19,7 @@ import java.util.Optional
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{CommitRangeNotFoundException, KernelException}
 import io.delta.kernel.spark.exception.VersionNotFoundException
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils}
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -272,7 +272,7 @@ class UCManagedTableSnapshotManagerSuite
           Optional.of(maxRatifiedVersion - 1))
       }
 
-      intercept[IllegalArgumentException] {
+      intercept[CommitRangeNotFoundException] {
         manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
       }
     }
