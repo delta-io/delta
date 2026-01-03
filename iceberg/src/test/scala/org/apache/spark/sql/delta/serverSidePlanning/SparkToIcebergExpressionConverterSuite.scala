@@ -75,21 +75,24 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // ========================================================================
 
   test("equality operators (=, !=) on all types including null and NaN handling") {
-    // Test standard equality operators
+    // Parameterize test to avoid duplication: test equality ops × all types.
+    // Each tuple: (Spark Filter builder, Iceberg Expression builder, operation label)
     val equalityOperators = Seq(
-      ((col: String, v: Any) => EqualTo(col, v),
-        (col: String, v: Any) => Expressions.equal(col, v),
-        "EqualTo"),
-      ((col: String, v: Any) => Not(EqualTo(col, v)),
-        (col: String, v: Any) => Expressions.notEqual(col, v),
-        "NotEqualTo")
+      ((col: String, v: Any) => EqualTo(col, v),         // Spark filter builder
+        (col: String, v: Any) => Expressions.equal(col, v),  // Iceberg expression builder
+        "EqualTo"),  // Operator name
+      ((col: String, v: Any) => Not(EqualTo(col, v)),    // Spark filter builder
+        (col: String, v: Any) => Expressions.notEqual(col, v),  // Iceberg expression builder
+        "NotEqualTo")  // Operator name
     )
 
+    // Generate all combinations: all types × equality operators
     val standardTests = for {
       (col, value, typeDesc) <- allTypes
       (sparkOp, icebergOp, opName) <- equalityOperators
     } yield ExprConvTestCase(
       sparkOp(col, value),
+      // supportBoolean=true because equality operators work on all types including Boolean
       Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, true))),
       s"$opName $typeDesc"
     )
@@ -164,6 +167,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       (sparkOp, icebergOp, opName) <- comparisonOpMappings
     } yield ExprConvTestCase(
       sparkOp(col, value),
+      // supportBoolean=false because ordering operators don't work on Boolean type
       Some(icebergOp(col, SparkToIcebergExpressionConverter.toIcebergValue(value, false))),
       s"$opName $typeDesc"
     )
@@ -200,15 +204,17 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // ========================================================================
 
   test("null check operators (IsNull, IsNotNull) on all types") {
+    // Each tuple: (Spark Filter builder, Iceberg Expression builder, operation label)
     val nullCheckOperators = Seq(
-      ((col: String, _: Any) => IsNull(col),
-        (col: String, _: Any) => Expressions.isNull(col),
-        "IsNull"),
-      ((col: String, _: Any) => IsNotNull(col),
-        (col: String, _: Any) => Expressions.notNull(col),
-        "IsNotNull")
+      ((col: String, _: Any) => IsNull(col),              // Spark filter builder
+        (col: String, _: Any) => Expressions.isNull(col),  // Iceberg expression builder
+        "IsNull"),  // Operator name
+      ((col: String, _: Any) => IsNotNull(col),           // Spark filter builder
+        (col: String, _: Any) => Expressions.notNull(col),  // Iceberg expression builder
+        "IsNotNull")  // Operator name
     )
 
+    // Generate all combinations: all types × null check operators
     val testCases = for {
       (col, value, typeDesc) <- allTypes
       (sparkOp, icebergOp, opName) <- nullCheckOperators
