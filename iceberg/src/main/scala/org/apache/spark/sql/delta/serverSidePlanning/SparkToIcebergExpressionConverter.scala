@@ -195,7 +195,6 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
   }
 
   /*
-   * Convert NOT with special case handling.
    * Iceberg doesn't support arbitrary NOT expressions. We only support Not(EqualTo) as a special
    * case, converting it to NotEqualTo. All other NOT expressions are unsupported.
    */

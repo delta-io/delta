@@ -537,11 +537,59 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // UNSUPPORTED FILTERS
   // ========================================================================
 
-  test("unsupported filters (EqualNullSafe, etc.)") {
+  test("unsupported filters return None gracefully") {
+    // This test ensures that all known unsupported Spark Filter types return None
+    // without throwing exceptions. This is important for forward compatibility -
+    // if Spark adds new filter types, our converter will gracefully skip them.
     val testCases = Seq(
+      // EqualNullSafe - Iceberg doesn't have null-safe equality
       ExprConvTestCase(
-        "EqualNullSafe (unsupported)",
+        "EqualNullSafe",
         EqualNullSafe("intCol", 5),
+        None
+      ),
+      // StringEndsWith - Iceberg API doesn't provide this predicate
+      ExprConvTestCase(
+        "StringEndsWith",
+        StringEndsWith("stringCol", "suffix"),
+        None
+      ),
+      // StringContains - Iceberg API doesn't provide this predicate
+      ExprConvTestCase(
+        "StringContains",
+        StringContains("stringCol", "substring"),
+        None
+      ),
+      // Not with non-EqualTo inner filter - Iceberg doesn't support arbitrary NOT
+      // Only Not(EqualTo) is converted as a special case
+      ExprConvTestCase(
+        "Not(LessThan) - arbitrary NOT unsupported",
+        Not(LessThan("intCol", 10)),
+        None
+      ),
+      ExprConvTestCase(
+        "Not(GreaterThan) - arbitrary NOT unsupported",
+        Not(GreaterThan("intCol", 10)),
+        None
+      ),
+      ExprConvTestCase(
+        "Not(IsNull) - arbitrary NOT unsupported",
+        Not(IsNull("intCol")),
+        None
+      ),
+      ExprConvTestCase(
+        "Not(In) - arbitrary NOT unsupported",
+        Not(In("intCol", Array(1, 2, 3))),
+        None
+      ),
+      ExprConvTestCase(
+        "Not(And) - arbitrary NOT unsupported",
+        Not(And(EqualTo("intCol", 1), EqualTo("longCol", 2L))),
+        None
+      ),
+      ExprConvTestCase(
+        "Not(StringStartsWith) - arbitrary NOT unsupported",
+        Not(StringStartsWith("stringCol", "prefix")),
         None
       )
     )
