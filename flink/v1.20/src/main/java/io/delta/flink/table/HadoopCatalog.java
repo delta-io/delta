@@ -16,7 +16,9 @@
 
 package io.delta.flink.table;
 
+import io.delta.kernel.types.StructType;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -78,6 +80,25 @@ public class HadoopCatalog implements DeltaCatalog {
     info.uuid = tableId;
     return info;
   }
+
+  /**
+   * Creates a table at the given location in a file-based catalog.
+   *
+   * <p>The {@code tableId} is interpreted as a filesystem path or URI that identifies the table
+   * location. This operation does not create any data or log files at the specified path.
+   *
+   * @param tableId The table identifier, interpreted as a filesystem path or URI that specifies the
+   *     table location.
+   * @param schema The logical schema of the table, describing column names, data types, and
+   *     nullability.
+   * @param partitions A list of column names used for partitioning the table; an empty list
+   *     indicates an unpartitioned table.
+   * @param properties A map of table properties for configuration and metadata; may be empty but
+   *     must not be {@code null}.
+   */
+  @Override
+  public void createTable(
+      String tableId, StructType schema, List<String> partitions, Map<String, String> properties) {}
 
   /**
    * Returns the static credential configuration associated with this catalog.

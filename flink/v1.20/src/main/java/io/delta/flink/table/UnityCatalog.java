@@ -16,7 +16,12 @@
 
 package io.delta.flink.table;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.failsafe.function.CheckedSupplier;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.types.*;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.SchemasApi;
@@ -24,11 +29,10 @@ import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.api.TemporaryCredentialsApi;
 import io.unitycatalog.client.model.*;
 import java.net.URI;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -127,11 +131,20 @@ public class UnityCatalog implements DeltaCatalog {
       return body.get();
     } catch (Throwable e) {
       if (e instanceof ApiException) {
-        int code = ((ApiException) e).getCode();
-        if (code < 500 && code > 300) {
-          throw new ExceptionUtils.ResourceNotFoundException(e.getMessage());
+        ApiException apiException = (ApiException) e;
+        try {
+          JsonNode node = new ObjectMapper().readTree(apiException.getResponseBody());
+          switch (node.get("error_code").asText()) {
+            case "TABLE_ALREADY_EXISTS":
+              throw new ExceptionUtils.ResourceAlreadyExistException(node.get("message").asText());
+            case "TABLE_NOT_FOUND":
+              throw new ExceptionUtils.ResourceNotFoundException(node.get("message").asText());
+            default:
+              throw new RuntimeException(apiException);
+          }
+        } catch (JsonProcessingException ex) {
+          throw new RuntimeException(ex);
         }
-        throw new RuntimeException(e);
       }
       throw new RuntimeException(e);
     }
@@ -149,6 +162,7 @@ public class UnityCatalog implements DeltaCatalog {
    */
   @Override
   public TableBrief getTable(String tableId) {
+    Objects.requireNonNull(tableId);
     return withRetry(
         () -> {
           TablesApi tablesApi = new TablesApi(getApiClient());
@@ -160,6 +174,90 @@ public class UnityCatalog implements DeltaCatalog {
           brief.uuid = tableInfo.getTableId();
           LOG.debug("Loaded table with UUID {} at {}", brief.uuid, brief.tablePath);
           return brief;
+        });
+  }
+
+  /**
+   * Creates a new table in the backed UnityCatalog
+   *
+   * <p>The {@code tableId} identifies the table within UC. This operation registers the table
+   * metadata with the remote catalog, including schema, partition specification, and table
+   * properties.
+   *
+   * <p>This method does not write any table data. It is limited to metadata creation and
+   * validation, such as checking for table existence and ensuring the provided schema and partition
+   * definitions are compatible with the catalog.
+   *
+   * @param tableId The catalog-specific identifier of the table to create.
+   * @param schema The logical schema of the table, describing column names, data types, and
+   *     nullability.
+   * @param partitions A list of column names used for partitioning the table; an empty list
+   *     indicates an unpartitioned table.
+   * @param properties A map of table properties for configuration and metadata; may be empty but
+   *     must not be {@code null}.
+   */
+  @Override
+  public void createTable(
+      String tableId, StructType schema, List<String> partitions, Map<String, String> properties) {
+    Objects.requireNonNull(tableId);
+    Objects.requireNonNull(schema);
+    Objects.requireNonNull(partitions);
+    Objects.requireNonNull(properties);
+    withRetry(
+        () -> {
+          TablesApi tablesApi = new TablesApi(getApiClient());
+          // Obtain names
+          String[] namespaces = tableId.split("\\.");
+          Preconditions.checkArgument(namespaces.length == 2 || namespaces.length == 3);
+          String schemaName;
+          String tableName;
+          if (namespaces.length == 3) {
+            Preconditions.checkArgument(namespaces[0].equals(getName()));
+            schemaName = namespaces[1];
+            tableName = namespaces[2];
+          } else {
+            schemaName = namespaces[0];
+            tableName = namespaces[1];
+          }
+          // Column Info
+          List<ColumnInfo> columnInfos =
+              IntStream.range(0, schema.fields().size())
+                  .mapToObj(
+                      index -> {
+                        StructField field = schema.fields().get(index);
+                        ColumnInfo colInfo =
+                            new ColumnInfo()
+                                .name(field.getName())
+                                .typeName(columnTypeName(field.getDataType()))
+                                .typeText(typeText(field.getDataType()))
+                                .typeJson(DataTypeJsonSerDe.serializeDataType(field.getDataType()))
+                                .position(index)
+                                .nullable(field.isNullable());
+                        if (field.getDataType() instanceof DecimalType) {
+                          DecimalType decimalType = (DecimalType) field.getDataType();
+                          colInfo
+                              .typePrecision(decimalType.getPrecision())
+                              .typeScale(decimalType.getScale());
+                        }
+                        return colInfo;
+                      })
+                  .collect(Collectors.toList());
+
+          // Make sure the table supports CCv2.
+          Map<String, String> consolidatedProperties = new HashMap<>();
+          consolidatedProperties.putAll(properties);
+          consolidatedProperties.put("delta.feature.catalogManaged", "supported");
+
+          tablesApi.createTable(
+              new CreateTable()
+                  .catalogName(getName())
+                  .schemaName(schemaName)
+                  .name(tableName)
+                  .tableType(TableType.MANAGED)
+                  .dataSourceFormat(DataSourceFormat.DELTA)
+                  .columns(columnInfos)
+                  .properties(consolidatedProperties));
+          return null;
         });
   }
 
@@ -244,5 +342,69 @@ public class UnityCatalog implements DeltaCatalog {
           TablesApi tablesApi = new TablesApi(getApiClient());
           return tablesApi.getTable(tableId, false, false);
         });
+  }
+
+  protected static ColumnTypeName columnTypeName(DataType dataType) {
+    if (dataType instanceof IntegerType) {
+      return ColumnTypeName.INT;
+    } else if (dataType instanceof LongType) {
+      return ColumnTypeName.LONG;
+    } else if (dataType instanceof ShortType) {
+      return ColumnTypeName.SHORT;
+    } else if (dataType instanceof ByteType) {
+      return ColumnTypeName.BYTE;
+    } else if (dataType instanceof BooleanType) {
+      return ColumnTypeName.BOOLEAN;
+    } else if (dataType instanceof FloatType) {
+      return ColumnTypeName.FLOAT;
+    } else if (dataType instanceof DoubleType) {
+      return ColumnTypeName.DOUBLE;
+    } else if (dataType instanceof StringType) {
+      return ColumnTypeName.STRING;
+    } else if (dataType instanceof BinaryType) {
+      return ColumnTypeName.BINARY;
+    } else if (dataType instanceof DecimalType) {
+      return ColumnTypeName.DECIMAL;
+    } else if (dataType instanceof DateType) {
+      return ColumnTypeName.DATE;
+    } else if (dataType instanceof TimestampType) {
+      return ColumnTypeName.TIMESTAMP;
+    } else if (dataType instanceof TimestampNTZType) {
+      return ColumnTypeName.TIMESTAMP_NTZ;
+    } else if (dataType instanceof ArrayType) {
+      return ColumnTypeName.ARRAY;
+    } else if (dataType instanceof MapType) {
+      return ColumnTypeName.MAP;
+    } else if (dataType instanceof StructType) {
+      return ColumnTypeName.STRUCT;
+    } else {
+      throw new UnsupportedOperationException("Unsupported data type: " + dataType);
+    }
+  }
+
+  protected static String typeText(DataType dataType) {
+
+    if (dataType instanceof DecimalType) {
+      DecimalType decimalType = (DecimalType) dataType;
+      return String.format("DECIMAL(%d,%d)", decimalType.getPrecision(), decimalType.getScale());
+    } else if (dataType instanceof BasePrimitiveType) {
+      return dataType.toString().toUpperCase(Locale.ROOT);
+    } else if (dataType instanceof ArrayType) {
+      ArrayType arrayType = (ArrayType) dataType;
+      return String.format("ARRAY<%s>", typeText(arrayType.getElementType()));
+    } else if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      return String.format(
+          "MAP<%s,%s>", typeText(mapType.getKeyType()), typeText(mapType.getValueType()));
+    } else if (dataType instanceof StructType) {
+      StructType structType = (StructType) dataType;
+      return String.format(
+          "STRUCT<%s>",
+          structType.fields().stream()
+              .map(field -> String.format("%s:%s", field.getName(), typeText(field.getDataType())))
+              .collect(Collectors.joining(",")));
+    } else {
+      throw new UnsupportedOperationException("Unsupported data type: " + dataType);
+    }
   }
 }

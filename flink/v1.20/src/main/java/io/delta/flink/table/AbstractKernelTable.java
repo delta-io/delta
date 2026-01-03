@@ -138,6 +138,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
       this.schema = latestSnapshot.getSchema();
       this.partitionColumns = latestSnapshot.getPartitionColumnNames();
     } else {
+      // Init the table in catalog
+      getCatalog().createTable(tableId, schema, partitionColumns, configuration);
       CreateTableTransactionBuilder createTxnBuilder =
           TableManager.buildCreateTableTransaction(getTablePath().toString(), schema, ENGINE_INFO);
       if (!partitionColumns.isEmpty()) {

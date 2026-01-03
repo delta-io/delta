@@ -16,16 +16,44 @@
 
 package io.delta.flink.table
 
+import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
+
+import io.delta.kernel.{types => ktypes}
+import io.delta.kernel.types._
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class UnityCatalogSuite extends AnyFunSuite {
 
   val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
-  val CATALOG_TOKEN = "<PLACEHOLDER>"
+  val CATALOG_TOKEN = ""
 
-  ignore("operations") {
+  ignore("create table") {
     val catalog = new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN)
-    val schemainfo = catalog.getTableDetail("main.hao.schematest")
-    assert(schemainfo == null)
+
+    val nested = new StructType().add("nested", IntegerType.INTEGER)
+      .add("nested_id", StringType.STRING)
+
+    val schema =
+      new StructType().add("id", IntegerType.INTEGER)
+        .add("name", StringType.STRING)
+        .add("b", BooleanType.BOOLEAN, true)
+        .add("i", IntegerType.INTEGER, true)
+        .add("l", LongType.LONG, true)
+        .add("f", FloatType.FLOAT, true)
+        .add("d", DoubleType.DOUBLE, true)
+        .add("s", StringType.STRING, true)
+        .add("bin", BinaryType.BINARY, true)
+        .add("dec", new DecimalType(10, 2), true)
+        .add("ids", new ArrayType(IntegerType.INTEGER, true), true)
+        .add("names", new ArrayType(nested, true), true)
+        .add("map", new MapType(IntegerType.INTEGER, StringType.STRING, true), true)
+        .add("map2", new MapType(IntegerType.INTEGER, nested, true), true)
+
+    catalog.createTable(
+      "main.hao.testcreate",
+      schema,
+      List.empty[String].asJava,
+      Map("a" -> "b").asJava)
   }
 }

@@ -40,4 +40,10 @@ public class ExceptionUtils {
       super(message);
     }
   }
+
+  public static class ResourceAlreadyExistException extends RuntimeException {
+    public ResourceAlreadyExistException(String message) {
+      super(message);
+    }
+  }
 }

@@ -16,8 +16,10 @@
 
 package io.delta.flink.table;
 
+import io.delta.kernel.types.StructType;
 import java.io.Serializable;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -49,9 +51,30 @@ public interface DeltaCatalog extends Serializable {
    * @param tableId the logical identifier of the table to load; must not be {@code null}
    * @return a {@link TableBrief} object describing the resolved table
    * @throws IllegalArgumentException if the identifier is invalid
-   * @throws RuntimeException if the table cannot be resolved or loaded
+   * @throws ExceptionUtils.ResourceNotFoundException if the table cannot be resolved or loaded
    */
   TableBrief getTable(String tableId);
+
+  /**
+   * Creates a new table in the catalog with the given schema, partitioning, and properties.
+   *
+   * <p>The table is identified by {@code tableId} and is initialized with the provided {@link
+   * StructType} schema. Optional partition columns define how the table data is physically
+   * organized, and table properties supply additional configuration such as format-specific options
+   * or metadata.
+   *
+   * @param tableId The unique identifier of the table to create within the catalog.
+   * @param schema The logical schema of the table, describing column names, data types, and
+   *     nullability.
+   * @param partitions A list of column names used for partitioning the table; an empty list
+   *     indicates an unpartitioned table.
+   * @param properties A map of table properties for configuration and metadata; may be empty but
+   *     must not be {@code null}.
+   * @throws ExceptionUtils.ResourceAlreadyExistException If a table with the same identifier
+   *     already exists in the catalog.
+   */
+  void createTable(
+      String tableId, StructType schema, List<String> partitions, Map<String, String> properties);
 
   /**
    * Returns the credentials or configuration properties required to access the table identified by
