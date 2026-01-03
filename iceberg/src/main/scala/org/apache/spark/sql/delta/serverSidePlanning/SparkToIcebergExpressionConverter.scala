@@ -70,8 +70,6 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     // Equality and Comparison Operators
     case EqualTo(attribute, sparkValue) =>
       Some(convertEqualTo(attribute, sparkValue))
-    case Not(EqualTo(attribute, sparkValue)) =>
-      Some(convertNotEqualTo(attribute, sparkValue))
     case LessThan(attribute, sparkValue) =>
       Some(convertLessThan(attribute, sparkValue))
     case GreaterThan(attribute, sparkValue) =>
@@ -102,6 +100,10 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
         rightIcebergExpr <- convert(right)
       } yield Expressions.or(leftIcebergExpr, rightIcebergExpr)
 
+    // NOT Operator (special case)
+    case Not(innerFilter) =>
+      convertNot(innerFilter)
+
     // String Operations
     case StringStartsWith(attribute, value) =>
       Some(Expressions.startsWith(attribute, value))
@@ -115,8 +117,6 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
     /*
      * Unsupported Filters:
      * - StringEndsWith, StringContains: Iceberg API doesn't provide these predicates
-     * - Not (general): Iceberg doesn't support arbitrary NOT expressions. We convert Not(EqualTo)
-     * as a special case to NotEqualTo.
      */
     case _ =>
       None
@@ -191,6 +191,20 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter {
       case null => Expressions.notNull(attribute)
       case _ if isNaN(sparkValue) => Expressions.notNaN(attribute)
       case _ => Expressions.notEqual(attribute, toIcebergValue(sparkValue, supportBoolean = true))
+    }
+  }
+
+  /*
+   * Convert NOT with special case handling.
+   * Iceberg doesn't support arbitrary NOT expressions. We only support Not(EqualTo) as a special
+   * case, converting it to NotEqualTo. All other NOT expressions are unsupported.
+   */
+  private def convertNot(innerFilter: Filter): Option[Expression] = {
+    innerFilter match {
+      case EqualTo(attribute, sparkValue) =>
+        Some(convertNotEqualTo(attribute, sparkValue))
+      case _ =>
+        None  // Other NOT expressions are unsupported
     }
   }
 
