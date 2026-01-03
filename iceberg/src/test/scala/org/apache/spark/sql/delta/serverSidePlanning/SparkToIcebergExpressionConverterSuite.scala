@@ -75,7 +75,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // ========================================================================
 
   test("equality operators (=, !=) on all types including null and NaN handling") {
-    // Parameterize test to avoid duplication: test equality ops × all types.
+    // Parameterize test to avoid duplication: test equality ops x all types.
     // Each tuple: (operation label, Spark Filter builder, Iceberg Expression builder)
     val equalityOperators = Seq(
       ("EqualTo",  // Operator name
@@ -86,7 +86,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, v: Any) => Expressions.notEqual(col, v))  // Iceberg expression builder
     )
 
-    // Generate all combinations: all types × equality operators
+    // Generate all combinations: all types x equality operators
     val standardTests = for {
       (col, value, typeDesc) <- allTypes
       (opName, sparkOp, icebergOp) <- equalityOperators
@@ -143,7 +143,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // ========================================================================
 
   test("ordering comparison operators (<, >, <=, >=) on orderable types") {
-    // Parameterize test to avoid duplication: test all ordering comparison ops × all orderable
+    // Parameterize test to avoid duplication: test all ordering comparison ops x all orderable
     // types. Each tuple: (operation label, Spark Filter builder, Iceberg Expression builder)
     // Note: This tests ordering comparisons (<, >, <=, >=), not equality or other operations
     val comparisonOpMappings = Seq(
@@ -161,7 +161,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, v: Any) => Expressions.greaterThanOrEqual(col, v))
     )
 
-    // Generate all combinations: orderable types × comparison operators
+    // Generate all combinations: orderable types x comparison operators
     val supportedTests = for {
       (col, value, typeDesc) <- orderableTypeTestCases
       (opName, sparkOp, icebergOp) <- comparisonOpMappings
@@ -214,7 +214,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         (col: String, _: Any) => Expressions.notNull(col))  // Iceberg expression builder
     )
 
-    // Generate all combinations: all types × null check operators
+    // Generate all combinations: all types x null check operators
     val testCases = for {
       (col, value, typeDesc) <- allTypes
       (opName, sparkOp, icebergOp) <- nullCheckOperators
