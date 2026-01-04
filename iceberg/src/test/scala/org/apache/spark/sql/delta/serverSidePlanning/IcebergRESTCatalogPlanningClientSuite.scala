@@ -219,7 +219,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           client.planScan(
             defaultNamespace.toString,
             "filterTest",
-            sparkFilterOption = Some(filter))
+            filterOption = Some(filter))
 
           // Verify server captured the filter
           val capturedFilter = server.getCapturedFilter
@@ -317,39 +317,36 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
   test("projection sent to IRC server over HTTP") {
     withTempTable("projectionTest") { table =>
-      // Create test data with SQL
+      // Populate test data using the shared helper method
       val tableName = s"rest_catalog.${defaultNamespace}.projectionTest"
-      sql(s"""
-        INSERT INTO $tableName (id, name, age, price, rating, active)
-        VALUES
-          (1, 'alice', 25, 99.99, 4.5, true),
-          (2, 'bob', 30, 149.50, 4.2, false),
-          (3, 'charlie', 35, 199.99, 4.8, true)
-      """)
+      populateTestData(tableName)
 
       // Test cases covering different projection scenarios
       val testCases = Seq(
         ("single column",
-          Seq("id"), // input: columns to request
-          Set("id")), // expected: columns captured by server
+          Seq("intCol"), // input: columns to request
+          Set("intCol")), // expected: columns captured by server
         ("multiple columns",
-          Seq("id", "name"),
-          Set("id", "name")),
+          Seq("intCol", "stringCol"),
+          Set("intCol", "stringCol")),
         ("all columns",
-          Seq("id", "name", "age", "price", "rating", "active"),
-          Set("id", "name", "age", "price", "rating", "active")),
+          Seq("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol"),
+          Set("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol")),
         ("different order",
-          Seq("name", "id"),
-          Set("name", "id"))
+          Seq("stringCol", "intCol"),
+          Set("stringCol", "intCol"))
       )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
         testCases.foreach { case (description, projection, expectedFields) =>
+          // Clear previous captured projection
+          server.clearCaptured()
+
           client.planScan(
             defaultNamespace.toString,
             "projectionTest",
-            sparkProjectionOption = Some(projection))
+            projectionOption = Some(projection))
 
           // Verify server captured the projection
           val capturedProjection = server.getCapturedProjection
