@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.execution.streaming.StreamingRelation
+import org.apache.spark.sql.delta.Relocated.StreamingRelation
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
