@@ -18,8 +18,8 @@ package io.delta.sql
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.spark.catalog.SparkTable
-import io.delta.kernel.spark.utils.{CatalogTableUtils, ScalaUtils}
+import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.utils.{CatalogTableUtils, ScalaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSQLConfV2, DeltaSourceUtils}
 
 import org.apache.spark.sql.SparkSession
@@ -30,8 +30,6 @@ import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-
-import scala.jdk.CollectionConverters._
 
 /**
  * Rule for applying the V2 streaming path by rewriting V1 StreamingRelation

@@ -41,10 +41,9 @@ object DeltaSQLConfV2 extends DeltaSQLConfUtils {
     buildConf("v2.enableMode")
       .doc(
         "Controls the Delta V2 connector enable mode. " +
-        "Valid values: NONE (disabled, default), AUTO (use V2 for Unity Catalog managed tables), " +
-        "STRICT (should ONLY be enabled for testing).")
+          "Valid values: NONE (disabled, default), AUTO (use V2 for Unity Catalog managed tables), " +
+          "STRICT (should ONLY be enabled for testing).")
       .stringConf
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("NONE")
 }
-
