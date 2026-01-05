@@ -133,8 +133,9 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
           val durationMs =
             duration.NANOSECONDS.toMillis(System.nanoTime() - startTime)
           logInfo(
-            "validateGeneratedColumns: " +
-              log"took ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms"
+            log"Validated Generated Column expressions on table " +
+            log"${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)} " +
+            log"in ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms"
           )
         } catch {
           case NonFatal(e) =>

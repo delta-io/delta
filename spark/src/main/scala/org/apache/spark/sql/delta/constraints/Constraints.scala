@@ -145,10 +145,11 @@ object Constraints extends DeltaLogging {
       val startTime = System.nanoTime()
       validateCheckConstraintsInternal(spark, constraints, schema)
       val durationMs = duration.NANOSECONDS.toMillis(System.nanoTime() - startTime)
-      logInfo("validateCheckConstraints: " +
-        log"took ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms")
-      logInfo("Constraints processed: " +
-        log"${MDC(DeltaLogKeys.NUM_PREDICATES, constraints.size)}")
+      logInfo(
+        log"Validated CHECK constraints on table ${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)} " +
+        log"in ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms and processed " +
+        log"${MDC(DeltaLogKeys.NUM_PREDICATES, constraints.size)} constraints"
+      )
     } catch {
       case NonFatal(e) =>
         val errorClassName = e match {
