@@ -21,7 +21,6 @@ import scala.collection.mutable
 import scala.concurrent.duration
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
