@@ -20,7 +20,7 @@ import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, Cast, NamedExpression}
 import org.apache.spark.sql.catalyst.optimizer.CollapseProject
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, SubqueryAlias, View}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, SubqueryAlias, View, ViewShims}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.internal.SQLConf
 
@@ -65,7 +65,7 @@ object DeltaViewHelper {
         // We check for this by removing all subquery aliases and collapsing all Projects into one
         // and ensuring that the project list exactly match the output of the scan.
         CollapseProject(EliminateSubqueryAliases(plan)) match {
-          case View(desc, true, // isTempView
+          case ViewShims.TempViewWithChild(desc,
               Project(outerList, scan: LogicalRelation))
             if attributesMatch(outerList, scan.output) =>
             Some(desc, outerList, scan)

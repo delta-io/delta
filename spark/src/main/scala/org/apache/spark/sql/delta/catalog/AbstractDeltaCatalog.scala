@@ -53,7 +53,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, SyncIdentity}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
@@ -218,6 +218,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       writer,
       operation,
       tableByPath = isByPath,
+      allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
       // respect third party catalogs. Note: only handle CREATE TABLE for now, we
       // should support CTAS later.
@@ -773,7 +774,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
               col.isNullable,
               Option(col.comment()),
               Option(col.position()).map(UnresolvedFieldPosition),
-              Option(col.defaultValue()).map(_.getSql())
+              QualifiedColTypeShims.getDefaultValueArgFromAddColumn(col)
             )
           }).run(spark)
 

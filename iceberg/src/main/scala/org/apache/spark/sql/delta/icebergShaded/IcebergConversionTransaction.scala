@@ -49,6 +49,11 @@ case object CREATE_TABLE extends IcebergTableOp
 case object WRITE_TABLE extends IcebergTableOp
 case object REPLACE_TABLE extends IcebergTableOp
 
+sealed trait IcebergConversionMode  {
+}
+// Used by Post-commit Delta UniForm (Iceberg conversion in Delta post commit hook)
+case object UNIFORM_POST_COMMIT_MODE extends IcebergConversionMode {
+}
 /**
  * Used to prepare (convert) and then commit a set of Delta actions into the Iceberg table located
  * at the same path as [[postCommitSnapshot]]

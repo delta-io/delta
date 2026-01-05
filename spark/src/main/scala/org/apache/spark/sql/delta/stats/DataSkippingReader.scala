@@ -765,10 +765,7 @@ trait DataSkippingReaderBase
       case _: DateFromUnixDate | _: FromUnixTime | _: TimestampToLongBase | _: ToUnixTimestamp |
            _: UnixDate | _: UnixTime | _: UnixTimestamp => true
       // Date and time arithmetic.
-      case _: AddMonthsBase | _: DateAdd | _: DateAddInterval | _: DateDiff | _: DateSub |
-           _: DatetimeSub | _: LastDay | _: MonthsBetween | _: NextDay | _: SubtractDates |
-           _: SubtractTimestamps | _: TimeAdd | _: TimestampAdd | _: TimestampAddYMInterval |
-           _: TimestampDiff | _: TruncInstant => true
+      case expr if DateTimeExpressionShims.isDateTimeArithmeticExpression(expr) => true
       // String expressions.
       case _: Base64 | _: BitLength | _: Chr | _: ConcatWs | _: Decode | _: Elt | _: Empty2Null |
            _: Encode | _: FormatNumber | _: FormatString | _: ILike | _: InitCap | _: Left |
@@ -959,14 +956,19 @@ trait DataSkippingReaderBase
           // min-max values or partial nulls on any of the referenced columns.
           val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
           val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
-          val statsCols = ArrayBuffer(numRecordsStatsCol)
-          val finalExpr = referencedStats.foldLeft(newExpr) {
-            case (oldExpr, resolvedReference) =>
-              val updatedExpr = Or(
-                oldExpr, fileMustBeScanned(resolvedReference, numRecordsColOpt))
-              statsCols ++= resolvedReference.referencedStatsCols
-              updatedExpr
-          }
+          val statsCols = referencedStats.flatMap(_.referencedStatsCols) + numRecordsStatsCol
+          val mustScanFileExpression = referencedStats.map { resolvedReference =>
+            fileMustBeScanned(resolvedReference, numRecordsColOpt)
+          }.toSeq.reduceLeftOption { (l, r) => Or(l, r) }.getOrElse(Literal(false))
+
+          // Only evaluate the rewritten expression if the file passes the validation expression,
+          // ensuring that any non-partition-like input (that might cause a filter evaluation
+          // exception) is skipped. Note that we cannot rely on short-circuiting here, since
+          // common subexpression elimination during codegen may move the evaluation of the
+          // condition before that of the file validation expression, so we need to explicitly use
+          // a conditional expression to guarantee the correct evaluation order.
+          val finalExpr = If(mustScanFileExpression, Literal(true), newExpr)
+
           // Create the final data skipping expression - read a file either if it's has nulls on any
           // referenced column, has mismatched stats on any referenced column, or the filter
           // expression evaluates to `true`.
@@ -1072,11 +1074,19 @@ trait DataSkippingReaderBase
           //
           // There is a longer term task SC-22825 to fix the serialization problem that caused this.
           // But we need the adjustment in any case to correctly read stats written by old versions.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
+          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
+          Column(Cast(TimestampAdd(
+            "MILLISECOND",
+            new Literal(1L, LongType),
+            statCol.expr), TimestampType))
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
           // We also apply the same adjustment of max stats that was applied to Timestamp
           // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
+          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
+          Column(Cast(TimestampAdd(
+            "MILLISECOND",
+            new Literal(1L, LongType),
+            statCol.expr), TimestampNTZType))
         case (statCol, _, _) =>
           statCol
       }
@@ -1537,6 +1547,15 @@ trait DataSkippingReaderBase
     val withNumRecords = {
       getFilesAndNumRecords(df)
     }
+    pruneFilesWithIterator(withNumRecords, limit)
+  }
+
+  /**
+   * Accepts an iterator of files with record counts and prunes them based on the limit.
+   */
+  protected def pruneFilesWithIterator(
+      withNumRecords: Iterator[(AddFile, NumRecords)] with Closeable,
+      limit: Long): ScanAfterLimit = {
 
     var logicalRowsToScan = 0L
     var physicalRowsToScan = 0L

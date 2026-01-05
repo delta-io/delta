@@ -309,5 +309,5 @@ class DeltaStructuredLoggingSuite extends SparkFunSuite with Logging {
 
 object CustomLogKeys {
   // Custom `LogKey` must extend LogKey
-  case object CUSTOM_LOG_KEY extends LogKey
+  case object CUSTOM_LOG_KEY extends DeltaLogKey
 }

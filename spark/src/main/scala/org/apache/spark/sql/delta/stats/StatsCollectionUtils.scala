@@ -88,7 +88,7 @@ object StatsCollectionUtils
     }
 
     val parquetRebaseMode =
-      spark.sessionState.conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ)
+      spark.sessionState.conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ).toString
 
     val stringTruncateLength =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
