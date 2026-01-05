@@ -222,7 +222,8 @@ trait UpdateSQLTests extends UpdateSQLMixin {
       withTable("source") {
           Seq(("X"), ("Y"), ("Z")).toDF("category").write.format("delta").saveAsTable("target")
           Seq(("Y")).toDF("category").write.format("delta").saveAsTable("source")
-          sql("UPDATE target SET category = 'unset' WHERE category NOT IN (SELECT category FROM source)")
+          sql("UPDATE target SET category = 'unset'" +
+            " WHERE category NOT IN (SELECT category FROM source)")
           checkAnswer(sql("SELECT * FROM target ORDER BY category"),
             Seq(Row("Y"), Row("unset"), Row("unset")))
       }
