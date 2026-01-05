@@ -77,7 +77,7 @@ class ApplyV2Streaming(
         // Only apply for Unity Catalog managed tables
         // catalogTable is guaranteed to be Some because isDeltaStreamingRelation checked it
         s.dataSource.catalogTable.exists(CatalogTableUtils.isUnityCatalogManagedTable)
-      case "NONE" | _ =>
+      case _ =>
         // V2 streaming disabled or other mode
         false
     }
@@ -102,7 +102,7 @@ class ApplyV2Streaming(
 
       StreamingRelationV2(
         source = None,
-        sourceName = "delta",
+        sourceName = DeltaSourceUtils.NAME,
         table = table,
         extraOptions = new CaseInsensitiveStringMap(s.dataSource.options.asJava),
         output = toAttributes(table.schema),
