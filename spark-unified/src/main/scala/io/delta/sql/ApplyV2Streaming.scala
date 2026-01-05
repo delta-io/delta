@@ -98,6 +98,10 @@ class ApplyV2Streaming(
           ident,
           catalogTable,
           ScalaUtils.toJavaMap(catalogTable.properties))
+      val catalog = catalogTable.identifier.catalog match {
+        case Some(catalogName) => Some(session.sessionState.catalogManager.catalog(catalogName))
+        case None => None
+      }
 
       StreamingRelationV2(
         source = None,
@@ -105,9 +109,8 @@ class ApplyV2Streaming(
         table = table,
         extraOptions = new CaseInsensitiveStringMap(s.dataSource.options.asJava),
         output = toAttributes(table.schema),
-        catalog = None,
+        catalog = catalog,
         identifier = Some(ident),
-        v1Relation = Some(s))
+        v1Relation = None)
   }
 }
-
