@@ -58,8 +58,7 @@ class ApplyV2Streaming(
     s.dataSource.catalogTable match {
       case Some(catalogTable) =>
         DeltaSourceUtils.isDeltaDataSourceName(s.sourceName) ||
-        catalogTable.provider.exists(DeltaSourceUtils.isDeltaDataSourceName) ||
-        CatalogTableUtils.isUnityCatalogManagedTable(catalogTable)
+        catalogTable.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)
       case None => false
     }
   }
