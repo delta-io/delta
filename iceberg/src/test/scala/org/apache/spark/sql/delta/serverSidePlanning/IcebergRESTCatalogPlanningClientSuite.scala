@@ -219,7 +219,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           client.planScan(
             defaultNamespace.toString,
             "filterTest",
-            filterOption = Some(filter))
+            sparkFilterOption = Some(filter))
 
           // Verify server captured the filter
           val capturedFilter = server.getCapturedFilter
@@ -346,7 +346,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           client.planScan(
             defaultNamespace.toString,
             "projectionTest",
-            projectionOption = Some(projection))
+            sparkProjectionOption = Some(projection))
 
           // Verify server captured the projection
           val capturedProjection = server.getCapturedProjection
