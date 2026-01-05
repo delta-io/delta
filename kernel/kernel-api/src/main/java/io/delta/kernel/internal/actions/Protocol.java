@@ -26,6 +26,7 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.data.*;
+import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
@@ -261,6 +262,9 @@ public class Protocol implements Serializable {
    *       invariants]) results in [columnMapping, invariants]
    *   <li>(minRV = 1, minWV = 2, readerFeatures = [], writerFeatures=[]) results in []
    * </ul>
+   *
+   * @throws UnsupportedTableFeatureException if any table features in the protocol's list of
+   *     readerFeatures or writerFeatures are unsupported by Kernel
    */
   public Set<TableFeature> getExplicitlySupportedFeatures() {
     return Stream.of(readerFeatures, writerFeatures)
@@ -273,6 +277,9 @@ public class Protocol implements Serializable {
    * Get the set of features that are both implicitly and explicitly supported by the protocol.
    * Usually, the protocol has either implicit or explicit features, but not both. This API provides
    * a way to get all enabled features.
+   *
+   * @throws UnsupportedTableFeatureException if any table features in the protocol's list of
+   *     readerFeatures or writerFeatures are unsupported by Kernel
    */
   public Set<TableFeature> getImplicitlyAndExplicitlySupportedFeatures() {
     Set<TableFeature> supportedFeatures = new HashSet<>();
@@ -512,7 +519,19 @@ public class Protocol implements Serializable {
 
   /** Check if the protocol supports the given table feature */
   public boolean supportsFeature(TableFeature feature) {
-    return getImplicitlyAndExplicitlySupportedFeatures().contains(feature);
+    if (feature.isReaderWriterFeature()) {
+      if (supportsReaderFeatures) {
+        return readerFeatures.contains(feature.featureName());
+      } else {
+        return feature.minReaderVersion() <= minReaderVersion;
+      }
+    } else {
+      if (supportsWriterFeatures) {
+        return writerFeatures.contains(feature.featureName());
+      } else {
+        return feature.minWriterVersion() <= minWriterVersion;
+      }
+    }
   }
 
   /** Validate the protocol contents represents a valid state */

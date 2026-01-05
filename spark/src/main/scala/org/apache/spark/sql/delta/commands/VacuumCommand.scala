@@ -768,7 +768,9 @@ trait VacuumCommandImpl extends DeltaCommand {
       spark: SparkSession,
       retentionMs: Option[Long],
       configuredRetention: Long): Unit = {
-    require(retentionMs.forall(_ >= 0), "Retention for Vacuum can't be less than 0.")
+    if (retentionMs.exists(_ < 0)) {
+      throw DeltaErrors.vacuumRetentionPeriodNegative()
+    }
     val checkEnabled =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
     val retentionSafe = retentionMs.forall(_ >= configuredRetention)
@@ -776,17 +778,9 @@ trait VacuumCommandImpl extends DeltaCommand {
     if (TimeUnit.HOURS.toMillis(configuredRetentionHours) < configuredRetention) {
       configuredRetentionHours += 1
     }
-    require(!checkEnabled || retentionSafe,
-      s"""Are you sure you would like to vacuum files with such a low retention period? If you have
-        |writers that are currently writing to this table, there is a risk that you may corrupt the
-        |state of your Delta table.
-        |
-        |If you are certain that there are no operations being performed on this table, such as
-        |insert/upsert/delete/optimize, then you may turn off this check by setting:
-        |spark.databricks.delta.retentionDurationCheck.enabled = false
-        |
-        |If you are not sure, please use a value not less than "$configuredRetentionHours hours".
-       """.stripMargin)
+    if (checkEnabled && !retentionSafe) {
+      throw DeltaErrors.vacuumRetentionPeriodTooShort(configuredRetentionHours)
+    }
   }
 
   /**

@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
@@ -68,8 +69,7 @@ import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.execution.streaming.StreamingRelation
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -330,18 +330,18 @@ class DeltaAnalysis(session: SparkSession)
     case cloneStatement: CloneTableStatement =>
       // Get the info necessary to CreateDeltaTableCommand
       EliminateSubqueryAliases(cloneStatement.source) match {
-        case DataSourceV2Relation(table: DeltaTableV2, _, _, _, _) =>
+        case DataSourceV2RelationShim(table: DeltaTableV2, _, _, _, _) =>
           resolveCloneCommand(cloneStatement.target, new CloneDeltaSource(table), cloneStatement)
 
         // Pass the traveled table if a previous version is to be cloned
-        case tt @ TimeTravel(DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _), _, _, _)
+        case tt @ TimeTravel(DataSourceV2RelationShim(tbl: DeltaTableV2, _, _, _, _), _, _, _)
             if tt.expressions.forall(_.resolved) =>
           val ttSpec = DeltaTimeTravelSpec(tt.timestamp, tt.version, tt.creationSource)
           val traveledTable = tbl.copy(timeTravelOpt = Some(ttSpec))
           resolveCloneCommand(
             cloneStatement.target, new CloneDeltaSource(traveledTable), cloneStatement)
 
-        case DataSourceV2Relation(table: IcebergTablePlaceHolder, _, _, _, _) =>
+        case DataSourceV2RelationShim(table: IcebergTablePlaceHolder, _, _, _, _) =>
           resolveCloneCommand(
             cloneStatement.target,
             CloneIcebergSource(
@@ -352,7 +352,7 @@ class DeltaAnalysis(session: SparkSession)
               session),
             cloneStatement)
 
-        case DataSourceV2Relation(table, _, _, _, _)
+        case DataSourceV2RelationShim(table, _, _, _, _)
             if table.getClass.getName.endsWith("org.apache.iceberg.spark.source.SparkTable") =>
           val metadataLocation = ConvertUtils.getIcebergMetadataLocationFromSparkTable(table)
           resolveCloneCommand(
@@ -417,7 +417,7 @@ class DeltaAnalysis(session: SparkSession)
     case restoreStatement @ RestoreTableStatement(target) =>
       EliminateSubqueryAliases(target) match {
         // Pass the traveled table if a previous version is to be cloned
-        case tt @ TimeTravel(DataSourceV2Relation(tbl: DeltaTableV2, _, _, _, _), _, _, _)
+        case tt @ TimeTravel(DataSourceV2RelationShim(tbl: DeltaTableV2, _, _, _, _), _, _, _)
             if tt.expressions.forall(_.resolved) =>
           val ttSpec = DeltaTimeTravelSpec(tt.timestamp, tt.version, tt.creationSource)
           val traveledTable = tbl.copy(timeTravelOpt = Some(ttSpec))
@@ -750,7 +750,8 @@ class DeltaAnalysis(session: SparkSession)
 
     EliminateSubqueryAliases(targetPlan) match {
       // Target is a path based table
-      case DataSourceV2Relation(targetTbl: DeltaTableV2, _, _, _, _) if !targetTbl.tableExists =>
+      case DataSourceV2RelationShim(targetTbl: DeltaTableV2, _, _, _, _)
+        if !targetTbl.tableExists =>
         val path = targetTbl.path
         val tblIdent = TableIdentifier(path.toString, Some("delta"))
         if (!isCreate) {
@@ -855,7 +856,7 @@ class DeltaAnalysis(session: SparkSession)
             throw e
         }
       // Delta metastore table already exists at target
-      case DataSourceV2Relation(deltaTableV2: DeltaTableV2, _, _, _, _) =>
+      case DataSourceV2RelationShim(deltaTableV2: DeltaTableV2, _, _, _, _) =>
         val path = deltaTableV2.path
         val existingTable = deltaTableV2.catalogTable
         val tblIdent = existingTable match {
@@ -903,6 +904,34 @@ class DeltaAnalysis(session: SparkSession)
           output = CloneTableCommand.output)
 
       case _ => throw DeltaErrors.notADeltaTableException("CLONE")
+    }
+  }
+
+  /**
+   * Conditionally wraps a struct expression with an IF expression to preserve NULL source values
+   * when `DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS` is enabled:
+   *   IF(sourceExpr IS NULL, NULL, createStructExpr)
+   *
+   * This prevents null expansion where a null struct would be incorrectly expanded to a struct
+   * with all fields set to NULL during INSERT operations.
+   *
+   * @param sourceExpr The source struct expression
+   * @param createStructExpr The generated CreateStruct expression
+   * @return The potentially wrapped expression with null preservation logic
+   */
+  private def maybeWrapWithNullPreservationForInsert(
+      sourceExpr: Expression,
+      createStructExpr: Expression): Expression = {
+    if (conf.getConf(DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS)) {
+      val sourceNullCondition = IsNull(sourceExpr)
+      val targetType = createStructExpr.dataType
+      If(
+        sourceNullCondition,
+        Literal.create(null, targetType),
+        createStructExpr
+      )
+    } else {
+      createStructExpr
     }
   }
 
@@ -1172,7 +1201,26 @@ class DeltaAnalysis(session: SparkSession)
           GetStructField(parent, i, Option(sourceField.name)),
           sourceField.name)(explicitMetadata = Option(sourceField.metadata))
     }
-    Alias(CreateStruct(fields), parent.name)(
+
+    // Fix for null expansion caused by struct type cast by preserving NULL source structs.
+    //
+    // Problem: When inserting a struct column, if the source struct is NULL, the casting logic
+    // will expand the NULL into a non-null struct with all fields set to NULL:
+    //   NULL -> struct(field1: null, field2: null, ..., newField: null)
+    //
+    // Expected: The target struct should remain NULL when the source struct is NULL:
+    //   NULL -> NULL
+    //
+    // Solution: Wrap the CreateStruct expression in an IF expression that preserves NULL:
+    //   IF(source_struct IS NULL, NULL, CreateStruct(...))
+    //
+    // This is controlled by the DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS config.
+    val createStructExpr = CreateStruct(fields)
+    val wrappedWithNullPreservation =
+      maybeWrapWithNullPreservationForInsert(
+        sourceExpr = parent,
+        createStructExpr = createStructExpr)
+    Alias(wrappedWithNullPreservation, parent.name)(
       parent.exprId, parent.qualifier, Option(parent.metadata))
   }
 
@@ -1371,8 +1419,8 @@ object DeltaRelation extends DeltaLogging {
   val KEEP_AS_V2_RELATION_TAG = new TreeNodeTag[Unit]("__keep_as_v2_relation")
 
   def unapply(plan: LogicalPlan): Option[LogicalRelation] = plan match {
-    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
-      Some(fromV2Relation(d, dsv2, options))
+    case dsv2 @ DataSourceV2RelationShim(d: DeltaTableV2, _, _, _, options) =>
+      Some(fromV2Relation(d, dsv2.asInstanceOf[DataSourceV2Relation], options))
     case lr @ DeltaTable(_) => Some(lr)
     case _ => None
   }
