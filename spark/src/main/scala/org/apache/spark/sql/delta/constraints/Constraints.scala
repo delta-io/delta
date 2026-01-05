@@ -136,7 +136,8 @@ object Constraints extends DeltaLogging {
       deltaLog: DeltaLog,
       schema: StructType): Unit = {
     val validateCheckConstraints = ValidateCheckConstraintsMode.fromConf(spark.sessionState.conf)
-    if (validateCheckConstraints == ValidateCheckConstraintsMode.OFF || constraints.isEmpty) return
+    if (validateCheckConstraints == ValidateCheckConstraintsMode.OFF) return
+    if (constraints.isEmpty) return
 
     try {
       validateCheckConstraintsInternal(spark, constraints, schema)
