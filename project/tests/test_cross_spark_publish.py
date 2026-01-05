@@ -86,7 +86,7 @@ class SparkVersionSpec:
 # Spark versions to test (key = full version string, value = spec with suffix)
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
     "4.0.1": SparkVersionSpec(""),      # Default Spark version without suffix
-    "4.1.0-SNAPSHOT": SparkVersionSpec("_4.1")
+    "4.1.0": SparkVersionSpec("_4.1")
 }
 
 # The default Spark version (no suffix in artifact names)

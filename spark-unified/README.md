@@ -21,17 +21,16 @@ spark-unified/           (This module - final published artifact)
 
 spark/                   (sparkV1 - V1 implementation)
   ├── Core Delta Lake classes with DeltaLog
-  └── AbstractDeltaCatalog, AbstractDeltaSparkSessionExtension
-
-kernel-spark/            (sparkV2 - V2 implementation)
-  └── Kernel-backed DSv2 connector
+  ├── AbstractDeltaCatalog, AbstractDeltaSparkSessionExtension
+  └── v2/                (sparkV2 - V2 implementation)
+      └── Kernel-backed DSv2 connector
 ```
 
 ## How It Works
 
 1. **sparkV1** (`spark/`): Contains production code for the V1 connector using DeltaLog
 2. **sparkV1Filtered** (`spark-v1-shaded/`): Filtered version of V1 excluding DeltaLog, Snapshot, OptimisticTransaction, and actions.scala
-3. **sparkV2** (`kernel-spark/`): Kernel-backed V2 connector that depends on sparkV1Filtered
+3. **sparkV2** (`spark/v2/`): Kernel-backed V2 connector that depends on sparkV1Filtered
 4. **spark** (this module): Final JAR that merges V1 + V2 classes
 
 The final JAR includes:

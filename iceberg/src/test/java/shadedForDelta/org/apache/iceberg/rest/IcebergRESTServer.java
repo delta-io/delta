@@ -26,6 +26,7 @@ import shadedForDelta.org.apache.iceberg.catalog.Catalog;
 import shadedForDelta.org.apache.iceberg.jdbc.JdbcCatalog;
 import shadedForDelta.org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import shadedForDelta.org.apache.iceberg.util.PropertyUtil;
+import shadedForDelta.org.apache.iceberg.expressions.Expression;
 
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Server;
@@ -150,6 +151,21 @@ public class IcebergRESTServer {
     if (adapter != null) {
       adapter.setCatalogPrefix(prefix);
     }
+  }
+
+  /**
+   * Get the filter captured from the most recent /plan request.
+   * Delegates to adapter. For test verification.
+   */
+  public Expression getCapturedFilter() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedFilter();
+  }
+
+  /**
+   * Clear captured filter. Call between tests.
+   */
+  public void clearCaptured() {
+    IcebergRESTCatalogAdapterWithPlanSupport.clearCaptured();
   }
 
   public void stop() throws Exception {
