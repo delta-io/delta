@@ -238,7 +238,8 @@ class V2StreamingConversionSuite
 
           // In STRICT mode, catalog returns SparkTable, so we use V2 streaming
           assert(usesV2Streaming(df),
-            "STRICT mode uses V2 streaming for catalog tables (via DeltaCatalog, not ApplyV2Streaming)")
+            "STRICT mode uses V2 streaming for catalog tables " +
+              "(via DeltaCatalog, not ApplyV2Streaming)")
 
           // TODO: Update this test to verify streaming execution works once SparkMicroBatchStream
           // supports initialOffset with initial snapshot. Currently it fails as expected.
@@ -247,7 +248,8 @@ class V2StreamingConversionSuite
           }
           assert(
             e.getMessage.contains("initialOffset with initial snapshot is not supported yet"),
-            s"STRICT mode V2 streaming should fail with expected error; message was: ${e.getMessage}"
+            s"STRICT mode V2 streaming should fail with expected error; " +
+              s"message was: ${e.getMessage}"
           )
         }
       }
@@ -357,10 +359,12 @@ class V2StreamingConversionSuite
             Map("path" -> catalogTable.location.toString)
           )
 
-          // For UC managed tables in AUTO/STRICT mode, should use provided schema without validation
-          // Verify the returned schema matches the provided schema (different order than table)
+          // For UC managed tables in AUTO/STRICT mode, should use provided schema
+          // without validation. Verify the returned schema matches the provided schema
+          // (different order than table)
           assert(returnedSchema.fieldNames.toSeq == Seq("value", "id"),
-            s"$mode mode should use provided schema for UC managed tables, preserving field order")
+            s"$mode mode should use provided schema for UC managed tables, " +
+              "preserving field order")
         }
       }
     }
