@@ -322,6 +322,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       populateTestData(tableName)
 
       // Test cases covering different projection scenarios
+      // Note: At this HTTP layer, we're only testing that column name strings are correctly
+      // sent and received. Type serialization and data reading are tested end-to-end.
       val testCases = Seq(
         // Basic projections
         ("single column",
@@ -330,42 +332,19 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         ("multiple columns",
           Seq("intCol", "stringCol"),
           Set("intCol", "stringCol")),
-        ("different order",
-          Seq("stringCol", "intCol"),
-          Set("stringCol", "intCol")),
 
-        // All column types - ensures serialization works for all Spark/Iceberg type mappings
-        ("all flat primitive types",
-          Seq("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
-            "decimalCol", "dateCol", "timestampCol"),
-          Set("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
-            "decimalCol", "dateCol", "timestampCol")),
-
-        // Nested field projections
+        // Nested field projections - test dot-notation string handling
         ("individual nested field",
           Seq("address.intCol"),
           Set("address.intCol")),
         ("multiple nested fields",
           Seq("address.intCol", "metadata.stringCol"),
           Set("address.intCol", "metadata.stringCol")),
-        ("mixed flat and nested fields",
-          Seq("intCol", "address.intCol", "stringCol", "metadata.stringCol"),
-          Set("intCol", "address.intCol", "stringCol", "metadata.stringCol")),
 
-        // Struct projections - test if entire struct can be projected
+        // Struct projection - test if entire struct name can be projected (different from nested)
         ("entire struct",
           Seq("address"),
-          Set("address")),
-        ("struct plus flat fields",
-          Seq("intCol", "address", "stringCol"),
-          Set("intCol", "address", "stringCol")),
-
-        // Comprehensive test - all 11 fields including nested structs
-        ("all fields including nested",
-          Seq("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
-            "decimalCol", "dateCol", "timestampCol", "address", "metadata"),
-          Set("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
-            "decimalCol", "dateCol", "timestampCol", "address", "metadata"))
+          Set("address"))
       )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
@@ -404,22 +383,15 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
         // Test cases: (filter, projection, description)
+        // Note: Filter types are already tested in "filter sent to IRC server" test.
+        // Here we only need to verify filter AND projection are sent together correctly.
         val testCases = Seq(
           (EqualTo("longCol", 2L),
             Seq("intCol", "stringCol"),
             "simple filter + projection"),
-          (And(GreaterThan("intCol", 10), LessThan("intCol", 100)),
-            Seq("intCol", "longCol"),
-            "compound filter + projection"),
           (EqualTo("address.intCol", 200),
             Seq("intCol", "address.intCol"),
-            "nested field in both filter and projection"),
-          (Or(EqualTo("stringCol", "test_1"), EqualTo("stringCol", "test_2")),
-            Seq("intCol", "stringCol", "longCol"),
-            "OR filter + multiple column projection"),
-          (IsNotNull("decimalCol"),
-            Seq("decimalCol", "dateCol", "timestampCol"),
-            "null check filter + special type projections")
+            "nested field in both filter and projection")
         )
 
         testCases.foreach { case (filter, projection, description) =>
