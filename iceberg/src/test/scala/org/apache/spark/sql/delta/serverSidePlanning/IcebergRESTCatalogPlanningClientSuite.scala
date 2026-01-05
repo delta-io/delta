@@ -323,18 +323,49 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       // Test cases covering different projection scenarios
       val testCases = Seq(
+        // Basic projections
         ("single column",
           Seq("intCol"), // input: columns to request
           Set("intCol")), // expected: columns captured by server
         ("multiple columns",
           Seq("intCol", "stringCol"),
           Set("intCol", "stringCol")),
-        ("all columns",
-          Seq("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol"),
-          Set("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol")),
         ("different order",
           Seq("stringCol", "intCol"),
-          Set("stringCol", "intCol"))
+          Set("stringCol", "intCol")),
+
+        // All column types - ensures serialization works for all Spark/Iceberg type mappings
+        ("all flat primitive types",
+          Seq("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
+            "decimalCol", "dateCol", "timestampCol"),
+          Set("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
+            "decimalCol", "dateCol", "timestampCol")),
+
+        // Nested field projections
+        ("individual nested field",
+          Seq("address.intCol"),
+          Set("address.intCol")),
+        ("multiple nested fields",
+          Seq("address.intCol", "metadata.stringCol"),
+          Set("address.intCol", "metadata.stringCol")),
+        ("mixed flat and nested fields",
+          Seq("intCol", "address.intCol", "stringCol", "metadata.stringCol"),
+          Set("intCol", "address.intCol", "stringCol", "metadata.stringCol")),
+
+        // Struct projections - test if entire struct can be projected
+        ("entire struct",
+          Seq("address"),
+          Set("address")),
+        ("struct plus flat fields",
+          Seq("intCol", "address", "stringCol"),
+          Set("intCol", "address", "stringCol")),
+
+        // Comprehensive test - all 11 fields including nested structs
+        ("all fields including nested",
+          Seq("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
+            "decimalCol", "dateCol", "timestampCol", "address", "metadata"),
+          Set("intCol", "longCol", "doubleCol", "floatCol", "stringCol", "boolCol",
+            "decimalCol", "dateCol", "timestampCol", "address", "metadata"))
       )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
@@ -357,6 +388,79 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           val fieldNames = capturedProjection.asScala.toSet
           assert(fieldNames == expectedFields,
             s"[$description] Expected $expectedFields, got: $fieldNames")
+        }
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("filter and projection sent together to IRC server over HTTP") {
+    withTempTable("filterProjectionTest") { table =>
+      // Populate test data using the shared helper method
+      val tableName = s"rest_catalog.${defaultNamespace}.filterProjectionTest"
+      populateTestData(tableName)
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        // Test cases: (filter, projection, description)
+        val testCases = Seq(
+          (EqualTo("longCol", 2L),
+            Seq("intCol", "stringCol"),
+            "simple filter + projection"),
+          (And(GreaterThan("intCol", 10), LessThan("intCol", 100)),
+            Seq("intCol", "longCol"),
+            "compound filter + projection"),
+          (EqualTo("address.intCol", 200),
+            Seq("intCol", "address.intCol"),
+            "nested field in both filter and projection"),
+          (Or(EqualTo("stringCol", "test_1"), EqualTo("stringCol", "test_2")),
+            Seq("intCol", "stringCol", "longCol"),
+            "OR filter + multiple column projection"),
+          (IsNotNull("decimalCol"),
+            Seq("decimalCol", "dateCol", "timestampCol"),
+            "null check filter + special type projections")
+        )
+
+        testCases.foreach { case (filter, projection, description) =>
+          // Clear previous captured state
+          server.clearCaptured()
+
+          // Convert Spark filter to expected Iceberg expression
+          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter)
+          assert(
+            expectedExpr.isDefined,
+            s"[$description] Filter conversion should succeed for: $filter")
+
+          // Call client with both filter and projection
+          client.planScan(
+            defaultNamespace.toString,
+            "filterProjectionTest",
+            sparkFilterOption = Some(filter),
+            sparkProjectionOption = Some(projection))
+
+          // Verify server captured both filter and projection
+          val capturedFilter = server.getCapturedFilter
+          val capturedProjection = server.getCapturedProjection
+
+          assert(capturedFilter != null,
+            s"[$description] Server should have captured filter")
+          assert(capturedProjection != null,
+            s"[$description] Server should have captured projection")
+
+          // Verify filter is correct
+          val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
+          val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
+          assert(
+            boundCaptured.isEquivalentTo(boundExpected),
+            s"[$description] Filter mismatch. Expected: $boundExpected, got: $boundCaptured")
+
+          // Verify projection is correct
+          val projectionFields = capturedProjection.asScala.toSet
+          val expectedFields = projection.toSet
+          assert(projectionFields == expectedFields,
+            s"[$description] Projection mismatch. Expected: $expectedFields, " +
+            s"got: $projectionFields")
         }
       } finally {
         client.close()
