@@ -38,6 +38,17 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
   import testImplicits._
 
+  // Test case classes for structured test data
+  private case class ProjectionTestCase(
+    description: String,
+    projection: Seq[String],
+    expected: Set[String])
+
+  private case class FilterProjectionTestCase(
+    description: String,
+    filter: Filter,
+    projection: Seq[String])
+
   private val defaultNamespace = Namespace.of("testDatabase")
   private val defaultSchema = TestSchemas.testSchema
   private val defaultSpec = PartitionSpec.unpartitioned()
@@ -326,47 +337,52 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       // sent and received. Type serialization and data reading are tested end-to-end.
       val testCases = Seq(
         // Basic projections
-        ("single column",
-          Seq("intCol"), // input: columns to request
-          Set("intCol")), // expected: columns captured by server
-        ("multiple columns",
+        ProjectionTestCase(
+          "single column",
+          Seq("intCol"),
+          Set("intCol")),
+        ProjectionTestCase(
+          "multiple columns",
           Seq("intCol", "stringCol"),
           Set("intCol", "stringCol")),
 
         // Nested field projections - test dot-notation string handling
-        ("individual nested field",
+        ProjectionTestCase(
+          "individual nested field",
           Seq("address.intCol"),
           Set("address.intCol")),
-        ("multiple nested fields",
+        ProjectionTestCase(
+          "multiple nested fields",
           Seq("address.intCol", "metadata.stringCol"),
           Set("address.intCol", "metadata.stringCol")),
 
         // Struct projection - test if entire struct name can be projected (different from nested)
-        ("entire struct",
+        ProjectionTestCase(
+          "entire struct",
           Seq("address"),
           Set("address"))
       )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
-        testCases.foreach { case (description, projection, expectedFields) =>
+        testCases.foreach { testCase =>
           // Clear previous captured projection
           server.clearCaptured()
 
           client.planScan(
             defaultNamespace.toString,
             "projectionTest",
-            sparkProjectionOption = Some(projection))
+            sparkProjectionOption = Some(testCase.projection))
 
           // Verify server captured the projection
           val capturedProjection = server.getCapturedProjection
           assert(capturedProjection != null,
-            s"[$description] Server should have captured projection")
+            s"[${testCase.description}] Server should have captured projection")
 
           // Verify field names match expected
           val fieldNames = capturedProjection.asScala.toSet
-          assert(fieldNames == expectedFields,
-            s"[$description] Expected $expectedFields, got: $fieldNames")
+          assert(fieldNames == testCase.expected,
+            s"[${testCase.description}] Expected ${testCase.expected}, got: $fieldNames")
         }
       } finally {
         client.close()
@@ -382,56 +398,58 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
-        // Test cases: (filter, projection, description)
         // Note: Filter types are already tested in "filter sent to IRC server" test.
         // Here we only need to verify filter AND projection are sent together correctly.
         val testCases = Seq(
-          (EqualTo("longCol", 2L),
-            Seq("intCol", "stringCol"),
-            "simple filter + projection"),
-          (EqualTo("address.intCol", 200),
-            Seq("intCol", "address.intCol"),
-            "nested field in both filter and projection")
+          FilterProjectionTestCase(
+            "simple filter + projection",
+            EqualTo("longCol", 2L),
+            Seq("intCol", "stringCol")),
+          FilterProjectionTestCase(
+            "nested field in both filter and projection",
+            EqualTo("address.intCol", 200),
+            Seq("intCol", "address.intCol"))
         )
 
-        testCases.foreach { case (filter, projection, description) =>
+        testCases.foreach { testCase =>
           // Clear previous captured state
           server.clearCaptured()
 
           // Convert Spark filter to expected Iceberg expression
-          val expectedExpr = SparkToIcebergExpressionConverter.convert(filter)
+          val expectedExpr = SparkToIcebergExpressionConverter.convert(testCase.filter)
           assert(
             expectedExpr.isDefined,
-            s"[$description] Filter conversion should succeed for: $filter")
+            s"[${testCase.description}] Filter conversion should succeed for: ${testCase.filter}")
 
           // Call client with both filter and projection
           client.planScan(
             defaultNamespace.toString,
             "filterProjectionTest",
-            sparkFilterOption = Some(filter),
-            sparkProjectionOption = Some(projection))
+            sparkFilterOption = Some(testCase.filter),
+            sparkProjectionOption = Some(testCase.projection))
 
           // Verify server captured both filter and projection
           val capturedFilter = server.getCapturedFilter
           val capturedProjection = server.getCapturedProjection
 
           assert(capturedFilter != null,
-            s"[$description] Server should have captured filter")
+            s"[${testCase.description}] Server should have captured filter")
           assert(capturedProjection != null,
-            s"[$description] Server should have captured projection")
+            s"[${testCase.description}] Server should have captured projection")
 
           // Verify filter is correct
           val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
           val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
           assert(
             boundCaptured.isEquivalentTo(boundExpected),
-            s"[$description] Filter mismatch. Expected: $boundExpected, got: $boundCaptured")
+            s"[${testCase.description}] Filter mismatch. Expected: $boundExpected, " +
+            s"got: $boundCaptured")
 
           // Verify projection is correct
           val projectionFields = capturedProjection.asScala.toSet
-          val expectedFields = projection.toSet
+          val expectedFields = testCase.projection.toSet
           assert(projectionFields == expectedFields,
-            s"[$description] Projection mismatch. Expected: $expectedFields, " +
+            s"[${testCase.description}] Projection mismatch. Expected: $expectedFields, " +
             s"got: $projectionFields")
         }
       } finally {
