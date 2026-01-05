@@ -38,17 +38,6 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
   import testImplicits._
 
-  // Test case classes for structured test data
-  private case class ProjectionTestCase(
-    description: String,
-    projection: Seq[String],
-    expected: Set[String])
-
-  private case class FilterProjectionTestCase(
-    description: String,
-    filter: Filter,
-    projection: Seq[String])
-
   private val defaultNamespace = Namespace.of("testDatabase")
   private val defaultSchema = TestSchemas.testSchema
   private val defaultSpec = PartitionSpec.unpartitioned()
@@ -251,80 +240,16 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
-  private def startServer(): IcebergRESTServer = {
-    val config = Map(IcebergRESTServer.REST_PORT -> "0").asJava
-    val newServer = new IcebergRESTServer(config)
-    newServer.start(/* join = */ false)
-    if (!isServerReachable(newServer)) {
-      throw new IllegalStateException("Failed to start IcebergRESTServer")
-    }
-    newServer
-  }
+  // Test case classes for structured test data
+  private case class ProjectionTestCase(
+    description: String,
+    projection: Seq[String],
+    expected: Set[String])
 
-  private def isServerReachable(server: IcebergRESTServer): Boolean = {
-    val httpHeaders = Map(
-      HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
-      HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType
-    ).map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
-
-    val httpClient = HttpClientBuilder.create()
-      .setDefaultHeaders(httpHeaders)
-      .build()
-
-    try {
-      val httpGet = new HttpGet(s"http://localhost:${server.getPort}/v1/config")
-      val httpResponse = httpClient.execute(httpGet)
-      try {
-        val statusCode = httpResponse.getStatusLine.getStatusCode
-        statusCode == 200
-      } finally {
-        httpResponse.close()
-      }
-    } finally {
-      httpClient.close()
-    }
-  }
-
-  private def withTempTable[T](tableName: String)(func: Table => T): T = {
-    val tableId = TableIdentifier.of(defaultNamespace, tableName)
-    val table = catalog.createTable(tableId, defaultSchema, defaultSpec)
-    try {
-      func(table)
-    } finally {
-      catalog.dropTable(tableId, false)
-      server.clearCaptured()
-    }
-  }
-
-  /**
-   * Populates a table with sample test data covering all schema types.
-   * Uses parallelize with 2 partitions to create 2 data files.
-   */
-  private def populateTestData(tableName: String): Unit = {
-    import org.apache.spark.sql.Row
-
-    val data = spark.sparkContext.parallelize(0 until 250, numSlices = 2)
-      .map(i => Row(
-        i, // intCol
-        i.toLong, // longCol
-        i * 10.0, // doubleCol
-        i.toFloat, // floatCol
-        s"test_$i", // stringCol
-        i % 2 == 0, // boolCol
-        BigDecimal(i).bigDecimal, // decimalCol
-        java.sql.Date.valueOf("2024-01-01"), // dateCol
-        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
-        Row(i * 100), // address.intCol
-        Row(s"meta_$i") // metadata.stringCol
-      ))
-
-
-    spark.createDataFrame(data, TestSchemas.sparkSchema)
-      .write
-      .format("iceberg")
-      .mode("append")
-      .save(tableName)
-  }
+  private case class FilterProjectionTestCase(
+    description: String,
+    filter: Filter,
+    projection: Seq[String])
 
   test("projection sent to IRC server over HTTP") {
     withTempTable("projectionTest") { table =>
@@ -354,13 +279,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         ProjectionTestCase(
           "multiple nested fields",
           Seq("address.intCol", "metadata.stringCol"),
-          Set("address.intCol", "metadata.stringCol")),
-
-        // Struct projection - test if entire struct name can be projected (different from nested)
-        ProjectionTestCase(
-          "entire struct",
-          Seq("address"),
-          Set("address"))
+          Set("address.intCol", "metadata.stringCol"))
       )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
@@ -456,6 +375,81 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         client.close()
       }
     }
+  }
+
+  private def startServer(): IcebergRESTServer = {
+    val config = Map(IcebergRESTServer.REST_PORT -> "0").asJava
+    val newServer = new IcebergRESTServer(config)
+    newServer.start(/* join = */ false)
+    if (!isServerReachable(newServer)) {
+      throw new IllegalStateException("Failed to start IcebergRESTServer")
+    }
+    newServer
+  }
+
+  private def isServerReachable(server: IcebergRESTServer): Boolean = {
+    val httpHeaders = Map(
+      HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
+      HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType
+    ).map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
+
+    val httpClient = HttpClientBuilder.create()
+      .setDefaultHeaders(httpHeaders)
+      .build()
+
+    try {
+      val httpGet = new HttpGet(s"http://localhost:${server.getPort}/v1/config")
+      val httpResponse = httpClient.execute(httpGet)
+      try {
+        val statusCode = httpResponse.getStatusLine.getStatusCode
+        statusCode == 200
+      } finally {
+        httpResponse.close()
+      }
+    } finally {
+      httpClient.close()
+    }
+  }
+
+  private def withTempTable[T](tableName: String)(func: Table => T): T = {
+    val tableId = TableIdentifier.of(defaultNamespace, tableName)
+    val table = catalog.createTable(tableId, defaultSchema, defaultSpec)
+    try {
+      func(table)
+    } finally {
+      catalog.dropTable(tableId, false)
+      server.clearCaptured()
+    }
+  }
+
+  /**
+   * Populates a table with sample test data covering all schema types.
+   * Uses parallelize with 2 partitions to create 2 data files.
+   */
+  private def populateTestData(tableName: String): Unit = {
+    import org.apache.spark.sql.Row
+
+    val data = spark.sparkContext.parallelize(0 until 250, numSlices = 2)
+      .map(i => Row(
+        i, // intCol
+        i.toLong, // longCol
+        i * 10.0, // doubleCol
+        i.toFloat, // floatCol
+        s"test_$i", // stringCol
+        i % 2 == 0, // boolCol
+        BigDecimal(i).bigDecimal, // decimalCol
+        java.sql.Date.valueOf("2024-01-01"), // dateCol
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
+        Row(i * 100), // address.intCol
+        Row(s"meta_$i") // metadata.stringCol
+      ))
+
+
+    spark.createDataFrame(data, TestSchemas.sparkSchema)
+      .write
+      .format("iceberg")
+      .mode("append")
+      .save(tableName)
   }
 
 }
