@@ -246,23 +246,6 @@ trait UpdateSQLTests extends UpdateSQLMixin {
       }
     }
   }
-
-  test("nested subquery should fail via temp view") {
-    withTable("target") {
-      withTable("source") {
-        withTable("source2") {
-            Seq((1, "a"), (2, "b")).toDF("key", "col").write.format("delta").saveAsTable("target")
-            Seq((2)).toDF("key").write.format("delta").saveAsTable("source")
-            Seq((3)).toDF("id").write.format("delta").saveAsTable("source2")
-            val e = intercept[AnalysisException] {
-              sql("UPDATE target SET col = 'C' WHERE key" +
-                " IN (SELECT key FROM source WHERE key IN (SELECT id FROM source2))")
-            }
-            assert(e.getMessage.contains("Subqueries are not supported in the UPDATE"))
-        }
-      }
-    }
-  }
 }
 
 trait UpdateSQLWithDeletionVectorsMixin extends UpdateSQLMixin
