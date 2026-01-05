@@ -19,7 +19,7 @@ package io.delta.kernel.unitycatalog
 import java.lang.{Long => JLong}
 import java.net.URI
 import java.util
-import java.util.{Collections, Map, Optional}
+import java.util.{Collections, Optional}
 import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Supplier
 

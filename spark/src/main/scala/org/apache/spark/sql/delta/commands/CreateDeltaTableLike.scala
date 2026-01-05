@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
-import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -48,6 +47,9 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   // The save mode when writing data. Relevant when the query is empty or set to Ignore with `CREATE
   // TABLE IF NOT EXISTS`.
   val mode: SaveMode
+
+  // Whether the table is UC managed table with catalogManaged feature.
+  val allowCatalogManaged: Boolean
 
   /**
    * Generates a `CatalogTable` with its `locationUri` set appropriately, depending on whether the
@@ -153,9 +155,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         storage = storageProps,
         tracksPartitionsInCatalog = true)
     } else {
+      // Setting table properties is required for creating catalogManaged tables.
+      val properties: Map[String, String] =
+        if (allowCatalogManaged) UpdateCatalog.updatedProperties(snapshot) else Map.empty
       table.copy(
         schema = new StructType(),
-        properties = Map.empty,
+        properties = properties,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,
@@ -173,6 +178,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    */
   protected def isV1Writer: Boolean = {
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      Relocated.dataFrameWriterClassName + "."))
+      classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
   }
 }
