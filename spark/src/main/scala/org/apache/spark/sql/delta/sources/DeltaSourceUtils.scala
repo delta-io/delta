@@ -108,27 +108,41 @@ object DeltaSourceUtils {
     case sources.AlwaysFalse() => expressions.Literal.FalseLiteral
   }.reduceOption(expressions.And).getOrElse(expressions.Literal.TrueLiteral)
 
+  /**
+   * Configuration options for schema compatibility validation during Delta streaming reads.
+   *
+   * This class encapsulates various flags and settings that control how Delta streaming handles
+   * schema changes and compatibility checks.
+   *
+   * @param allowUnsafeStreamingReadOnColumnMappingSchemaChanges
+   *        Flag that allows user to force enable unsafe streaming read on Delta table with
+   *        column mapping enabled AND drop/rename actions.
+   * @param allowUnsafeStreamingReadOnPartitionColumnChanges
+   *        Flag that allows user to force enable unsafe streaming read on Delta table with
+   *        column mapping enabled AND partition column changes.
+   * @param forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart
+   *        Flag that allows user to disable the read-compatibility check during stream start which
+   *        protects against a corner case in which verifyStreamHygiene could not detect.
+   *        This is a bug fix but yet a potential behavior change, so we add a flag to fallback.
+   * @param forceEnableUnsafeReadOnNullabilityChange
+   *        Flag that allows user to fallback to the legacy behavior in which user can allow
+   *        nullable=false schema to read nullable=true data, which is incorrect but a behavior
+   *        change regardless.
+   * @param isStreamingFromColumnMappingTable
+   *        Whether we are streaming from a table with column mapping enabled.
+   * @param typeWideningEnabled
+   *        Whether we are streaming from a table that has the type widening table feature enabled.
+   * @param enableSchemaTrackingForTypeWidening
+   *        Whether we should track widening type changes to allow users to accept them and resume
+   *        stream processing.
+   */
   case class SchemaReadOptions(
-      // Flag that allows user to force enable unsafe streaming read on Delta table with
-      // column mapping enabled AND drop/rename actions.
       allowUnsafeStreamingReadOnColumnMappingSchemaChanges: Boolean,
-      // Flag that allows user to force enable unsafe streaming read on Delta table with
-      // column mapping enabled AND partition column changes.
       allowUnsafeStreamingReadOnPartitionColumnChanges: Boolean,
-      // Flag that allows user to disable the read-compatibility check during stream start which
-      // protects against an corner case in which verifyStreamHygiene could not detect.
-      // This is a bug fix but yet a potential behavior change, so we add a flag to fallback.
       forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart: Boolean,
-      // Flag that allow user to fallback to the legacy behavior in which user can allow
-      // nullable=false schema to read nullable=true data, which is incorrect but a behavior
-      // change regardless.
       forceEnableUnsafeReadOnNullabilityChange: Boolean,
-      // Whether we are streaming from a table with column mapping enabled
       isStreamingFromColumnMappingTable: Boolean,
-      // Whether we are streaming from a table that has the type widening table feature enabled.
       typeWideningEnabled: Boolean,
-      // Whether we should track widening type changes to allow users to accept them and resume
-      // stream processing.
       enableSchemaTrackingForTypeWidening: Boolean
   )
 

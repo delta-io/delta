@@ -684,11 +684,29 @@ trait DeltaSourceBase extends Source
     }
   }
 
+  /**
+   * Checks for non-additive schema changes (column renames, drops, type widening) and blocks
+   * the stream by throwing an exception if detected.
+   *
+   * Blocks when type widening tracking is enabled and widening changes exist, or when column
+   * mapping changes (rename/drop) are detected, unless `allowUnsafeStreamingReadOnColumnMapping
+   * SchemaChanges` is enabled. Upon blocking, the stream writes the new schema to the tracking
+   * log and fails. On restart, users must acknowledge changes via reader options or SQL confs.
+   * See [[DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked]].
+   *
+   * Note: Should not be called when schema tracking is active (trackingMetadataChange = true).
+   *
+   * @param oldMetadata Previous metadata (typically from stream initialization)
+   * @param newMetadata New metadata with potential schema changes
+   * @param validatedDuringStreamStart Whether validating during stream start vs. execution,
+   *                                   which affects the error message.
+   * @throws DeltaAnalysisException if non-additive schema changes require blocking
+   */
   private def checkNonAdditiveSchemaChanges(
       oldMetadata: Metadata,
       newMetadata: Metadata,
       validatedDuringStreamStart: Boolean): Unit = {
-    def shouldTrackSchema: Boolean =
+    val shouldTrackSchema: Boolean =
       if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
           TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
         // If schema tracking is enabled for type widening, we will detect widening type changes and
