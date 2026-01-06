@@ -3149,6 +3149,32 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
     }
   }
 
+  test("replaceWhere by name SQL - partition column - static filter") {
+    withTable("tbl") {
+      // create partitioned table
+      spark.range(100).withColumn("part", lit(0)).withColumn("otherCol", lit("a"))
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .saveAsTable("tbl")
+
+      val partEq1DF = spark.range(10, 20)
+        .withColumn("part", lit(1))
+        .withColumn("otherCol", lit("b"))
+      partEq1DF.write.format("delta").mode("append").saveAsTable("tbl")
+
+      val replacer = spark.range(10)
+        .withColumn("otherCol", lit("b"))
+        .withColumn("part", lit(0))
+
+      replacer.createOrReplaceTempView("replace")
+      sql(s"INSERT INTO tbl BY NAME REPLACE WHERE part=0 SELECT * FROM replace")
+      checkAnswer(
+        spark.read.format("delta").table("tbl"),
+        replacer.select("id", "part", "otherCol").union(partEq1DF))
+    }
+  }
+
   test("replaceWhere SQL - data column - dynamic") {
     withTable("tbl") {
       // write table
