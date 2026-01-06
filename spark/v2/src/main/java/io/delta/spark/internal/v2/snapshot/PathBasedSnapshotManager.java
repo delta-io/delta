@@ -39,8 +39,12 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
   private final Engine kernelEngine;
 
   public PathBasedSnapshotManager(String tablePath, Configuration hadoopConf) {
+    this(tablePath, DefaultEngine.create(requireNonNull(hadoopConf, "hadoopConf is null")));
+  }
+
+  public PathBasedSnapshotManager(String tablePath, Engine kernelEngine) {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
-    this.kernelEngine = DefaultEngine.create(requireNonNull(hadoopConf, "hadoopConf is null"));
+    this.kernelEngine = requireNonNull(kernelEngine, "kernelEngine is null");
   }
 
   /**
