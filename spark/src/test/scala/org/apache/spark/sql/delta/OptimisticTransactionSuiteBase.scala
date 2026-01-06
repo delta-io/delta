@@ -52,7 +52,8 @@ trait OptimisticTransactionSuiteBase
    * @param reads               reads made in the test transaction
    * @param concurrentWrites    writes made by concurrent transactions after the test txn reads
    * @param actions             actions to be committed by the test transaction
-   * @param errorMessageHint    What to expect in the error message
+   * @param expectedErrorClass  Expected error class for the exception
+   * @param expectedErrorMessageParameters Expected parameter map for error message validation
    * @param exceptionClass      A substring to expect in the exception class name
    */
   protected def check(
@@ -63,7 +64,8 @@ trait OptimisticTransactionSuiteBase
       reads: Seq[OptimisticTransaction => Unit],
       concurrentWrites: Seq[Action],
       actions: Seq[Action],
-      errorMessageHint: Option[Seq[String]] = None,
+      expectedErrorClass: Option[String] = None,
+      expectedErrorMessageParameters: Option[Map[String, String]] = None,
       exceptionClass: Option[String] = None): Unit = {
 
     val concurrentTxn: OptimisticTransaction => Unit =
@@ -83,7 +85,8 @@ trait OptimisticTransactionSuiteBase
       Seq(concurrentTxn),
       actions,
       operation = Truncate(), // a data-changing operation
-      errorMessageHint = errorMessageHint,
+      expectedErrorClass = expectedErrorClass,
+      expectedErrorMessageParameters = expectedErrorMessageParameters,
       exceptionClass = exceptionClass,
       additionalSQLConfs = Seq.empty
     )
@@ -106,9 +109,11 @@ trait OptimisticTransactionSuiteBase
    * @param reads               reads made in the test transaction
    * @param concurrentTxns      concurrent txns that may write data after the test txn reads
    * @param actions             actions to be committed by the test transaction
-   * @param errorMessageHint    What to expect in the error message
+   * @param expectedErrorClass  Expected error class for the exception
+   * @param expectedErrorMessageParameters Expected parameter map for error message validation
    * @param exceptionClass      A substring to expect in the exception class name
    */
+  // scalastyle:off argcount
   protected def check(
       name: String,
       conflicts: Boolean,
@@ -117,10 +122,11 @@ trait OptimisticTransactionSuiteBase
       concurrentTxns: Seq[OptimisticTransaction => Unit],
       actions: Seq[Action],
       operation: DeltaOperations.Operation,
-      errorMessageHint: Option[Seq[String]],
+      expectedErrorClass: Option[String],
+      expectedErrorMessageParameters: Option[Map[String, String]],
       exceptionClass: Option[String],
       additionalSQLConfs: Seq[(String, String)]): Unit = {
-
+    // scalastyle:on argcount
     val conflict = if (conflicts) "should conflict" else "should not conflict"
     test(s"$name - $conflict") {
       withSQLConf(additionalSQLConfs: _*) {
@@ -142,8 +148,14 @@ trait OptimisticTransactionSuiteBase
           val e = intercept[ConcurrentModificationException] {
             txn.commit(actions, operation)
           }
-          errorMessageHint.foreach { expectedParts =>
-            assert(expectedParts.forall(part => e.getMessage.contains(part)))
+          if (expectedErrorClass.isDefined) {
+            checkError(
+              e.asInstanceOf[DeltaThrowable],
+              expectedErrorClass.get,
+              parameters = expectedErrorMessageParameters.get
+                ++ Map("tableName" -> s"delta.`${log.dataPath}`"),
+              matchPVals = true
+            )
           }
           if (exceptionClass.nonEmpty) {
             assert(e.getClass.getName.contains(exceptionClass.get))
