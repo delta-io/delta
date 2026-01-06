@@ -18,17 +18,12 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.net.{URI, URISyntaxException}
 import java.util.concurrent.ConcurrentHashMap
-
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
-
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
-
+import io.delta.storage.commit.uccommitcoordinator.{TokenProvider, UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-
-import io.unitycatalog.client.auth.TokenProvider
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 

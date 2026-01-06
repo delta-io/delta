@@ -36,7 +36,6 @@ import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Metadata;
 import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Protocol;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
-import io.unitycatalog.client.auth.TokenProvider;
 import org.apache.hadoop.fs.Path;
 import org.apache.http.client.methods.*;
 import org.apache.http.entity.StringEntity;
