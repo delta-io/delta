@@ -23,8 +23,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableMap;
+import io.delta.storage.internal.Preconditions;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -55,7 +54,6 @@ import org.apache.http.util.EntityUtils;
 class OAuthTokenProvider implements TokenProvider {
 
   private static final long DEFAULT_LEAD_RENEWAL_TIME_SECONDS = 30L;
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private String oauthUri;
   private String oauthClientId;
@@ -134,8 +132,10 @@ class OAuthTokenProvider implements TokenProvider {
         ContentType.APPLICATION_FORM_URLENCODED.getMimeType());
     request.setHeader(HttpHeaders.AUTHORIZATION, "Basic " + encodeCredentials());
 
-    String requestBody = toUrlEncoded(
-        ImmutableMap.of("grant_type", "client_credentials", "scope", "all-apis"));
+    Map<String, String> params = new HashMap<>();
+    params.put("grant_type", "client_credentials");
+    params.put("scope", "all-apis");
+    String requestBody = toUrlEncoded(params);
     request.setEntity(new StringEntity(requestBody, StandardCharsets.UTF_8));
 
     try (CloseableHttpResponse response = httpClient.execute(request)) {
@@ -143,16 +143,17 @@ class OAuthTokenProvider implements TokenProvider {
       String body = EntityUtils.toString(response.getEntity());
       if (statusLine.getStatusCode() == HttpStatus.SC_OK) {
         Map<String, String> result = mapper.readValue(body,
-            new TypeReference<Map<String, String>>() {});
+            new TypeReference<Map<String, String>>() {
+            });
 
         // Parse and validate the access token.
         String accessToken = result.get("access_token");
-        checkIOArg(accessToken != null && !accessToken.isEmpty(),
+        Preconditions.checkArgument(accessToken != null && !accessToken.isEmpty(),
             "Response missing 'access_token' field");
 
         // Parse and validate the expires duration.
         String expiresInStr = result.get("expires_in");
-        checkIOArg(expiresInStr != null && !expiresInStr.isEmpty(),
+        Preconditions.checkArgument(expiresInStr != null && !expiresInStr.isEmpty(),
             "Response missing 'expires_in' field");
 
         // Parse and validate the expires duration.
@@ -169,16 +170,10 @@ class OAuthTokenProvider implements TokenProvider {
         throw new IOException(
             String.format(
                 "Failed to obtain access token from OAuth endpoint %s, status code: %s, body: %s",
-                oauthClientId, statusLine.getStatusCode(), body));
+                oauthUri, statusLine.getStatusCode(), body));
       }
-    } catch (IOException e){
+    } catch (IOException e) {
       throw new UncheckedIOException(e);
-    }
-  }
-
-  private static void checkIOArg(boolean expression, String message) throws IOException {
-    if (!expression) {
-      throw new IOException(message);
     }
   }
 
