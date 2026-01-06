@@ -46,6 +46,7 @@ object InMemoryUCClient {
     // For test only, since UC doesn't store these as top-level entities.
     private var currentProtocolOpt: Option[AbstractProtocol] = None
     private var currentMetadataOpt: Option[AbstractMetadata] = None
+    private var currentCommitterPropertiesOpt: Map[String, String] = Map.empty
 
     /** @return the maximum ratified version. */
     def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
@@ -70,6 +71,16 @@ object InMemoryUCClient {
 
     /** @return the current metadata. For test only. */
     def getCurrentMetadataOpt: Option[AbstractMetadata] = synchronized { currentMetadataOpt }
+
+    /** @return the current committer properties. For test only. */
+    def getCurrentCommitterProperties: Map[String, String] = synchronized {
+      currentCommitterPropertiesOpt
+    }
+
+    /** Updates the committer properties. */
+    def updateCommitterProperties(properties: util.Map[String, String]): Unit = synchronized {
+      currentCommitterPropertiesOpt = properties.asScala.toMap
+    }
 
     /** Appends a new commit to this table and atomically updates protocol/metadata. */
     def appendCommit(
@@ -173,6 +184,12 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
       lastKnownBackfilledVersionOpt.ifPresent { lastKnownBackfilledVersion =>
         tableData.forceRemoveCommitsUpToVersion(lastKnownBackfilledVersion)
+      }
+
+      // Update committer properties if provided and non-empty
+      val properties = committerProperties.get()
+      if (properties != null && !properties.isEmpty) {
+        tableData.updateCommitterProperties(properties)
       }
     }
   }

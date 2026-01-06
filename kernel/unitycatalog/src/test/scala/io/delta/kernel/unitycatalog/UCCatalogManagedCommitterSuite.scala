@@ -240,6 +240,78 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
+  test("CATALOG_WRITE: committer properties are passed to UC client") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      val testCommitterProperties = Map(
+        "catalog.specific.property1" -> "value1",
+        "catalog.specific.property2" -> "value2").asJava
+
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        committerProperties = () => testCommitterProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
+      val storedProperties = updatedTableData.getCurrentCommitterProperties
+      assert(storedProperties.size == 2)
+      assert(storedProperties("catalog.specific.property1") == "value1")
+      assert(storedProperties("catalog.specific.property2") == "value2")
+    }
+  }
+
+  test("CATALOG_WRITE: empty committer properties are not stored in UC client") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      // First commit with non-empty properties
+      val initialProperties = Map("key" -> "value").asJava
+      val commitMetadata1 = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        committerProperties = () => initialProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata1)
+
+      // Second commit with empty properties
+      val emptyProperties = Map.empty[String, String].asJava
+      val commitMetadata2 = createCommitMetadata(
+        version = 2,
+        logPath = logPath,
+        committerProperties = () => emptyProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata2)
+
+      // ===== THEN =====
+      // Properties from first commit should still be present (empty map didn't overwrite)
+      val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
+      val storedProperties = updatedTableData.getCurrentCommitterProperties
+      assert(storedProperties.size == 1)
+      assert(storedProperties("key") == "value")
+    }
+  }
+
   test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API (no P&M change") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
