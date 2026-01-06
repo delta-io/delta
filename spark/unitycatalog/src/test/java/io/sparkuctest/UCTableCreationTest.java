@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,11 +21,12 @@ import static io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorCli
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
-import java.net.URI;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -40,9 +41,8 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 import lombok.experimental.Accessors;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.hadoop.fs.Path;
+import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.delta.AppendOnlyTableFeature$;
 import org.apache.spark.sql.delta.CatalogOwnedTableFeature;
@@ -57,9 +57,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Test suite for creating UC Delta Tables. */
-@Slf4j
 public class UCTableCreationTest extends UCDeltaTableIntegrationBaseTest {
-  private static final String SCHEMA_NAME = "default";
+
+  private static final Logger LOG = Logger.getLogger(UCTableCreationTest.class);
 
   // Property constants related to managed table creation
   private static final String DELTA_CATALOG_MANAGED_KEY = CatalogOwnedTableFeature.propertyKey();
@@ -88,12 +88,12 @@ public class UCTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
   private static final String EXTERNAL_TBLPROPERTIES_CLAUSE = "TBLPROPERTIES ('Foo'='Bar')";
 
-  Path tempDir;
+  String tempDir;
   private Set<String> tablesToCleanUp = new HashSet<>();
 
   @BeforeEach
   public void setUp() {
-    tempDir = new Path(unityCatalogInfo().baseTableLocation(), "temp-" + UUID.randomUUID());
+    tempDir = unityCatalogInfo().baseTableLocation() + "/temp-" + UUID.randomUUID();
   }
 
   @AfterEach
@@ -127,15 +127,17 @@ public class UCTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     public TableSetupOptions() {}
 
     public TableSetupOptions setPartitionColumn(String column) {
-      assert List.of("i", "s").contains(column);
-      assert clusterColumn.isEmpty();
+      Preconditions.checkArgument(List.of("i", "s").contains(column));
+      Preconditions.checkState(
+          clusterColumn.isEmpty(), "Can not have both PARTITIONED BY and CLUSTER BY.");
       partitionColumn = Optional.of(column);
       return this;
     }
 
     public TableSetupOptions setClusterColumn(String column) {
-      assert List.of("i", "s").contains(column);
-      assert partitionColumn.isEmpty();
+      Preconditions.checkArgument(List.of("i", "s").contains(column));
+      Preconditions.checkState(
+          partitionColumn.isEmpty(), "Can not have both PARTITIONED BY and CLUSTER BY.");
       clusterColumn = Optional.of(column);
       return this;
     }
@@ -197,12 +199,7 @@ public class UCTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     public String getExternalTableLocation() {
-      URI uri = new Path(tempDir, tableName).toUri();
-      if (uri.getScheme() == null) {
-        return "file://" + uri.getPath();
-      } else {
-        return uri.toString();
-      }
+      return tempDir + "/" + tableName;
     }
 
     private String createExternalTableSql() {
@@ -272,7 +269,7 @@ public class UCTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               if (withAsSelect) {
                 options.setAsSelect(1, "a");
               }
-              log.info("Running table creation test: {}", options);
+              LOG.info("Running table creation test: " + options);
 
               String fullTableName = options.fullTableName();
               if (replaceTable) {
@@ -320,7 +317,7 @@ public class UCTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                 Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
 
                 Map<String, String> expectedOtherProperties =
-                    Map.of(
+                    ImmutableMap.of(
                         "delta.enableInCommitTimestamps",
                         "true",
                         "delta.lastUpdateVersion",
@@ -391,7 +388,7 @@ public class UCTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   public void testCreateManagedTableErrors() {
     String tableName = "test_delta_errors";
     UnityCatalogInfo uc = unityCatalogInfo();
-    String fullTableName = uc.catalogName() + "." + SCHEMA_NAME + "." + tableName;
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
 
     // Test 1: Non-Delta managed tables are not supported
     assertThatThrownBy(
