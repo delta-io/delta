@@ -600,6 +600,22 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
     ),
 
+    // Conditionally add hadoop-aws dependency only when UC_REMOTE=true
+    // Please see: https://github.com/delta-io/delta/issues/5624#issuecomment-3673383736
+    // Once we release the relocated unitycatalog-server, we can remove this.
+    libraryDependencies ++= {
+      if (sys.env.get("UC_REMOTE").contains("true")) {
+        Seq(
+          "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-client-api" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion % "test"
+        )
+      } else {
+        Seq.empty
+      }
+    },
+
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
