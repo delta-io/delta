@@ -980,7 +980,7 @@ object DeltaLog extends DeltaLogging {
           DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
         }.toMap
       } else {
-        catalogTableStorageProps ++ Map.empty
+        catalogTableStorageProps
       }
 
     // scalastyle:off deltahadoopconfiguration

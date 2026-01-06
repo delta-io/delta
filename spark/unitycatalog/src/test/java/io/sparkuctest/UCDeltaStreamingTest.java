@@ -18,6 +18,14 @@ package io.sparkuctest;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.tables.DeltaTable;
+import io.unitycatalog.client.ApiClient;
+import io.unitycatalog.client.ApiException;
+import io.unitycatalog.client.api.DeltaCommitsApi;
+import io.unitycatalog.client.api.TablesApi;
+import io.unitycatalog.client.model.DeltaGetCommits;
+import io.unitycatalog.client.model.DeltaGetCommitsResponse;
+import io.unitycatalog.client.model.TableInfo;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -27,6 +35,7 @@ import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.execution.streaming.MemoryStream;
+import org.apache.spark.sql.functions;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -117,6 +126,37 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           check(
               tableName,
               List.of(List.of("1", "Alice"), List.of("2", "Bob"), List.of("3", "Charlie")));
+
+          // The UC server should have the latest version, for managed table.
+          if (TableType.MANAGED == tableType) {
+            ApiClient client = unityCatalogInfo().createApiClient();
+            assertUCManagedTableVersion(tableName, client);
+          }
         });
+  }
+
+  private void assertUCManagedTableVersion(String tableName, ApiClient client) throws ApiException {
+    // Get the table info.
+    TablesApi tablesApi = new TablesApi(client);
+    TableInfo tableInfo = tablesApi.getTable(tableName, false, false);
+
+    // Get the latest UC commit version.
+    DeltaCommitsApi deltaCommitsApi = new DeltaCommitsApi(client);
+    DeltaGetCommitsResponse resp =
+        deltaCommitsApi.getCommits(
+            new DeltaGetCommits().tableId(tableInfo.getTableId()).startVersion(0L));
+    assertNotNull(resp, "DeltaGetCommits response should not be null");
+    assertNotNull(resp.getLatestTableVersion(), "Latest table version should not be null");
+
+    // Get the delta metadata commit version.
+    Row latestRow =
+        DeltaTable.forName(spark(), tableName).history().select(functions.max("version")).first();
+    assertNotNull(latestRow, "Latest table version should not be null");
+    long deltaVersion = latestRow.getLong(0);
+
+    // The UC server should have the latest version.
+    assertTrue(
+        resp.getLatestTableVersion() >= deltaVersion,
+        "The UC server should have the latest version since commits went through UC, for managed table.");
   }
 }
