@@ -325,9 +325,9 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
-  test("projection and filter pushed together") {
+  test("projection, filter, and limit pushed together") {
     withPushdownCapturingEnabled {
-      sql("SELECT id FROM test_db.shared_test WHERE value > 10").collect()
+      sql("SELECT id FROM test_db.shared_test WHERE value > 10 LIMIT 5").collect()
 
       // Verify projection was pushed with exactly the expected columns
       // Spark needs 'id' for SELECT and 'value' for WHERE clause
@@ -348,6 +348,30 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       }
       assert(gtFilter.isDefined, "Expected GreaterThan filter on 'value'")
       assert(gtFilter.get.value == 10, s"Expected GreaterThan value 10, got ${gtFilter.get.value}")
+
+      // Verify limit was also pushed
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isDefined, "Limit should be pushed down")
+      assert(capturedLimit.get == 5, s"Expected limit 5, got ${capturedLimit.get}")
+    }
+  }
+
+  test("limit pushed to planning client") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test LIMIT 2").collect()
+
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isDefined, "Limit should be pushed down")
+      assert(capturedLimit.get == 2, s"Expected limit 2, got ${capturedLimit.get}")
+    }
+  }
+
+  test("no limit pushed when no LIMIT clause") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test").collect()
+
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isEmpty, "No limit should be pushed when there's no LIMIT clause")
     }
   }
 }
