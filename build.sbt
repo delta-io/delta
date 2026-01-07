@@ -410,7 +410,7 @@ lazy val sparkV1 = (project in file("spark"))
 
 // ============================================================
 // Spark Module 2: sparkV1Filtered (v1 without DeltaLog for v2 dependency)
-// This filtered version of sparkV1 is needed because sparkV2 (kernel-spark) depends on some
+// This filtered version of sparkV1 is needed because sparkV2 (spark/v2) depends on some
 // V1 classes for utilities and common functionality, but must NOT have access to DeltaLog,
 // Snapshot, OptimisticTransaction, or actions that belongs to core V1 delta libraries.
 // We should use Kernel as the Delta implementation.
@@ -443,9 +443,9 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
   )
 
 // ============================================================
-// Spark Module 3: sparkV2 (kernel-spark based, depends on v1-filtered)
+// Spark Module 3: sparkV2 (Kernel-based DSv2 connector, depends on v1-filtered)
 // ============================================================
-lazy val sparkV2 = (project in file("kernel-spark"))
+lazy val sparkV2 = (project in file("spark/v2"))
   .dependsOn(sparkV1Filtered)
   .dependsOn(kernelDefaults)
   .dependsOn(kernelUnityCatalog % "compile->compile;test->test")
@@ -732,6 +732,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     ),
 
     libraryDependencies ++= Seq(
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JUnit 5 test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
@@ -757,6 +758,22 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
     ),
+
+    // Conditionally add hadoop-aws dependency only when UC_REMOTE=true
+    // Please see: https://github.com/delta-io/delta/issues/5624#issuecomment-3673383736
+    // Once we release the relocated unitycatalog-server, we can remove this.
+    libraryDependencies ++= {
+      if (sys.env.get("UC_REMOTE").contains("true")) {
+        Seq(
+          "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-client-api" % hadoopVersion % "test",
+          "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion % "test"
+        )
+      } else {
+        Seq.empty
+      }
+    },
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
@@ -1022,6 +1039,13 @@ lazy val storage = (project in file("storage"))
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+      "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion excludeAll(
+        ExclusionRule(organization = "org.openapitools"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",

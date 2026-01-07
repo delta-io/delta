@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.util.ScalaExtensions._
 
-import org.apache.spark.sql.types.{AtomicType, DecimalType}
+import org.apache.spark.sql.types.{AtomicType, ByteType, DecimalType, IntegerType, IntegralType, LongType, ShortType}
 
 /**
  * A type widening mode captures a specific set of type changes that are allowed to be applied.
@@ -148,6 +148,68 @@ object TypeWideningMode {
       (left, right) match {
         case (l, r) if typeChangeSupported(l, r) => Some(r)
         case (l, r) if typeChangeSupported(r, l) => Some(l)
+        case (l: DecimalType, r: DecimalType) =>
+          val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
+          Option.when(typeChangeSupported(l, wider) && typeChangeSupported(r, wider))(wider)
+        case _ => None
+      }
+    }
+  }
+
+  /**
+   * Same as TypeEvolution with AllowAutomaticWideningMode.ALWAYS, but
+   * additionally gets the wider decimal type given two types that are
+   * DecimalType-compatible.
+   */
+  case object AllTypeWideningWithDecimalCoercion extends TypeWideningMode {
+    private def getDecimalType(t: IntegralType): DecimalType = {
+      t match {
+        case _: ByteType => DecimalType(3, 0)
+        case _: ShortType => DecimalType(5, 0)
+        case _: IntegerType => DecimalType(10, 0)
+        case _: LongType => DecimalType(20, 0)
+      }
+    }
+
+    private def getWiderDecimalTypeWithInteger(
+        integralType: IntegralType,
+        decimalType: DecimalType): Option[DecimalType] = {
+      val wider = DecimalPrecisionTypeCoercion.widerDecimalType(
+        getDecimalType(integralType), decimalType)
+      Option.when(
+        TypeWidening.isTypeChangeSupported(getDecimalType(integralType), wider) &&
+          TypeWidening.isTypeChangeSupported(decimalType, wider))(wider)
+    }
+
+    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] =
+      (fromType, toType) match {
+        case (from, to) if TypeWidening.isTypeChangeSupported(from, to) => Some(to)
+        case (l: IntegralType, r: DecimalType) =>
+          getWiderDecimalTypeWithInteger(l, r)
+        case (l: DecimalType, r: IntegralType) =>
+          getWiderDecimalTypeWithInteger(r, l)
+        case (l: DecimalType, r: DecimalType) =>
+          val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
+          Option.when(
+            TypeWidening.isTypeChangeSupported(l, wider) &&
+              TypeWidening.isTypeChangeSupported(r, wider))(wider)
+        case _ => None
+      }
+  }
+
+  /**
+   * Same as TypeEvolution with AllowAutomaticWideningMode.SAME_FAMILY_TYPE,
+   * but additionally gets the wider decimal type given two types that are
+   * DecimalType-compatible.
+   */
+  case object TypeEvolutionWithDecimalCoercion extends TypeWideningMode {
+    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] = {
+      def typeChangeSupported: (AtomicType, AtomicType) => Boolean =
+        TypeWidening.isTypeChangeSupportedForSchemaEvolution(_, _,
+          uniformIcebergCompatibleOnly = false)
+
+      (fromType, toType) match {
+        case (from, to) if typeChangeSupported(from, to) => Some(to)
         case (l: DecimalType, r: DecimalType) =>
           val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
           Option.when(typeChangeSupported(l, wider) && typeChangeSupported(r, wider))(wider)

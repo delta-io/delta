@@ -231,8 +231,8 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
-  private val spark41Snapshot = SparkVersionSpec(
-    fullVersion = "4.1.0-SNAPSHOT",
+  private val spark41 = SparkVersionSpec(
+    fullVersion = "4.1.0",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.1"),
     antlr4Version = "4.13.1",
@@ -260,7 +260,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = Some(spark42Snapshot)
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41Snapshot, spark42Snapshot)
+  val ALL_SPECS = Seq(spark40, spark41, spark42Snapshot)
 }
 
 /** See docs on top of this file */
