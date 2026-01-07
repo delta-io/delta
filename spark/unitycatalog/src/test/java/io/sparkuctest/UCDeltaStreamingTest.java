@@ -18,7 +18,6 @@ package io.sparkuctest;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.tables.DeltaTable;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.DeltaCommitsApi;
@@ -31,11 +30,12 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims;
-import org.apache.spark.sql.functions;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -100,20 +100,29 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           // Assert that the query is active
           assertTrue(query.isActive(), "Streaming query should be active");
 
-          // Add test data - convert to Rows
-          Seq<Row> batchRow =
-              JavaConverters.asScalaIteratorConverter(
-                      Arrays.asList(
-                              RowFactory.create(1L, "Alice"),
-                              RowFactory.create(2L, "Bob"),
-                              RowFactory.create(3L, "Charlie"))
-                          .iterator())
-                  .asScala()
-                  .toSeq();
-          memoryStream.addData(batchRow);
+          // Let's do 10 rounds testing, and for every round, adding 1 row and waiting to be
+          // available, and finally verify the results and unity catalog latest version are
+          // expected.
+          ApiClient client = unityCatalogInfo().createApiClient();
+          for (long i = 1; i < 10; i += 1) {
+            Seq<Row> batchRow = createRowsAsSeq(RowFactory.create(i, String.valueOf(i)));
+            memoryStream.addData(batchRow);
 
-          // Process all available data
-          query.processAllAvailable();
+            // Process all available data
+            query.processAllAvailable();
+
+            // Verify the content
+            check(
+                tableName,
+                LongStream.range(1, i + 1)
+                    .mapToObj(idx -> List.of(String.valueOf(idx), String.valueOf(idx)))
+                    .collect(Collectors.toUnmodifiableList()));
+
+            // The UC server should have the latest version, for managed table.
+            if (TableType.MANAGED == tableType) {
+              assertUCManagedTableVersion(i, tableName, client);
+            }
+          }
 
           // Stop the stream.
           query.stop();
@@ -121,21 +130,11 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
           // Assert that the query has stopped
           assertFalse(query.isActive(), "Streaming query should have stopped");
-
-          // Verify the content
-          check(
-              tableName,
-              List.of(List.of("1", "Alice"), List.of("2", "Bob"), List.of("3", "Charlie")));
-
-          // The UC server should have the latest version, for managed table.
-          if (TableType.MANAGED == tableType) {
-            ApiClient client = unityCatalogInfo().createApiClient();
-            assertUCManagedTableVersion(tableName, client);
-          }
         });
   }
 
-  private void assertUCManagedTableVersion(String tableName, ApiClient client) throws ApiException {
+  private void assertUCManagedTableVersion(long expectedVersion, String tableName, ApiClient client)
+      throws ApiException {
     // Get the table info.
     TablesApi tablesApi = new TablesApi(client);
     TableInfo tableInfo = tablesApi.getTable(tableName, false, false);
@@ -148,15 +147,13 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     assertNotNull(resp, "DeltaGetCommits response should not be null");
     assertNotNull(resp.getLatestTableVersion(), "Latest table version should not be null");
 
-    // Get the delta metadata commit version.
-    Row latestRow =
-        DeltaTable.forName(spark(), tableName).history().select(functions.max("version")).first();
-    assertNotNull(latestRow, "Latest table version should not be null");
-    long deltaVersion = latestRow.getLong(0);
-
     // The UC server should have the latest version.
-    assertTrue(
-        resp.getLatestTableVersion() >= deltaVersion,
-        "The UC server should have the latest version since commits went through UC, for managed table.");
+    assertEquals(expectedVersion, resp.getLatestTableVersion());
+  }
+
+  private static Seq<Row> createRowsAsSeq(Row... rows) {
+    return JavaConverters.asScalaIteratorConverter(Arrays.asList(rows).iterator())
+        .asScala()
+        .toSeq();
   }
 }
