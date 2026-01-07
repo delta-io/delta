@@ -51,17 +51,19 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion latest",
     "startingVersion latest defined before started",
     "startingVersion latest works on defined but empty table",
-    "startingVersion specific version: new commits arrive after stream initialization"
+    "startingVersion specific version: new commits arrive after stream initialization",
+
+    // === Schema Evolution ===
+    "allow to change schema before starting a streaming query",
+    "allow user specified schema if consistent: v1 source",
+    "disallow user specified schema",
+    "createSource should create source with empty or matching table schema provided"
   )
 
   private lazy val shouldFailTests = Set(
     // === Schema Evolution ===
-    "allow to change schema before starting a streaming query",
     "restarting a query should pick up latest table schema and recover",
     "handling nullability schema changes",
-    "allow user specified schema if consistent: v1 source",
-    "disallow user specified schema",
-    "createSource should create source with empty or matching table schema provided",
 
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
