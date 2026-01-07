@@ -126,6 +126,11 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
           sql("INSERT INTO %s PARTITION (date='2025-11-01') VALUES (1, 'AAA')", tableName);
           sql("INSERT INTO %s PARTITION (date='2025-11-01') VALUES (2, 'BBB')", tableName);
 
+          // Verify the result before dynamic partition overwrite.
+          check(
+              tableName,
+              List.of(List.of("1", "AAA", "2025-11-01"), List.of("2", "BBB", "2025-11-01")));
+
           // Enable dynamic partition overwrite
           sql("SET spark.databricks.delta.dynamicPartitionOverwrite.enabled = true");
 
