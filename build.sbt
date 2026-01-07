@@ -714,16 +714,6 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     // Ensure Java sources are picked up
     Test / unmanagedSourceDirectories += baseDirectory.value / "src" / "test" / "java",
 
-    // Add scala-shims from spark module for cross-version compatibility
-    Test / unmanagedSourceDirectories += {
-      val sparkDir = (sparkV1 / baseDirectory).value
-      val spec = CrossSparkVersions.getSparkVersionSpec()
-      spec.additionalSourceDir match {
-        case Some(dir) => sparkDir / "src" / "test" / dir
-        case None => throw new IllegalStateException("No shim directory configured for current Spark version")
-      }
-    },
-
     Test / javaOptions ++= Seq("-ea"),
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
