@@ -142,39 +142,86 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
   }
 
   test("shouldUseServerSidePlanning() decision logic") {
-    // Case 1: Force flag enabled -> should always use server-side planning
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = true,
-      forceServerSidePlanning = true),
-      "Should use server-side planning when force flag is true")
+    case class TestCase(
+      isUnityCatalog: Boolean,
+      hasCredentials: Boolean,
+      forceServerSidePlanning: Boolean,
+      skipUcRequirementForTesting: Boolean,
+      expectSSPEnabled: Boolean,  // Expected output from shouldUseServerSidePlanning()
+      description: String
+    )
 
-    // Case 2: Unity Catalog without credentials -> should use server-side planning
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = true,
-      hasCredentials = false,
-      forceServerSidePlanning = false),
-      "Should use server-side planning for UC table without credentials")
+    val testCases = Seq(
+      // Production mode tests (skipUcRequirementForTesting = false)
+      TestCase(
+        isUnityCatalog = true,
+        hasCredentials = false,
+        forceServerSidePlanning = true,
+        skipUcRequirementForTesting = false,
+        expectSSPEnabled = true,
+        description = "Production: UC without credentials + force flag -> use SSP"
+      ),
+      TestCase(
+        isUnityCatalog = true,
+        hasCredentials = true,
+        forceServerSidePlanning = true,
+        skipUcRequirementForTesting = false,
+        expectSSPEnabled = false,
+        description = "Production: UC with credentials -> do NOT use SSP"
+      ),
+      TestCase(
+        isUnityCatalog = false,
+        hasCredentials = false,
+        forceServerSidePlanning = true,
+        skipUcRequirementForTesting = false,
+        expectSSPEnabled = false,
+        description = "Production: Should NOT use server-side planning for non-UC table"
+      ),
+      TestCase(
+        isUnityCatalog = true,
+        hasCredentials = false,
+        forceServerSidePlanning = false,
+        skipUcRequirementForTesting = false,
+        expectSSPEnabled = false,
+        description = "Production: Should NOT use server-side planning without force flag"
+      ),
 
-    // Case 3: Unity Catalog with credentials -> should NOT use server-side planning
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = true,
-      hasCredentials = true,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for UC table with credentials")
+      // Test mode tests (skipUcRequirementForTesting = true)
+      TestCase(
+        isUnityCatalog = false,
+        hasCredentials = true,
+        forceServerSidePlanning = true,
+        skipUcRequirementForTesting = true,
+        expectSSPEnabled = true,
+        description = "Test mode: Non-UC + force flag -> use SSP (bypasses UC check)"
+      ),
+      TestCase(
+        isUnityCatalog = true,
+        hasCredentials = false,
+        forceServerSidePlanning = true,
+        skipUcRequirementForTesting = true,
+        expectSSPEnabled = true,
+        description = "Test mode: UC without credentials + force flag -> use SSP"
+      ),
+      TestCase(
+        isUnityCatalog = false,
+        hasCredentials = false,
+        forceServerSidePlanning = false,
+        skipUcRequirementForTesting = true,
+        expectSSPEnabled = false,
+        description = "Test mode: Should NOT use server-side planning without force flag"
+      )
+    )
 
-    // Case 4: Non-UC catalog -> should NOT use server-side planning
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = true,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for non-UC catalog")
-
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = false,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for non-UC catalog (even without credentials)")
+    testCases.foreach { testCase =>
+      val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
+        testCase.isUnityCatalog,
+        testCase.hasCredentials,
+        testCase.forceServerSidePlanning,
+        testCase.skipUcRequirementForTesting
+      )
+      assert(result == testCase.expectSSPEnabled, testCase.description)
+    }
   }
 
   test("ServerSidePlannedTable is read-only") {
