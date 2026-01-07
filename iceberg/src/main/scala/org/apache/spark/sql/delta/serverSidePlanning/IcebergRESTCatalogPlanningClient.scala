@@ -21,6 +21,7 @@ import java.lang.reflect.Method
 import java.util.Locale
 
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 import org.apache.http.client.methods.HttpPost
 import org.apache.http.entity.{ContentType, StringEntity}
@@ -31,6 +32,8 @@ import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
+import org.json4s._
+import org.json4s.jackson.JsonMethods._
 import shadedForDelta.org.apache.iceberg.PartitionSpec
 import shadedForDelta.org.apache.iceberg.rest.requests.{PlanTableScanRequest, PlanTableScanRequestParser}
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
@@ -201,7 +204,7 @@ class IcebergRESTCatalogPlanningClient(
             s"expected 'completed'. Table: $database.$table")
         }
 
-        convertToScanPlan(icebergResponse)
+        convertToScanPlan(icebergResponse, responseBody)
       } else {
         // TODO: Parse structured ErrorResponse JSON from Iceberg REST spec instead of raw body
         throw new IOException(
@@ -218,7 +221,9 @@ class IcebergRESTCatalogPlanningClient(
    *
    * Validates response structure and ensures the table is unpartitioned.
    */
-  private def convertToScanPlan(response: PlanTableScanResponse): ScanPlan = {
+  private def convertToScanPlan(
+      response: PlanTableScanResponse,
+      responseBody: String): ScanPlan = {
     require(response != null, "PlanTableScanResponse cannot be null")
     require(response.fileScanTasks() != null, "File scan tasks cannot be null")
 
@@ -241,7 +246,93 @@ class IcebergRESTCatalogPlanningClient(
       )
     }.toSeq
 
-    ScanPlan(files = files)
+    val credentials = extractCredentials(responseBody)
+    ScanPlan(files = files, credentials = credentials)
+  }
+
+  /**
+   * Extract storage credentials from IRC server response.
+   * Supports AWS S3, Azure ADLS Gen2, and Google Cloud Storage.
+   *
+   * JSON structure:
+   * {
+   *   "storage-credentials": [{
+   *     "config": {
+   *       // S3 credentials
+   *       "s3.access-key-id": "...",
+   *       "s3.secret-access-key": "...",
+   *       "s3.session-token": "...",
+   *
+   *       // Azure credentials
+   *       "azure.account-name": "...",
+   *       "azure.sas-token": "...",
+   *       "azure.container-name": "...",
+   *
+   *       // GCS credentials
+   *       "gcs.oauth2.token": "..."
+   *     }
+   *   }]
+   * }
+   */
+  private def extractCredentials(responseBody: String): Option[StorageCredentials] = {
+    Try {
+      implicit val formats: Formats = DefaultFormats
+      val json = parse(responseBody)
+
+      // Navigate to storage-credentials[0].config
+      val config = (json \ "storage-credentials")(0) \ "config"
+
+      // Extract all credential types (any or all may be present)
+      val s3AccessKeyId = (config \ "s3.access-key-id") match {
+        case JNothing | JNull => None
+        case value => Some(value.extract[String])
+      }
+      val s3SecretAccessKey = (config \ "s3.secret-access-key") match {
+        case JNothing | JNull => None
+        case value => Some(value.extract[String])
+      }
+      val s3SessionToken = (config \ "s3.session-token") match {
+        case JNothing | JNull => None
+        case value => Some(value.extract[String])
+      }
+
+      val azureAccountName = (config \ "azure.account-name") match {
+        case JNothing | JNull => None
+        case value => Some(value.extract[String])
+      }
+      val azureSasToken = (config \ "azure.sas-token") match {
+        case JNothing | JNull => None
+        case value => Some(value.extract[String])
+      }
+      val azureContainerName = (config \ "azure.container-name") match {
+        case JNothing | JNull => None
+        case value => Some(value.extract[String])
+      }
+
+      val gcsOAuth2Token = (config \ "gcs.oauth2.token") match {
+        case JNothing | JNull => None
+        case value => Some(value.extract[String])
+      }
+
+      // Return credentials if ANY provider has credentials
+      val creds = StorageCredentials(
+        s3AccessKeyId = s3AccessKeyId,
+        s3SecretAccessKey = s3SecretAccessKey,
+        s3SessionToken = s3SessionToken,
+        azureAccountName = azureAccountName,
+        azureSasToken = azureSasToken,
+        azureContainerName = azureContainerName,
+        gcsOAuth2Token = gcsOAuth2Token
+      )
+
+      // Only return if at least one cloud provider has credentials
+      if (creds.hasS3Credentials || creds.hasAzureCredentials || creds.hasGcsCredentials) {
+        Some(creds)
+      } else {
+        None
+      }
+
+    }.toOption.flatten
   }
 
   /**

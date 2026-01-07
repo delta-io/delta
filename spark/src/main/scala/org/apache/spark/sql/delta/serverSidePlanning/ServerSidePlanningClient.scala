@@ -30,10 +30,39 @@ case class ScanFile(
 )
 
 /**
+ * Temporary storage credentials from server-side planning response.
+ * Supports AWS S3, Azure ADLS Gen2, and Google Cloud Storage.
+ */
+case class StorageCredentials(
+  // AWS S3 credentials
+  s3AccessKeyId: Option[String] = None,
+  s3SecretAccessKey: Option[String] = None,
+  s3SessionToken: Option[String] = None,
+
+  // Azure ADLS Gen2 credentials
+  azureAccountName: Option[String] = None,
+  azureSasToken: Option[String] = None,
+  azureContainerName: Option[String] = None,
+
+  // Google Cloud Storage credentials
+  gcsOAuth2Token: Option[String] = None
+) {
+  def hasS3Credentials: Boolean =
+    s3AccessKeyId.isDefined && s3SecretAccessKey.isDefined && s3SessionToken.isDefined
+
+  def hasAzureCredentials: Boolean =
+    azureAccountName.isDefined && azureSasToken.isDefined && azureContainerName.isDefined
+
+  def hasGcsCredentials: Boolean =
+    gcsOAuth2Token.isDefined
+}
+
+/**
  * Result of a table scan plan operation.
  */
 case class ScanPlan(
-  files: Seq[ScanFile]
+  files: Seq[ScanFile],
+  credentials: Option[StorageCredentials] = None
 )
 
 /**
