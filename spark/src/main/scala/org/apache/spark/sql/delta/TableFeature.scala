@@ -120,9 +120,6 @@ sealed abstract class TableFeature(
    * to be enabled if this table feature is enabled.
    */
   def requiredFeatures: Set[TableFeature] = Set.empty
-
-  /** Get the table property config key. */
-  def propertyKey: String = TableFeatureProtocolUtils.propertyKey(name)
 }
 
 /** A trait to indicate a feature applies to readers and writers. */
