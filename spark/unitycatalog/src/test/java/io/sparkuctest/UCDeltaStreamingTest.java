@@ -34,7 +34,7 @@ import java.util.List;
 import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
-import org.apache.spark.sql.execution.streaming.MemoryStream;
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims;
 import org.apache.spark.sql.functions;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.types.DataTypes;
@@ -83,9 +83,9 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
                     new StructField("value", DataTypes.StringType, false, Metadata.empty())
                   });
 
-          // Create MemoryStream - using Scala companion object with proper encoder
-          MemoryStream<Row> memoryStream =
-              MemoryStream.apply(Encoders.row(schema), spark().sqlContext());
+          // Create MemoryStream - using Scala companion object with proper encoder via shims
+          var memoryStream =
+              StreamingTestShims.MemoryStream().apply(Encoders.row(schema), spark().sqlContext());
 
           // Start streaming query writing to the Unity Catalog managed table
           StreamingQuery query =
