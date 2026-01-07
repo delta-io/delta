@@ -17,8 +17,6 @@
 package io.sparkuctest;
 
 import java.util.List;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * DML test suite for Delta Table operations through Unity Catalog.
@@ -29,8 +27,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testBasicInsertOperations(TableType tableType) throws Exception {
     withNewTable(
         "insert_basic_test",
@@ -60,8 +57,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testAdvancedInsertOperations(TableType tableType) throws Exception {
     // Test INSERT ... SELECT
     withNewTable(
@@ -113,8 +109,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testInsertWithDynamicPartitionOverwrite(TableType tableType) throws Exception {
     withNewTable(
         "insert_dynamic_partition_overwrite_test",
@@ -147,8 +142,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testUpdateOperations(TableType tableType) throws Exception {
     withNewTable(
         "update_test",
@@ -187,8 +181,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testDeleteOperations(TableType tableType) throws Exception {
     withNewTable(
         "delete_test",
@@ -221,8 +214,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testMergeInsertOnly(TableType tableType) throws Exception {
     withNewTable(
         "merge_insert_test",
@@ -259,8 +251,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testMergeUpdateOnly(TableType tableType) throws Exception {
     withNewTable(
         "merge_update_test",
@@ -293,8 +284,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testMergeCombinedInsertAndUpdate(TableType tableType) throws Exception {
     withNewTable(
         "merge_combined_test",
@@ -335,8 +325,7 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testMergeWithDeleteAction(TableType tableType) throws Exception {
     withNewTable(
         "merge_delete_test",
