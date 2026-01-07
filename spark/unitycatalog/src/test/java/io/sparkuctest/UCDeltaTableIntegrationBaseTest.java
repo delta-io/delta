@@ -158,14 +158,25 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    *
    * @param tableName The simple table name (without catalog/schema prefix)
    * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param partitionFields The partition fields (e.g., "id, name")
    * @param tableType The type of table (EXTERNAL or MANAGED)
    * @param testCode The test function that receives the full table name
    */
   protected void withNewTable(
-      String tableName, String tableSchema, TableType tableType, TestCode testCode)
+      String tableName,
+      String tableSchema,
+      String partitionFields,
+      TableType tableType,
+      TestCode testCode)
       throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+
+    // Create th partition cause.
+    StringBuilder partitionCause = new StringBuilder();
+    if (partitionFields != null && !partitionFields.trim().isEmpty()) {
+      partitionCause.append(String.format("PARTITIONED BY (%s)", partitionFields));
+    }
 
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location
@@ -173,8 +184,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
           (Path dir) -> {
             Path tablePath = new Path(dir, tableName);
             sql(
-                "CREATE TABLE %s (%s) USING DELTA LOCATION '%s'",
-                fullTableName, tableSchema, tablePath.toString());
+                "CREATE TABLE %s (%s) USING DELTA %s LOCATION '%s'",
+                fullTableName, tableSchema, partitionCause.toString(), tablePath.toString());
 
             try {
               testCode.run(fullTableName);
@@ -186,9 +197,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       // Managed table - Spark manages the location
       // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
       sql(
-          "CREATE TABLE %s (%s) USING DELTA "
+          "CREATE TABLE %s (%s) USING DELTA %s "
               + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-          fullTableName, tableSchema);
+          fullTableName, tableSchema, partitionCause.toString());
 
       try {
         testCode.run(fullTableName);
@@ -196,6 +207,20 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
         sql("DROP TABLE IF EXISTS %s", fullTableName);
       }
     }
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(
+      String tableName, String tableSchema, TableType tableType, TestCode testCode)
+      throws Exception {
+    withNewTable(tableName, tableSchema, null, tableType, testCode);
   }
 
   /** Functional interface for test code that takes a temporary directory. */
