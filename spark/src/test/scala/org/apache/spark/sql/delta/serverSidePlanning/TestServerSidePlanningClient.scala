@@ -35,10 +35,12 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
       databaseName: String,
       table: String,
       filterOption: Option[Filter] = None,
-      projectionOption: Option[Seq[String]] = None): ScanPlan = {
-    // Capture filter and projection for test verification
+      projectionOption: Option[Seq[String]] = None,
+      limitOption: Option[Int] = None): ScanPlan = {
+    // Capture filter, projection, and limit for test verification
     TestServerSidePlanningClient.capturedFilter = filterOption
     TestServerSidePlanningClient.capturedProjection = projectionOption
+    TestServerSidePlanningClient.capturedLimit = limitOption
 
     val fullTableName = s"$databaseName.$table"
 
@@ -92,17 +94,20 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
 
 /**
  * Companion object for TestServerSidePlanningClient.
- * Stores captured pushdown parameters (filter, projection) for test verification.
+ * Stores captured pushdown parameters (filter, projection, limit) for test verification.
  */
 object TestServerSidePlanningClient {
   private var capturedFilter: Option[Filter] = None
   private var capturedProjection: Option[Seq[String]] = None
+  private var capturedLimit: Option[Int] = None
 
   def getCapturedFilter: Option[Filter] = capturedFilter
   def getCapturedProjection: Option[Seq[String]] = capturedProjection
+  def getCapturedLimit: Option[Int] = capturedLimit
   def clearCaptured(): Unit = {
     capturedFilter = None
     capturedProjection = None
+    capturedLimit = None
   }
 }
 
