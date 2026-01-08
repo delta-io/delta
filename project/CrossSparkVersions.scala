@@ -205,6 +205,8 @@ case class SparkVersionSpec(
   fullVersion: String,
   targetJvm: String,
   additionalSourceDir: Option[String] = None,
+  supportIceberg: Boolean,
+  supportHudi: Boolean,
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
@@ -254,6 +256,8 @@ object SparkVersionSpec {
     fullVersion = "4.0.1",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.0"),
+    supportIceberg = true,
+    supportHudi = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
@@ -263,6 +267,8 @@ object SparkVersionSpec {
     fullVersion = "4.1.0",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.1"),
+    supportIceberg = false,
+    supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
