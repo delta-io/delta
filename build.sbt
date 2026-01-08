@@ -16,18 +16,7 @@
 
 // scalastyle:off line.size.limit
 
-import java.io.BufferedInputStream
 import java.nio.file.Files
-import java.nio.file.attribute.PosixFilePermission
-import java.util
-
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
-import org.apache.commons.compress.utils.IOUtils
-
-import scala.collection.mutable
-import scala.sys.process._
-import scala.util.Using
 
 import sbt.internal.inc.Analysis
 import sbtprotoc.ProtocPlugin.autoImport._
@@ -149,42 +138,20 @@ def scalafmtCheckSettings(): Seq[Def.Setting[Task[CompileAnalysis]]] = Seq(
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
  *       setting macro.
  */
-def runTaskOnlyOnSparkMaster[T](
-    task: sbt.TaskKey[T],
-    taskName: String,
-    projectName: String,
-    emptyValue: => T): Def.Initialize[Task[T]] = {
-  if (CrossSparkVersions.getSparkVersionSpec().isMaster) {
-    Def.task(task.value)
-  } else {
-    Def.task {
-      // scalastyle:off println
-      val masterVersion = SparkVersionSpec.MASTER.map(_.fullVersion).getOrElse("(no master version configured)")
-      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
-        s"${CrossSparkVersions.getSparkVersion()} does not equal $masterVersion.")
-      // scalastyle:on println
-      emptyValue
-    }
-  }
-}
-
-/**
- * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
- *       setting macro.
- */
-def runTaskOnlyOnSparkDefault[T](
+def runTaskOnlyOnSpark[T](
   task: sbt.TaskKey[T],
   taskName: String,
   projectName: String,
-  emptyValue: => T): Def.Initialize[Task[T]] = {
-  if (CrossSparkVersions.getSparkVersionSpec().isDefault) {
+  emptyValue: => T,
+  additionalPredicate: SparkVersionSpec => Boolean = _ => true): Def.Initialize[Task[T]] = {
+  val spec = CrossSparkVersions.getSparkVersionSpec()
+  if (additionalPredicate(spec)) {
     Def.task(task.value)
   } else {
     Def.task {
       // scalastyle:off println
-      val defaultVersion = SparkVersionSpec.DEFAULT.fullVersion
-      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
-        s"${CrossSparkVersions.getSparkVersion()} does not equal $defaultVersion.")
+      println(s"Project $projectName: Skipping `$taskName` as additional predicate not satisfied " +
+        s"for Spark version ${CrossSparkVersions.getSparkVersion()}.")
       // scalastyle:on println
       emptyValue
     }
@@ -1125,44 +1092,54 @@ lazy val iceberg = (project in file("iceberg"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentModuleName(sparkVersion),
-    // TODO: upgrade to Spark 4.1?
-    Compile / compile := runTaskOnlyOnSparkDefault(
+    // TODO: Remove the next 4 tasks after Iceberg Spark 4.1 integration is released.
+    Compile / compile := runTaskOnlyOnSpark(
       task = Compile / compile,
       taskName = "compile",
       projectName = "delta-iceberg",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis],
+      additionalPredicate = _.supportIceberg
     ).value,
-    Test / test := runTaskOnlyOnSparkDefault(
+    Test / test := runTaskOnlyOnSpark(
       task = Test / test,
       taskName = "test",
       projectName = "delta-iceberg",
-      emptyValue = ()
+      emptyValue = (),
+      additionalPredicate = _.supportIceberg
     ).value,
-    publish := runTaskOnlyOnSparkDefault(
+    publish := runTaskOnlyOnSpark(
       task = publish,
       taskName = "publish",
       projectName = "delta-iceberg",
-      emptyValue = ()
+      emptyValue = (),
+      additionalPredicate = _.supportIceberg
     ).value,
-    publishM2 := runTaskOnlyOnSparkDefault(
+    publishM2 := runTaskOnlyOnSpark(
       task = publishM2,
       taskName = "publishM2",
       projectName = "delta-iceberg",
-      emptyValue = ()
+      emptyValue = (),
+      additionalPredicate = _.supportIceberg
     ).value,
-    libraryDependencies ++= Seq(
-      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
-      // due to legacy scala.
-      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
-      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
-      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
-      "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
-      "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
-      "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
-      "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
-      "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
-    ),
+    libraryDependencies ++= {
+      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+        Seq(
+          // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+          // due to legacy scala.
+          "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
+          "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
+          "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
+          "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
+          "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
+          "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
+          "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
+          "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
+        )
+      } else {
+        Seq.empty
+      }
+    },
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
@@ -1312,29 +1289,34 @@ lazy val hudi = (project in file("hudi"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    Compile / compile := runTaskOnlyOnSparkDefault(
+    // TODO: Remove the next 4 tasks after Hudi Spark 4.1 integration is released.
+    Compile / compile := runTaskOnlyOnSpark(
       task = Compile / compile,
       taskName = "compile",
       projectName = "delta-hudi",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis],
+      additionalPredicate = _.supportHudi
     ).value,
-    Test / test := runTaskOnlyOnSparkDefault(
+    Test / test := runTaskOnlyOnSpark(
       task = Test / test,
       taskName = "test",
       projectName = "delta-hudi",
-      emptyValue = ()
+      emptyValue = (),
+      additionalPredicate = _.supportHudi
     ).value,
-    publish := runTaskOnlyOnSparkDefault(
+    publish := runTaskOnlyOnSpark(
       task = publish,
       taskName = "publish",
       projectName = "delta-hudi",
-      emptyValue = ()
+      emptyValue = (),
+      additionalPredicate = _.supportHudi
     ).value,
-    publishM2 := runTaskOnlyOnSparkDefault(
+    publishM2 := runTaskOnlyOnSpark(
       task = publishM2,
       taskName = "publishM2",
       projectName = "delta-hudi",
-      emptyValue = ()
+      emptyValue = (),
+      additionalPredicate = _.supportHudi
     ).value,
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
@@ -1427,23 +1409,40 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
  */
 
 // Don't use these groups for any other projects
-lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, hudi, sharing, connectCommon, connectClient, connectServer)
-  .settings(
-    // crossScalaVersions must be set to Nil on the aggregating project
-    crossScalaVersions := Nil,
-    publishArtifact := false,
-    publish / skip := false,
-  )
+lazy val sparkGroup = {
+  val baseProjects = Seq(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, sharing, connectCommon, connectClient, connectServer)
+  val allProjects = if (CrossSparkVersions.getSparkVersionSpec().supportHudi) {
+    baseProjects :+ hudi
+  } else {
+    baseProjects
+  }
 
-lazy val icebergGroup = project
-  .aggregate(iceberg, testDeltaIcebergJar)
-  .settings(
-    // crossScalaVersions must be set to Nil on the aggregating project
-    crossScalaVersions := Nil,
-    publishArtifact := false,
-    publish / skip := false,
-  )
+  Project("sparkGroup", file("sparkGroup"))
+    .aggregate(allProjects.map(_.project): _*)
+    .settings(
+      // crossScalaVersions must be set to Nil on the aggregating project
+      crossScalaVersions := Nil,
+      publishArtifact := false,
+      publish / skip := false,
+    )
+}
+
+lazy val icebergGroup = {
+  val allProjects = if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+    Seq(iceberg, testDeltaIcebergJar)
+  } else {
+    Seq.empty
+  }
+
+  Project("icebergGroup", file("icebergGroup"))
+    .aggregate(allProjects.map(_.project): _*)
+    .settings(
+      // crossScalaVersions must be set to Nil on the aggregating project
+      crossScalaVersions := Nil,
+      publishArtifact := false,
+      publish / skip := false,
+    )
+}
 
 lazy val kernelGroup = project
   .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
