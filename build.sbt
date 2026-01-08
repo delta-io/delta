@@ -1125,19 +1125,25 @@ lazy val iceberg = (project in file("iceberg"))
       emptyValue = (),
       additionalPredicate = _.supportIceberg
     ).value,
-    libraryDependencies ++= Seq(
-      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
-      // due to legacy scala.
-      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
-      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
-      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
-      "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
-      "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
-      "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
-      "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
-      "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
-    ),
+    libraryDependencies ++= {
+      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+        Seq(
+          // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+          // due to legacy scala.
+          "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
+          "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
+          "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
+          "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
+          "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
+          "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
+          "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
+          "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
+        )
+      } else {
+        Seq.empty
+      }
+    },
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
@@ -1471,23 +1477,40 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
  */
 
 // Don't use these groups for any other projects
-lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, hudi, sharing, connectCommon, connectClient, connectServer)
-  .settings(
-    // crossScalaVersions must be set to Nil on the aggregating project
-    crossScalaVersions := Nil,
-    publishArtifact := false,
-    publish / skip := false,
-  )
+lazy val sparkGroup = {
+  val baseProjects = Seq(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, sharing, connectCommon, connectClient, connectServer)
+  val allProjects = if (CrossSparkVersions.getSparkVersionSpec().supportHudi) {
+    baseProjects :+ hudi
+  } else {
+    baseProjects
+  }
 
-lazy val icebergGroup = project
-  .aggregate(iceberg, testDeltaIcebergJar)
-  .settings(
-    // crossScalaVersions must be set to Nil on the aggregating project
-    crossScalaVersions := Nil,
-    publishArtifact := false,
-    publish / skip := false,
-  )
+  Project("sparkGroup", file("sparkGroup"))
+    .aggregate(allProjects.map(_.project): _*)
+    .settings(
+      // crossScalaVersions must be set to Nil on the aggregating project
+      crossScalaVersions := Nil,
+      publishArtifact := false,
+      publish / skip := false,
+    )
+}
+
+lazy val icebergGroup = {
+  val allProjects = if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+    Seq(iceberg, testDeltaIcebergJar)
+  } else {
+    Seq.empty
+  }
+
+  Project("icebergGroup", file("icebergGroup"))
+    .aggregate(allProjects.map(_.project): _*)
+    .settings(
+      // crossScalaVersions must be set to Nil on the aggregating project
+      crossScalaVersions := Nil,
+      publishArtifact := false,
+      publish / skip := false,
+    )
+}
 
 lazy val kernelGroup = project
   .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
