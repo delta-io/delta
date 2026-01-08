@@ -54,10 +54,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   //          to /v1/iceberg/namespaces/db/tables/t1/plan
   private String catalogPrefix = null;  // null = no prefix (fallback case)
 
-  // Static fields for test verification - captures filter and projection from requests
+  // Static fields for test verification - captures filter, projection, and limit from requests
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Expression capturedFilter = null;
   private static volatile List<String> capturedProjection = null;
+  private static volatile Long capturedMinRowsRequested = null;
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -102,12 +103,21 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
-   * Clear captured filter and projection. Call between tests to avoid pollution.
+   * Get the min-rows-requested captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Long getCapturedMinRowsRequested() {
+    return capturedMinRowsRequested;
+  }
+
+  /**
+   * Clear captured filter, projection, and limit. Call between tests to avoid pollution.
    * Package-private for test access.
    */
   static void clearCaptured() {
     capturedFilter = null;
     capturedProjection = null;
+    capturedMinRowsRequested = null;
   }
 
   @Override
@@ -178,6 +188,47 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     return PlanTableScanRequestParser.fromJson(jsonBody);
   }
 
+  /**
+   * Extract min-rows-requested from JSON string.
+   * Iceberg 1.11 added this field, but we're on 1.10.0, so we parse it manually from JSON.
+   */
+  private Long extractMinRowsRequested(String jsonBody) {
+    if (jsonBody == null || jsonBody.trim().isEmpty()) {
+      return null;
+    }
+    try {
+      // Simple JSON parsing to extract min-rows-requested field
+      int index = jsonBody.indexOf("\"min-rows-requested\"");
+      if (index == -1) {
+        return null;  // Field not present
+      }
+      // Find the colon after the field name
+      int colonIndex = jsonBody.indexOf(":", index);
+      if (colonIndex == -1) {
+        return null;
+      }
+      // Find the value (skip whitespace)
+      int valueStart = colonIndex + 1;
+      while (valueStart < jsonBody.length() && Character.isWhitespace(jsonBody.charAt(valueStart))) {
+        valueStart++;
+      }
+      // Find the end of the value (comma, closing brace, or end of string)
+      int valueEnd = valueStart;
+      while (valueEnd < jsonBody.length()) {
+        char c = jsonBody.charAt(valueEnd);
+        if (c == ',' || c == '}' || Character.isWhitespace(c)) {
+          break;
+        }
+        valueEnd++;
+      }
+      String valueStr = jsonBody.substring(valueStart, valueEnd).trim();
+      return Long.parseLong(valueStr);
+    } catch (Exception e) {
+      LOG.warn("Failed to extract min-rows-requested from JSON: {}", e.getMessage());
+      return null;
+    }
+  }
+
   private PlanTableScanResponse handlePlanTableScan(
       HTTPRequest request,
       ParserContext parserContext) throws Exception {
@@ -187,6 +238,12 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     // Extract table identifier
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
+
+    // Extract min-rows-requested from JSON before parsing (not in Iceberg 1.10.0 API)
+    Object body = request.body();
+    String jsonBody = body != null ? body.toString() : null;
+    Long minRows = extractMinRowsRequested(jsonBody);
+    LOG.debug("Extracted min-rows-requested from JSON: {}", minRows);
 
     // Parse request
     PlanTableScanRequest planRequest = parsePlanRequest(request);
@@ -207,11 +264,13 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
       LOG.debug("Using current snapshot (snapshotId was null or 0)");
     }
 
-    // Capture filter and projection for test verification
+    // Capture filter, projection, and limit for test verification
     capturedFilter = planRequest.filter();
     capturedProjection = planRequest.select();
+    capturedMinRowsRequested = minRows;  // Extracted from JSON, not from API
     LOG.debug("Captured filter: {}", capturedFilter);
     LOG.debug("Captured projection: {}", capturedProjection);
+    LOG.debug("Captured min-rows-requested: {}", capturedMinRowsRequested);
 
     // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {
