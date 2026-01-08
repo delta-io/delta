@@ -47,11 +47,30 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
   }
 
   private lazy val shouldPassTests = Set(
+    // ========== Core streaming tests ==========
+    "basic",
+    "initial snapshot ends at base index of next version",
+    "new commits arrive after stream initialization - with explicit startingVersion",
+    "SC-11561: can consume new data without update",
+    "Delta sources don't write offsets with null json",
+
+    // ========== startingVersion option tests ==========
     "startingVersion",
     "startingVersion latest",
     "startingVersion latest defined before started",
     "startingVersion latest works on defined but empty table",
-    "startingVersion specific version: new commits arrive after stream initialization"
+    "startingVersion specific version: new commits arrive after stream initialization",
+
+    // ========== Rate limiting tests ==========
+    "maxFilesPerTrigger",
+    "maxBytesPerTrigger: process at least one file",
+    "maxFilesPerTrigger: change and restart",
+    "maxFilesPerTrigger: invalid parameter",
+    "maxFilesPerTrigger: ignored when using Trigger.Once",
+    "maxBytesPerTrigger: change and restart",
+    "maxBytesPerTrigger: invalid parameter",
+    "maxBytesPerTrigger: max bytes and max files together",
+    "startingVersion should work with rate time"
   )
 
   private lazy val shouldFailTests = Set(
@@ -81,8 +100,6 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
 
     // === Other tests that bypass V2 by not using loadStreamWithOptions ===
     "disallow to change schema after starting a streaming query",
-    "maxFilesPerTrigger: invalid parameter",
-    "maxBytesPerTrigger: invalid parameter",
     "recreate the reservoir should fail the query",
     "excludeRegex throws good error on bad regex pattern",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
@@ -99,18 +116,11 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
     "fail on data loss - gaps of files with option off",
 
     // === Rate Limiting / Trigger Options ===
-    "maxFilesPerTrigger",
     "maxFilesPerTrigger: metadata checkpoint",
-    "maxFilesPerTrigger: change and restart",
-    "maxFilesPerTrigger: ignored when using Trigger.Once",
     "maxFilesPerTrigger: Trigger.AvailableNow respects read limits",
-    "maxBytesPerTrigger: process at least one file",
     "maxBytesPerTrigger: metadata checkpoint",
-    "maxBytesPerTrigger: change and restart",
     "maxBytesPerTrigger: Trigger.AvailableNow respects read limits",
-    "maxBytesPerTrigger: max bytes and max files together",
     "Trigger.AvailableNow with an empty table",
-    "startingVersion should work with rate time",
     "Rate limited Delta source advances with non-data inserts",
     "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
 
@@ -127,13 +137,9 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
 
     // === Misc ===
     "no schema should throw an exception",
-    "basic",
-    "initial snapshot ends at base index of next version",
-    "Delta sources don't write offsets with null json",
     "Delta source advances with non-data inserts and generates empty dataframe for addl files",
     "a fast writer should not starve a Delta source",
     "start from corrupt checkpoint",
-    "SC-11561: can consume new data without update",
     "make sure that the delta sources works fine",
     "should not attempt to read a non exist version",
     "self union a Delta table should pass the catalog table assert"
