@@ -47,11 +47,20 @@ jobs:
             !unity/**
             !kernel/**
             !connectors/**
+      - name: Get Spark version details
+        id: spark-details
+        run: |
+          # Get JVM version and full Spark version for this matrix entry
+          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
+          FULL_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" fullVersion | jq -r)
+          echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
+          echo "spark_full_version=$FULL_VERSION" >> $GITHUB_OUTPUT
+          echo "Using JVM $JVM_VERSION for Spark ${{ matrix.spark_version }} (full: $FULL_VERSION)"
       - name: install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "17"
+          java-version: ${{ steps.spark-details.outputs.jvm_version }}
       - name: Cache Scala, SBT
         uses: actions/cache@v3
         with:
@@ -64,13 +73,6 @@ jobs:
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
-      - name: Get Spark version details
-        id: spark-details
-        run: |
-          # Get the full Spark version for this matrix entry
-          FULL_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" fullVersion | jq -r)
-          echo "spark_full_version=$FULL_VERSION" >> $GITHUB_OUTPUT
-          echo "Spark full version: $FULL_VERSION"
       - name: Install Job dependencies
         run: |
           sudo apt-get update
