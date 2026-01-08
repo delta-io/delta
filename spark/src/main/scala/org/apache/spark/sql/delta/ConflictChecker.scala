@@ -1029,21 +1029,11 @@ private[delta] class ConflictChecker(
         getFirstFileMatchingPartitionPredicates(addedFilesToCheckForConflicts)
 
       if (fileMatchingPartitionReadPredicates.nonEmpty) {
-        val isWriteSerializable = isolationLevel == WriteSerializable
-
-        val retryMsg = if (isWriteSerializable && winningCommitSummary.onlyAddFiles &&
-          winningCommitSummary.isBlindAppendOption.isEmpty) {
-          // The transaction was made by an older version which did not set `isBlindAppend` flag
-          // So even if it looks like an append, we don't know for sure if it was a blind append
-          // or not. So we suggest them to upgrade all there workloads to latest version.
-          Some(
-            "Upgrading all your concurrent writers to use the latest Delta Lake may " +
-              "avoid this error. Please upgrade and then retry this operation again.")
-        } else None
         throw DeltaErrors.concurrentAppendException(
           winningCommitSummary.commitInfo,
-          getPrettyPartitionMessage(fileMatchingPartitionReadPredicates.get.partitionValues),
-          retryMsg)
+          getTableNameOrPath,
+          winningCommitVersion,
+          getPrettyPartitionMessage(fileMatchingPartitionReadPredicates.get.partitionValues))
       }
     }
   }
@@ -1060,15 +1050,19 @@ private[delta] class ConflictChecker(
       val deleteReadOverlap = winningCommitSummary.removedFiles
         .find(r => readFilePaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
-        val filePath = deleteReadOverlap.get.path
-        val partition = getPrettyPartitionMessage(readFilePaths(filePath))
+        val partitionOpt = getPrettyPartitionMessage(readFilePaths(deleteReadOverlap.get.path))
         throw DeltaErrors.concurrentDeleteReadException(
-          winningCommitSummary.commitInfo, s"$filePath in $partition")
+          winningCommitSummary.commitInfo,
+          getTableNameOrPath,
+          winningCommitVersion,
+          partitionOpt)
       }
       if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
-        val filePath = winningCommitSummary.removedFiles.head.path
         throw DeltaErrors.concurrentDeleteReadException(
-          winningCommitSummary.commitInfo, s"$filePath")
+          winningCommitSummary.commitInfo,
+          getTableNameOrPath,
+          winningCommitVersion,
+          partitionOpt = None)
       }
     }
   }
@@ -1080,13 +1074,18 @@ private[delta] class ConflictChecker(
   protected def checkForDeletedFilesAgainstCurrentTxnDeletedFiles(): Unit = {
     recordTime("checked-2x-deletes") {
       // Fail if a file is deleted twice.
-      val txnDeletes = currentTransactionInfo.actions
-        .collect { case r: RemoveFile => r }
-        .map(_.path).toSet
-      val deleteOverlap = winningCommitSummary.removedFiles.map(_.path).toSet intersect txnDeletes
+      val deletedFilePaths = currentTransactionInfo.actions
+        .collect { case r: RemoveFile => r.path -> r.partitionValues }
+        .toMap
+      val deleteOverlap = winningCommitSummary.removedFiles
+        .find(r => deletedFilePaths.contains(r.path))
       if (deleteOverlap.nonEmpty) {
+        val partitionOpt = getPrettyPartitionMessage(deletedFilePaths(deleteOverlap.get.path))
         throw DeltaErrors.concurrentDeleteDeleteException(
-          winningCommitSummary.commitInfo, deleteOverlap.head)
+          winningCommitSummary.commitInfo,
+          getTableNameOrPath,
+          winningCommitVersion,
+          partitionOpt)
       }
     }
   }
@@ -1315,15 +1314,26 @@ private[delta] class ConflictChecker(
   }
 
   /** A helper function for pretty printing a specific partition directory. */
-  protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): String = {
+  protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): Option[String] = {
     val partitionColumns = currentTransactionInfo.partitionSchemaAtReadTime
-    if (partitionColumns.isEmpty) {
-      "the root of the table"
+    if (partitionColumns.isEmpty || partitionValues == null) {
+      None
     } else {
-      val partition = partitionColumns.map { field =>
-        s"${field.name}=${partitionValues(DeltaColumnMapping.getPhysicalName(field))}"
-      }.mkString("[", ", ", "]")
-      s"partition ${partition}"
+      Some(
+        partitionColumns.map { field =>
+          s"${field.name}=${partitionValues(DeltaColumnMapping.getPhysicalName(field))}"
+        }.mkString("[", ", ", "]")
+      )
+    }
+  }
+
+  protected def getTableNameOrPath: String = {
+    val tableName = currentTransactionInfo.catalogTable.map(_.qualifiedName)
+      .getOrElse(currentTransactionInfo.metadata.name)
+    if (tableName != null) {
+      tableName
+    } else {
+      s"delta.`${currentTransactionInfo.readSnapshot.deltaLog.dataPath}`"
     }
   }
 

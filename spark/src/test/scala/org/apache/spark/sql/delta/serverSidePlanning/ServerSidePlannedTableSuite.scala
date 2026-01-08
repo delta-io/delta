@@ -310,8 +310,8 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
 
       val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
       assert(capturedProjection.isDefined, "Projection should be pushed down")
-      assert(capturedProjection.get.fieldNames.toSet == Set("id", "name"),
-        s"Expected {id, name}, got {${capturedProjection.get.fieldNames.mkString(", ")}}")
+      assert(capturedProjection.get.toSet == Set("id", "name"),
+        s"Expected {id, name}, got {${capturedProjection.get.mkString(", ")}}")
     }
   }
 
@@ -333,7 +333,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       // Spark needs 'id' for SELECT and 'value' for WHERE clause
       val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
       assert(capturedProjection.isDefined, "Projection should be pushed down")
-      val projectedFields = capturedProjection.get.fieldNames.toSet
+      val projectedFields = capturedProjection.get.toSet
       assert(projectedFields == Set("id", "value"),
         s"Expected projection with exactly {id, value}, got {${projectedFields.mkString(", ")}}")
 
