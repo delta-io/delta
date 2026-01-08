@@ -550,10 +550,8 @@ public class SparkMicroBatchStream
     return result;
   }
 
-  // TODO(#5318): implement lazy loading (one batch at a time).
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
-    List<IndexedFile> allIndexedFiles = new ArrayList<>();
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
 
@@ -577,7 +575,7 @@ public class SparkMicroBatchStream
     } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
       // If the requested version range doesn't exist (e.g., we're asking for version 6 when
       // the table only has versions 0-5).
-      return Utils.toCloseableIterator(allIndexedFiles.iterator());
+      return Utils.toCloseableIterator(Collections.emptyIterator());
     }
 
     // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
@@ -586,35 +584,74 @@ public class SparkMicroBatchStream
     //    (e.g., if log files have been cleaned up after checkpointing).
     // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
     //    AddFile actions and performs per-commit protocol validation.
-    try (CloseableIterator<CommitActions> commitsIter =
+    CloseableIterator<CommitActions> commitsIterator =
         StreamingHelper.getCommitActionsFromRangeUnsafe(
             engine,
             (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
             snapshotAtSourceInit.getPath(),
-            ACTION_SET)) {
+            ACTION_SET);
 
-      while (commitsIter.hasNext()) {
-        try (CommitActions commit = commitsIter.next()) {
-          long version = commit.getVersion();
+    return commitsIterator.flatMap(commit -> processCommitToIndexedFiles(commit, endOffset));
+  }
 
-          // First pass: Validate the commit.
-          // Must process the entire commit first for all-or-nothing semantics.
-          validateCommit(commit, version, snapshotAtSourceInit.getPath(), endOffset);
+  /**
+   * Processes a single commit and returns an iterator of IndexedFiles wrapped with BEGIN/END
+   * sentinels.
+   */
+  private CloseableIterator<IndexedFile> processCommitToIndexedFiles(
+      CommitActions commit, Optional<DeltaSourceOffset> endOffsetOpt) {
+    try {
+      long version = commit.getVersion();
 
-          // TODO(#5318): consider caching the commit actions to avoid reading the same commit
-          // twice.
-          // Second pass: Extract AddFile actions with dataChange=true.
-          extractVersionFiles(commit, version, allIndexedFiles);
-        }
-      }
-    } catch (RuntimeException e) {
-      throw e; // Rethrow runtime exceptions directly
+      // First pass: Validate the commit.
+      //
+      // We must validate the ENTIRE commit before emitting ANY files. This is a correctness
+      // requirement: commits could contain both AddFiles and RemoveFiles.
+      // If we emitted AddFiles before discovering a RemoveFile(dataChange=true) later in the
+      // commit, downstream would produce incorrect results.
+      //
+      // TODO(#5318): consider caching the commit actions to avoid reading the same commit twice.
+      validateCommit(commit, version, snapshotAtSourceInit.getPath(), endOffsetOpt);
+
+      // Second pass: Build a lazy iterator of IndexedFiles.
+      //
+      //   BEGIN (BASE_INDEX) + actual file actions + END (END_INDEX)
+      //
+      // These sentinel IndexedFiles have null file actions and are used for proper offset
+      // tracking:
+      //   - BASE_INDEX: marks "before any files in this version", allowing the offset to
+      //                 reference the start of a version.
+      //   - END_INDEX:  marks end of version, triggers version advancement in
+      //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
+      //
+      // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
+      return Utils.singletonCloseableIterator(
+              new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null))
+          .combine(getFilesFromCommit(commit, version))
+          .combine(
+              Utils.singletonCloseableIterator(
+                  new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null)));
     } catch (Exception e) {
-      // CommitActions.close() throws Exception
-      throw new RuntimeException("Failed to process commits", e);
+      // commit is not a CloseableIterator, we need to close it manually.
+      Utils.closeCloseables(commit);
+      throw (e instanceof RuntimeException) ? (RuntimeException) e : new RuntimeException(e);
     }
-    // TODO(#5318): implement lazy loading (only load a batch into memory if needed).
-    return Utils.toCloseableIterator(allIndexedFiles.iterator());
+  }
+
+  private CloseableIterator<IndexedFile> getFilesFromCommit(CommitActions commit, long version) {
+    // Assign each IndexedFile a unique index within the commit. We use a mutable array
+    // because variables captured by a lambda must be effectively final (never reassigned).
+    long[] fileIndex = {0};
+
+    return commit
+        .getActions()
+        .flatMap(
+            batch -> {
+              // Processing each batch eagerly because they are already loaded into memory.
+              List<IndexedFile> files = new ArrayList<>();
+              fileIndex[0] = extractIndexedFilesFromBatch(batch, version, fileIndex[0], files);
+              return Utils.toCloseableIterator(files.iterator());
+            });
   }
 
   /**
@@ -660,30 +697,6 @@ public class SparkMicroBatchStream
     } catch (IOException e) {
       throw new RuntimeException("Failed to process commit at version " + version, e);
     }
-  }
-
-  /**
-   * Extracts all IndexedFiles from a commit version, wrapped with BEGIN/END sentinels.
-   *
-   * @param commit the CommitActions representing a single commit
-   * @param version the commit version
-   * @param output the list to append IndexedFiles to
-   */
-  private void extractVersionFiles(CommitActions commit, long version, List<IndexedFile> output) {
-    // Add BEGIN sentinel before data files.
-    output.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null));
-    // TODO(#5319): implement getMetadataOrProtocolChangeIndexedFileIterator.
-    long index = 0;
-    try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
-      while (actionsIter.hasNext()) {
-        ColumnarBatch batch = actionsIter.next();
-        index = extractIndexedFilesFromBatch(batch, version, index, output);
-      }
-    } catch (IOException e) {
-      throw new RuntimeException("Failed to extract files from commit at version " + version, e);
-    }
-    // Add END sentinel after data files.
-    output.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null));
   }
 
   /**
