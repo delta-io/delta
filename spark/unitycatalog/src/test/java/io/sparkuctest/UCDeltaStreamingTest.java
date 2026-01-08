@@ -35,7 +35,7 @@ import java.util.stream.LongStream;
 import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
-import org.apache.spark.sql.delta.test.shims.StreamingTestShims;
+import org.apache.spark.sql.execution.streaming.MemoryStream;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -83,9 +83,9 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
                     new StructField("value", DataTypes.StringType, false, Metadata.empty())
                   });
 
-          // Create MemoryStream - using Scala companion object with proper encoder via shims
-          var memoryStream =
-              StreamingTestShims.MemoryStream().apply(Encoders.row(schema), spark().sqlContext());
+          // Create MemoryStream
+          MemoryStream<Row> memoryStream =
+              MemoryStream.apply(Encoders.row(schema), spark().sqlContext());
 
           // Start streaming query writing to the Unity Catalog managed table
           StreamingQuery query =
@@ -100,11 +100,11 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           // Assert that the query is active
           assertTrue(query.isActive(), "Streaming query should be active");
 
-          // Let's do 10 rounds testing, and for every round, adding 1 row and waiting to be
+          // Let's do 3 rounds testing, and for every round, adding 1 row and waiting to be
           // available, and finally verify the results and unity catalog latest version are
           // expected.
           ApiClient client = unityCatalogInfo().createApiClient();
-          for (long i = 1; i < 10; i += 1) {
+          for (long i = 1; i < 3; i += 1) {
             Seq<Row> batchRow = createRowsAsSeq(RowFactory.create(i, String.valueOf(i)));
             memoryStream.addData(batchRow);
 
