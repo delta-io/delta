@@ -325,9 +325,9 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
-  test("projection, filter, and limit pushed together") {
+  test("projection and filter pushed together") {
     withPushdownCapturingEnabled {
-      sql("SELECT id FROM test_db.shared_test WHERE value > 10 LIMIT 5").collect()
+      sql("SELECT id FROM test_db.shared_test WHERE value > 10").collect()
 
       // Verify projection was pushed with exactly the expected columns
       // Spark needs 'id' for SELECT and 'value' for WHERE clause
@@ -348,8 +348,21 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       }
       assert(gtFilter.isDefined, "Expected GreaterThan filter on 'value'")
       assert(gtFilter.get.value == 10, s"Expected GreaterThan value 10, got ${gtFilter.get.value}")
+    }
+  }
 
-      // Verify limit was also pushed
+  test("projection and limit pushed together") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id FROM test_db.shared_test LIMIT 5").collect()
+
+      // Verify projection was pushed (only 'id' column)
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isDefined, "Projection should be pushed down")
+      val projectedFields = capturedProjection.get.toSet
+      assert(projectedFields == Set("id"),
+        s"Expected projection with just {id}, got {${projectedFields.mkString(", ")}}")
+
+      // Verify limit was pushed
       val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
       assert(capturedLimit.isDefined, "Limit should be pushed down")
       assert(capturedLimit.get == 5, s"Expected limit 5, got ${capturedLimit.get}")

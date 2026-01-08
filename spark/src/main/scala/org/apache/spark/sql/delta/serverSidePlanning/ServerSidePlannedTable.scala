@@ -237,7 +237,7 @@ class ServerSidePlannedScanBuilder(
 
   override def pushLimit(limit: Int): Boolean = {
     _limit = Some(limit)
-    true  // Accept the limit for forwarding to server
+    true
   }
 
   override def isPartiallyPushed(): Boolean = {

@@ -41,7 +41,6 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
     TestServerSidePlanningClient.capturedFilter = filterOption
     TestServerSidePlanningClient.capturedProjection = projectionOption
     TestServerSidePlanningClient.capturedLimit = limitOption
-
     val fullTableName = s"$databaseName.$table"
 
     // Temporarily disable server-side planning to avoid infinite recursion
