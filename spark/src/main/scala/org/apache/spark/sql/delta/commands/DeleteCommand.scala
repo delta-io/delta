@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FIN
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
@@ -289,10 +290,13 @@ case class DeleteCommand(
               opName = "DELETE")
 
             if (touchedFiles.nonEmpty) {
+              val stringTruncateLength = StatsCollectionUtils.getDataSkippingStringPrefixLength(
+                sparkSession, txn.metadata)
               val (actions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
                 sparkSession,
                 touchedFiles,
-                txn.snapshot)
+                txn.snapshot,
+                stringTruncateLength)
               metrics("numDeletedRows").set(metricMap("numModifiedRows"))
               numDeletionVectorsAdded = metricMap("numDeletionVectorsAdded")
               numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")
