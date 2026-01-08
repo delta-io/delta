@@ -239,11 +239,8 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
-  // TODO: 4.2.0-SNAPSHOT (actual master)
-
-  // TODO: Once Spark 4.1 is officially out update DEFAULT = spark41
   /** Default Spark version */
-  val DEFAULT = spark40
+  val DEFAULT = spark41
 
   /** Spark master branch version (optional). Release branches should not build against master */
   val MASTER: Option[SparkVersionSpec] = None
