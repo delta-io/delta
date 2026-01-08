@@ -238,8 +238,23 @@ if __name__ == "__main__":
     run_delta_connect_codegen_python(root_dir)
     # TODO: In the future, find a way to get these
     # packages locally instead of downloading from Maven.
+    # Get the full Spark version for spark-connect artifact
+    script_path = os.path.join(root_dir, "project", "scripts", "get_spark_version_info.py")
+    try:
+        result = subprocess.run(
+            ["python3", script_path, "--get-field", spark_version, "fullVersion"],
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        spark_full_version = json.loads(result.stdout.strip())
+    except Exception as e:
+        print(f"Warning: Could not determine full Spark version: {e}")
+        spark_full_version = "4.0.0"
+
     delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
-                              "org.apache.spark:spark-connect_2.13:4.0.0",
+                              f"org.apache.spark:spark-connect_2.13:{spark_full_version}",
                               get_local_package("delta-connect-server", spark_version, root_dir)]
 
     test(root_dir, path.join("delta", "connect"), delta_connect_packages)
