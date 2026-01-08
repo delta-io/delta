@@ -237,10 +237,13 @@ class ServerSidePlannedScanBuilder(
 
   override def pushLimit(limit: Int): Boolean = {
     _limit = Some(limit)
-    false  // We forward to server, but Spark should apply limit too as safety net
+    true  // Accept the limit for forwarding to server
   }
 
-  override def isPartiallyPushed(): Boolean = false
+  override def isPartiallyPushed(): Boolean = {
+    // Return true if we have a limit - indicates partial pushdown so Spark applies it too
+    _limit.isDefined
+  }
 
   override def build(): Scan = {
     new ServerSidePlannedScan(
