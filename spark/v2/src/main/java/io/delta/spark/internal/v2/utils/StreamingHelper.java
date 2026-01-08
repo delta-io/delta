@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.CommitActions;
-import io.delta.kernel.CommitRange;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -30,8 +29,8 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
-import io.delta.kernel.spark.snapshot.DeltaSnapshotManager;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.io.IOException;
 import java.util.*;
 import org.apache.spark.annotation.Experimental;
@@ -157,37 +156,45 @@ public class StreamingHelper {
       Optional<Long> endVersionOpt,
       DeltaSnapshotManager snapshotManager,
       Engine engine,
-      String tablePath,
-      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    CommitRange commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
+      String tablePath) {
+    CommitRangeImpl commitRange =
+        (CommitRangeImpl) snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     // LinkedHashMap to preserve insertion order
     Map<Long, Metadata> versionToMetadata = new LinkedHashMap<>();
 
-    try (CloseableIterator<ColumnarBatch> actionsIter =
-        getActionsFromRangeUnsafe(
-            engine,
-            (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
-            tablePath,
-            actionSet)) {
-      while (actionsIter.hasNext()) {
-        ColumnarBatch batch = actionsIter.next();
-        int numRows = batch.getSize();
-        long version = StreamingHelper.getVersion(batch);
-        for (int rowId = 0; rowId < numRows; rowId++) {
-          Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
-          if (metadataOpt.isPresent()) {
-            Metadata metadata = metadataOpt.get();
-            Metadata existing = versionToMetadata.putIfAbsent(version, metadata);
-            checkState(
-                existing == null,
-                String.format(
-                    "Should not encounter two metadata actions in the same commit of version %d.",
-                    version));
+    try (CloseableIterator<CommitActions> commitsIter =
+        getCommitActionsFromRangeUnsafe(
+            engine, commitRange, tablePath, Set.of(DeltaLogActionUtils.DeltaAction.METADATA))) {
+      while (commitsIter.hasNext()) {
+        try (CommitActions commit = commitsIter.next()) {
+          long version = commit.getVersion();
+          try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+            while (actionsIter.hasNext()) {
+              ColumnarBatch batch = actionsIter.next();
+              int numRows = batch.getSize();
+              for (int rowId = 0; rowId < numRows; rowId++) {
+                Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+                if (metadataOpt.isPresent()) {
+                  Metadata metadata = metadataOpt.get();
+                  Metadata existing = versionToMetadata.putIfAbsent(version, metadata);
+                  checkState(
+                      existing == null,
+                      String.format(
+                          "Should not encounter two metadata actions in the same commit of version %d.",
+                          version));
+                }
+              }
+            }
+          } catch (IOException e) {
+            throw new RuntimeException("Failed to process commit at version " + version, e);
           }
         }
       }
-    } catch (IOException e) {
-      throw new RuntimeException("Failed to read commit range", e);
+    } catch (RuntimeException e) {
+      throw e; // Rethrow runtime exceptions directly
+    } catch (Exception e) {
+      // CommitActions.close() throws Exception
+      throw new RuntimeException("Failed to process commits", e);
     }
 
     return versionToMetadata;
