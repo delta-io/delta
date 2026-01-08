@@ -388,10 +388,11 @@ public class SparkMicroBatchStream
       }
       return Optional.of(previousOffset);
     }
-    // Similarly, block latestOffset() from generating an invalid offset by proactively
+    // Block latestOffset() from generating an invalid offset by proactively
     // verifying incompatible schema changes under column mapping. See more details in the
-    // method scala doc.
-    checkReadIncompatibleSchemaChangeOnStreamStartOnce(previousOffset.reservoirVersion(), null);
+    // method java doc.
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+        previousOffset.reservoirVersion(), /* batchEndVersion= */ null);
     IndexedFile lastFile = lastFileChange.get();
     return Optional.of(
         DeltaSource.buildOffsetFromIndexedFile(
@@ -819,124 +820,27 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically: 1.
-   * Any column mapping related schema changes (rename / drop) columns 2. Standard
-   * read-compatibility changes including: a) No missing columns b) No data type changes c) No
-   * read-incompatible nullability changes If the check fails, we throw an exception to exit the
-   * stream. If lazy log initialization is required, we also run a one time scan to safely
-   * initialize the metadata tracking log upon any non-additive schema change failures.
-   *
-   * @param metadata Metadata that contains a potential schema change
-   * @param version Version for the metadata action
-   * @param validatedDuringStreamStart Whether this check is being done during stream start.
-   */
-  private void checkReadIncompatibleSchemaChanges(
-      Metadata metadata,
-      long version,
-      long batchStartVersion,
-      Long batchEndVersion,
-      boolean validatedDuringStreamStart) {
-    logger.info(
-        "checking read incompatibility with schema at version {}, inside batch[{}, {}].",
-        version,
-        batchStartVersion,
-        batchEndVersion != null ? batchEndVersion : "latest");
-
-    Metadata newMetadata, oldMetadata;
-    if (version < snapshotAtSourceInit.getVersion()) {
-      newMetadata = snapshotAtSourceInit.getMetadata();
-      oldMetadata = metadata;
-    } else {
-      newMetadata = metadata;
-      oldMetadata = snapshotAtSourceInit.getMetadata();
-    }
-
-    // Table ID has changed during streaming
-    if (!Objects.equals(newMetadata.getId(), oldMetadata.getId())) {
-      throw (RuntimeException)
-          DeltaErrors.differentDeltaTableReadByStreamingSource(
-              newMetadata.getId(), oldMetadata.getId());
-    }
-
-    // TODO(#5319): schema tracking for non-additive schema changes
-
-    // Other standard read compatibility changes
-    if (!validatedDuringStreamStart
-        || !schemaReadOptions
-            .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
-
-      StructType schemaChange = SchemaUtils.convertKernelSchemaToSparkSchema(metadata.getSchema());
-
-      // There is a schema change. All files after this commit will use `schemaChange`. Hence, we
-      // check whether we can use `schema` (the fixed source schema we use in the same run of the
-      // query) to read these new files safely.
-      boolean backfilling = version < snapshotAtSourceInit.getVersion();
-      // Partition column change will be ignored if user enable the unsafe flag
-      Seq<String> newPartitionColumns, oldPartitionColumns;
-      if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges()) {
-        newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
-        oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
-      } else {
-        newPartitionColumns =
-            CollectionConverters.asScala(
-                    VectorUtils.toJavaList(newMetadata.getPartitionColumns()).stream()
-                        .map(Object::toString)
-                        .collect(Collectors.toList()))
-                .toSeq();
-        oldPartitionColumns =
-            CollectionConverters.asScala(
-                    VectorUtils.toJavaList(oldMetadata.getPartitionColumns()).stream()
-                        .map(Object::toString)
-                        .collect(Collectors.toList()))
-                .toSeq();
-      }
-
-      Tuple2<Object, Option<Object>> result =
-          DeltaSourceUtils.validateBasicSchemaChanges(
-              schemaChange,
-              readSchemaAtSourceInit,
-              newPartitionColumns,
-              oldPartitionColumns,
-              backfilling,
-              schemaReadOptions);
-      boolean isCompatible = (Boolean) result._1();
-      Boolean isRetryable = result._2().getOrElse(() -> null);
-
-      if (!isCompatible) {
-        Objects.requireNonNull(isRetryable);
-        throw (RuntimeException)
-            DeltaErrors.schemaChangedException(
-                readSchemaAtSourceInit,
-                schemaChange,
-                isRetryable,
-                Some.apply(version),
-                options.containsStartingVersionOrTimestamp());
-      }
-    }
-  }
-
-  /**
    * Check read-incompatible schema changes during stream (re)start so we could fail fast.
    *
-   * <p>This only needs to be called ONCE in the life cycle of a stream, either at the very first
-   * latestOffset, or the very first getBatch to make sure we have detected an incompatible schema
-   * change. Typically, the verifyStreamHygiene that was called maybe good enough to detect these
-   * schema changes, there may be cases that wouldn't work, e.g. consider this sequence: 1. User
-   * starts a new stream @ startingVersion 1 2. latestOffset is called before getBatch() because
-   * there was no previous commits so getBatch won't be called as a recovery mechanism. Suppose
-   * there's a single rename/drop/nullability change S during computing next offset, S would look
-   * exactly the same as the latest schema so verifyStreamHygiene would not work. 3. latestOffset
-   * would return this new offset cross the schema boundary.
+   * <p>This is called ONCE during the first latestOffset call to catch edge cases that normal
+   * per-commit validation (checkReadIncompatibleSchemaChanges) misses.
    *
-   * <p>If a schema log is already initialized, we don't have to run the initialization nor schema
-   * checks any more.
+   * <p><b>Why needed?</b> Normal validation only checks commits with metadata actions. If a stream
+   * starts at version 1 (after a schema change at version 1), scanning only validates version 1's
+   * schema against itself (SAME, passes). But version 0 files may have an incompatible older schema
+   * that was never checked since version 0 has no metadata action.
+   *
+   * <p>This method explicitly loads and validates the snapshot in the scan range, regardless of
+   * whether it has a metadata action, catching such incompatibilities before planInputPartitions
+   *
+   * <p>Skipped if schema tracking log is already initialized.
    *
    * @param batchStartVersion Start version we want to verify read compatibility against
    * @param batchEndVersion Optionally, if we are checking against an existing constructed batch
    *     during streaming initialization, we would also like to verify all schema changes in between
    *     as well before we can lazily initialize the schema log if needed.
    */
-  protected void checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+  private void checkReadIncompatibleSchemaChangeOnStreamStartOnce(
       long batchStartVersion, Long batchEndVersion) {
     // TODO(#5319): skip if enable schema tracking log
 
@@ -980,8 +884,7 @@ public class SparkMicroBatchStream
                       Optional.of(batchEndVersion),
                       snapshotManager,
                       engine,
-                      snapshotAtSourceInit.getPath(),
-                      ACTION_SET)
+                      snapshotAtSourceInit.getPath())
                   .entrySet()) {
             long version = entry.getKey();
             Metadata metadata = entry.getValue();
