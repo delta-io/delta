@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta.sources
 
-import java.util.Locale
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
@@ -31,7 +29,7 @@ import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.{DeltaCatalogUtils, PartitionUtils, Utils}
+import org.apache.spark.sql.delta.util.{PartitionUtils, Utils}
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
 import org.json4s.jackson.Serialization
@@ -188,18 +186,8 @@ class DeltaDataSource
   private def shouldUseProvidedSchemaForStreaming(
       spark: SparkSession,
       parameters: Map[String, String]): Boolean = {
-    // NOTE: DeltaSQLConfV2 lives in kernel-spark, which sparkV1 cannot depend on. Use the shared
-    // key constant from DeltaSQLConfUtils instead.
-    val mode = spark.conf.get(DeltaSQLConf.V2_ENABLE_MODE_KEY, "NONE")
-
-    mode.toUpperCase(Locale.ROOT) match {
-      case "STRICT" | "AUTO" =>
-        // In STRICT or AUTO mode, we trust the schema if it's a Unity Catalog managed table.
-        catalogTableOpt.exists(DeltaCatalogUtils.isUnityCatalogManagedTable)
-      case _ =>
-        // NONE or unknown: V1 streaming or fallback, must load schema via DeltaLog
-        false
-    }
+    val connectorMode = DeltaConnectorMode(spark.sessionState.conf)
+    connectorMode.shouldBypassSchemaValidation(catalogTableOpt)
   }
 
   override def createSource(

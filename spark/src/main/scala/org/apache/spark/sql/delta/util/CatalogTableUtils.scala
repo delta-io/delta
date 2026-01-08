@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
  * Utility helpers for inspecting Delta-related metadata persisted on Spark CatalogTable instances.
  * This logic is shared between Delta Spark and Delta Kernel Spark integration.
  */
-object DeltaCatalogUtils {
+object CatalogTableUtils {
 
   // We are not using TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName() because this class
   // is in the 'spark' module which does not depend on 'kernel-api' where TableFeatures resides.

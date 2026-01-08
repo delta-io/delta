@@ -39,16 +39,6 @@ trait DeltaSQLConfUtils {
   def buildConf(key: String): ConfigBuilder = SQLConf.buildConf(s"$SQL_CONF_PREFIX.$key")
   def buildStaticConf(key: String): ConfigBuilder =
     SQLConf.buildStaticConf(s"spark.databricks.delta.$key")
-
-  /**
-   * Canonical SQLConf key for Delta V2 enable mode.
-   *
-   * This constant is shared across spark and kernel modules to avoid repeating the literal
-   * "spark.databricks.delta.v2.enableMode" in multiple places.
-   *
-   * NOTE: The ConfigEntry itself is defined in kernel-spark (DeltaSQLConfV2).
-   */
-  final val V2_ENABLE_MODE_KEY: String = s"$SQL_CONF_PREFIX.v2.enableMode"
 }
 
 /**
@@ -2958,6 +2948,34 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |instead of normal table loading.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  /**
+   * Controls which connector implementation to use for Delta table operations.
+   *
+   * Valid values:
+   * - NONE: sparkV2 connector is disabled, always use sparkV1 connector (DeltaTableV2) - default
+   * - AUTO: Automatically use sparkV2 connector (SparkTable) for Unity Catalog managed tables
+   *         in streaming queries and sparkV1 connector (DeltaTableV2) for all other tables
+   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (SparkTable).
+   *           Intended for testing sparkV2 connector capabilities
+   *
+   * sparkV1 vs sparkV2 Connectors:
+   * - sparkV1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
+   *   uses DeltaLog for metadata management
+   * - sparkV2 Connector (SparkTable): New kernel-based connector with read-only support,
+   *   uses Kernel's Table API for metadata management
+   *
+   * See [[DeltaConnectorMode]] for the centralized logic that interprets this configuration.
+   */
+  val V2_ENABLE_MODE =
+    buildConf("v2.enableMode")
+      .doc(
+        "Controls the Delta connector enable mode. " +
+          "Valid values: NONE (disabled, default), AUTO (use sparkV2 for Unity Catalog " +
+          "managed tables), STRICT (should ONLY be enabled for testing).")
+      .stringConf
+      .checkValues(Set("AUTO", "NONE", "STRICT"))
+      .createWithDefault("NONE")
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@ package io.delta.sql
 import scala.jdk.CollectionConverters._
 
 import io.delta.spark.internal.v2.catalog.SparkTable
-import io.delta.spark.internal.v2.utils.{CatalogTableUtils, ScalaUtils}
-import org.apache.spark.sql.delta.sources.{DeltaSQLConfV2, DeltaSourceUtils}
+import io.delta.spark.internal.v2.utils.ScalaUtils
+import org.apache.spark.sql.delta.sources.{DeltaConnectorMode, DeltaSourceUtils}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -38,11 +38,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * This rule handles the case where Spark's FindDataSourceTable rule has converted
  * a StreamingRelationV2 (with DeltaTableV2) back to a StreamingRelation because
  * DeltaTableV2 doesn't advertise STREAMING_READ capability. We convert it back to
- * StreamingRelationV2 with SparkTable (from kernel-spark) which does support streaming.
+ * StreamingRelationV2 with SparkTable (from sparkV2) which does support streaming.
  *
- * Behavior based on spark.databricks.delta.v2.enableMode:
- * - AUTO (default): Only applies to Unity Catalog managed tables
- * - NONE: Rule is disabled, no conversion happens
+ * See [[DeltaConnectorMode]] for configuration behavior.
  *
  * @param session The Spark session for configuration access
  */
@@ -68,19 +66,8 @@ class ApplyV2Streaming(
       return false
     }
 
-    val mode = session.conf.get(
-      DeltaSQLConfV2.V2_ENABLE_MODE.key,
-      DeltaSQLConfV2.V2_ENABLE_MODE.defaultValueString)
-
-    mode.toUpperCase(java.util.Locale.ROOT) match {
-      case "AUTO" =>
-        // Only apply for Unity Catalog managed tables
-        // catalogTable is guaranteed to be Some because isDeltaStreamingRelation checked it
-        s.dataSource.catalogTable.exists(CatalogTableUtils.isUnityCatalogManagedTable)
-      case _ =>
-        // V2 streaming disabled or other mode
-        false
-    }
+    val connectorMode = DeltaConnectorMode(session.sessionState.conf)
+    connectorMode.isStreamingReadsEnabled(s.dataSource.catalogTable)
   }
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {

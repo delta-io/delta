@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,20 +16,20 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConfV2}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.UCTableInjectingSessionCatalog
 
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
-import org.apache.spark.sql.execution.streaming.StreamingRelation
+import org.apache.spark.sql.delta.Relocated.StreamingRelation
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 import org.scalatest.exceptions.TestFailedException
 
 /**
  * Test suite for V2 streaming conversion logic via ApplyV2Streaming rule.
- * Tests the interaction between V2_ENABLE_MODE configuration and streaming queries.
+ * Tests the interaction between [[DeltaConnectorMode]] configuration and streaming queries.
  */
 class V2StreamingConversionSuite
   extends StreamTest
@@ -61,7 +61,7 @@ class V2StreamingConversionSuite
   // ============================================================================
 
   test("AUTO mode: UC-managed table via test catalog runs V2 streaming (expected to fail today)") {
-    // TODO: Enable this as a passing end-to-end test once the kernel-backed streaming source
+    // TODO: Enable this as a passing end-to-end test once the sparkV2 streaming source
     // supports initialOffset with an initial snapshot (SparkMicroBatchStream limitation).
     withTable("uc_table") {
       withTempDir { dir =>
@@ -76,7 +76,7 @@ class V2StreamingConversionSuite
         try {
           withSQLConf(
             "spark.sql.catalog.spark_catalog" -> classOf[UCTableInjectingSessionCatalog].getName,
-            DeltaSQLConfV2.V2_ENABLE_MODE.key -> "AUTO") {
+            DeltaSQLConf.V2_ENABLE_MODE.key -> "AUTO") {
             // Reset again to force catalog re-initialization with updated configs.
             spark.sessionState.catalogManager.reset()
 
@@ -100,7 +100,7 @@ class V2StreamingConversionSuite
   }
 
   test("AUTO mode: non-UC catalog table uses V1 streaming (DeltaLog)") {
-    withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "AUTO") {
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "AUTO") {
       withTable("regular_table") {
         // Create regular catalog table (no UC properties)
         sql("CREATE TABLE regular_table (id INT, value STRING) USING delta")
@@ -126,7 +126,7 @@ class V2StreamingConversionSuite
   }
 
   test("AUTO mode: path-based table uses V1 streaming") {
-    withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "AUTO") {
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "AUTO") {
       withTempDir { dir =>
         val path = dir.getCanonicalPath
 
@@ -161,7 +161,7 @@ class V2StreamingConversionSuite
   // ============================================================================
 
   test("NONE mode: all tables use V1 streaming") {
-    withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "NONE") {
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
       withTable("test_table") {
         sql("CREATE TABLE test_table (id INT) USING delta")
         sql("INSERT INTO test_table VALUES (1)")
@@ -193,7 +193,7 @@ class V2StreamingConversionSuite
         try {
           withSQLConf(
             "spark.sql.catalog.spark_catalog" -> classOf[UCTableInjectingSessionCatalog].getName,
-            DeltaSQLConfV2.V2_ENABLE_MODE.key -> "NONE") {
+            DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
             spark.sessionState.catalogManager.reset()
 
             val df = spark.readStream.table("uc_table")
@@ -224,7 +224,7 @@ class V2StreamingConversionSuite
     // In STRICT mode, DeltaCatalog returns SparkTable directly (not via ApplyV2Streaming)
     // This causes catalog tables to use V2 streaming
     withTable("strict_test_table") {
-      withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "STRICT") {
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
         withTempDir { dir =>
           val path = dir.getCanonicalPath
 
@@ -257,7 +257,7 @@ class V2StreamingConversionSuite
   }
 
   test("STRICT mode: path-based table uses V1 streaming") {
-    withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> "STRICT") {
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
       withTempDir { dir =>
         val path = dir.getCanonicalPath
 
@@ -292,7 +292,7 @@ class V2StreamingConversionSuite
 
   Seq("AUTO", "STRICT").foreach { mode =>
     test(s"sourceSchema: $mode mode falls back to DeltaLog for non-UC tables") {
-      withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> mode) {
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> mode) {
         withTable("test_table") {
           sql("CREATE TABLE test_table (id INT, value STRING) USING delta")
 
@@ -323,7 +323,7 @@ class V2StreamingConversionSuite
     }
 
     test(s"sourceSchema: $mode mode uses provided schema for UC managed tables") {
-      withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> mode) {
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> mode) {
         withTable("uc_table") {
           // Create an empty table - we only need valid Delta metadata, not actual data
           sql("CREATE TABLE uc_table (id INT, value STRING) USING delta")
