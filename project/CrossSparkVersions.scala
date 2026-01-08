@@ -280,9 +280,8 @@ object SparkVersionSpec {
     additionalResolvers = Seq("jitpack" at "https://jitpack.io")
   )
 
-  // TODO: Once Spark 4.1 is officially out update DEFAULT = spark41
   /** Default Spark version */
-  val DEFAULT = spark40
+  val DEFAULT = spark41
 
   /** Spark master branch version (optional). Release branches should not build against master */
   val MASTER: Option[SparkVersionSpec] = None
