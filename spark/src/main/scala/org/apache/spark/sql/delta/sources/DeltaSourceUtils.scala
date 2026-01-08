@@ -114,6 +114,7 @@ object DeltaSourceUtils {
    * This class encapsulates various flags and settings that control how Delta streaming handles
    * schema changes and compatibility checks.
    *
+   * TODO(#5318): Remove this config when schema tracking is enabled in v2
    * @param allowUnsafeStreamingReadOnColumnMappingSchemaChanges
    *        Flag that allows user to force enable unsafe streaming read on Delta table with
    *        column mapping enabled AND drop/rename actions.
@@ -146,11 +147,24 @@ object DeltaSourceUtils {
       enableSchemaTrackingForTypeWidening: Boolean
   )
 
+  sealed trait SchemaCompatibilityResult
+  object SchemaCompatibilityResult {
+    case object Compatible extends SchemaCompatibilityResult
+    case object RetryableIncompatible extends SchemaCompatibilityResult
+    case object NonRetryableIncompatible extends SchemaCompatibilityResult
+
+    def isCompatible(result: SchemaCompatibilityResult): Boolean =
+      result == Compatible
+
+    def isRetryableIncompatible(result: SchemaCompatibilityResult): Boolean =
+      result == RetryableIncompatible
+  }
+
   /**
    * Validate schema compatibility between data schema and read schema. Checks for read
    * compatibility considering nullability, type widening, missing columns, and partition changes.
    *
-   * Returns (isCompatible, isRetryable) where isRetryable is None if validation succeeded.
+   * Returns SchemaCompatibilityResult where isRetryable is None if validation succeeded.
    */
   def validateBasicSchemaChanges(
       dataSchema: StructType,
@@ -158,7 +172,7 @@ object DeltaSourceUtils {
       newPartitionColumns: Seq[String],
       oldPartitionColumns: Seq[String],
       backfilling: Boolean,
-      readOptions: SchemaReadOptions): (Boolean, Option[Boolean]) = {
+      readOptions: SchemaReadOptions): SchemaCompatibilityResult = {
     // We forbid the case when the the schemaChange is nullable while the read schema is NOT
     // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
     // because we don't ever want to read back any nulls when the read schema is non-nullable.
@@ -213,9 +227,13 @@ object DeltaSourceUtils {
           TypeWideningMode.NoTypeWidening
         }
       )
-      (false, Some(retryable))
+      if (retryable) {
+        SchemaCompatibilityResult.RetryableIncompatible
+      } else {
+        SchemaCompatibilityResult.NonRetryableIncompatible
+      }
     } else {
-      (true, None)
+      SchemaCompatibilityResult.Compatible
     }
   }
 }

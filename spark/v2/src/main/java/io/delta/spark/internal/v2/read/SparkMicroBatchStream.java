@@ -67,9 +67,7 @@ import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import scala.Option;
 import scala.Some;
-import scala.Tuple2;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
@@ -882,7 +880,7 @@ public class SparkMicroBatchStream
                 .toSeq();
       }
 
-      Tuple2<Object, Option<Object>> result =
+      DeltaSourceUtils.SchemaCompatibilityResult checkResult =
           DeltaSourceUtils.validateBasicSchemaChanges(
               schemaChange,
               readSchemaAtSourceInit,
@@ -890,11 +888,11 @@ public class SparkMicroBatchStream
               oldPartitionColumns,
               backfilling,
               schemaReadOptions);
-      boolean isCompatible = (Boolean) result._1();
-      Boolean isRetryable = result._2().getOrElse(() -> null);
 
-      if (!isCompatible) {
-        Objects.requireNonNull(isRetryable);
+      if (!DeltaSourceUtils.SchemaCompatibilityResult$.MODULE$.isCompatible(checkResult)) {
+        boolean isRetryable =
+            DeltaSourceUtils.SchemaCompatibilityResult$.MODULE$.isRetryableIncompatible(
+                checkResult);
         throw (RuntimeException)
             DeltaErrors.schemaChangedException(
                 readSchemaAtSourceInit,

@@ -19,11 +19,9 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.FileNotFoundException
 import java.sql.Timestamp
-
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 import scala.util.matching.Regex
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -36,7 +34,6 @@ import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.FileStatus
-
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
@@ -45,6 +42,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl, SupportsTriggerAvailableNow}
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils.SchemaCompatibilityResult.{isCompatible, isRetryableIncompatible}
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -651,20 +649,21 @@ trait DeltaSourceBase extends Source
       val oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
       else oldMetadata.partitionColumns
 
-      val (isCompatible, isRetryable) = DeltaSourceUtils.validateBasicSchemaChanges(
+      val checkResult = DeltaSourceUtils.validateBasicSchemaChanges(
         schemaChange, schema,
         newPartitionColumns, oldPartitionColumns,
         backfilling,
         schemaReadOptions)
 
-      if (!isCompatible) {
+      if (!isCompatible(checkResult)) {
+        val isRetryable = isRetryableIncompatible(checkResult)
         recordDeltaEvent(
           deltaLog,
           "delta.streaming.source.schemaChanged",
           data = Map(
             "currentVersion" -> snapshotAtSourceInit.version,
             "newVersion" -> version,
-            "retryable" -> isRetryable.get,
+            "retryable" -> isRetryable,
             "backfilling" -> backfilling,
             "readChangeDataFeed" -> options.readChangeFeed,
             "typeWideningEnabled" -> typeWideningEnabled,
@@ -677,7 +676,7 @@ trait DeltaSourceBase extends Source
         throw DeltaErrors.schemaChangedException(
           schema,
           schemaChange,
-          retryable = isRetryable.get,
+          retryable = isRetryable,
           Some(version),
           includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
       }
@@ -690,8 +689,9 @@ trait DeltaSourceBase extends Source
    *
    * Blocks when type widening tracking is enabled and widening changes exist, or when column
    * mapping changes (rename/drop) are detected, unless `allowUnsafeStreamingReadOnColumnMapping
-   * SchemaChanges` is enabled. Upon blocking, the stream writes the new schema to the tracking
-   * log and fails. On restart, users must acknowledge changes via reader options or SQL confs.
+   * SchemaChanges` is enabled. Upon blocking, the error requests the user to provide a schema
+   * tracking location to enable schema tracking. On restart, users must acknowledge changes via
+   * reader options or SQL confs.
    * See [[DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked]].
    *
    * Note: Should not be called when schema tracking is active (trackingMetadataChange = true).
