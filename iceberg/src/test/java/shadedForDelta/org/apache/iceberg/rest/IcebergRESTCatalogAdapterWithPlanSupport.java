@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import shadedForDelta.org.apache.iceberg.FileScanTask;
 import shadedForDelta.org.apache.iceberg.Table;
 import shadedForDelta.org.apache.iceberg.TableScan;
@@ -189,40 +192,18 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
-   * Extract min-rows-requested from JSON string.
-   * Iceberg 1.11 added this field, but we're on 1.10.0, so we parse it manually from JSON.
+   * Extract min-rows-requested from JSON string using Jackson.
+   * Iceberg 1.11 added this field, but we're on 1.10.0, so we parse it from JSON.
    */
   private Long extractMinRowsRequested(String jsonBody) {
     if (jsonBody == null || jsonBody.trim().isEmpty()) {
       return null;
     }
     try {
-      // Simple JSON parsing to extract min-rows-requested field
-      int index = jsonBody.indexOf("\"min-rows-requested\"");
-      if (index == -1) {
-        return null;  // Field not present
-      }
-      // Find the colon after the field name
-      int colonIndex = jsonBody.indexOf(":", index);
-      if (colonIndex == -1) {
-        return null;
-      }
-      // Find the value (skip whitespace)
-      int valueStart = colonIndex + 1;
-      while (valueStart < jsonBody.length() && Character.isWhitespace(jsonBody.charAt(valueStart))) {
-        valueStart++;
-      }
-      // Find the end of the value (comma, closing brace, or end of string)
-      int valueEnd = valueStart;
-      while (valueEnd < jsonBody.length()) {
-        char c = jsonBody.charAt(valueEnd);
-        if (c == ',' || c == '}' || Character.isWhitespace(c)) {
-          break;
-        }
-        valueEnd++;
-      }
-      String valueStr = jsonBody.substring(valueStart, valueEnd).trim();
-      return Long.parseLong(valueStr);
+      ObjectMapper mapper = new ObjectMapper();
+      JsonNode root = mapper.readTree(jsonBody);
+      JsonNode minRowsNode = root.get("min-rows-requested");
+      return minRowsNode != null ? minRowsNode.asLong() : null;
     } catch (Exception e) {
       LOG.warn("Failed to extract min-rows-requested from JSON: {}", e.getMessage());
       return null;

@@ -246,7 +246,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     projection: Seq[String],
     expected: Set[String])
 
-  private case class FilterProjectionLimitTestCase(
+  private case class PushdownTestCase(
     description: String,
     filter: Filter,
     projection: Seq[String],
@@ -356,12 +356,12 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         // Note: Filter types are already tested in "filter sent to IRC server" test.
         // Here we verify filter, projection, AND limit are sent together correctly.
         val testCases = Seq(
-          FilterProjectionLimitTestCase(
+          PushdownTestCase(
             "filter + projection + limit",
             EqualTo("longCol", 2L),
             Seq("intCol", "stringCol"),
             Some(10)),
-          FilterProjectionLimitTestCase(
+          PushdownTestCase(
             "nested field in both filter and projection + limit",
             EqualTo("address.intCol", 200),
             Seq("intCol", "address.intCol"),
