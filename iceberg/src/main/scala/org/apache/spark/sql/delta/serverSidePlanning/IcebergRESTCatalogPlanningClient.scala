@@ -144,7 +144,7 @@ class IcebergRESTCatalogPlanningClient(
       database: String,
       table: String,
       sparkFilterOption: Option[Filter] = None,
-      projection: Option[StructType] = None): ScanPlan = {
+      sparkProjectionOption: Option[Seq[String]] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
     // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
     // /v1/config to get the optional prefix and builds the proper endpoint
@@ -163,6 +163,11 @@ class IcebergRESTCatalogPlanningClient(
       SparkToIcebergExpressionConverter.convert(sparkFilter).foreach { icebergExpr =>
         builder.withFilter(icebergExpr)
       }
+    }
+
+    // Add projection to request if present.
+    sparkProjectionOption.foreach { columnNames =>
+      builder.withSelect(columnNames.asJava)
     }
 
     val request = builder.build()

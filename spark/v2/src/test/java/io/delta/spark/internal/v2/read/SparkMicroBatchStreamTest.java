@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
@@ -597,6 +598,79 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             "Multiple consecutive metadata-only versions"));
   }
 
+  @Test
+  public void testGetFileChanges_lazyLoading(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_lazy_loading_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Create 3 INSERT versions (versions 1-3 with ADD files only)
+    sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", testTableName);
+    sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", testTableName);
+    sql("INSERT INTO %s VALUES (5, 'User5'), (6, 'User6')", testTableName);
+
+    // Version 4: DELETE operation that will create a REMOVE file
+    sql("DELETE FROM %s WHERE id = 1", testTableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // Get file changes from version 0 (which will include versions 1-4)
+    CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(
+            /* fromVersion= */ 0L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* endOffset= */ Optional.empty());
+
+    try {
+      // Partially consume the iterator: only read files from versions 1-2
+      // With lazy loading, this should succeed without hitting the REMOVE file error in version 4
+      List<IndexedFile> partialFiles = new ArrayList<>();
+      int filesRead = 0;
+      int targetVersion = 2; // Only read up to version 2
+
+      while (kernelChanges.hasNext()) {
+        IndexedFile file = kernelChanges.next();
+        partialFiles.add(file);
+        filesRead++;
+
+        // Stop after we've passed version 2's END sentinel
+        // Each version has: BEGIN sentinel + actual files + END sentinel
+        if (file.getVersion() == targetVersion
+            && file.getIndex() == DeltaSourceOffset.END_INDEX()) {
+          break;
+        }
+      }
+
+      // If we got here, lazy loading worked - we successfully read versions 1-2 without
+      // encountering the REMOVE file error in version 4
+      // Version 0 (CREATE TABLE): BEGIN + 1 metadata/protocol action + END = 3 files
+      // Version 1 (INSERT): BEGIN + 1 data file + END = 3 files
+      // Version 2 (INSERT): BEGIN + 1 data file + END = 3 files
+      // Total = 9 files
+      assertEquals(9, filesRead, "Should have read exactly 9 IndexedFiles from versions 0-2");
+
+      // Now consume the rest of the iterator - this should hit the REMOVE file in version 4
+      assertThrows(
+          UnsupportedOperationException.class,
+          () -> {
+            while (kernelChanges.hasNext()) {
+              kernelChanges.next(); // This should throw when it reaches version 4's REMOVE
+            }
+          },
+          "Should throw UnsupportedOperationException when reaching version 4 with REMOVE file");
+    } finally {
+      try {
+        kernelChanges.close();
+      } catch (Exception ignored) {
+      }
+    }
+  }
+
   // ================================================================================================
   // Tests for REMOVE file handling
   // ================================================================================================
@@ -627,25 +701,27 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
-    UnsupportedOperationException dsv1Exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> {
-              ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                  deltaSource.getFileChanges(
-                      fromVersion,
-                      fromIndex,
-                      isInitialSnapshot,
-                      endOffset,
-                      /* verifyMetadataAction= */ true);
-              // Consume the iterator to trigger validation
-              while (deltaChanges.hasNext()) {
-                // Exception is thrown by .next() when it encounters a REMOVE
-                deltaChanges.next();
-              }
-              deltaChanges.close();
-            },
-            String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
+    AtomicInteger dsv1SuccessfulCalls = new AtomicInteger(0);
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> {
+          ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+              deltaSource.getFileChanges(
+                  fromVersion,
+                  fromIndex,
+                  isInitialSnapshot,
+                  endOffset,
+                  /* verifyMetadataAction= */ true);
+          try {
+            while (deltaChanges.hasNext()) {
+              deltaChanges.next(); // Should throw when hitting REMOVE file
+              dsv1SuccessfulCalls.incrementAndGet();
+            }
+          } finally {
+            deltaChanges.close();
+          }
+        },
+        String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
     // Test DSv2 SparkMicroBatchStream
     Configuration hadoopConf = new Configuration();
@@ -653,39 +729,33 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
-    UnsupportedOperationException dsv2Exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> {
-              CloseableIterator<IndexedFile> kernelChanges =
-                  stream.getFileChanges(
-                      fromVersion,
-                      fromIndex,
-                      isInitialSnapshot,
-                      ScalaUtils.toJavaOptional(endOffset));
-              try {
-                // Consume the iterator to trigger validation (if not already triggered)
-                while (kernelChanges.hasNext()) {
-                  kernelChanges.next();
-                }
-                kernelChanges.close();
-              } finally {
-                // Make sure to close the iterator even if exception occurs
-                if (kernelChanges != null) {
-                  try {
-                    kernelChanges.close();
-                  } catch (Exception ignored) {
-                  }
-                }
-              }
-            },
-            String.format("DSv2 should throw on REMOVE for scenario: %s", testDescription));
 
-    // TODO(#5318): Add precise exception point verification when DSv2 implements
-    // lazy loading. Currently, DSv1 uses lazy loading (throws during .next() iteration after
-    // processing ADD files) while DSv2 uses eager loading (throws during getFileChanges() before
-    // iteration begins). Once DSv2 implements lazy loading, both should throw at exactly the same
-    // point.
+    AtomicInteger dsv2SuccessfulCalls = new AtomicInteger(0);
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> {
+          CloseableIterator<IndexedFile> kernelChanges =
+              stream.getFileChanges(
+                  fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset));
+          try {
+            while (kernelChanges.hasNext()) {
+              kernelChanges.next(); // Should throw when hitting REMOVE file
+              dsv2SuccessfulCalls.incrementAndGet();
+            }
+          } finally {
+            kernelChanges.close();
+          }
+        },
+        String.format("DSv2 should throw on REMOVE for scenario: %s", testDescription));
+
+    // Verify both threw at the exact same point
+    assertEquals(
+        dsv1SuccessfulCalls.get(),
+        dsv2SuccessfulCalls.get(),
+        String.format(
+            "DSv1 and DSv2 should throw after the same number of next() calls for scenario: %s. "
+                + "DSv1=%d, DSv2=%d",
+            testDescription, dsv1SuccessfulCalls.get(), dsv2SuccessfulCalls.get()));
   }
 
   /** Provides test scenarios that generate REMOVE actions through various DML operations. */
