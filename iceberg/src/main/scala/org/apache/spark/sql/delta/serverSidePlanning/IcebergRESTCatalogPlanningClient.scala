@@ -29,6 +29,7 @@ import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -159,10 +160,10 @@ class IcebergRESTCatalogPlanningClient(
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
-    // Explicitly set caseSensitive to false (defaults to true in spec) because Spark doesn't
-    // support case-sensitive columns and the server will block requests with caseSensitive=true
     val builder = new PlanTableScanRequest.Builder()
       .withSnapshotId(CURRENT_SNAPSHOT_ID)
+      // Set caseSensitive=false (defaults to true in spec) because Spark doesn't support
+      // case-sensitive columns in serverless GC. Server validates and blocks caseSensitive=true.
       .withCaseSensitive(false)
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
@@ -194,9 +195,10 @@ class IcebergRESTCatalogPlanningClient(
       val statusCode = httpResponse.getStatusLine.getStatusCode
       val responseBody = EntityUtils.toString(httpResponse.getEntity)
       if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_CREATED) {
-        // Parse response. caseSensitive = true because Iceberg is case-sensitive by default.
+        // Parse response with caseSensitive=false to match request and Spark's case-insensitive
+        // column handling
         val icebergResponse = parsePlanTableScanResponse(
-          responseBody, unpartitionedSpecMap, caseSensitive = true)
+          responseBody, unpartitionedSpecMap, caseSensitive = false)
 
         // Verify plan status is "completed". The Iceberg REST spec allows async planning
         // where the server returns "submitted" status and the client must poll for results.
@@ -256,98 +258,41 @@ class IcebergRESTCatalogPlanningClient(
 
   /**
    * Extract storage credentials from IRC server response.
-   * Supports AWS S3, Azure ADLS Gen2, and Google Cloud Storage.
+   * Uses sealed trait pattern - tries each credential type in priority order.
    *
    * JSON structure:
    * {
    *   "storage-credentials": [{
    *     "config": {
-   *       // S3 credentials
    *       "s3.access-key-id": "...",
-   *       "s3.secret-access-key": "...",
-   *       "s3.session-token": "...",
-   *
-   *       // Azure credentials
    *       "azure.account-name": "...",
-   *       "azure.sas-token": "...",
-   *       "azure.container-name": "...",
-   *
-   *       // GCS credentials
-   *       "gcs.oauth2.token": "..."
+   *       "gcs.oauth2.token": "...",
+   *       ...
    *     }
    *   }]
    * }
    */
-  private def extractCredentials(responseBody: String): Option[StorageCredentials] = {
-    Try {
-      implicit val formats: Formats = DefaultFormats
-      val json = parse(responseBody)
+  /**
+   * Extract storage credentials from response using sealed trait factory.
+   * Returns None if no credentials section exists.
+   * Throws IllegalStateException if credentials are incomplete or malformed.
+   */
+  private def extractCredentials(responseBody: String): Option[ScanPlanStorageCredentials] = {
+    implicit val formats: Formats = DefaultFormats
+    val json = parse(responseBody)
 
-      // Navigate to storage-credentials[0].config
-      val config = (json \ "storage-credentials")(0) \ "config"
+    // Extract config map from storage-credentials[0].config
+    val config: Option[Map[String, String]] = try {
+      (json \ "storage-credentials")(0) \ "config" match {
+        case JNothing | JNull => None
+        case c => Some(c.extract[Map[String, String]])
+      }
+    } catch {
+      case _: Exception => None // No credentials section in response
+    }
 
-      // Extract all credential types (any or all may be present)
-      val s3AccessKeyId = (config \ "s3.access-key-id") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-      val s3SecretAccessKey = (config \ "s3.secret-access-key") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-      val s3SessionToken = (config \ "s3.session-token") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-
-      val azureAccountName = (config \ "azure.account-name") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-      val azureSasToken = (config \ "azure.sas-token") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-      val azureContainerName = (config \ "azure.container-name") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-
-      val gcsOAuth2Token = (config \ "gcs.oauth2.token") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-
-      // Check which cloud provider has complete credentials
-      val s3Complete = s3AccessKeyId.isDefined && s3SecretAccessKey.isDefined &&
-        s3SessionToken.isDefined
-      val azureComplete = azureAccountName.isDefined && azureSasToken.isDefined &&
-        azureContainerName.isDefined
-      val gcsComplete = gcsOAuth2Token.isDefined
-
-      // Construct appropriate subclass based on which provider has credentials
-      // Prioritize in order: S3, Azure, GCS (if multiple somehow present)
-      if (s3Complete) {
-        Some(S3Credentials(
-          accessKeyId = s3AccessKeyId.get,
-          secretAccessKey = s3SecretAccessKey.get,
-          sessionToken = s3SessionToken.get
-        ))
-      } else if (azureComplete) {
-        Some(AzureCredentials(
-          accountName = azureAccountName.get,
-          sasToken = azureSasToken.get,
-          containerName = azureContainerName.get
-        ))
-      } else if (gcsComplete) {
-        Some(GcsCredentials(
-          oauth2Token = gcsOAuth2Token.get
-        ))
-      } else {
-        None
-      }
-
-    }.toOption.flatten
+    // If config exists and is non-empty, use factory (throws on incomplete credentials)
+    config.filter(_.nonEmpty).map(ScanPlanStorageCredentials.fromConfig)
   }
 
   /**

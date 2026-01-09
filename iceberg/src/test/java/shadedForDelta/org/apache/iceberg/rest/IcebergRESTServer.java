@@ -171,6 +171,16 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Set test credentials to inject into /plan responses.
+   * Used for testing credential extraction in clients.
+   * 
+   * @param credentials Map of credential config (e.g., "s3.access-key-id" -> "...")
+   */
+  public void setTestCredentials(Map<String, String> credentials) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setTestCredentials(credentials);
+  }
+  
+  /**
    * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {
