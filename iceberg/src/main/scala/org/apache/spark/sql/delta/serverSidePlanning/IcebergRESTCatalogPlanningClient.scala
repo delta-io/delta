@@ -143,8 +143,8 @@ class IcebergRESTCatalogPlanningClient(
   override def planScan(
       database: String,
       table: String,
-      filter: Option[Filter] = None,
-      projection: Option[StructType] = None): ScanPlan = {
+      sparkFilterOption: Option[Filter] = None,
+      sparkProjectionOption: Option[Seq[String]] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
     // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
     // /v1/config to get the optional prefix and builds the proper endpoint
@@ -156,9 +156,21 @@ class IcebergRESTCatalogPlanningClient(
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
-    // TODO: Add filter and projection pushdown to PlanTableScanRequest once Iceberg REST spec
-    // supports these parameters. For now, filters and projections are passed but not used.
-    val request = new PlanTableScanRequest.Builder().withSnapshotId(CURRENT_SNAPSHOT_ID).build()
+    val builder = new PlanTableScanRequest.Builder().withSnapshotId(CURRENT_SNAPSHOT_ID)
+
+    // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
+    sparkFilterOption.foreach { sparkFilter =>
+      SparkToIcebergExpressionConverter.convert(sparkFilter).foreach { icebergExpr =>
+        builder.withFilter(icebergExpr)
+      }
+    }
+
+    // Add projection to request if present.
+    sparkProjectionOption.foreach { columnNames =>
+      builder.withSelect(columnNames.asJava)
+    }
+
+    val request = builder.build()
 
     val requestJson = PlanTableScanRequestParser.toJson(request)
     val httpPost = new HttpPost(planTableScanUri)

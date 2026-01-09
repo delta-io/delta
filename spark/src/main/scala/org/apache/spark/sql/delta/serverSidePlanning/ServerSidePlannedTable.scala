@@ -211,7 +211,7 @@ class ServerSidePlannedScanBuilder(
   // Filters that have been pushed down and will be sent to the server
   private var _pushedFilters: Array[Filter] = Array.empty
 
-  // Required schema (columns) that have been pushed down
+  // Required schema (columns to read). Defaults to full table schema.
   private var _requiredSchema: StructType = tableSchema
 
   override def pushFilters(filters: Array[Filter]): Array[Filter] = {
@@ -246,7 +246,7 @@ class ServerSidePlannedScan(
     pushedFilters: Array[Filter],
     requiredSchema: StructType) extends Scan with Batch {
 
-  override def readSchema(): StructType = tableSchema
+  override def readSchema(): StructType = requiredSchema
 
   override def toBatch: Batch = this
 
@@ -264,17 +264,19 @@ class ServerSidePlannedScan(
   }
 
   // Only pass projection if columns are actually pruned (not SELECT *)
-  private val projection: Option[StructType] = {
+  // Extract field names for planning client (server only needs names, not types)
+  private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(requiredSchema)
+      Some(requiredSchema.fieldNames.toSeq)
     }
   }
 
   override def planInputPartitions(): Array[InputPartition] = {
     // Call the server-side planning API to get the scan plan
-    val scanPlan = planningClient.planScan(databaseName, tableName, combinedFilter, projection)
+    val scanPlan = planningClient.planScan(
+      databaseName, tableName, combinedFilter, projectionColumnNames)
 
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>
@@ -283,7 +285,7 @@ class ServerSidePlannedScan(
   }
 
   override def createReaderFactory(): PartitionReaderFactory = {
-    new ServerSidePlannedFilePartitionReaderFactory(spark, tableSchema)
+    new ServerSidePlannedFilePartitionReaderFactory(spark, tableSchema, requiredSchema)
   }
 }
 
@@ -298,10 +300,14 @@ case class ServerSidePlannedFileInputPartition(
 /**
  * Factory for creating PartitionReaders that read server-side planned files.
  * Builds reader functions on the driver for Parquet files.
+ *
+ * @param tableSchema The full table schema (all columns in the file)
+ * @param requiredSchema The required schema (columns to read after projection pushdown)
  */
 class ServerSidePlannedFilePartitionReaderFactory(
     spark: SparkSession,
-    tableSchema: StructType)
+    tableSchema: StructType,
+    requiredSchema: StructType)
     extends PartitionReaderFactory {
 
   import org.apache.spark.util.SerializableConfiguration
@@ -319,11 +325,13 @@ class ServerSidePlannedFilePartitionReaderFactory(
 
   // Pre-build reader function for Parquet on the driver
   // This function will be serialized and sent to executors
+  // tableSchema: All columns in the file (full table schema)
+  // requiredSchema: Columns to actually read (after projection pushdown)
   private val parquetReaderBuilder = new ParquetFileFormat().buildReaderWithPartitionValues(
     sparkSession = spark,
     dataSchema = tableSchema,
     partitionSchema = StructType(Nil),
-    requiredSchema = tableSchema,
+    requiredSchema = requiredSchema,
     filters = Seq.empty,
     options = Map(
       FileFormat.OPTION_RETURNING_BATCH -> "false"
