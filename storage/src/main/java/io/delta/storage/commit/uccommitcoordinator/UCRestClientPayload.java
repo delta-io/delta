@@ -18,6 +18,7 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.delta.storage.commit.Commit;
+import io.delta.storage.commit.actions.AbstractIceberg;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import org.apache.hadoop.fs.FileStatus;
@@ -26,6 +27,7 @@ import org.apache.hadoop.fs.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Container for internal REST classes used by UCTokenBasedRestClient.
@@ -200,6 +202,43 @@ class UCRestClientPayload {
   }
 
   // ==============================
+  // DeltaUniformIceberg Class
+  // ==============================
+  static class DeltaUniformIceberg {
+    String metadataLocation;
+    Long convertedDeltaVersion;
+    String convertedDeltaTimestamp;
+
+    static DeltaUniformIceberg fromAbstractIceberg(AbstractIceberg externalIceberg) {
+      if (externalIceberg == null) {
+        throw new IllegalArgumentException("externalIceberg cannot be null");
+      }
+
+      DeltaUniformIceberg iceberg = new DeltaUniformIceberg();
+      iceberg.metadataLocation = externalIceberg.getMetadataLocation();
+      iceberg.convertedDeltaVersion = externalIceberg.getConvertedDeltaVersion();
+      iceberg.convertedDeltaTimestamp = externalIceberg.getConvertedDeltaTimestamp();
+      return iceberg;
+    }
+  }
+
+  // ==============================
+  // Uniform Class
+  // ==============================
+  static class Uniform {
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    DeltaUniformIceberg iceberg;
+
+    static Uniform fromAbstractIceberg(Optional<AbstractIceberg> externalIcebergOpt) {
+      Uniform uniform = new Uniform();
+      if (externalIcebergOpt.isPresent()) {
+        uniform.iceberg = DeltaUniformIceberg.fromAbstractIceberg(externalIcebergOpt.get());
+      }
+      return uniform;
+    }
+  }
+
+  // ==============================
   // CommitRequest Class
   // ==============================
   static class CommitRequest {
@@ -209,6 +248,8 @@ class UCRestClientPayload {
     Long latestBackfilledVersion;
     Metadata metadata;
     Protocol protocol;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    Uniform uniform;
   }
 
   // ==============================

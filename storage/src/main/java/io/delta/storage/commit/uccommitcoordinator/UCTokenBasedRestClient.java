@@ -34,6 +34,8 @@ import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.GetMetast
 import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.RestGetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Metadata;
 import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Protocol;
+import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Uniform;
+import io.delta.storage.commit.actions.AbstractIceberg;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.unitycatalog.client.auth.TokenProvider;
@@ -192,7 +194,7 @@ public class UCTokenBasedRestClient implements UCClient {
       boolean disown,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> newProtocol,
-      Supplier<Map<String, String>> committerProperties
+      Optional<AbstractIceberg> icebergMetadata
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
     // Validate required parameters
     Objects.requireNonNull(tableId, "tableId must not be null.");
@@ -207,6 +209,9 @@ public class UCTokenBasedRestClient implements UCClient {
       commitRequest.latestBackfilledVersion = version);
     newMetadata.ifPresent(m -> commitRequest.metadata = Metadata.fromAbstractMetadata(m));
     newProtocol.ifPresent(p -> commitRequest.protocol = Protocol.fromAbstractProtocol(p));
+    if (icebergMetadata.isPresent()) {
+      commitRequest.uniform = Uniform.fromAbstractIceberg(icebergMetadata);
+    }
 
     URI uri = URI.create(resolve(baseUri, "/delta/preview/commits"));
     HttpPost request = new HttpPost(uri);

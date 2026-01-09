@@ -686,7 +686,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       disown,
       newMetadata,
       newProtocol,
-      Collections::emptyMap /* committerProperties */
+      Optional.empty() /* icebergMetadata */
     );
   }
 

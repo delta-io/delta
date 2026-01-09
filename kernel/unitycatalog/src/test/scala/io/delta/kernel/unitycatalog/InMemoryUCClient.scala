@@ -18,16 +18,14 @@ package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
-import java.util
-import java.util.{Collections, Optional}
+import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
-import java.util.function.Supplier
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractIceberg, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 
 object InMemoryUCClient {
@@ -46,7 +44,7 @@ object InMemoryUCClient {
     // For test only, since UC doesn't store these as top-level entities.
     private var currentProtocolOpt: Option[AbstractProtocol] = None
     private var currentMetadataOpt: Option[AbstractMetadata] = None
-    private var currentCommitterPropertiesOpt: Map[String, String] = Map.empty
+    private var currentIcebergOpt: Option[AbstractIceberg] = None
 
     /** @return the maximum ratified version. */
     def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
@@ -72,14 +70,14 @@ object InMemoryUCClient {
     /** @return the current metadata. For test only. */
     def getCurrentMetadataOpt: Option[AbstractMetadata] = synchronized { currentMetadataOpt }
 
-    /** @return the current committer properties. For test only. */
-    def getCurrentCommitterProperties: Map[String, String] = synchronized {
-      currentCommitterPropertiesOpt
+    /** @return the current Iceberg metadata. For test only. */
+    def getCurrentIcebergOpt: Option[AbstractIceberg] = synchronized {
+      currentIcebergOpt
     }
 
-    /** Updates the committer properties. */
-    def updateCommitterProperties(properties: util.Map[String, String]): Unit = synchronized {
-      currentCommitterPropertiesOpt = properties.asScala.toMap
+    /** Updates the Iceberg metadata. */
+    def updateIcebergMetadata(icebergMetadata: AbstractIceberg): Unit = synchronized {
+      currentIcebergOpt = Some(icebergMetadata)
     }
 
     /** Appends a new commit to this table and atomically updates protocol/metadata. */
@@ -156,7 +154,8 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       lastKnownBackfilledVersion,
       disown,
       newMetadata,
-      newProtocol)
+      newProtocol,
+      Optional.empty() /* icebergMetadata */ )
   }
 
   override def commit(
@@ -167,8 +166,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
       newProtocol: Optional[AbstractProtocol],
-      committerProperties: Supplier[util.Map[String, String]] =
-        () => Collections.emptyMap()): Unit = {
+      icebergMetadata: Optional[AbstractIceberg]): Unit = {
     forceThrowInCommitMethod()
 
     if (disown) {
@@ -186,10 +184,9 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
         tableData.forceRemoveCommitsUpToVersion(lastKnownBackfilledVersion)
       }
 
-      // Update committer properties if provided and non-empty
-      val properties = committerProperties.get()
-      if (properties != null && !properties.isEmpty) {
-        tableData.updateCommitterProperties(properties)
+      // Update Iceberg metadata if provided
+      icebergMetadata.ifPresent { iceberg =>
+        tableData.updateIcebergMetadata(iceberg)
       }
     }
   }

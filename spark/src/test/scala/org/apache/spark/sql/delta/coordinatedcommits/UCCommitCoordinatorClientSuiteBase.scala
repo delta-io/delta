@@ -125,7 +125,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       false,
       Optional.empty(),
       Optional.empty(),
-      () => Collections.emptyMap())
+      Optional.empty() /* icebergMetadata */)
   }
 
   override protected def validateBackfillStrategy(

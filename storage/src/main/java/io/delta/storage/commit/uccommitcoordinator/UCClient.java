@@ -19,14 +19,13 @@ package io.delta.storage.commit.uccommitcoordinator;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.actions.AbstractIceberg;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 
 import java.io.IOException;
 import java.net.URI;
-import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
 
 /**
  * Interface for interacting with the Unity Catalog.
@@ -78,10 +77,8 @@ public interface UCClient extends AutoCloseable {
    *                    If present, the table's metadata will be updated atomically with the commit.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
-   * @param committerProperties Additional catalog-specific properties to be passed through to the
-   *                          UC server. These opaque key-value pairs may be used by specific UC
-   *                          client implementations as needed. The interpretation and usage of these
-   *                          properties is implementation-specific.
+   * @param icebergMetadata An Optional containing Iceberg metadata for Delta Uniform Iceberg support.
+   *                        If present, this metadata will be used by UC to manage Iceberg conversion.
    * @throws IOException if there's an error during the commit process, such as network issues.
    * @throws CommitFailedException if the commit fails due to conflicts or other logical errors.
    * @throws UCCommitCoordinatorException if there's an error specific to the Unity Catalog
@@ -95,7 +92,7 @@ public interface UCClient extends AutoCloseable {
       boolean disown,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> newProtocol,
-      Supplier<Map<String, String>> committerProperties
+      Optional<AbstractIceberg> icebergMetadata
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException;
 
   /**

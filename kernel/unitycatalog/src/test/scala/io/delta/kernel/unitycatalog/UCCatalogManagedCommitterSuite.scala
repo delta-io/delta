@@ -29,6 +29,7 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
+import io.delta.kernel.unitycatalog.adapters.IcebergAdapter
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -240,7 +241,7 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  test("CATALOG_WRITE: committer properties are passed to UC client") {
+  test("CATALOG_WRITE: Iceberg metadata is extracted and passed to UC client") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
@@ -248,14 +249,15 @@ class UCCatalogManagedCommitterSuite
       val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
 
       // ===== WHEN =====
-      val testCommitterProperties = Map(
-        "catalog.specific.property1" -> "value1",
-        "catalog.specific.property2" -> "value2").asJava
+      val icebergProperties = Map(
+        IcebergAdapter.ICEBERG_METADATA_LOCATION_KEY -> "s3://bucket/table/metadata/v1.json",
+        IcebergAdapter.ICEBERG_CONVERTED_DELTA_VERSION_KEY -> "1044",
+        IcebergAdapter.ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY -> "2025-01-04T03:13:11.423").asJava
 
       val commitMetadata = createCommitMetadata(
         version = 1,
         logPath = logPath,
-        committerProperties = () => testCommitterProperties,
+        committerProperties = () => icebergProperties,
         readPandMOpt = Optional.of(
           new KernelTuple2[Protocol, Metadata](
             protocolWithCatalogManagedSupport,
@@ -264,14 +266,16 @@ class UCCatalogManagedCommitterSuite
 
       // ===== THEN =====
       val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
-      val storedProperties = updatedTableData.getCurrentCommitterProperties
-      assert(storedProperties.size == 2)
-      assert(storedProperties("catalog.specific.property1") == "value1")
-      assert(storedProperties("catalog.specific.property2") == "value2")
+      val icebergOpt = updatedTableData.getCurrentIcebergOpt
+      assert(icebergOpt.isDefined)
+      val iceberg = icebergOpt.get
+      assert(iceberg.getMetadataLocation == "s3://bucket/table/metadata/v1.json")
+      assert(iceberg.getConvertedDeltaVersion == 1044L)
+      assert(iceberg.getConvertedDeltaTimestamp == "2025-01-04T03:13:11.423")
     }
   }
 
-  test("CATALOG_WRITE: empty committer properties are not stored in UC client") {
+  test("CATALOG_WRITE: empty committer properties result in no Iceberg metadata") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
@@ -279,36 +283,21 @@ class UCCatalogManagedCommitterSuite
       val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
 
       // ===== WHEN =====
-      // First commit with non-empty properties
-      val initialProperties = Map("key" -> "value").asJava
-      val commitMetadata1 = createCommitMetadata(
-        version = 1,
-        logPath = logPath,
-        committerProperties = () => initialProperties,
-        readPandMOpt = Optional.of(
-          new KernelTuple2[Protocol, Metadata](
-            protocolWithCatalogManagedSupport,
-            basicPartitionedMetadata)))
-      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata1)
-
-      // Second commit with empty properties
       val emptyProperties = Map.empty[String, String].asJava
-      val commitMetadata2 = createCommitMetadata(
-        version = 2,
+      val commitMetadata = createCommitMetadata(
+        version = 1,
         logPath = logPath,
         committerProperties = () => emptyProperties,
         readPandMOpt = Optional.of(
           new KernelTuple2[Protocol, Metadata](
             protocolWithCatalogManagedSupport,
             basicPartitionedMetadata)))
-      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata2)
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
 
       // ===== THEN =====
-      // Properties from first commit should still be present (empty map didn't overwrite)
       val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
-      val storedProperties = updatedTableData.getCurrentCommitterProperties
-      assert(storedProperties.size == 1)
-      assert(storedProperties("key") == "value")
+      val icebergOpt = updatedTableData.getCurrentIcebergOpt
+      assert(icebergOpt.isEmpty)
     }
   }
 
