@@ -257,24 +257,16 @@ class IcebergRESTCatalogPlanningClient(
 
   /**
    * Extract storage credentials from IRC server response.
-   * Supports AWS S3, Azure ADLS Gen2, and Google Cloud Storage.
+   * Uses sealed trait pattern - tries each credential type in priority order.
    *
    * JSON structure:
    * {
    *   "storage-credentials": [{
    *     "config": {
-   *       // S3 credentials
    *       "s3.access-key-id": "...",
-   *       "s3.secret-access-key": "...",
-   *       "s3.session-token": "...",
-   *
-   *       // Azure credentials
    *       "azure.account-name": "...",
-   *       "azure.sas-token": "...",
-   *       "azure.container-name": "...",
-   *
-   *       // GCS credentials
-   *       "gcs.oauth2.token": "..."
+   *       "gcs.oauth2.token": "...",
+   *       ...
    *     }
    *   }]
    * }
@@ -284,119 +276,58 @@ class IcebergRESTCatalogPlanningClient(
       implicit val formats: Formats = DefaultFormats
       val json = parse(responseBody)
 
-      // Navigate to storage-credentials[0].config
-      // If no credentials section exists, return None (this is OK)
-      val config = try {
-        (json \ "storage-credentials")(0) \ "config"
+      // Extract config map, return None if no credentials section exists
+      val configMap = try {
+        val config = (json \ "storage-credentials")(0) \ "config"
+        config.extract[Map[String, String]]
       } catch {
         case _: Exception => return None
       }
 
-      // Extract all credential types (any or all may be present)
-      val s3AccessKeyId = (config \ "s3.access-key-id") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-      val s3SecretAccessKey = (config \ "s3.secret-access-key") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-      val s3SessionToken = (config \ "s3.session-token") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
+      // Helper to get value from config map
+      def get(key: String): Option[String] = configMap.get(key).filter(_.nonEmpty)
+
+      // Helper to validate all required keys are present
+      def validateComplete(requiredKeys: Seq[String]): Unit = {
+        val presentKeys = requiredKeys.filter(get(_).isDefined)
+        if (presentKeys.nonEmpty && presentKeys.size < requiredKeys.size) {
+          val missing = requiredKeys.filterNot(get(_).isDefined)
+          throw new IllegalStateException(
+            s"Incomplete credentials in server response. " +
+            s"Missing properties: ${missing.mkString(", ")}")
+        }
       }
 
-      val azureAccountName = (config \ "azure.account-name") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-      val azureSasToken = (config \ "azure.sas-token") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
-      }
-      val azureContainerName = (config \ "azure.container-name") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
+      // Try each credential type in priority order (S3, Azure, GCS)
+      // Using sealed trait pattern: each case represents one subtype
+      val s3Keys = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
+      validateComplete(s3Keys)
+      if (s3Keys.forall(get(_).isDefined)) {
+        return Some(S3Credentials(
+          accessKeyId = get("s3.access-key-id").get,
+          secretAccessKey = get("s3.secret-access-key").get,
+          sessionToken = get("s3.session-token").get))
       }
 
-      val gcsOAuth2Token = (config \ "gcs.oauth2.token") match {
-        case JNothing | JNull => None
-        case value => Some(value.extract[String])
+      val azureKeys = Seq("azure.account-name", "azure.sas-token", "azure.container-name")
+      validateComplete(azureKeys)
+      if (azureKeys.forall(get(_).isDefined)) {
+        return Some(AzureCredentials(
+          accountName = get("azure.account-name").get,
+          sasToken = get("azure.sas-token").get,
+          containerName = get("azure.container-name").get))
       }
 
-      // Check which cloud provider has complete credentials
-      val s3Complete = s3AccessKeyId.isDefined && s3SecretAccessKey.isDefined &&
-        s3SessionToken.isDefined
-      val azureComplete = azureAccountName.isDefined && azureSasToken.isDefined &&
-        azureContainerName.isDefined
-      val gcsComplete = gcsOAuth2Token.isDefined
-
-      // Check for partial credentials and provide helpful error messages
-      val s3Partial = s3AccessKeyId.isDefined || s3SecretAccessKey.isDefined ||
-        s3SessionToken.isDefined
-      val azurePartial = azureAccountName.isDefined || azureSasToken.isDefined ||
-        azureContainerName.isDefined
-      val gcsPartial = gcsOAuth2Token.isDefined
-
-      // If we have partial credentials, throw error indicating missing properties
-      // These errors should propagate to caller
-      if (s3Partial && !s3Complete) {
-        val missing = Seq(
-          if (s3AccessKeyId.isEmpty) "s3.access-key-id" else null,
-          if (s3SecretAccessKey.isEmpty) "s3.secret-access-key" else null,
-          if (s3SessionToken.isEmpty) "s3.session-token" else null
-        ).filter(_ != null)
-        throw new IllegalStateException(
-          s"Incomplete S3 credentials in server response. " +
-          s"Missing properties: ${missing.mkString(", ")}"
-        )
-      }
-      if (azurePartial && !azureComplete) {
-        val missing = Seq(
-          if (azureAccountName.isEmpty) "azure.account-name" else null,
-          if (azureSasToken.isEmpty) "azure.sas-token" else null,
-          if (azureContainerName.isEmpty) "azure.container-name" else null
-        ).filter(_ != null)
-        throw new IllegalStateException(
-          s"Incomplete Azure credentials in server response. " +
-          s"Missing properties: ${missing.mkString(", ")}"
-        )
-      }
-      if (gcsPartial && !gcsComplete) {
-        throw new IllegalStateException(
-          "Incomplete GCS credentials in server response. Missing property: gcs.oauth2.token"
-        )
+      val gcsKeys = Seq("gcs.oauth2.token")
+      validateComplete(gcsKeys)
+      if (gcsKeys.forall(get(_).isDefined)) {
+        return Some(GcsCredentials(oauth2Token = get("gcs.oauth2.token").get))
       }
 
-      // Construct appropriate subclass based on which provider has credentials
-      // Prioritize in order: S3, Azure, GCS (if multiple somehow present)
-      if (s3Complete) {
-        Some(S3Credentials(
-          accessKeyId = s3AccessKeyId.get,
-          secretAccessKey = s3SecretAccessKey.get,
-          sessionToken = s3SessionToken.get
-        ))
-      } else if (azureComplete) {
-        Some(AzureCredentials(
-          accountName = azureAccountName.get,
-          sasToken = azureSasToken.get,
-          containerName = azureContainerName.get
-        ))
-      } else if (gcsComplete) {
-        Some(GcsCredentials(
-          oauth2Token = gcsOAuth2Token.get
-        ))
-      } else {
-        // No credentials present at all (which is OK)
-        None
-      }
+      None // No credentials present
     } catch {
-      case e: IllegalStateException =>
-        // Re-throw validation errors - incomplete credentials are a real error
-        throw e
-      case _: Exception =>
-        // JSON parsing errors mean no credentials present, which is OK
-        None
+      case e: IllegalStateException => throw e // Propagate validation errors
+      case _: Exception => None // JSON parsing errors mean no credentials
     }
   }
 
