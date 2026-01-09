@@ -28,13 +28,17 @@ import io.unitycatalog.client.model.TableInfo;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.types.DataTypes;
@@ -130,6 +134,55 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
           // Assert that the query has stopped
           assertFalse(query.isActive(), "Streaming query should have stopped");
+        });
+  }
+
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testStreamingReadFromTable(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_read_test",
+        "id BIGINT, value STRING",
+        tableType,
+        (tableName) -> {
+          SparkSession spark = spark();
+          String queryName =
+              "uc_streaming_read_"
+                  + tableType.name().toLowerCase()
+                  + "_"
+                  + UUID.randomUUID().toString().replace("-", "");
+          StreamingQuery query = null;
+          List<List<String>> expected = new ArrayList<>();
+
+          try {
+            Dataset<Row> input = spark.readStream().format("delta").table(tableName);
+            query =
+                input
+                    .writeStream()
+                    .format("memory")
+                    .queryName(queryName)
+                    .option("checkpointLocation", createTempCheckpointDir())
+                    .outputMode("append")
+                    .start();
+
+            assertTrue(query.isActive(), "Streaming query should be active");
+
+            for (long i = 1; i <= 10; i += 1) {
+              String value = "value_" + i;
+              sql("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value);
+
+              query.processAllAvailable();
+
+              expected.add(List.of(String.valueOf(i), value));
+              check(queryName, expected);
+            }
+          } finally {
+            if (query != null) {
+              query.stop();
+              query.awaitTermination();
+            }
+            spark.sql("DROP VIEW IF EXISTS " + queryName);
+          }
         });
   }
 
