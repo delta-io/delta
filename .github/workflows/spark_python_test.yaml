@@ -126,7 +126,7 @@ jobs:
             pipenv run pip install grpcio==1.71.0
             pipenv run pip install grpcio-status==1.71.0
             pipenv run pip install googleapis-common-protos==1.69.2
-            pipenv run pip install protobuf==6.31.1
+            pipenv run pip install protobuf==6.33.0
             pipenv run pip install zstandard==0.25.0
           fi
         if: steps.git-diff.outputs.diff
