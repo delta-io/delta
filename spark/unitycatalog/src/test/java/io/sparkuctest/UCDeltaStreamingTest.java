@@ -182,7 +182,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
             assertTrue(query.isActive(), "Streaming query should be active");
 
-            for (long i = 1; i <= 10; i += 1) {
+            for (long i = 1; i < 10; i += 1) {
               String value = "value_" + i;
               writerSpark
                   .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
@@ -197,6 +197,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
             if (query != null) {
               query.stop();
               query.awaitTermination();
+              assertFalse(query.isActive(), "Streaming query should have stopped");
             }
             spark.sql("DROP VIEW IF EXISTS " + queryName);
             restoreV2Mode(spark, originalMode);
