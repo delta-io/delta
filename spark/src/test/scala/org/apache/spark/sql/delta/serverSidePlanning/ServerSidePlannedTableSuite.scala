@@ -147,6 +147,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     for (isUC <- Seq(true, false)) {
       for (hasCreds <- Seq(true, false)) {
         for (enableSSP <- Seq(true, false)) {
+          val description = s"Production: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
           val expected = (isUC && !hasCreds) && enableSSP
           val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
             isUnityCatalog = isUC,
@@ -154,7 +155,6 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
             enableServerSidePlanning = enableSSP,
             skipUCRequirementForTests = false
           )
-          val description = s"Production: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
           assert(result == expected, s"$description -> expected $expected but got $result")
         }
       }
@@ -165,6 +165,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     for (isUC <- Seq(true, false)) {
       for (hasCreds <- Seq(true, false)) {
         for (enableSSP <- Seq(true, false)) {
+          val description = s"Test mode: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
           val expected = enableSSP
           val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
             isUnityCatalog = isUC,
@@ -172,7 +173,6 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
             enableServerSidePlanning = enableSSP,
             skipUCRequirementForTests = true
           )
-          val description = s"Test mode: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
           assert(result == expected, s"$description -> expected $expected but got $result")
         }
       }
