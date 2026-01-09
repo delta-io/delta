@@ -16,44 +16,37 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-import java.nio.file.Files
-import java.util.{Locale, Optional}
+import java.util.{Locale, Optional, UUID}
 
-import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
-import io.delta.kernel.Operation.{CREATE_TABLE, MANUAL_UPDATE, WRITE}
+import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtils}
-import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
-import io.delta.kernel.expressions.{Column, Literal}
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
-import io.delta.kernel.internal.table.SnapshotBuilderImpl
-import io.delta.kernel.internal.util.{Clock, JsonUtils}
+import io.delta.kernel.internal.data.GenericRow
+import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
-import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
+import io.delta.kernel.types.BooleanType.BOOLEAN
 import io.delta.kernel.types.ByteType.BYTE
 import io.delta.kernel.types.DateType.DATE
-import io.delta.kernel.types.DecimalType
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.FloatType.FLOAT
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.ShortType.SHORT
 import io.delta.kernel.types.StringType.STRING
-import io.delta.kernel.types.StructType
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.tables.DeltaTable
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -426,7 +419,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         testSchema)
 
       // Use your new commitUnsafe API to write an unsupported writer feature
-      import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
+      import org.apache.spark.sql.delta.DeltaLog
       import org.apache.spark.sql.delta.actions.Protocol
 
       val deltaLog = DeltaLog.forTable(spark, tablePath)
@@ -1214,6 +1207,101 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         verifyWrittenContent(tablePath, testSchema, expData)
       }
     }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Change Data Feed (CDF) tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  val cdfTestCases: Seq[(String, Seq[Row], Boolean)] = Seq(
+    ("add with dataChange=true", Seq(createAddFileRow(dataChange = true)), true),
+    ("add with dataChange=false", Seq(createAddFileRow(dataChange = false)), true),
+    (
+      "multiple adds with dataChange=true",
+      Seq(createAddFileRow(dataChange = true), createAddFileRow(dataChange = true)),
+      true),
+    (
+      "add dataChange=true, remove dataChange=false", {
+        val path = "file1.parquet"
+        Seq(
+          createAddFileRow(path, dataChange = true),
+          createRemoveFileRow(path, dataChange = false))
+      },
+      true),
+    (
+      "add dataChange=true, remove dataChange=true", {
+        val path = "file1.parquet"
+        Seq(createAddFileRow(path, dataChange = true), createRemoveFileRow(path, dataChange = true))
+      },
+      false))
+
+  // Test cases for CDF-enabled tables (combination of add/remove with dataChange true/false)
+  cdfTestCases.foreach { case (desc, actions, shouldSucceed) =>
+    test(s"CDF-enabled table: $desc - ${if (shouldSucceed) "succeeds" else "fails"}") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+        val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+
+        val actionsIterable = inMemoryIterable(
+          io.delta.kernel.internal.util.Utils.toCloseableIterator(actions.iterator.asJava))
+
+        if (shouldSucceed) {
+          val result = commitTransaction(txn, engine, actionsIterable)
+          assert(result.getVersion === 0)
+        } else {
+          intercept[KernelException] {
+            commitTransaction(txn, engine, actionsIterable)
+          }
+        }
+      }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Helper functions
+  ///////////////////////////////////////////////////////////////////////////
+
+  private def createAddFileRow(
+      path: String = s"part-${UUID.randomUUID()}.parquet",
+      dataChange: Boolean = true): Row = {
+    import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+    import io.delta.kernel.internal.util.PartitionUtils
+
+    val partitionValues = PartitionUtils.serializePartitionMap(
+      java.util.Collections.emptyMap[String, Literal]())
+
+    val addFileRow = AddFile.createAddFileRow(
+      testSchema,
+      path,
+      partitionValues,
+      100L, // size
+      System.currentTimeMillis(), // modificationTime
+      dataChange,
+      Optional.empty(), // deletionVector
+      Optional.empty(), // tags
+      Optional.empty(), // baseRowId
+      Optional.empty(), // defaultRowCommitVersion
+      Optional.empty()
+    ) // stats
+
+    SingleAction.createAddFileSingleAction(addFileRow)
+  }
+
+  private def createRemoveFileRow(
+      path: String,
+      dataChange: Boolean = true): Row = {
+    import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
+
+    val removeFileRow = new GenericRow(
+      RemoveFile.FULL_SCHEMA,
+      Map[Integer, Object](
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> path,
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) -> Long.box(
+          System.currentTimeMillis()),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> Boolean.box(dataChange),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) -> Long.box(100L)).asJava)
+
+    SingleAction.createRemoveFileSingleAction(removeFileRow)
   }
 
   def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
