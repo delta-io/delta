@@ -122,10 +122,10 @@ jobs:
             pipenv run pip install googleapis-common-protos==1.65.0
             pipenv run pip install protobuf==5.29.1
           else
-            # Spark 4.1+ requires protobuf 6.x and compatible grpc versions
-            pipenv run pip install grpcio==1.71.0
-            pipenv run pip install grpcio-status==1.71.0
-            pipenv run pip install googleapis-common-protos==1.69.2
+            # Spark 4.1+ requirements from https://github.com/apache/spark/blob/branch-4.1/dev/requirements.txt
+            pipenv run pip install grpcio==1.76.0
+            pipenv run pip install grpcio-status==1.76.0
+            pipenv run pip install googleapis-common-protos==1.71.0
             pipenv run pip install protobuf==6.33.0
             pipenv run pip install zstandard==0.25.0
           fi
