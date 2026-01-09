@@ -179,7 +179,8 @@ case class SparkVersionSpec(
   additionalSourceDir: Option[String] = None,
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
-  jacksonVersion: String = "2.15.2"
+  jacksonVersion: String = "2.15.2",
+  additionalResolvers: Seq[Resolver] = Seq.empty
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
   def shortVersion: String = {
@@ -239,17 +240,27 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
-  // TODO: 4.2.0-SNAPSHOT (actual master)
+  private val spark42Snapshot = SparkVersionSpec(
+    fullVersion = "4.2.0-SNAPSHOT",
+    targetJvm = "17",
+    additionalSourceDir = Some("scala-shims/spark-4.2"),
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = java17TestSettings,
+    jacksonVersion = "2.18.2",
+    // Artifact updates in maven central for roaringbitmap stopped after 1.3.0.
+    // Spark master uses 1.5.3. Relevant Spark PR here https://github.com/apache/spark/pull/52892
+    additionalResolvers = Seq("jitpack" at "https://jitpack.io")
+  )
 
   // TODO: Once Spark 4.1 is officially out update DEFAULT = spark41
   /** Default Spark version */
   val DEFAULT = spark40
 
   /** Spark master branch version (optional). Release branches should not build against master */
-  val MASTER: Option[SparkVersionSpec] = None
+  val MASTER: Option[SparkVersionSpec] = Some(spark42Snapshot)
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41)
+  val ALL_SPECS = Seq(spark40, spark41, spark42Snapshot)
 }
 
 /** See docs on top of this file */
@@ -266,7 +277,6 @@ object CrossSparkVersions extends AutoPlugin {
     // Resolve aliases first
     val resolvedInput = input match {
       case "default" => SparkVersionSpec.DEFAULT.fullVersion
-      /*
       case "master" => SparkVersionSpec.MASTER match {
         case Some(masterSpec) => masterSpec.fullVersion
         case None => throw new IllegalArgumentException(
@@ -274,7 +284,6 @@ object CrossSparkVersions extends AutoPlugin {
           SparkVersionSpec.ALL_SPECS.map(_.fullVersion).mkString(", ")
         )
       }
-      */
       case other => other
     }
 
@@ -326,8 +335,7 @@ object CrossSparkVersions extends AutoPlugin {
     val baseSettings = Seq(
       scalaVersion := scala213,
       crossScalaVersions := Seq(scala213),
-      // For adding staged Spark RC versions, e.g.:
-      // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
+      resolvers ++= spec.additionalResolvers,
       Antlr4 / antlr4Version := spec.antlr4Version,
       Test / javaOptions ++= (Seq(s"-Dlog4j.configurationFile=${spec.log4jConfig}") ++ spec.additionalJavaOptions)
     )
