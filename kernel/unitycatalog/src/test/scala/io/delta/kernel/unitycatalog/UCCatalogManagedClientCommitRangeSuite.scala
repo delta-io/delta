@@ -157,7 +157,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
   }
 
   test(
-    "loadCommitRange returns no commit range if startVersion is greater than max ratified version") {
+    "loadCommitRange throws if startVersion is greater than max ratified version") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
@@ -168,7 +168,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
         startVersionOpt = Optional.of(9L))
     }
     assert(ex.getMessage.contains(
-      "no log files found in the requested version range"))
+      "Cannot load commit range with start version 9 as the latest version ratified by UC is 2"))
   }
 
   test("loadCommitRange throws if endVersion is greater than max ratified version") {
