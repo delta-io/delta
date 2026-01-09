@@ -29,9 +29,9 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.unitycatalog.adapters.IcebergAdapter;
 import io.delta.kernel.unitycatalog.adapters.MetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.ProtocolAdapter;
+import io.delta.kernel.unitycatalog.adapters.UniformAdapter;
 import io.delta.kernel.unitycatalog.metrics.UcCommitTelemetry;
 import io.delta.kernel.unitycatalog.metrics.UcPublishTelemetry;
 import io.delta.kernel.utils.CloseableIterator;
@@ -375,7 +375,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 false /* isDisown */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
-                IcebergAdapter.fromCommitterProperties(
+                UniformAdapter.fromCommitterProperties(
                     commitMetadata.getCommitterProperties().get()));
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {

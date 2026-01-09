@@ -24,13 +24,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Adapter for Delta Uniform Iceberg metadata to {@link UniformMetadata}.
+ * Adapter for Delta Uniform metadata to {@link UniformMetadata}.
  *
- * <p>This adapter extracts Iceberg metadata from committer properties and provides it in the format
- * expected by Unity Catalog.
+ * <p>This adapter extracts Uniform metadata (e.g., Iceberg) from committer properties and provides
+ * it in the format expected by Unity Catalog.
  */
-public class IcebergAdapter {
-  private static final Logger logger = LoggerFactory.getLogger(IcebergAdapter.class);
+public class UniformAdapter {
+  private static final Logger logger = LoggerFactory.getLogger(UniformAdapter.class);
 
   // Keys for extracting Iceberg metadata from committer properties
   public static final String ICEBERG_METADATA_LOCATION_KEY =
@@ -40,12 +40,12 @@ public class IcebergAdapter {
   public static final String ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY =
       "delta.uniform.iceberg.convertedDeltaTimestamp";
 
-  private IcebergAdapter() {
+  private UniformAdapter() {
     // Private constructor to prevent instantiation
   }
 
   /**
-   * Extracts Iceberg metadata from committer properties.
+   * Extracts Uniform metadata from committer properties.
    *
    * @param properties the committer properties map
    * @return an Optional containing the UniformMetadata if all required fields are present,

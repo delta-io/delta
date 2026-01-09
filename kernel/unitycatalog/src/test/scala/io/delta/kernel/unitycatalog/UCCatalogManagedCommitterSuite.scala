@@ -29,7 +29,7 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
-import io.delta.kernel.unitycatalog.adapters.IcebergAdapter
+import io.delta.kernel.unitycatalog.adapters.UniformAdapter
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -250,9 +250,9 @@ class UCCatalogManagedCommitterSuite
 
       // ===== WHEN =====
       val icebergProperties = Map(
-        IcebergAdapter.ICEBERG_METADATA_LOCATION_KEY -> "s3://bucket/table/metadata/v1.json",
-        IcebergAdapter.ICEBERG_CONVERTED_DELTA_VERSION_KEY -> "1044",
-        IcebergAdapter.ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY -> "2025-01-04T03:13:11.423").asJava
+        UniformAdapter.ICEBERG_METADATA_LOCATION_KEY -> "s3://bucket/table/metadata/v1.json",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_VERSION_KEY -> "1044",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY -> "2025-01-04T03:13:11.423").asJava
 
       val commitMetadata = createCommitMetadata(
         version = 1,
