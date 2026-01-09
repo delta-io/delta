@@ -176,6 +176,7 @@ class IcebergRESTCatalogPlanningClient(
     val requestJson = PlanTableScanRequestParser.toJson(request)
     val httpPost = new HttpPost(planTableScanUri)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
+    // Set User-Agent header, e.g., "Delta-ServerSidePlanning/4.1.0-SNAPSHOT"
     httpPost.setHeader("User-Agent", s"Delta-ServerSidePlanning/${BuildInfo.version}")
     // TODO: Add retry logic for transient HTTP failures (e.g., connection timeouts, 5xx errors)
     val httpResponse = httpClient.execute(httpPost)
