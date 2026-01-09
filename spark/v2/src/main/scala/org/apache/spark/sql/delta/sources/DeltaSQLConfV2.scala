@@ -43,5 +43,12 @@ object DeltaSQLConfV2 extends DeltaSQLConfUtils {
       .stringConf
       .checkValues(Set("NONE", "STRICT"))
       .createWithDefault("NONE")
+
+  val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
+    buildConf("streaming.initialSnapshotMaxFiles")
+      .internal()
+      .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
+      .intConf
+      .createWithDefault(50000)
 }
 

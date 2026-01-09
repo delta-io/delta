@@ -47,6 +47,7 @@ import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSQLConfV2;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
@@ -2216,5 +2217,54 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         expectedVersion,
         dsv2Result,
         String.format("DSv2 getStartingVersion should match for %s", testDescription));
+  }
+
+  @Test
+  public void testMemoryProtection_initialSnapshotTooLarge(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_memory_protection_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // At version 5, there will be at least 25 files.
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 10,
+        /* rowsPerVersion= */ 5,
+        /* includeEmptyVersion= */ false);
+
+    String configKey = DeltaSQLConfV2.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    spark.conf().set(configKey, "5");
+
+    try {
+      Configuration hadoopConf = new Configuration();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = 5L;
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      RuntimeException exception =
+          assertThrows(
+              RuntimeException.class,
+              () -> {
+                try (CloseableIterator<IndexedFile> iter =
+                    stream.getFileChanges(
+                        version, fromIndex, isInitialSnapshot, Optional.empty())) {
+                  while (iter.hasNext()) {
+                    iter.next();
+                  }
+                }
+              });
+
+      String errorMessage = exception.getMessage();
+      assertTrue(errorMessage.contains("DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE"));
+      assertTrue(
+          errorMessage.contains("initial snapshot") || errorMessage.contains("Initial snapshot"));
+    } finally {
+      spark.conf().unset(configKey);
+    }
   }
 }

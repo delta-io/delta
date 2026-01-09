@@ -2576,6 +2576,13 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE" : {
+    "message" : [
+      "Initial snapshot for Delta streaming at table '<tablePath>' (version <snapshotVersion>) contains <numFiles> files, which exceeds the maximum allowed <maxFiles> files.",
+      "<suggestions>"
+    ],
+    "sqlState" : "54000"
+  },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
       "Unable to enable Change Data Capture on the table. The table already contains",
