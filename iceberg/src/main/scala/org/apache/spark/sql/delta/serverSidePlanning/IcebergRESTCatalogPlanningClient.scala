@@ -325,6 +325,42 @@ class IcebergRESTCatalogPlanningClient(
         azureContainerName.isDefined
       val gcsComplete = gcsOAuth2Token.isDefined
 
+      // Check for partial credentials and provide helpful error messages
+      val s3Partial = s3AccessKeyId.isDefined || s3SecretAccessKey.isDefined ||
+        s3SessionToken.isDefined
+      val azurePartial = azureAccountName.isDefined || azureSasToken.isDefined ||
+        azureContainerName.isDefined
+      val gcsPartial = gcsOAuth2Token.isDefined
+
+      // If we have partial credentials, throw error indicating missing properties
+      if (s3Partial && !s3Complete) {
+        val missing = Seq(
+          if (s3AccessKeyId.isEmpty) "s3.access-key-id" else null,
+          if (s3SecretAccessKey.isEmpty) "s3.secret-access-key" else null,
+          if (s3SessionToken.isEmpty) "s3.session-token" else null
+        ).filter(_ != null)
+        throw new IllegalStateException(
+          s"Incomplete S3 credentials in server response. " +
+          s"Missing properties: ${missing.mkString(", ")}"
+        )
+      }
+      if (azurePartial && !azureComplete) {
+        val missing = Seq(
+          if (azureAccountName.isEmpty) "azure.account-name" else null,
+          if (azureSasToken.isEmpty) "azure.sas-token" else null,
+          if (azureContainerName.isEmpty) "azure.container-name" else null
+        ).filter(_ != null)
+        throw new IllegalStateException(
+          s"Incomplete Azure credentials in server response. " +
+          s"Missing properties: ${missing.mkString(", ")}"
+        )
+      }
+      if (gcsPartial && !gcsComplete) {
+        throw new IllegalStateException(
+          "Incomplete GCS credentials in server response. Missing property: gcs.oauth2.token"
+        )
+      }
+
       // Construct appropriate subclass based on which provider has credentials
       // Prioritize in order: S3, Azure, GCS (if multiple somehow present)
       if (s3Complete) {
@@ -344,6 +380,7 @@ class IcebergRESTCatalogPlanningClient(
           oauth2Token = gcsOAuth2Token.get
         ))
       } else {
+        // No credentials present at all (which is OK)
         None
       }
 
