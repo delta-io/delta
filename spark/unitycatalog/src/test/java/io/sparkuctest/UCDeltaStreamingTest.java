@@ -47,6 +47,7 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 
@@ -57,6 +58,8 @@ import scala.collection.immutable.Seq;
  * Catalog.
  */
 public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
+  private static final String V2_ENABLE_MODE_KEY = "spark.databricks.delta.v2.enableMode";
+  private static final String V2_ENABLE_MODE_STRICT = "STRICT";
 
   /**
    * Creates a local temporary directory for checkpoint location. Checkpoint must be on local
@@ -146,6 +149,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
         tableType,
         (tableName) -> {
           SparkSession spark = spark();
+          Option<String> originalMode = spark.conf().getOption(V2_ENABLE_MODE_KEY);
           String queryName =
               "uc_streaming_read_"
                   + tableType.name().toLowerCase()
@@ -155,7 +159,18 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           List<List<String>> expected = new ArrayList<>();
 
           try {
-            Dataset<Row> input = spark.readStream().format("delta").table(tableName);
+            SparkSession writerSpark = spark.newSession();
+            restoreV2Mode(writerSpark, originalMode);
+
+            writerSpark
+                .sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName))
+                .collect();
+            expected.add(List.of("0", "seed"));
+
+            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
+
+            Dataset<Row> input =
+                spark.readStream().format("delta").option("startingVersion", "0").table(tableName);
             query =
                 input
                     .writeStream()
@@ -169,7 +184,9 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
             for (long i = 1; i <= 10; i += 1) {
               String value = "value_" + i;
-              sql("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value);
+              writerSpark
+                  .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
+                  .collect();
 
               query.processAllAvailable();
 
@@ -182,6 +199,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               query.awaitTermination();
             }
             spark.sql("DROP VIEW IF EXISTS " + queryName);
+            restoreV2Mode(spark, originalMode);
           }
         });
   }
@@ -208,5 +226,13 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     return JavaConverters.asScalaIteratorConverter(Arrays.asList(rows).iterator())
         .asScala()
         .toSeq();
+  }
+
+  private static void restoreV2Mode(SparkSession spark, Option<String> originalMode) {
+    if (originalMode.isDefined()) {
+      spark.conf().set(V2_ENABLE_MODE_KEY, originalMode.get());
+    } else {
+      spark.conf().unset(V2_ENABLE_MODE_KEY);
+    }
   }
 }
