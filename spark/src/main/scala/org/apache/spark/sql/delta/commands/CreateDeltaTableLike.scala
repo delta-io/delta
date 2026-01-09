@@ -136,8 +136,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     // If we have to update the catalog, use the correct schema and table properties, otherwise
     // empty out the schema and property information
     if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
-      // In the case we're creating a Delta table on an existing path and adopting the schema
-      val schema = if (table.schema.isEmpty) snapshot.schema else table.schema
       val truncationThreshold = spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD)
       val (truncatedSchema, additionalProperties) = UpdateCatalog.truncateSchemaIfNecessary(
