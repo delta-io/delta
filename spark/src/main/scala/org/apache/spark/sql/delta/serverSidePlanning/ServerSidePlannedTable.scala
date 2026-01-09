@@ -250,13 +250,6 @@ class ServerSidePlannedScan(
 
   override def toBatch: Batch = this
 
-  // Call the server-side planning API to get the scan plan with files AND credentials
-  private val scanPlan: ScanPlan = planningClient.planScan(
-    databaseName,
-    tableName,
-    combinedFilter,
-    projectionColumnNames)
-
   // Convert pushed filters to a single Spark Filter for the API call.
   // If no filters, pass None. If filters exist, combine them into a single filter.
   private val combinedFilter: Option[Filter] = {
@@ -279,6 +272,13 @@ class ServerSidePlannedScan(
       Some(requiredSchema.fieldNames.toSeq)
     }
   }
+
+  // Call the server-side planning API to get the scan plan with files AND credentials
+  private val scanPlan: ScanPlan = planningClient.planScan(
+    databaseName,
+    tableName,
+    combinedFilter,
+    projectionColumnNames)
 
   override def planInputPartitions(): Array[InputPartition] = {
     // Convert each file to an InputPartition

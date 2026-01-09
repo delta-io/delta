@@ -29,6 +29,7 @@ import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -271,64 +272,27 @@ class IcebergRESTCatalogPlanningClient(
    *   }]
    * }
    */
+  /**
+   * Extract storage credentials from response using sealed trait factory.
+   * Returns None if no credentials section exists.
+   * Throws IllegalStateException if credentials are incomplete or malformed.
+   */
   private def extractCredentials(responseBody: String): Option[ScanPlanStorageCredentials] = {
-    try {
-      implicit val formats: Formats = DefaultFormats
-      val json = parse(responseBody)
+    implicit val formats: Formats = DefaultFormats
+    val json = parse(responseBody)
 
-      // Extract config map, return None if no credentials section exists
-      val configMap = try {
-        val config = (json \ "storage-credentials")(0) \ "config"
-        config.extract[Map[String, String]]
-      } catch {
-        case _: Exception => return None
+    // Extract config map from storage-credentials[0].config
+    val config: Option[Map[String, String]] = try {
+      (json \ "storage-credentials")(0) \ "config" match {
+        case JNothing | JNull => None
+        case c => Some(c.extract[Map[String, String]])
       }
-
-      // Helper to get value from config map
-      def get(key: String): Option[String] = configMap.get(key).filter(_.nonEmpty)
-
-      // Helper to validate all required keys are present
-      def validateComplete(requiredKeys: Seq[String]): Unit = {
-        val presentKeys = requiredKeys.filter(get(_).isDefined)
-        if (presentKeys.nonEmpty && presentKeys.size < requiredKeys.size) {
-          val missing = requiredKeys.filterNot(get(_).isDefined)
-          throw new IllegalStateException(
-            s"Incomplete credentials in server response. " +
-            s"Missing properties: ${missing.mkString(", ")}")
-        }
-      }
-
-      // Try each credential type in priority order (S3, Azure, GCS)
-      // Using sealed trait pattern: each case represents one subtype
-      val s3Keys = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
-      validateComplete(s3Keys)
-      if (s3Keys.forall(get(_).isDefined)) {
-        return Some(S3Credentials(
-          accessKeyId = get("s3.access-key-id").get,
-          secretAccessKey = get("s3.secret-access-key").get,
-          sessionToken = get("s3.session-token").get))
-      }
-
-      val azureKeys = Seq("azure.account-name", "azure.sas-token", "azure.container-name")
-      validateComplete(azureKeys)
-      if (azureKeys.forall(get(_).isDefined)) {
-        return Some(AzureCredentials(
-          accountName = get("azure.account-name").get,
-          sasToken = get("azure.sas-token").get,
-          containerName = get("azure.container-name").get))
-      }
-
-      val gcsKeys = Seq("gcs.oauth2.token")
-      validateComplete(gcsKeys)
-      if (gcsKeys.forall(get(_).isDefined)) {
-        return Some(GcsCredentials(oauth2Token = get("gcs.oauth2.token").get))
-      }
-
-      None // No credentials present
     } catch {
-      case e: IllegalStateException => throw e // Propagate validation errors
-      case _: Exception => None // JSON parsing errors mean no credentials
+      case _: Exception => None // No credentials section in response
     }
+
+    // If config exists and is non-empty, use factory (throws on incomplete credentials)
+    config.filter(_.nonEmpty).map(ScanPlanStorageCredentials.fromConfig)
   }
 
   /**
