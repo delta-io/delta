@@ -78,12 +78,24 @@ class IcebergRESTCatalogPlanningClient(
 
   /**
    * Build User-Agent header with Delta and Spark version information.
-   * Format: "Delta-Lake/<version> Apache-Spark/<version>"
+   * Format: "Delta-ServerSidePlanning/<version> Spark/<version> Delta/<version>"
+   * Following Unity Catalog's User-Agent format pattern.
    */
   private def buildUserAgent(): String = {
-    val deltaVersion = getDeltaVersion().getOrElse("unknown")
+    val baseClient = s"Delta-ServerSidePlanning/${BuildInfo.version}"
     val sparkVersion = getSparkVersion().getOrElse("unknown")
-    s"Delta-Lake/$deltaVersion Apache-Spark/$sparkVersion"
+    val deltaVersion = getDeltaVersion().getOrElse("unknown")
+    s"$baseClient Spark/$sparkVersion Delta/$deltaVersion"
+  }
+
+  /**
+   * Get the User-Agent header value used by this client.
+   * Format: "Delta-ServerSidePlanning/<version> Spark/<version> Delta/<version>"
+   *
+   * @return The User-Agent string used in HTTP requests
+   */
+  def getUserAgent(): String = {
+    buildUserAgent()
   }
 
   /**
@@ -176,8 +188,6 @@ class IcebergRESTCatalogPlanningClient(
     val requestJson = PlanTableScanRequestParser.toJson(request)
     val httpPost = new HttpPost(planTableScanUri)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
-    // Set User-Agent header, e.g., "Delta-ServerSidePlanning/4.1.0-SNAPSHOT"
-    httpPost.setHeader("User-Agent", s"Delta-ServerSidePlanning/${BuildInfo.version}")
     // TODO: Add retry logic for transient HTTP failures (e.g., connection timeouts, 5xx errors)
     val httpResponse = httpClient.execute(httpPost)
 
