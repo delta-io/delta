@@ -57,26 +57,26 @@ object ServerSidePlannedTable extends DeltaLogging {
    * credential availability, and configuration.
    *
    * Decision logic:
-   * - Requires forceServerSidePlanning flag to be enabled (prevents accidental enablement)
+   * - Requires enableServerSidePlanning flag to be enabled (prevents accidental enablement)
    * - In production: Also requires Unity Catalog table that lacks credentials
-   * - In test mode: Only requires the force flag (allows testing without UC setup)
+   * - In test mode: Only requires the enable flag (allows testing without UC setup)
    * - Otherwise use normal table loading path
    *
-   * The logic is: ((isUnityCatalog && !hasCredentials) || skipUcRequirementForTesting) && forceFlag
+   * The logic is: ((isUnityCatalog && !hasCredentials) || skipUCRequirementForTests) && enableFlag
    *
    * @param isUnityCatalog Whether this is a Unity Catalog instance
    * @param hasCredentials Whether the table has credentials available
-   * @param forceServerSidePlanning Whether to force server-side planning (config flag)
-   * @param skipUcRequirementForTesting Whether to skip Unity Catalog requirement for testing
-   *                                     with non-UC tables
+   * @param enableServerSidePlanning Whether to enable server-side planning (config flag)
+   * @param skipUCRequirementForTests Whether to skip Unity Catalog requirement for testing
+   *                                   with non-UC tables
    * @return true if server-side planning should be used
    */
   private[serverSidePlanning] def shouldUseServerSidePlanning(
       isUnityCatalog: Boolean,
       hasCredentials: Boolean,
-      forceServerSidePlanning: Boolean,
-      skipUcRequirementForTesting: Boolean): Boolean = {
-    ((isUnityCatalog && !hasCredentials) || skipUcRequirementForTesting) && forceServerSidePlanning
+      enableServerSidePlanning: Boolean,
+      skipUCRequirementForTests: Boolean): Boolean = {
+    ((isUnityCatalog && !hasCredentials) || skipUCRequirementForTests) && enableServerSidePlanning
   }
 
   /**
@@ -85,7 +85,7 @@ object ServerSidePlannedTable extends DeltaLogging {
    *
    * This method encapsulates all the logic to decide whether to use server-side planning:
    * - Checks if Unity Catalog table lacks credentials
-   * - Checks if server-side planning is forced via config (required for all cases)
+   * - Checks if server-side planning is enabled via config (required for all cases)
    * - In test mode, Unity Catalog check is bypassed to allow testing
    * - Extracts catalog name and table identifiers
    * - Attempts to create the planning client
@@ -104,15 +104,15 @@ object ServerSidePlannedTable extends DeltaLogging {
       ident: Identifier,
       table: Table,
       isUnityCatalog: Boolean): Option[ServerSidePlannedTable] = {
-    // Check if we should force server-side planning (for testing)
-    val forceServerSidePlanning =
+    // Check if we should enable server-side planning (for testing)
+    val enableServerSidePlanning =
       spark.conf.get(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false").toBoolean
     val hasTableCredentials = hasCredentials(table)
 
     // Check if we should use server-side planning
     if (shouldUseServerSidePlanning(
-        isUnityCatalog, hasTableCredentials, forceServerSidePlanning,
-        skipUcRequirementForTesting = DeltaUtils.isTesting)) {
+        isUnityCatalog, hasTableCredentials, enableServerSidePlanning,
+        skipUCRequirementForTests = DeltaUtils.isTesting)) {
       val namespace = ident.namespace().mkString(".")
       val tableName = ident.name()
 

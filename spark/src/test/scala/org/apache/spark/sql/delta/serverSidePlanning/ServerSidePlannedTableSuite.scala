@@ -142,85 +142,40 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
   }
 
   test("shouldUseServerSidePlanning() decision logic") {
-    case class TestCase(
-      isUnityCatalog: Boolean,
-      hasCredentials: Boolean,
-      forceServerSidePlanning: Boolean,
-      skipUcRequirementForTesting: Boolean,
-      expectSSPEnabled: Boolean,  // Expected output from shouldUseServerSidePlanning()
-      description: String
-    )
+    // Test production mode: skipUCRequirementForTests = false
+    // Logic: (isUnityCatalog && !hasCredentials) && enableServerSidePlanning
+    for (isUC <- Seq(true, false)) {
+      for (hasCreds <- Seq(true, false)) {
+        for (enableSSP <- Seq(true, false)) {
+          val expected = (isUC && !hasCreds) && enableSSP
+          val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
+            isUnityCatalog = isUC,
+            hasCredentials = hasCreds,
+            enableServerSidePlanning = enableSSP,
+            skipUCRequirementForTests = false
+          )
+          val description = s"Production: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
+          assert(result == expected, s"$description -> expected $expected but got $result")
+        }
+      }
+    }
 
-    val testCases = Seq(
-      // Production mode tests (skipUcRequirementForTesting = false)
-      TestCase(
-        isUnityCatalog = true,
-        hasCredentials = false,
-        forceServerSidePlanning = true,
-        skipUcRequirementForTesting = false,
-        expectSSPEnabled = true,
-        description = "Production: UC without credentials + force flag -> use SSP"
-      ),
-      TestCase(
-        isUnityCatalog = true,
-        hasCredentials = true,
-        forceServerSidePlanning = true,
-        skipUcRequirementForTesting = false,
-        expectSSPEnabled = false,
-        description = "Production: UC with credentials -> do NOT use SSP"
-      ),
-      TestCase(
-        isUnityCatalog = false,
-        hasCredentials = false,
-        forceServerSidePlanning = true,
-        skipUcRequirementForTesting = false,
-        expectSSPEnabled = false,
-        description = "Production: Should NOT use server-side planning for non-UC table"
-      ),
-      TestCase(
-        isUnityCatalog = true,
-        hasCredentials = false,
-        forceServerSidePlanning = false,
-        skipUcRequirementForTesting = false,
-        expectSSPEnabled = false,
-        description = "Production: Should NOT use server-side planning without force flag"
-      ),
-
-      // Test mode tests (skipUcRequirementForTesting = true)
-      TestCase(
-        isUnityCatalog = false,
-        hasCredentials = true,
-        forceServerSidePlanning = true,
-        skipUcRequirementForTesting = true,
-        expectSSPEnabled = true,
-        description = "Test mode: Non-UC + force flag -> use SSP (bypasses UC check)"
-      ),
-      TestCase(
-        isUnityCatalog = true,
-        hasCredentials = false,
-        forceServerSidePlanning = true,
-        skipUcRequirementForTesting = true,
-        expectSSPEnabled = true,
-        description = "Test mode: UC without credentials + force flag -> use SSP"
-      ),
-      TestCase(
-        isUnityCatalog = false,
-        hasCredentials = false,
-        forceServerSidePlanning = false,
-        skipUcRequirementForTesting = true,
-        expectSSPEnabled = false,
-        description = "Test mode: Should NOT use server-side planning without force flag"
-      )
-    )
-
-    testCases.foreach { testCase =>
-      val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
-        testCase.isUnityCatalog,
-        testCase.hasCredentials,
-        testCase.forceServerSidePlanning,
-        testCase.skipUcRequirementForTesting
-      )
-      assert(result == testCase.expectSSPEnabled, testCase.description)
+    // Test test mode: skipUCRequirementForTests = true
+    // Logic: true && enableServerSidePlanning = enableServerSidePlanning
+    for (isUC <- Seq(true, false)) {
+      for (hasCreds <- Seq(true, false)) {
+        for (enableSSP <- Seq(true, false)) {
+          val expected = enableSSP
+          val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
+            isUnityCatalog = isUC,
+            hasCredentials = hasCreds,
+            enableServerSidePlanning = enableSSP,
+            skipUCRequirementForTests = true
+          )
+          val description = s"Test mode: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
+          assert(result == expected, s"$description -> expected $expected but got $result")
+        }
+      }
     }
   }
 
