@@ -31,9 +31,8 @@ case class ScanFile(
 
 /**
  * Temporary storage credentials from server-side planning response.
- * Exactly one cloud provider must have credentials (enforced by sealed trait structure).
  */
-sealed trait StorageCredentials
+sealed trait ScanPlanStorageCredentials
 
 /**
  * AWS S3 temporary credentials.
@@ -42,7 +41,7 @@ case class S3Credentials(
   accessKeyId: String,
   secretAccessKey: String,
   sessionToken: String
-) extends StorageCredentials
+) extends ScanPlanStorageCredentials
 
 /**
  * Azure ADLS Gen2 credentials with SAS token.
@@ -51,21 +50,21 @@ case class AzureCredentials(
   accountName: String,
   sasToken: String,
   containerName: String
-) extends StorageCredentials
+) extends ScanPlanStorageCredentials
 
 /**
  * Google Cloud Storage OAuth2 token credentials.
  */
 case class GcsCredentials(
   oauth2Token: String
-) extends StorageCredentials
+) extends ScanPlanStorageCredentials
 
 /**
  * Result of a table scan plan operation.
  */
 case class ScanPlan(
   files: Seq[ScanFile],
-  credentials: Option[StorageCredentials] = None
+  credentials: Option[ScanPlanStorageCredentials] = None
 )
 
 /**

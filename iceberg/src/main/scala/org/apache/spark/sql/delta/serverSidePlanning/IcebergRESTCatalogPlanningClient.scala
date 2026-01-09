@@ -279,13 +279,18 @@ class IcebergRESTCatalogPlanningClient(
    *   }]
    * }
    */
-  private def extractCredentials(responseBody: String): Option[StorageCredentials] = {
-    Try {
+  private def extractCredentials(responseBody: String): Option[ScanPlanStorageCredentials] = {
+    try {
       implicit val formats: Formats = DefaultFormats
       val json = parse(responseBody)
 
       // Navigate to storage-credentials[0].config
-      val config = (json \ "storage-credentials")(0) \ "config"
+      // If no credentials section exists, return None (this is OK)
+      val config = try {
+        (json \ "storage-credentials")(0) \ "config"
+      } catch {
+        case _: Exception => return None
+      }
 
       // Extract all credential types (any or all may be present)
       val s3AccessKeyId = (config \ "s3.access-key-id") match {
@@ -334,6 +339,7 @@ class IcebergRESTCatalogPlanningClient(
       val gcsPartial = gcsOAuth2Token.isDefined
 
       // If we have partial credentials, throw error indicating missing properties
+      // These errors should propagate to caller
       if (s3Partial && !s3Complete) {
         val missing = Seq(
           if (s3AccessKeyId.isEmpty) "s3.access-key-id" else null,
@@ -384,8 +390,14 @@ class IcebergRESTCatalogPlanningClient(
         // No credentials present at all (which is OK)
         None
       }
-
-    }.toOption.flatten
+    } catch {
+      case e: IllegalStateException =>
+        // Re-throw validation errors - incomplete credentials are a real error
+        throw e
+      case _: Exception =>
+        // JSON parsing errors mean no credentials present, which is OK
+        None
+    }
   }
 
   /**
