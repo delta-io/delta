@@ -328,27 +328,19 @@ class ServerSidePlannedFilePartitionReaderFactory(
 
     // Inject temporary credentials from IRC server response
     credentials.foreach { creds =>
-      // AWS S3 credentials
-      if (creds.hasS3Credentials) {
-        conf.set("fs.s3a.access.key", creds.s3AccessKeyId.get)
-        conf.set("fs.s3a.secret.key", creds.s3SecretAccessKey.get)
-        conf.set("fs.s3a.session.token", creds.s3SessionToken.get)
-      }
+      creds match {
+        case S3Credentials(accessKeyId, secretAccessKey, sessionToken) =>
+          conf.set("fs.s3a.access.key", accessKeyId)
+          conf.set("fs.s3a.secret.key", secretAccessKey)
+          conf.set("fs.s3a.session.token", sessionToken)
 
-      // Azure ADLS Gen2 credentials (SAS token)
-      if (creds.hasAzureCredentials) {
-        val accountName = creds.azureAccountName.get
-        val containerName = creds.azureContainerName.get
-        val sasToken = creds.azureSasToken.get
+        case AzureCredentials(accountName, sasToken, containerName) =>
+          // Format: fs.azure.sas.<container>.<account>.dfs.core.windows.net
+          val sasKey = s"fs.azure.sas.$containerName.$accountName.dfs.core.windows.net"
+          conf.set(sasKey, sasToken)
 
-        // Format: fs.azure.sas.<container>.<account>.dfs.core.windows.net
-        val sasKey = s"fs.azure.sas.$containerName.$accountName.dfs.core.windows.net"
-        conf.set(sasKey, sasToken)
-      }
-
-      // Google Cloud Storage credentials (OAuth2 token)
-      if (creds.hasGcsCredentials) {
-        conf.set("fs.gs.auth.access.token", creds.gcsOAuth2Token.get)
+        case GcsCredentials(oauth2Token) =>
+          conf.set("fs.gs.auth.access.token", oauth2Token)
       }
     }
 

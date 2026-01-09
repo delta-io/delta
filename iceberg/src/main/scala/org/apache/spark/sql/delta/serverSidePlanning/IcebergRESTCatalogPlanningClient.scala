@@ -159,7 +159,11 @@ class IcebergRESTCatalogPlanningClient(
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
-    val builder = new PlanTableScanRequest.Builder().withSnapshotId(CURRENT_SNAPSHOT_ID)
+    // Explicitly set caseSensitive to false (defaults to true in spec) because Spark doesn't
+    // support case-sensitive columns and the server will block requests with caseSensitive=true
+    val builder = new PlanTableScanRequest.Builder()
+      .withSnapshotId(CURRENT_SNAPSHOT_ID)
+      .withCaseSensitive(false)
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
     sparkFilterOption.foreach { sparkFilter =>
@@ -314,20 +318,31 @@ class IcebergRESTCatalogPlanningClient(
         case value => Some(value.extract[String])
       }
 
-      // Return credentials if ANY provider has credentials
-      val creds = StorageCredentials(
-        s3AccessKeyId = s3AccessKeyId,
-        s3SecretAccessKey = s3SecretAccessKey,
-        s3SessionToken = s3SessionToken,
-        azureAccountName = azureAccountName,
-        azureSasToken = azureSasToken,
-        azureContainerName = azureContainerName,
-        gcsOAuth2Token = gcsOAuth2Token
-      )
+      // Check which cloud provider has complete credentials
+      val s3Complete = s3AccessKeyId.isDefined && s3SecretAccessKey.isDefined &&
+        s3SessionToken.isDefined
+      val azureComplete = azureAccountName.isDefined && azureSasToken.isDefined &&
+        azureContainerName.isDefined
+      val gcsComplete = gcsOAuth2Token.isDefined
 
-      // Only return if at least one cloud provider has credentials
-      if (creds.hasS3Credentials || creds.hasAzureCredentials || creds.hasGcsCredentials) {
-        Some(creds)
+      // Construct appropriate subclass based on which provider has credentials
+      // Prioritize in order: S3, Azure, GCS (if multiple somehow present)
+      if (s3Complete) {
+        Some(S3Credentials(
+          accessKeyId = s3AccessKeyId.get,
+          secretAccessKey = s3SecretAccessKey.get,
+          sessionToken = s3SessionToken.get
+        ))
+      } else if (azureComplete) {
+        Some(AzureCredentials(
+          accountName = azureAccountName.get,
+          sasToken = azureSasToken.get,
+          containerName = azureContainerName.get
+        ))
+      } else if (gcsComplete) {
+        Some(GcsCredentials(
+          oauth2Token = gcsOAuth2Token.get
+        ))
       } else {
         None
       }

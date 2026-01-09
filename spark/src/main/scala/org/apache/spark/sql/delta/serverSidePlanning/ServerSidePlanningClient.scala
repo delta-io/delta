@@ -31,31 +31,34 @@ case class ScanFile(
 
 /**
  * Temporary storage credentials from server-side planning response.
- * Supports AWS S3, Azure ADLS Gen2, and Google Cloud Storage.
+ * Exactly one cloud provider must have credentials (enforced by sealed trait structure).
  */
-case class StorageCredentials(
-  // AWS S3 credentials
-  s3AccessKeyId: Option[String] = None,
-  s3SecretAccessKey: Option[String] = None,
-  s3SessionToken: Option[String] = None,
+sealed trait StorageCredentials
 
-  // Azure ADLS Gen2 credentials
-  azureAccountName: Option[String] = None,
-  azureSasToken: Option[String] = None,
-  azureContainerName: Option[String] = None,
+/**
+ * AWS S3 temporary credentials.
+ */
+case class S3Credentials(
+  accessKeyId: String,
+  secretAccessKey: String,
+  sessionToken: String
+) extends StorageCredentials
 
-  // Google Cloud Storage credentials
-  gcsOAuth2Token: Option[String] = None
-) {
-  def hasS3Credentials: Boolean =
-    s3AccessKeyId.isDefined && s3SecretAccessKey.isDefined && s3SessionToken.isDefined
+/**
+ * Azure ADLS Gen2 credentials with SAS token.
+ */
+case class AzureCredentials(
+  accountName: String,
+  sasToken: String,
+  containerName: String
+) extends StorageCredentials
 
-  def hasAzureCredentials: Boolean =
-    azureAccountName.isDefined && azureSasToken.isDefined && azureContainerName.isDefined
-
-  def hasGcsCredentials: Boolean =
-    gcsOAuth2Token.isDefined
-}
+/**
+ * Google Cloud Storage OAuth2 token credentials.
+ */
+case class GcsCredentials(
+  oauth2Token: String
+) extends StorageCredentials
 
 /**
  * Result of a table scan plan operation.
