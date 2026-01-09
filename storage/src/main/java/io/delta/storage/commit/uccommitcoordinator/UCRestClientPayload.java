@@ -18,16 +18,15 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.delta.storage.commit.Commit;
-import io.delta.storage.commit.actions.AbstractIceberg;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Container for internal REST classes used by UCTokenBasedRestClient.
@@ -202,22 +201,22 @@ class UCRestClientPayload {
   }
 
   // ==============================
-  // DeltaUniformIceberg Class
+  // IcebergMetadata Class
   // ==============================
-  static class DeltaUniformIceberg {
+  static class IcebergMetadata {
     String metadataLocation;
     Long convertedDeltaVersion;
     String convertedDeltaTimestamp;
 
-    static DeltaUniformIceberg fromAbstractIceberg(AbstractIceberg externalIceberg) {
-      if (externalIceberg == null) {
-        throw new IllegalArgumentException("externalIceberg cannot be null");
+    static IcebergMetadata fromIcebergMetadata(io.delta.storage.commit.uniform.IcebergMetadata icebergMetadata) {
+      if (icebergMetadata == null) {
+        throw new IllegalArgumentException("icebergMetadata cannot be null");
       }
 
-      DeltaUniformIceberg iceberg = new DeltaUniformIceberg();
-      iceberg.metadataLocation = externalIceberg.getMetadataLocation();
-      iceberg.convertedDeltaVersion = externalIceberg.getConvertedDeltaVersion();
-      iceberg.convertedDeltaTimestamp = externalIceberg.getConvertedDeltaTimestamp();
+      IcebergMetadata iceberg = new IcebergMetadata();
+      iceberg.metadataLocation = icebergMetadata.getMetadataLocation();
+      iceberg.convertedDeltaVersion = icebergMetadata.getConvertedDeltaVersion();
+      iceberg.convertedDeltaTimestamp = icebergMetadata.getConvertedDeltaTimestamp();
       return iceberg;
     }
   }
@@ -227,13 +226,12 @@ class UCRestClientPayload {
   // ==============================
   static class Uniform {
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    DeltaUniformIceberg iceberg;
+    IcebergMetadata iceberg;
 
-    static Uniform fromAbstractIceberg(Optional<AbstractIceberg> externalIcebergOpt) {
+    static Uniform fromUniformMetadata(UniformMetadata uniformMetadata) {
       Uniform uniform = new Uniform();
-      if (externalIcebergOpt.isPresent()) {
-        uniform.iceberg = DeltaUniformIceberg.fromAbstractIceberg(externalIcebergOpt.get());
-      }
+      uniformMetadata.getIcebergMetadata().ifPresent(
+          icebergMeta -> uniform.iceberg = IcebergMetadata.fromIcebergMetadata(icebergMeta));
       return uniform;
     }
   }

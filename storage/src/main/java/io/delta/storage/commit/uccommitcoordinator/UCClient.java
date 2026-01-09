@@ -19,9 +19,9 @@ package io.delta.storage.commit.uccommitcoordinator;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
-import io.delta.storage.commit.actions.AbstractIceberg;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 
 import java.io.IOException;
 import java.net.URI;
@@ -77,8 +77,9 @@ public interface UCClient extends AutoCloseable {
    *                    If present, the table's metadata will be updated atomically with the commit.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
-   * @param icebergMetadata An Optional containing Iceberg metadata for Delta Uniform Iceberg support.
-   *                        If present, this metadata will be used by UC to manage Iceberg conversion.
+   * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
+   *                If present, this metadata will be used by UC to manage format conversions
+   *                (e.g., Iceberg, Hudi).
    * @throws IOException if there's an error during the commit process, such as network issues.
    * @throws CommitFailedException if the commit fails due to conflicts or other logical errors.
    * @throws UCCommitCoordinatorException if there's an error specific to the Unity Catalog
@@ -92,7 +93,7 @@ public interface UCClient extends AutoCloseable {
       boolean disown,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> newProtocol,
-      Optional<AbstractIceberg> icebergMetadata
+      Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException;
 
   /**

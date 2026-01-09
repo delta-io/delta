@@ -16,21 +16,20 @@
 
 package io.delta.kernel.unitycatalog.adapters;
 
-import io.delta.storage.commit.actions.AbstractIceberg;
+import io.delta.storage.commit.uniform.IcebergMetadata;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Adapter for Delta Uniform Iceberg metadata to {@link
- * io.delta.storage.commit.actions.AbstractIceberg}.
+ * Adapter for Delta Uniform Iceberg metadata to {@link UniformMetadata}.
  *
  * <p>This adapter extracts Iceberg metadata from committer properties and provides it in the format
  * expected by Unity Catalog.
  */
-public class IcebergAdapter implements AbstractIceberg {
+public class IcebergAdapter {
   private static final Logger logger = LoggerFactory.getLogger(IcebergAdapter.class);
 
   // Keys for extracting Iceberg metadata from committer properties
@@ -41,26 +40,18 @@ public class IcebergAdapter implements AbstractIceberg {
   public static final String ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY =
       "delta.uniform.iceberg.convertedDeltaTimestamp";
 
-  private final String metadataLocation;
-  private final long convertedDeltaVersion;
-  private final String convertedDeltaTimestamp;
-
-  private IcebergAdapter(
-      String metadataLocation, long convertedDeltaVersion, String convertedDeltaTimestamp) {
-    this.metadataLocation = Objects.requireNonNull(metadataLocation, "metadataLocation is null");
-    this.convertedDeltaVersion = convertedDeltaVersion;
-    this.convertedDeltaTimestamp =
-        Objects.requireNonNull(convertedDeltaTimestamp, "convertedDeltaTimestamp is null");
+  private IcebergAdapter() {
+    // Private constructor to prevent instantiation
   }
 
   /**
    * Extracts Iceberg metadata from committer properties.
    *
    * @param properties the committer properties map
-   * @return an Optional containing the IcebergAdapter if all required fields are present,
+   * @return an Optional containing the UniformMetadata if all required fields are present,
    *     Optional.empty() otherwise
    */
-  public static Optional<AbstractIceberg> fromCommitterProperties(Map<String, String> properties) {
+  public static Optional<UniformMetadata> fromCommitterProperties(Map<String, String> properties) {
     if (properties == null || properties.isEmpty()) {
       return Optional.empty();
     }
@@ -76,27 +67,13 @@ public class IcebergAdapter implements AbstractIceberg {
 
     try {
       long convertedVersion = Long.parseLong(convertedVersionStr);
-      return Optional.of(
-          new IcebergAdapter(metadataLocation, convertedVersion, convertedTimestamp));
+      IcebergMetadata icebergMetadata =
+          new IcebergMetadata(metadataLocation, convertedVersion, convertedTimestamp);
+      return Optional.of(new UniformMetadata(icebergMetadata));
     } catch (NumberFormatException e) {
       logger.warn(
           "Invalid converted delta version in committer properties: {}", convertedVersionStr, e);
       return Optional.empty();
     }
-  }
-
-  @Override
-  public String getMetadataLocation() {
-    return metadataLocation;
-  }
-
-  @Override
-  public long getConvertedDeltaVersion() {
-    return convertedDeltaVersion;
-  }
-
-  @Override
-  public String getConvertedDeltaTimestamp() {
-    return convertedDeltaTimestamp;
   }
 }

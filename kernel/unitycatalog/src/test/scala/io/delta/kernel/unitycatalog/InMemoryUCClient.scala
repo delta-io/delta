@@ -25,8 +25,9 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse}
-import io.delta.storage.commit.actions.{AbstractIceberg, AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 object InMemoryUCClient {
 
@@ -44,7 +45,7 @@ object InMemoryUCClient {
     // For test only, since UC doesn't store these as top-level entities.
     private var currentProtocolOpt: Option[AbstractProtocol] = None
     private var currentMetadataOpt: Option[AbstractMetadata] = None
-    private var currentIcebergOpt: Option[AbstractIceberg] = None
+    private var currentIcebergOpt: Option[IcebergMetadata] = None
 
     /** @return the maximum ratified version. */
     def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
@@ -71,12 +72,12 @@ object InMemoryUCClient {
     def getCurrentMetadataOpt: Option[AbstractMetadata] = synchronized { currentMetadataOpt }
 
     /** @return the current Iceberg metadata. For test only. */
-    def getCurrentIcebergOpt: Option[AbstractIceberg] = synchronized {
+    def getCurrentIcebergOpt: Option[IcebergMetadata] = synchronized {
       currentIcebergOpt
     }
 
     /** Updates the Iceberg metadata. */
-    def updateIcebergMetadata(icebergMetadata: AbstractIceberg): Unit = synchronized {
+    def updateIcebergMetadata(icebergMetadata: IcebergMetadata): Unit = synchronized {
       currentIcebergOpt = Some(icebergMetadata)
     }
 
@@ -155,7 +156,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       disown,
       newMetadata,
       newProtocol,
-      Optional.empty() /* icebergMetadata */ )
+      Optional.empty() /* uniform */ )
   }
 
   override def commit(
@@ -166,7 +167,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
       newProtocol: Optional[AbstractProtocol],
-      icebergMetadata: Optional[AbstractIceberg]): Unit = {
+      uniform: Optional[UniformMetadata]): Unit = {
     forceThrowInCommitMethod()
 
     if (disown) {
@@ -184,9 +185,11 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
         tableData.forceRemoveCommitsUpToVersion(lastKnownBackfilledVersion)
       }
 
-      // Update Iceberg metadata if provided
-      icebergMetadata.ifPresent { iceberg =>
-        tableData.updateIcebergMetadata(iceberg)
+      // Update Iceberg metadata if provided in uniform
+      uniform.ifPresent { u =>
+        u.getIcebergMetadata.ifPresent { iceberg =>
+          tableData.updateIcebergMetadata(iceberg)
+        }
       }
     }
   }
