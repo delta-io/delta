@@ -24,7 +24,6 @@ import java.util.{Collections, Optional, UUID}
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsJava, SeqHasAsJava}
 import scala.util.Random
 
-import io.delta.flink.table.AbstractKernelTable
 import io.delta.kernel.{Operation, Snapshot, Table, TableManager}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
