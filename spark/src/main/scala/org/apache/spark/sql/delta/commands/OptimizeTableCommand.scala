@@ -310,7 +310,7 @@ class OptimizeExecutor(
       }
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
-      val jobs = groupFilesIntoBins(partitionsToCompact)
+      val jobs = groupFilesIntoBins(partitionsToCompact, maxDeletedRowsRatio)
 
       val batchResults = batchSize match {
         case Some(size) =>
@@ -354,6 +354,15 @@ class OptimizeExecutor(
     }
   }
 
+  private def shouldCompactBecauseOfDeletedRows(
+      file: AddFile, maxDeletedRowsRatio: Double): Boolean = {
+    // Always compact files with DVs but without numRecords stats.
+    // This may be overly aggressive, but it fixes the problem in the long-term,
+    // as the compacted files will have stats.
+    (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
+        file.deletedToPhysicalRecordsRatio.getOrElse(0d) > maxDeletedRowsRatio
+  }
+
   /**
    * Helper method to prune the list of selected files based on fileSize and ratio of
    * deleted rows according to the deletion vector in [[AddFile]].
@@ -364,17 +373,10 @@ class OptimizeExecutor(
     // Select all files in case of multi-dimensional clustering
     if (isMultiDimClustering) return files
 
-    def shouldCompactBecauseOfDeletedRows(file: AddFile): Boolean = {
-      // Always compact files with DVs but without numRecords stats.
-      // This may be overly aggressive, but it fixes the problem in the long-term,
-      // as the compacted files will have stats.
-      (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
-          file.deletedToPhysicalRecordsRatio.getOrElse(0d) > maxDeletedRowsRatio
-    }
-
     // Select files that are small or have too many deleted rows
     files.filter(
-      addFile => addFile.size < minFileSize || shouldCompactBecauseOfDeletedRows(addFile))
+      addFile => addFile.size < minFileSize ||
+        shouldCompactBecauseOfDeletedRows(addFile, maxDeletedRowsRatio))
   }
 
   /**
@@ -386,7 +388,8 @@ class OptimizeExecutor(
    *         partition and targeted for one output file.
    */
   private def groupFilesIntoBins(
-      partitionsToCompact: Seq[(Map[String, String], Seq[AddFile])])
+      partitionsToCompact: Seq[(Map[String, String], Seq[AddFile])],
+      maxDeletedRowsRatio: Double)
   : Seq[Bin] = {
     val maxBinSize = optimizeStrategy.maxBinSize
     partitionsToCompact.flatMap {
@@ -422,8 +425,11 @@ class OptimizeExecutor(
         }
 
         bins.filter { bin =>
+          val singleFileRewrite = bin.size == 1 && (optimizeContext.reorg.nonEmpty ||
+            shouldCompactBecauseOfDeletedRows(bin.head, maxDeletedRowsRatio))
+
           bin.size > 1 || // bin has more than one file or
-          bin.size == 1 && optimizeContext.reorg.nonEmpty || // always rewrite files during reorg
+          singleFileRewrite || // always rewrite files during reorg or deletion vector cleanup
           isMultiDimClustering // multi-clustering
         }.map(b => Bin(partition, b))
     }
