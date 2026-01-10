@@ -48,8 +48,8 @@ class DeltaV2Mode(sqlConf: SQLConf) {
   def isStreamingReadsEnabled(catalogTable: Option[CatalogTable]): Boolean = {
     mode match {
       case "STRICT" =>
-        // Always use sparkV2 connector for all Delta tables with catalog metadata
-        catalogTable.isDefined
+        // Always use sparkV2 connector for all catalog tables
+        true
       case "AUTO" =>
         // Only use sparkV2 connector for Unity Catalog managed tables
         catalogTable.exists(CatalogTableUtils.isUnityCatalogManagedTable)
