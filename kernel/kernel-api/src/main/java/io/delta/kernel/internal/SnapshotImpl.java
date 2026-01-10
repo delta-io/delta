@@ -297,6 +297,12 @@ public class SnapshotImpl implements Snapshot {
   }
 
   public void writeCheckpoint(Engine engine) throws IOException {
+    // Refuse to create a checkpoint if the table is CatalogManaged but the current snapshot is not
+    // published
+    if (TableFeatures.isCatalogManagedSupported(this.protocol)
+        && this.getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L) < this.version) {
+      throw new IllegalStateException("Unable to create checkpoint on unpublished commits");
+    }
     Checkpointer.checkpoint(engine, System::currentTimeMillis, this);
   }
 
