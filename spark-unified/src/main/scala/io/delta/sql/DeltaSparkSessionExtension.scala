@@ -16,6 +16,7 @@
 
 package io.delta.sql
 
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 
@@ -68,6 +69,20 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * @since 0.4.0
  */
 class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
+
+  override def apply(extensions: SparkSessionExtensions): Unit = {
+    // First register all the base Delta rules from the V1 implementation.
+    super.apply(extensions)
+
+    // Register a post-hoc resolution rule that rewrites V1 StreamingRelation plans that
+    // read Delta tables into V2 StreamingRelationV2 plans backed by SparkTable.
+    //
+    // NOTE: This rule is functional (not a placeholder). Binary compatibility concerns are
+    // handled separately via the nested NoOpRule class below (kept for MiMa).
+    extensions.injectResolutionRule { session =>
+      new ApplyV2Streaming(session)
+    }
+  }
 
   /**
    * NoOpRule for binary compatibility with Delta 3.3.0
