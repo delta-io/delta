@@ -27,6 +27,7 @@ import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType}
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
 import shadedForDelta.org.apache.iceberg.expressions.Binder
@@ -239,6 +240,143 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  // Test case classes for structured test data
+  private case class ProjectionTestCase(
+    description: String,
+    projection: Seq[String],
+    expected: Set[String])
+
+  private case class FilterProjectionTestCase(
+    description: String,
+    filter: Filter,
+    projection: Seq[String])
+
+  test("projection sent to IRC server over HTTP") {
+    withTempTable("projectionTest") { table =>
+      // Populate test data using the shared helper method
+      val tableName = s"rest_catalog.${defaultNamespace}.projectionTest"
+      populateTestData(tableName)
+
+      // Test cases covering different projection scenarios
+      // Note: At this HTTP layer, we're only testing that column name strings are correctly
+      // sent and received. Type serialization and data reading are tested end-to-end.
+      val testCases = Seq(
+        // Basic projections
+        ProjectionTestCase(
+          "single column",
+          Seq("intCol"),
+          Set("intCol")),
+        ProjectionTestCase(
+          "multiple columns",
+          Seq("intCol", "stringCol"),
+          Set("intCol", "stringCol")),
+
+        // Nested field projections - test dot-notation string handling
+        ProjectionTestCase(
+          "individual nested field",
+          Seq("address.intCol"),
+          Set("address.intCol")),
+        ProjectionTestCase(
+          "multiple nested fields",
+          Seq("address.intCol", "metadata.stringCol"),
+          Set("address.intCol", "metadata.stringCol"))
+      )
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        testCases.foreach { testCase =>
+          // Clear previous captured projection
+          server.clearCaptured()
+
+          client.planScan(
+            defaultNamespace.toString,
+            "projectionTest",
+            sparkProjectionOption = Some(testCase.projection))
+
+          // Verify server captured the projection
+          val capturedProjection = server.getCapturedProjection
+          assert(capturedProjection != null,
+            s"[${testCase.description}] Server should have captured projection")
+
+          // Verify field names match expected
+          val fieldNames = capturedProjection.asScala.toSet
+          assert(fieldNames == testCase.expected,
+            s"[${testCase.description}] Expected ${testCase.expected}, got: $fieldNames")
+        }
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("filter and projection sent together to IRC server over HTTP") {
+    withTempTable("filterProjectionTest") { table =>
+      // Populate test data using the shared helper method
+      val tableName = s"rest_catalog.${defaultNamespace}.filterProjectionTest"
+      populateTestData(tableName)
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        // Note: Filter types are already tested in "filter sent to IRC server" test.
+        // Here we only need to verify filter AND projection are sent together correctly.
+        val testCases = Seq(
+          FilterProjectionTestCase(
+            "simple filter + projection",
+            EqualTo("longCol", 2L),
+            Seq("intCol", "stringCol")),
+          FilterProjectionTestCase(
+            "nested field in both filter and projection",
+            EqualTo("address.intCol", 200),
+            Seq("intCol", "address.intCol"))
+        )
+
+        testCases.foreach { testCase =>
+          // Clear previous captured state
+          server.clearCaptured()
+
+          // Convert Spark filter to expected Iceberg expression
+          val expectedExpr = SparkToIcebergExpressionConverter.convert(testCase.filter)
+          assert(
+            expectedExpr.isDefined,
+            s"[${testCase.description}] Filter conversion should succeed for: ${testCase.filter}")
+
+          // Call client with both filter and projection
+          client.planScan(
+            defaultNamespace.toString,
+            "filterProjectionTest",
+            sparkFilterOption = Some(testCase.filter),
+            sparkProjectionOption = Some(testCase.projection))
+
+          // Verify server captured both filter and projection
+          val capturedFilter = server.getCapturedFilter
+          val capturedProjection = server.getCapturedProjection
+
+          assert(capturedFilter != null,
+            s"[${testCase.description}] Server should have captured filter")
+          assert(capturedProjection != null,
+            s"[${testCase.description}] Server should have captured projection")
+
+          // Verify filter is correct
+          val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
+          val boundCaptured = Binder.bind(defaultSchema.asStruct(), capturedFilter, true)
+          assert(
+            boundCaptured.isEquivalentTo(boundExpected),
+            s"[${testCase.description}] Filter mismatch. Expected: $boundExpected, " +
+            s"got: $boundCaptured")
+
+          // Verify projection is correct
+          val projectionFields = capturedProjection.asScala.toSet
+          val expectedFields = testCase.projection.toSet
+          assert(projectionFields == expectedFields,
+            s"[${testCase.description}] Projection mismatch. Expected: $expectedFields, " +
+            s"got: $projectionFields")
+        }
+      } finally {
+        client.close()
+      }
+    }
+  }
+
   private def startServer(): IcebergRESTServer = {
     val config = Map(IcebergRESTServer.REST_PORT -> "0").asJava
     val newServer = new IcebergRESTServer(config)
@@ -313,4 +451,5 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       .mode("append")
       .save(tableName)
   }
+
 }

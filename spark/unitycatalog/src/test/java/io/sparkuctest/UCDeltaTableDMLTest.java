@@ -115,6 +115,40 @@ public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
   @ParameterizedTest
   @MethodSource("allTableTypes")
+  public void testInsertWithDynamicPartitionOverwrite(TableType tableType) throws Exception {
+    withNewTable(
+        "insert_dynamic_partition_overwrite_test",
+        "id INT, name STRING, date STRING",
+        "date",
+        tableType,
+        tableName -> {
+          // Setup initial data
+          sql("INSERT INTO %s PARTITION (date='2025-11-01') VALUES (1, 'AAA')", tableName);
+          sql("INSERT INTO %s PARTITION (date='2025-11-01') VALUES (2, 'BBB')", tableName);
+
+          // Verify the result before dynamic partition overwrite.
+          check(
+              tableName,
+              List.of(List.of("1", "AAA", "2025-11-01"), List.of("2", "BBB", "2025-11-01")));
+
+          // Enable dynamic partition overwrite
+          sql("SET spark.databricks.delta.dynamicPartitionOverwrite.enabled = true");
+
+          try {
+            // Insert with dynamic partition overwrite
+            sql("INSERT OVERWRITE %s VALUES (3, 'CCC', '2025-11-01')", tableName);
+
+            // Verify the result - should have replaced with the new value
+            check(tableName, List.of(List.of("3", "CCC", "2025-11-01")));
+          } finally {
+            // Disable dynamic partition overwrite
+            sql("SET spark.databricks.delta.dynamicPartitionOverwrite.enabled = false");
+          }
+        });
+  }
+
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
   public void testUpdateOperations(TableType tableType) throws Exception {
     withNewTable(
         "update_test",
