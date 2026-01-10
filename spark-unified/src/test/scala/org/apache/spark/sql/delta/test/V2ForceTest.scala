@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.Tag
 import org.scalactic.source.Position
 
@@ -78,7 +78,7 @@ trait V2ForceTest extends DeltaSQLCommandTest {
    */
   abstract override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set(DeltaSQLConfV2.V2_ENABLE_MODE.key, "STRICT")
+      .set(DeltaSQLConf.V2_ENABLE_MODE.key, "STRICT")
   }
 
   override def afterAll(): Unit = {

@@ -18,7 +18,6 @@ package io.delta.spark.internal.v2.snapshot.unitycatalog;
 import static java.util.Objects.requireNonNull;
 import static scala.jdk.javaapi.CollectionConverters.asJava;
 
-import io.delta.spark.internal.v2.utils.CatalogTableUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Map;
 import java.util.Optional;
@@ -26,6 +25,7 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
+import org.apache.spark.sql.delta.util.CatalogTableUtils;
 
 /**
  * Utility class for extracting Unity Catalog table information from Spark catalog metadata.
