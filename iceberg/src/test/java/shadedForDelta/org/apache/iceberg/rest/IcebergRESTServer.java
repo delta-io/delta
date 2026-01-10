@@ -171,7 +171,15 @@ public class IcebergRESTServer {
   }
 
   /**
-   * Clear captured filter and projection. Call between tests.
+   * Get the min-rows-requested captured from the most recent /plan request.
+   * Delegates to adapter. For test verification.
+   */
+  public Long getCapturedLimit() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedMinRowsRequested();
+  }
+
+  /**
+   * Clear captured filter, projection, and limit. Call between tests.
    */
   public void clearCaptured() {
     IcebergRESTCatalogAdapterWithPlanSupport.clearCaptured();
