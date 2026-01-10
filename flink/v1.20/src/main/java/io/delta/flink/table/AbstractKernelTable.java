@@ -34,8 +34,8 @@ import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
@@ -76,6 +76,78 @@ import org.slf4j.LoggerFactory;
 public abstract class AbstractKernelTable implements DeltaTable {
   protected static String ENGINE_INFO = "DeltaSink";
   protected static Logger LOG = LoggerFactory.getLogger(AbstractKernelTable.class);
+
+  static Predicate<Throwable> isTableNotFound =
+      ExceptionUtils.recursiveCheck(ex -> ex instanceof TableNotFoundException);
+
+  static Predicate<Throwable> isSnapshotUpdated =
+      ExceptionUtils.recursiveCheck(
+          ex ->
+              ex instanceof ConcurrentModificationException
+                  || ex instanceof ConcurrentWriteException
+                  || ex instanceof TableAlreadyExistsException);
+
+  static Predicate<Throwable> isSwallowable =
+      ExceptionUtils.recursiveCheck(ex -> ex instanceof ConcurrentTransactionException);
+
+  /**
+   * Check if an exception is retryable.
+   *
+   * @param e exception
+   * @return true if the exception is Authentication or Concurrency related.
+   */
+  protected static boolean isRetryableException(Throwable e) {
+    return CredentialManager.isCredentialsExpired.test(e) || isSnapshotUpdated.test(e);
+  }
+
+  /**
+   * Normalizes the given URI string to a canonical form. The normalization includes:
+   *
+   * <ul>
+   *   <li>Ensuring file URIs use the standard triple-slash form (e.g., {@code file:/abc/def} →
+   *       {@code file:///abc/def}).
+   *   <li>Appending a trailing slash to paths that do not already end with {@code /}.
+   * </ul>
+   *
+   * <p>This method is useful for making URI comparisons consistent and avoiding issues caused by
+   * variations in file URI formatting or missing trailing path delimiters.
+   *
+   * @param input the URI to normalize;
+   * @return the normalized URI
+   */
+  public static URI normalize(URI input) {
+    if (input == null) {
+      return null;
+    }
+    URI target = input;
+    if (target.getScheme() == null) {
+      target = new File(input.toString()).toPath().toUri();
+    } else if (target.getScheme().equals("file")) {
+      // Normalize "file:/xxx/" to "file:///xxx/"
+      target = new File(input).toPath().toUri();
+    }
+    try {
+      // Normalize "abc://def/xxx" to "abc://def/xxx/"
+      if (!target.getPath().endsWith("/")) {
+        target =
+            new URI(
+                target.getScheme(),
+                Optional.ofNullable(target.getHost()).orElse(""),
+                target.getPath() + "/",
+                target.getFragment());
+      }
+    } catch (URISyntaxException e) {
+      throw new RuntimeException(e);
+    }
+    return target;
+  }
+
+  protected static List<String> normalize(List<String> rawPartitions) {
+    if (rawPartitions == null) {
+      return List.of();
+    }
+    return rawPartitions.stream().filter(StringUtils::isNotEmpty).collect(Collectors.toList());
+  }
 
   protected final DeltaCatalog catalog;
   protected String tableId;
@@ -122,6 +194,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
     this.refreshThreadPool = Executors.newSingleThreadExecutor();
     this.credentialManager = createCredentialManager();
     this.metricListeners = new ArrayList<>();
+    this.catalog.open();
     withRetry(
         () -> {
           initialize();
@@ -286,13 +359,11 @@ public abstract class AbstractKernelTable implements DeltaTable {
       // init all transient variables
       refreshThreadPool = Executors.newSingleThreadExecutor();
       generalThreadPool = Executors.newFixedThreadPool(Conf.getInstance().getTableThreadPoolSize());
-
       tableState = JsonUtils.rowFromJson(serializedTableState, TransactionStateRow.SCHEMA);
       schema = TransactionStateRow.getLogicalSchema(tableState);
-
       credentialManager = createCredentialManager();
-
       metricListeners = new ArrayList<>();
+      catalog.open();
     }
   }
 
@@ -352,9 +423,12 @@ public abstract class AbstractKernelTable implements DeltaTable {
    */
   protected boolean probeVersion(Long version) {
     try {
-      new SnapshotManager(new io.delta.kernel.internal.fs.Path(getTablePath()))
-          .getLogSegmentForVersion(getEngine(), Optional.of(version));
-      return true;
+      return !DeltaLogActionUtils.getCommitFilesForVersionRange(
+              getEngine(),
+              new io.delta.kernel.internal.fs.Path(tablePath),
+              version,
+              Optional.empty())
+          .isEmpty();
     } catch (Exception e) {
       return false;
     }
@@ -555,77 +629,5 @@ public abstract class AbstractKernelTable implements DeltaTable {
   protected void onSnapshotReloaded() {
     // Client need to clean up snapshot cache if any
     cacheManager.invalidate(getTablePath().toString());
-  }
-
-  static Predicate<Throwable> isTableNotFound =
-      ExceptionUtils.recursiveCheck(ex -> ex instanceof TableNotFoundException);
-
-  static Predicate<Throwable> isSnapshotUpdated =
-      ExceptionUtils.recursiveCheck(
-          ex ->
-              ex instanceof ConcurrentModificationException
-                  || ex instanceof ConcurrentWriteException
-                  || ex instanceof TableAlreadyExistsException);
-
-  static Predicate<Throwable> isSwallowable =
-      ExceptionUtils.recursiveCheck(ex -> ex instanceof ConcurrentTransactionException);
-
-  /**
-   * Check if an exception is retryable.
-   *
-   * @param e exception
-   * @return true if the exception is Authentication or Concurrency related.
-   */
-  protected static boolean isRetryableException(Throwable e) {
-    return CredentialManager.isCredentialsExpired.test(e) || isSnapshotUpdated.test(e);
-  }
-
-  /**
-   * Normalizes the given URI string to a canonical form. The normalization includes:
-   *
-   * <ul>
-   *   <li>Ensuring file URIs use the standard triple-slash form (e.g., {@code file:/abc/def} →
-   *       {@code file:///abc/def}).
-   *   <li>Appending a trailing slash to paths that do not already end with {@code /}.
-   * </ul>
-   *
-   * <p>This method is useful for making URI comparisons consistent and avoiding issues caused by
-   * variations in file URI formatting or missing trailing path delimiters.
-   *
-   * @param input the URI to normalize;
-   * @return the normalized URI
-   */
-  public static URI normalize(URI input) {
-    if (input == null) {
-      return null;
-    }
-    URI target = input;
-    if (target.getScheme() == null) {
-      target = new File(input.toString()).toPath().toUri();
-    } else if (target.getScheme().equals("file")) {
-      // Normalize "file:/xxx/" to "file:///xxx/"
-      target = new File(input).toPath().toUri();
-    }
-    try {
-      // Normalize "abc://def/xxx" to "abc://def/xxx/"
-      if (!target.getPath().endsWith("/")) {
-        target =
-            new URI(
-                target.getScheme(),
-                Optional.ofNullable(target.getHost()).orElse(""),
-                target.getPath() + "/",
-                target.getFragment());
-      }
-    } catch (URISyntaxException e) {
-      throw new RuntimeException(e);
-    }
-    return target;
-  }
-
-  protected static List<String> normalize(List<String> rawPartitions) {
-    if (rawPartitions == null) {
-      return List.of();
-    }
-    return rawPartitions.stream().filter(StringUtils::isNotEmpty).collect(Collectors.toList());
   }
 }

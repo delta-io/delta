@@ -54,29 +54,25 @@ public class CCv2Table extends AbstractKernelTable {
 
   protected transient UCCatalogManagedClient ccv2Client;
 
-  protected UCCatalogManagedClient getCcv2Client() {
-    if (ccv2Client == null) {
-      String endpointUri = configuration.get(CATALOG_ENDPOINT);
-      String token = configuration.get(CATALOG_TOKEN);
-      UCClient storageClient =
-          new UCTokenBasedRestClient(
-              endpointUri, TokenProvider.create(Map.of("type", "static", "token", token)));
-      ccv2Client = new UCCatalogManagedClient(storageClient);
-    }
-    return ccv2Client;
+  @Override
+  public void open() {
+    super.open();
+
+    String endpointUri = configuration.get(CATALOG_ENDPOINT);
+    String token = configuration.get(CATALOG_TOKEN);
+
+    UCClient storageClient =
+        new UCTokenBasedRestClient(
+            endpointUri, TokenProvider.create(Map.of("type", "static", "token", token)));
+    ccv2Client = new UCCatalogManagedClient(storageClient);
   }
 
   @Override
   protected Snapshot loadLatestSnapshot() {
     return withRetry(
         () ->
-            getCcv2Client()
-                .loadSnapshot(
-                    getEngine(),
-                    tableUUID,
-                    tablePath.toString(),
-                    Optional.empty(),
-                    Optional.empty()));
+            ccv2Client.loadSnapshot(
+                getEngine(), tableUUID, tablePath.toString(), Optional.empty(), Optional.empty()));
   }
 
   @Override

@@ -91,6 +91,7 @@ public interface DeltaTable extends Serializable, AutoCloseable {
    * table can be safely used. Calling open on an already opened table has no effect.
    */
   void open();
+
   /**
    * Commits a new version to the table by applying the provided Delta actions.
    *

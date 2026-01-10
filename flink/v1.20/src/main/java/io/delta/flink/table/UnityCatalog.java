@@ -57,7 +57,70 @@ import org.slf4j.LoggerFactory;
  */
 public class UnityCatalog implements DeltaCatalog {
 
-  private static Logger LOG = LoggerFactory.getLogger(UnityCatalog.class);
+  private static final Logger LOG = LoggerFactory.getLogger(UnityCatalog.class);
+
+  private static ColumnTypeName columnTypeName(DataType dataType) {
+    if (dataType instanceof IntegerType) {
+      return ColumnTypeName.INT;
+    } else if (dataType instanceof LongType) {
+      return ColumnTypeName.LONG;
+    } else if (dataType instanceof ShortType) {
+      return ColumnTypeName.SHORT;
+    } else if (dataType instanceof ByteType) {
+      return ColumnTypeName.BYTE;
+    } else if (dataType instanceof BooleanType) {
+      return ColumnTypeName.BOOLEAN;
+    } else if (dataType instanceof FloatType) {
+      return ColumnTypeName.FLOAT;
+    } else if (dataType instanceof DoubleType) {
+      return ColumnTypeName.DOUBLE;
+    } else if (dataType instanceof StringType) {
+      return ColumnTypeName.STRING;
+    } else if (dataType instanceof BinaryType) {
+      return ColumnTypeName.BINARY;
+    } else if (dataType instanceof DecimalType) {
+      return ColumnTypeName.DECIMAL;
+    } else if (dataType instanceof DateType) {
+      return ColumnTypeName.DATE;
+    } else if (dataType instanceof TimestampType) {
+      return ColumnTypeName.TIMESTAMP;
+    } else if (dataType instanceof TimestampNTZType) {
+      return ColumnTypeName.TIMESTAMP_NTZ;
+    } else if (dataType instanceof ArrayType) {
+      return ColumnTypeName.ARRAY;
+    } else if (dataType instanceof MapType) {
+      return ColumnTypeName.MAP;
+    } else if (dataType instanceof StructType) {
+      return ColumnTypeName.STRUCT;
+    } else {
+      throw new UnsupportedOperationException("Unsupported data type: " + dataType);
+    }
+  }
+
+  private static String typeText(DataType dataType) {
+    if (dataType instanceof DecimalType) {
+      DecimalType decimalType = (DecimalType) dataType;
+      return String.format("DECIMAL(%d,%d)", decimalType.getPrecision(), decimalType.getScale());
+    } else if (dataType instanceof BasePrimitiveType) {
+      return dataType.toString().toUpperCase(Locale.ROOT);
+    } else if (dataType instanceof ArrayType) {
+      ArrayType arrayType = (ArrayType) dataType;
+      return String.format("ARRAY<%s>", typeText(arrayType.getElementType()));
+    } else if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      return String.format(
+          "MAP<%s,%s>", typeText(mapType.getKeyType()), typeText(mapType.getValueType()));
+    } else if (dataType instanceof StructType) {
+      StructType structType = (StructType) dataType;
+      return String.format(
+          "STRUCT<%s>",
+          structType.fields().stream()
+              .map(field -> String.format("%s:%s", field.getName(), typeText(field.getDataType())))
+              .collect(Collectors.joining(",")));
+    } else {
+      throw new UnsupportedOperationException("Unsupported data type: " + dataType);
+    }
+  }
 
   private final String name;
   private final URI endpoint;
@@ -108,13 +171,10 @@ public class UnityCatalog implements DeltaCatalog {
     return token;
   }
 
-  /**
-   * Lazily initialize an {@link ApiClient} for communicating with the catalog service.
-   *
-   * @return an initialized {@link ApiClient}
-   */
-  protected ApiClient getApiClient() {
+  @Override
+  public void open() {
     if (apiClient == null) {
+
       apiClient =
           new ApiClient()
               .setScheme(endpoint.getScheme())
@@ -122,7 +182,6 @@ public class UnityCatalog implements DeltaCatalog {
               .setPort(endpoint.getPort())
               .setRequestInterceptor(request -> request.header("Authorization", "Bearer " + token));
     }
-    return apiClient;
   }
 
   protected <RET> RET withRetry(CheckedSupplier<RET> body) {
@@ -165,7 +224,7 @@ public class UnityCatalog implements DeltaCatalog {
     Objects.requireNonNull(tableId);
     return withRetry(
         () -> {
-          TablesApi tablesApi = new TablesApi(getApiClient());
+          TablesApi tablesApi = new TablesApi(apiClient);
           TableInfo tableInfo = tablesApi.getTable(tableId, null, null);
           TableBrief brief = new TableBrief();
           brief.tablePath =
@@ -205,7 +264,7 @@ public class UnityCatalog implements DeltaCatalog {
     Objects.requireNonNull(properties);
     withRetry(
         () -> {
-          TablesApi tablesApi = new TablesApi(getApiClient());
+          TablesApi tablesApi = new TablesApi(apiClient);
           // Obtain names
           String[] namespaces = tableId.split("\\.");
           Preconditions.checkArgument(namespaces.length == 2 || namespaces.length == 3);
@@ -277,7 +336,7 @@ public class UnityCatalog implements DeltaCatalog {
   public Map<String, String> getCredentials(String tableId) {
     return withRetry(
         () -> {
-          TemporaryCredentialsApi credentialsApi = new TemporaryCredentialsApi(getApiClient());
+          TemporaryCredentialsApi credentialsApi = new TemporaryCredentialsApi(apiClient);
           TemporaryCredentials credentials =
               credentialsApi.generateTemporaryTableCredentials(
                   new GenerateTemporaryTableCredential()
@@ -311,7 +370,7 @@ public class UnityCatalog implements DeltaCatalog {
   public List<String> listSchemas() {
     return withRetry(
         () -> {
-          SchemasApi schemasApi = new SchemasApi(getApiClient());
+          SchemasApi schemasApi = new SchemasApi(apiClient);
           return schemasApi.listSchemas(this.name, Integer.MAX_VALUE, null).getSchemas().stream()
               .map(SchemaInfo::getName)
               .collect(Collectors.toList());
@@ -321,7 +380,7 @@ public class UnityCatalog implements DeltaCatalog {
   public SchemaInfo getSchema(String name) {
     return withRetry(
         () -> {
-          SchemasApi schemasApi = new SchemasApi(getApiClient());
+          SchemasApi schemasApi = new SchemasApi(apiClient);
           return schemasApi.getSchema(String.format("%s.%s", getName(), name));
         });
   }
@@ -329,7 +388,7 @@ public class UnityCatalog implements DeltaCatalog {
   public List<String> listTables(String schema) {
     return withRetry(
         () -> {
-          TablesApi tablesApi = new TablesApi(getApiClient());
+          TablesApi tablesApi = new TablesApi(apiClient);
           return tablesApi.listTables(getName(), schema, Integer.MAX_VALUE, "").getTables().stream()
               .map(TableInfo::getName)
               .collect(Collectors.toList());
@@ -339,72 +398,8 @@ public class UnityCatalog implements DeltaCatalog {
   public TableInfo getTableDetail(String tableId) {
     return withRetry(
         () -> {
-          TablesApi tablesApi = new TablesApi(getApiClient());
+          TablesApi tablesApi = new TablesApi(apiClient);
           return tablesApi.getTable(tableId, false, false);
         });
-  }
-
-  protected static ColumnTypeName columnTypeName(DataType dataType) {
-    if (dataType instanceof IntegerType) {
-      return ColumnTypeName.INT;
-    } else if (dataType instanceof LongType) {
-      return ColumnTypeName.LONG;
-    } else if (dataType instanceof ShortType) {
-      return ColumnTypeName.SHORT;
-    } else if (dataType instanceof ByteType) {
-      return ColumnTypeName.BYTE;
-    } else if (dataType instanceof BooleanType) {
-      return ColumnTypeName.BOOLEAN;
-    } else if (dataType instanceof FloatType) {
-      return ColumnTypeName.FLOAT;
-    } else if (dataType instanceof DoubleType) {
-      return ColumnTypeName.DOUBLE;
-    } else if (dataType instanceof StringType) {
-      return ColumnTypeName.STRING;
-    } else if (dataType instanceof BinaryType) {
-      return ColumnTypeName.BINARY;
-    } else if (dataType instanceof DecimalType) {
-      return ColumnTypeName.DECIMAL;
-    } else if (dataType instanceof DateType) {
-      return ColumnTypeName.DATE;
-    } else if (dataType instanceof TimestampType) {
-      return ColumnTypeName.TIMESTAMP;
-    } else if (dataType instanceof TimestampNTZType) {
-      return ColumnTypeName.TIMESTAMP_NTZ;
-    } else if (dataType instanceof ArrayType) {
-      return ColumnTypeName.ARRAY;
-    } else if (dataType instanceof MapType) {
-      return ColumnTypeName.MAP;
-    } else if (dataType instanceof StructType) {
-      return ColumnTypeName.STRUCT;
-    } else {
-      throw new UnsupportedOperationException("Unsupported data type: " + dataType);
-    }
-  }
-
-  protected static String typeText(DataType dataType) {
-
-    if (dataType instanceof DecimalType) {
-      DecimalType decimalType = (DecimalType) dataType;
-      return String.format("DECIMAL(%d,%d)", decimalType.getPrecision(), decimalType.getScale());
-    } else if (dataType instanceof BasePrimitiveType) {
-      return dataType.toString().toUpperCase(Locale.ROOT);
-    } else if (dataType instanceof ArrayType) {
-      ArrayType arrayType = (ArrayType) dataType;
-      return String.format("ARRAY<%s>", typeText(arrayType.getElementType()));
-    } else if (dataType instanceof MapType) {
-      MapType mapType = (MapType) dataType;
-      return String.format(
-          "MAP<%s,%s>", typeText(mapType.getKeyType()), typeText(mapType.getValueType()));
-    } else if (dataType instanceof StructType) {
-      StructType structType = (StructType) dataType;
-      return String.format(
-          "STRUCT<%s>",
-          structType.fields().stream()
-              .map(field -> String.format("%s:%s", field.getName(), typeText(field.getDataType())))
-              .collect(Collectors.joining(",")));
-    } else {
-      throw new UnsupportedOperationException("Unsupported data type: " + dataType);
-    }
   }
 }

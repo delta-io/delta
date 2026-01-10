@@ -42,6 +42,12 @@ import java.util.Map;
 public interface DeltaCatalog extends Serializable {
 
   /**
+   * Init the catalog instance and make it ready for use. Should be called at least once before the
+   * catalog can be safely used. Calling open on an already opened table has no effect.
+   */
+  default void open() {}
+
+  /**
    * Loads metadata for a table identified by the given table identifier.
    *
    * <p>The identifier format and naming conventions are defined by the specific catalog
