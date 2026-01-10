@@ -204,9 +204,11 @@ trait TypeWideningUniformTests extends QueryTest
           testCase.initialValuesDF.write.format("delta").saveAsTable("target")
           testCase.additionalValuesDF.write.format("delta").saveAsTable("source")
           enableIcebergUniform("target", IcebergCompatV2)
-          withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
-            insert.runInsert(columns = Seq("value"), whereCol = "value", whereValue = 1)
-          }
+          insert.runInsert(
+            columns = Seq("value"),
+            whereCol = "value",
+            whereValue = 1,
+            withSchemaEvolution = true)
           val result = sql(s"SELECT * FROM target")
           assert(result.schema("value").dataType === testCase.toType)
           checkAnswer(result, testCase.expectedResult)
@@ -231,10 +233,13 @@ trait TypeWideningUniformTests extends QueryTest
             .saveAsTable("source")
           enableIcebergUniform("target", IcebergCompatV2)
           withSQLConf(
-            DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
             DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true"
           ) {
-            insert.runInsert(columns = Seq("value"), whereCol = "value", whereValue = 1)
+            insert.runInsert(
+              columns = Seq("value"),
+              whereCol = "value",
+              whereValue = 1,
+              withSchemaEvolution = true)
           }
           val result = sql(s"SELECT * FROM target")
           val expected = testCase.initialValuesDF.union(testCase.initialValuesDF)
