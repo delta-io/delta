@@ -21,8 +21,7 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -45,6 +44,13 @@ import java.util.function.Supplier;
  *       dependent components)
  * </ul>
  *
+ * Typical usage: <code>
+ *     CredentialManager credManager = new CredentialManager(loadCredFromCatalog, callback);
+ *     credManager.getCredentials(); // Guaranteed to be an refreshed credential
+ *     // Wait for a long time
+ *     credManager.getCredentials(); // Internally refreshed, still return valid credentials.
+ * </code>
+ *
  * <p>This class is thread-safe.
  */
 public class CredentialManager {
@@ -56,73 +62,6 @@ public class CredentialManager {
    * milliseconds), interpretable by the implementation.
    */
   protected static String CREDENTIAL_EXPIRATION_KEY = "credential.expiration";
-
-  /** Supplier used to fetch the latest credentials from the underlying source. */
-  private final Supplier<Map<String, String>> credSupplier;
-
-  /**
-   * Callback invoked after credentials are refreshed.
-   *
-   * <p>This can be used to trigger downstream updates or reconfiguration when credentials change.
-   */
-  private final Runnable refreshCallback;
-
-  private Map<String, String> cachedCredentials;
-
-  private ReadWriteLock lock;
-
-  public CredentialManager(Supplier<Map<String, String>> supplier, Runnable refreshCallback) {
-    this.credSupplier = supplier;
-    this.refreshCallback = refreshCallback;
-    this.lock = new ReentrantReadWriteLock();
-  }
-
-  /**
-   * Returns the current credentials, refreshing them if expiration is approaching.
-   *
-   * <p>If no credentials have been fetched yet, this method will fetch and cache them. On
-   * subsequent calls, the cached credentials are returned unless they are near expiration, in which
-   * case a refresh is triggered.
-   *
-   * <p>The refresh strategy (for example, how close to expiration a refresh occurs) is
-   * implementation-defined.
-   *
-   * @return the current valid credentials
-   */
-  Map<String, String> getCredentials() {
-    try {
-      lock.readLock().lock();
-      if (cachedCredentials == null) {
-        lock.readLock().unlock();
-        lock.writeLock().lock();
-        cachedCredentials = this.credSupplier.get();
-        lock.writeLock().unlock();
-        lock.readLock().lock();
-        long expiration =
-            Long.parseLong(cachedCredentials.getOrDefault(CREDENTIAL_EXPIRATION_KEY, "-1"));
-        if (expiration >= 0) {
-          long refreshDelay =
-              expiration
-                  - Conf.getInstance().getCredentialsRefreshAheadInMs()
-                  - System.currentTimeMillis();
-          if (refreshDelay > 0) {
-            refreshExecutors.schedule(
-                () -> {
-                  lock.writeLock().lock();
-                  cachedCredentials = this.credSupplier.get();
-                  lock.writeLock().unlock();
-                  this.refreshCallback.run();
-                },
-                refreshDelay,
-                TimeUnit.MILLISECONDS);
-          }
-        }
-      }
-      return cachedCredentials;
-    } finally {
-      lock.readLock().unlock();
-    }
-  }
 
   protected static ScheduledExecutorService refreshExecutors =
       Executors.newScheduledThreadPool(Conf.getInstance().getCredentialsRefreshThreadPoolSize());
@@ -138,4 +77,71 @@ public class CredentialManager {
    */
   public static Predicate<Throwable> isCredentialsExpired =
       ExceptionUtils.recursiveCheck(ex -> ex instanceof java.nio.file.AccessDeniedException);
+
+  /** Supplier used to fetch the latest credentials from the underlying source. */
+  private final Supplier<Map<String, String>> credSupplier;
+
+  /**
+   * Callback invoked after credentials are refreshed.
+   *
+   * <p>This can be used to trigger downstream updates or reconfiguration when credentials change.
+   */
+  private final Runnable refreshCallback;
+
+  private AtomicReference<Map<String, String>> cachedCredentials = new AtomicReference<>();
+
+  public CredentialManager(Supplier<Map<String, String>> supplier, Runnable refreshCallback) {
+    this.credSupplier = supplier;
+    this.refreshCallback = refreshCallback;
+  }
+
+  /**
+   * Returns the current credentials, refreshing them if expiration is approaching.
+   *
+   * <p>If no credentials have been fetched yet, this method will fetch and cache them. On
+   * subsequent calls, the cached credentials are returned unless they are near expiration, in which
+   * case a refresh is triggered.
+   *
+   * <p>The refresh strategy (for example, how close to expiration a refresh occurs) is
+   * implementation-defined.
+   *
+   * @return the current valid credentials
+   */
+  Map<String, String> getCredentials() {
+    Map<String, String> cached = cachedCredentials.get();
+    if (cached != null) return cached;
+    Map<String, String> newCredentials = this.credSupplier.get();
+    if (cachedCredentials.compareAndSet(null, newCredentials)) {
+      scheduleNextRefresh(newCredentials);
+      return newCredentials;
+    }
+    return cachedCredentials.get();
+  }
+
+  protected void scheduleNextRefresh(Map<String, String> newCredentials) {
+    long expiration = -1;
+    try {
+      expiration = Long.parseLong(newCredentials.getOrDefault(CREDENTIAL_EXPIRATION_KEY, "-1"));
+    } catch (NumberFormatException ignore) {
+    }
+    if (expiration >= 0) {
+      long refreshDelay =
+          Math.max(
+              1000, // A minimal wait of one sec if the refresh delay is too small
+              expiration
+                  - Conf.getInstance().getCredentialsRefreshAheadInMs()
+                  - System.currentTimeMillis());
+      refreshExecutors.schedule(
+          () -> {
+            Map<String, String> existingCredential = cachedCredentials.get();
+            Map<String, String> refreshedCredential = this.credSupplier.get();
+            if (cachedCredentials.compareAndSet(existingCredential, refreshedCredential)) {
+              this.refreshCallback.run();
+              scheduleNextRefresh(refreshedCredential);
+            }
+          },
+          refreshDelay,
+          TimeUnit.MILLISECONDS);
+    }
+  }
 }

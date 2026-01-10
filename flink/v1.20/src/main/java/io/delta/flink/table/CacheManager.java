@@ -107,40 +107,40 @@ public interface CacheManager extends Serializable {
    */
   class LocalCacheManager implements CacheManager {
 
-    @Override
-    public void put(String key, Snapshot snapshot) {
-      snapshotCache.put(key, Optional.ofNullable(snapshot));
-    }
-
-    @Override
-    public void invalidate(String key) {
-      snapshotCache.invalidate(key);
-    }
-
-    @Override
-    public Optional<Snapshot> get(
-        String key, Predicate<Long> versionProbe, Function<String, Optional<Snapshot>> body) {
-      Optional<Snapshot> cached = snapshotCache.get(key, body);
-      Long versionToProbe = cached.map(Snapshot::getVersion).orElse(-1L) + 1;
-
-      if (versionProbe.test(versionToProbe)) {
-        // Cache is outdated and needs reload
-        snapshotCache.invalidate(key);
-        return snapshotCache.get(key, body);
-      }
-      return cached;
-    }
-
     /**
      * A path-based snapshot cache used to speed up snapshot loading.
      *
      * <p>The cache is bounded in size and evicts entries based on access time to balance
      * performance and memory usage.
      */
-    static final Cache<String, Optional<Snapshot>> snapshotCache =
+    static final Cache<String, Optional<Snapshot>> SNAPSHOT_CACHE =
         Caffeine.newBuilder()
             .maximumSize(Conf.getInstance().getTableCacheSize())
             .expireAfterAccess(Conf.getInstance().getTableCacheExpireInMs(), TimeUnit.MILLISECONDS)
             .build();
+
+    @Override
+    public void put(String key, Snapshot snapshot) {
+      SNAPSHOT_CACHE.put(key, Optional.ofNullable(snapshot));
+    }
+
+    @Override
+    public void invalidate(String key) {
+      SNAPSHOT_CACHE.invalidate(key);
+    }
+
+    @Override
+    public Optional<Snapshot> get(
+        String key, Predicate<Long> versionProbe, Function<String, Optional<Snapshot>> body) {
+      Optional<Snapshot> cached = SNAPSHOT_CACHE.get(key, body);
+      long versionToProbe = cached.map(Snapshot::getVersion).orElse(-1L) + 1;
+
+      if (versionProbe.test(versionToProbe)) {
+        // Cache is outdated and needs reload
+        SNAPSHOT_CACHE.invalidate(key);
+        return SNAPSHOT_CACHE.get(key, body);
+      }
+      return cached;
+    }
   }
 }
