@@ -95,6 +95,11 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // UC server is stopped by UnityCatalogSupport.tearDownServer()
   }
 
+  /** Expose the SparkSession for tests that need direct Spark APIs (e.g., streaming). */
+  protected SparkSession getSparkSession() {
+    return sparkSession;
+  }
+
   /** Get the SparkSession for direct access (e.g., for streaming operations). */
   protected SparkSession spark() {
     return sparkSession;

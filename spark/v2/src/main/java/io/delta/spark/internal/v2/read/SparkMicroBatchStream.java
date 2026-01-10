@@ -552,8 +552,20 @@ public class SparkMicroBatchStream
 
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
-    Optional<Long> endVersionOpt =
-        endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
+    Optional<Long> endVersionOpt = Optional.empty();
+    if (endOffset.isPresent()) {
+      DeltaSourceOffset offset = endOffset.get();
+      // DSv1 offsets can point to the next version with BASE_INDEX after hitting END_INDEX.
+      // That means the end offset is exclusive of that next version, so translate it to an
+      // inclusive endVersion by stepping back one version (if possible).
+      long endVersion =
+          offset.index() == DeltaSourceOffset.BASE_INDEX()
+              ? offset.reservoirVersion() - 1
+              : offset.reservoirVersion();
+      if (endVersion >= 0) {
+        endVersionOpt = Optional.of(endVersion);
+      }
+    }
 
     // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
     // endVersion to be an actual existing version or empty.
