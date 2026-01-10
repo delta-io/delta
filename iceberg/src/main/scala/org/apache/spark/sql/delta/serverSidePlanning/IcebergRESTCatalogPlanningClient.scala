@@ -28,6 +28,7 @@ import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
+import org.apache.spark.sql.delta.iceberg.BuildInfo
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -77,12 +78,24 @@ class IcebergRESTCatalogPlanningClient(
 
   /**
    * Build User-Agent header with Delta and Spark version information.
-   * Format: "Delta-Lake/<version> Apache-Spark/<version>"
+   * Format: "Delta-ServerSidePlanning/<version> Spark/<version> Delta/<version>"
+   * Following Unity Catalog's User-Agent format pattern.
    */
   private def buildUserAgent(): String = {
-    val deltaVersion = getDeltaVersion().getOrElse("unknown")
+    val baseClient = s"Delta-ServerSidePlanning/${BuildInfo.version}"
     val sparkVersion = getSparkVersion().getOrElse("unknown")
-    s"Delta-Lake/$deltaVersion Apache-Spark/$sparkVersion"
+    val deltaVersion = getDeltaVersion().getOrElse("unknown")
+    s"$baseClient Spark/$sparkVersion Delta/$deltaVersion"
+  }
+
+  /**
+   * Get the User-Agent header value used by this client.
+   * Format: "Delta-ServerSidePlanning/<version> Spark/<version> Delta/<version>"
+   *
+   * @return The User-Agent string used in HTTP requests
+   */
+  def getUserAgent(): String = {
+    buildUserAgent()
   }
 
   /**

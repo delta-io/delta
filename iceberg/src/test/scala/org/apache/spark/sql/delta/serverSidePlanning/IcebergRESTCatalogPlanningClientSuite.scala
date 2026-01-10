@@ -422,6 +422,59 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  test("User-Agent header contains Delta-ServerSidePlanning, Spark and Delta versions") {
+    val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", null)
+    try {
+      val userAgent = client.getUserAgent()
+
+      // Verify the user agent starts with Delta-ServerSidePlanning
+      assert(userAgent.startsWith("Delta-ServerSidePlanning/"),
+        s"User-Agent should start with 'Delta-ServerSidePlanning/', got: $userAgent")
+
+      // Verify it contains Spark version (format: Spark/<version>)
+      assert(userAgent.contains("Spark/"),
+        s"User-Agent should contain 'Spark/', got: $userAgent")
+
+      // Verify it contains Delta version (format: Delta/<version>)
+      assert(userAgent.contains("Delta/"),
+        s"User-Agent should contain 'Delta/', got: $userAgent")
+
+      // Verify versions are not "unknown" in test environment where all dependencies are available
+      assert(!userAgent.contains("Spark/unknown"),
+        s"Spark version should not be 'unknown' in test environment, got: $userAgent")
+      assert(!userAgent.contains("Delta/unknown"),
+        s"Delta version should not be 'unknown' in test environment, got: $userAgent")
+    } finally {
+      client.close()
+    }
+  }
+
+  test("User-Agent header format follows RFC 7231") {
+    val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", null)
+    try {
+      val userAgent = client.getUserAgent()
+
+      // Verify the format follows RFC 7231: product/version [product/version ...]
+      val parts = userAgent.split(" ")
+      assert(parts.length == 3,
+        s"User-Agent should have 3 space-separated components, got ${parts.length}: $userAgent")
+
+      // First part should be Delta-ServerSidePlanning/version
+      assert(parts(0).matches("Delta-ServerSidePlanning/.*"),
+        s"First component should match 'Delta-ServerSidePlanning/<version>', got: ${parts(0)}")
+
+      // Second part should be Spark/version
+      assert(parts(1).matches("Spark/.*"),
+        s"Second component should match 'Spark/<version>', got: ${parts(1)}")
+
+      // Third part should be Delta/version
+      assert(parts(2).matches("Delta/.*"),
+        s"Third component should match 'Delta/<version>', got: ${parts(2)}")
+    } finally {
+      client.close()
+    }
+  }
+
   /**
    * Populates a table with sample test data covering all schema types.
    * Uses parallelize with 2 partitions to create 2 data files.
