@@ -17,8 +17,10 @@ package io.delta.spark.internal.v2.read;
 
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
+import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
@@ -35,6 +37,7 @@ import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.Comparator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -46,6 +49,7 @@ import org.apache.spark.sql.delta.DeltaStartingVersion;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSQLConfV2;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
@@ -110,6 +114,11 @@ public class SparkMicroBatchStream
   // Cached starting version to ensure idempotent behavior for "latest" starting version.
   // getStartingVersion() must return the same value across multiple calls.
   private volatile Optional<Long> cachedStartingVersion = null;
+
+  // Cache for the initial snapshot files to avoid re-sorting on repeated access.
+  // Thread-safe: volatile ensures visibility, unmodifiable list ensures immutability.
+  private volatile Long cachedInitialSnapshotVersion = null;
+  private volatile List<IndexedFile> cachedInitialSnapshotFiles = null;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -192,9 +201,9 @@ public class SparkMicroBatchStream
       version = startingVersionOpt.get();
       isInitialSnapshot = false;
     } else {
-      // TODO(#5318): Support initial snapshot case (isInitialSnapshot == true)
-      throw new UnsupportedOperationException(
-          "initialOffset with initial snapshot is not supported yet");
+      // No starting version - use snapshot captured at source initialization
+      version = snapshotAtSourceInit.getVersion();
+      isInitialSnapshot = true;
     }
 
     return DeltaSourceOffset.apply(
@@ -372,7 +381,8 @@ public class SparkMicroBatchStream
 
   @Override
   public void stop() {
-    // TODO(#5318): unpersist any cached initial snapshot.
+    cachedInitialSnapshotVersion = null;
+    cachedInitialSnapshotFiles = null;
   }
 
   ///////////////////////
@@ -516,8 +526,11 @@ public class SparkMicroBatchStream
     CloseableIterator<IndexedFile> result;
 
     if (isInitialSnapshot) {
-      // TODO(#5318): Implement initial snapshot
-      throw new UnsupportedOperationException("initial snapshot is not supported yet");
+      // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
+      // filterDeltaLogs handles the case when no commits exist after fromVersion.
+      CloseableIterator<IndexedFile> snapshotFiles = getSnapshotFiles(fromVersion);
+      CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
+      result = snapshotFiles.combine(deltaChanges);
     } else {
       result = filterDeltaLogs(fromVersion, endOffset);
     }
@@ -555,9 +568,9 @@ public class SparkMicroBatchStream
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
 
-    // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
-    // endVersion to be an actual existing version or empty.
     if (endVersionOpt.isPresent()) {
+      // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
+      // endVersion to be an actual existing version or empty.
       long latestVersion = snapshotAtSourceInit.getVersion();
       if (endVersionOpt.get() > latestVersion) {
         // This could happen because:
@@ -566,6 +579,21 @@ public class SparkMicroBatchStream
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
         endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+      }
+
+      // After capping, check if startVersion is beyond the endVersion.
+      // This can happen when all files in the batch come from the initial snapshot
+      // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
+      if (startVersion > endVersionOpt.get()) {
+        return Utils.toCloseableIterator(Collections.emptyIterator());
+      }
+    } else {
+      // When endOffset is empty (offset discovery), check if startVersion exceeds the current
+      // latest version. We must load the current latest (not snapshotAtSourceInit) because new
+      // commits may have arrived since stream initialization.
+      long currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      if (startVersion > currentLatestVersion) {
+        return Utils.toCloseableIterator(Collections.emptyIterator());
       }
     }
 
@@ -717,5 +745,93 @@ public class SparkMicroBatchStream
     }
 
     return index;
+  }
+
+  /**
+   * Get all files from a snapshot at the specified version, sorted by modificationTime and path,
+   * with indices assigned sequentially, and wrapped with BEGIN/END sentinels.
+   *
+   * <p>Mimics DeltaSourceSnapshot in DSv1.
+   *
+   * @param version The snapshot version to read
+   * @return An iterator of IndexedFile representing the snapshot files
+   */
+  private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
+    // Capture volatile references atomically to avoid race conditions
+    Long cachedVersion = cachedInitialSnapshotVersion;
+    List<IndexedFile> cachedFiles = cachedInitialSnapshotFiles;
+
+    if (cachedVersion != null && cachedVersion == version && cachedFiles != null) {
+      return Utils.toCloseableIterator(cachedFiles.iterator());
+    }
+
+    List<IndexedFile> indexedFiles = loadAndValidateSnapshot(version);
+
+    cachedInitialSnapshotFiles = Collections.unmodifiableList(indexedFiles);
+    cachedInitialSnapshotVersion = version;
+
+    return Utils.toCloseableIterator(indexedFiles.iterator());
+  }
+
+  /** Loads snapshot files at the specified version. */
+  private List<IndexedFile> loadAndValidateSnapshot(long version) {
+    int maxFiles =
+        (Integer)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConfV2.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
+
+    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+
+    Scan scan = snapshot.getScanBuilder().build();
+
+    List<AddFile> addFiles = new ArrayList<>();
+    try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
+      while (filesIter.hasNext()) {
+        FilteredColumnarBatch filteredBatch = filesIter.next();
+        ColumnarBatch batch = filteredBatch.getData();
+
+        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
+          Optional<AddFile> addOpt = StreamingHelper.getDataChangeAdd(batch, rowId);
+          if (addOpt.isPresent()) {
+            addFiles.add(addOpt.get());
+
+            // Basic memory protection: each IndexedFile is ~1-2KB (path, stats, partition values,
+            // etc.).
+            // This limit aims to prevent OOM for large tables.
+            // TODO(#5318): support large tables.
+            if (addFiles.size() > maxFiles) {
+              throw (RuntimeException)
+                  DeltaErrors.initialSnapshotTooLargeForStreaming(
+                      version, addFiles.size(), maxFiles, tablePath);
+            }
+          }
+        }
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(
+          String.format("Failed to read snapshot files at version %d", version), e);
+    }
+
+    // CRITICAL: Sort by modificationTime, then path for deterministic ordering
+    addFiles.sort(
+        Comparator.comparing(AddFile::getModificationTime).thenComparing(AddFile::getPath));
+
+    // Build IndexedFile list with sentinels
+    List<IndexedFile> indexedFiles = new ArrayList<>();
+
+    // Add BEGIN sentinel
+    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null));
+
+    // Add data files with sequential indices starting from 0
+    for (int i = 0; i < addFiles.size(); i++) {
+      indexedFiles.add(new IndexedFile(version, i, addFiles.get(i)));
+    }
+
+    // Add END sentinel
+    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null));
+
+    return indexedFiles;
   }
 }
