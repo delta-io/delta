@@ -53,7 +53,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           .add("b", IntegerType)
           .add("c", IntegerType)),
       includeInserts = insertsByName,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with missing nested field, schemaEvolution=$schemaEvolution")(
@@ -71,7 +71,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
             .add("y", IntegerType)
           )),
       includeInserts = insertsByName.intersect(insertsDataframe),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     // Missing columns for all inserts by name and missing nested fields for dataframe inserts by
@@ -90,7 +90,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           .add("b", IntegerType)
           .add("c", IntegerType)),
       includeInserts = insertsByName.intersect(insertsSQL) + StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with implicit cast and missing top-level column," +
@@ -111,7 +111,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsByName.intersect(insertsDataframe) - StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with implicit cast and missing nested field," +
@@ -134,7 +134,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsByName.intersect(insertsDataframe) - StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
   testInserts(s"insert with implicit cast and missing nested field," +
@@ -154,7 +154,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
             .add("x", IntegerType)
             .add("y", IntegerType))),
       includeInserts = Set(StreamingInsert),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     // Missing columns for all inserts by position and missing nested fields for all inserts by
@@ -177,7 +177,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsByPosition,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with implicit cast and missing top-level column," +
@@ -198,7 +198,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsByPosition,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with missing nested field, schemaEvolution=$schemaEvolution")(
@@ -220,7 +220,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsByPosition ++ insertsSQL,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with implicit cast and missing nested field," +
@@ -243,7 +243,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsByPosition ++ insertsSQL,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
   }
 }

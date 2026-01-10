@@ -76,7 +76,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
         SQLInsertColList(SaveMode.Overwrite),
         SQLInsertOverwritePartitionColList
       ),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
 
@@ -106,7 +106,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
         })
       },
       includeInserts = insertsByPosition + StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with extra top-level column and implicit cast," +
@@ -125,7 +125,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with extra top-level column and implicit cast," +
@@ -151,7 +151,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
         SQLInsertColList(SaveMode.Overwrite),
         SQLInsertOverwritePartitionColList
       ),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     // We allow adding new nested struct fields for all inserts, including SQL inserts by name.
@@ -179,7 +179,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             ))
         })
       },
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
   }
 
@@ -205,10 +205,10 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
       expectedResult = ExpectedResult.Success(expected = expectedAnswer),
       includeInserts = inserts,
       confs = Seq(
-        DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
         DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
           -> preserveNullSourceStructs.toString
-      )
+      ),
+      withSchemaEvolution = true
     )
   }
 
@@ -248,7 +248,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
         SQLInsertColList(SaveMode.Overwrite),
         SQLInsertOverwritePartitionColList
       ),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with extra nested field and implicit cast," +
@@ -268,7 +268,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
   }
 }
