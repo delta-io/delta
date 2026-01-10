@@ -1081,6 +1081,13 @@ trait DeltaErrorsBase
         s"Invalid data would be written to partitions $badPartitions."))
   }
 
+  def validateWhereException(validateWhere: String, message: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_VALIDATE_WHERE_WITH_OVERWRITE",
+      messageParameters = Array(validateWhere, message)
+    )
+  }
+
   def illegalFilesFound(file: String): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_ILLEGAL_FILE_FOUND",
