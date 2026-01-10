@@ -47,74 +47,124 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
   }
 
   private lazy val shouldPassTests = Set(
+    // ========== Core streaming tests ==========
+    "basic",
+    "initial snapshot ends at base index of next version",
+    "new commits arrive after stream initialization - with explicit startingVersion",
+    "SC-11561: can consume new data without update",
+    "Delta sources don't write offsets with null json",
+
+    // ========== startingVersion option tests ==========
     "startingVersion",
     "startingVersion latest",
     "startingVersion latest defined before started",
     "startingVersion latest works on defined but empty table",
-    "startingVersion specific version: new commits arrive after stream initialization"
-  )
-
-  private lazy val shouldFailTests = Set(
-    // === Schema Evolution ===
-    "allow to change schema before starting a streaming query",
-    "restarting a query should pick up latest table schema and recover",
-    "handling nullability schema changes",
-    "allow user specified schema if consistent: v1 source",
-    "disallow user specified schema",
-    "createSource should create source with empty or matching table schema provided",
-
-    // === Null Type Column Handling ===
-    "streaming delta source should not drop null columns",
-    "streaming delta source should drop null columns without feature flag",
-    "DeltaLog.createDataFrame should drop null columns with feature flag",
-    "DeltaLog.createDataFrame should not drop null columns without feature flag",
-
-    // === read options ===
-    "skip change commits",
-    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
+    "startingVersion specific version: new commits arrive after stream initialization",
     "startingVersion: user defined start works with mergeSchema",
     "startingVersion latest calls update when starting",
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = true",
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
-    "startingTimestamp",
     "startingVersion and startingTimestamp are both set",
 
-    // === Other tests that bypass V2 by not using loadStreamWithOptions ===
-    "disallow to change schema after starting a streaming query",
-    "maxFilesPerTrigger: invalid parameter",
-    "maxBytesPerTrigger: invalid parameter",
-    "recreate the reservoir should fail the query",
-    "excludeRegex throws good error on bad regex pattern",
-    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
-    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
-    "Delta sources should verify the protocol reader version",
-    "can delete old files of a snapshot without update",
-    "Delta source advances with non-data inserts and generates empty dataframe for " +
-      "non-data operations",
-
-    // === Data Loss Detection ===
-    "fail on data loss - starting from missing files",
-    "fail on data loss - gaps of files",
-    "fail on data loss - starting from missing files with option off",
-    "fail on data loss - gaps of files with option off",
-
-    // === Rate Limiting / Trigger Options ===
+    // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",
-    "maxFilesPerTrigger: metadata checkpoint",
+    "maxBytesPerTrigger: process at least one file",
     "maxFilesPerTrigger: change and restart",
+    "maxFilesPerTrigger: invalid parameter",
     "maxFilesPerTrigger: ignored when using Trigger.Once",
     "maxFilesPerTrigger: Trigger.AvailableNow respects read limits",
-    "maxBytesPerTrigger: process at least one file",
-    "maxBytesPerTrigger: metadata checkpoint",
     "maxBytesPerTrigger: change and restart",
+    "maxBytesPerTrigger: invalid parameter",
     "maxBytesPerTrigger: Trigger.AvailableNow respects read limits",
     "maxBytesPerTrigger: max bytes and max files together",
     "Trigger.AvailableNow with an empty table",
-    "startingVersion should work with rate time",
     "Rate limited Delta source advances with non-data inserts",
     "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
+    "startingVersion should work with rate time",
 
-    // === Source Offset / Version Handling ===
+    // ========== Error handling tests ==========
+    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "excludeRegex throws good error on bad regex pattern",
+
+    // ========== Misc tests ==========
+    "a fast writer should not starve a Delta source",
+    "make sure that the delta sources works fine",
+    "should not attempt to read a non exist version",
+    "self union a Delta table should pass the catalog table assert",
+    "DeltaLog.createDataFrame should drop null columns with feature flag",
+    "DeltaLog.createDataFrame should not drop null columns without feature flag"
+  )
+
+  private lazy val shouldFailTests = Set(
+    // === Schema Evolution ===
+    // Tests schema evolution: table changes from "id" to "id,value" schema. FAILS: V2 returns 0
+    // rows with empty schema instead of 10 rows with evolved schema.
+    "allow to change schema before starting a streaming query",
+    // Tests that restarting a stream picks up latest schema after schema changes. FAILS: throws
+    // NoSuchNamespaceException for schema `delta` - appears to be test setup issue with V2.
+    "restarting a query should pick up latest table schema and recover",
+    // Tests schema changes after stream starts should fail gracefully. FAILS: test behavior
+    // differs with V2 connector.
+    "disallow to change schema after starting a streaming query",
+    "handling nullability schema changes",  // Does not use loadStreamWithOptions
+    "allow user specified schema if consistent: v1 source",  // Does not use loadStreamWithOptions
+    "disallow user specified schema",  // Does not use loadStreamWithOptions
+    "createSource should create source with empty or matching table schema provided",  // Does not use loadStreamWithOptions
+
+    // === Null Type Column Handling ===
+    "streaming delta source should not drop null columns",  // Does not use loadStreamWithOptions
+    // Tests error handling for streaming null columns without feature flag. FAILS: throws
+    // KernelException instead of expected StreamingQueryException.
+    "streaming delta source should drop null columns without feature flag",
+
+    // === Read options ===
+    // Tests skipChangeCommits option for ignoring UPDATE/DELETE/MERGE operations. FAILS: test
+    // behavior differs with V2 connector.
+    "skip change commits",
+    // Tests excludeRegex option for filtering files. FAILS: test behavior differs with V2 connector.
+    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
+
+    // === startingTimestamp option ===
+    // Tests startingTimestamp option for starting stream from a specific timestamp. FAILS: V2
+    // connector doesn't support startingTimestamp option (only startingVersion, maxFilesPerTrigger,
+    // maxBytesPerTrigger are supported).
+    "startingTimestamp",
+
+    // === Error handling tests ===
+    // Tests error message format for CDC changes. FAILS: test expectations don't match V2 behavior.
+    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
+    // Tests protocol version verification. FAILS: throws KernelException instead of expected
+    // InvalidProtocolVersionException, and test assertion logic doesn't handle this.
+    "Delta sources should verify the protocol reader version",
+    // Tests that recreating a table should fail existing streams. FAILS: test behavior differs
+    // with V2 connector.
+    "recreate the reservoir should fail the query",
+    // Tests error handling for tables without schema. FAILS: throws TableNotFoundException
+    // instead of expected AnalysisException.
+    "no schema should throw an exception",
+    // Tests reading from corrupt checkpoint. FAILS: throws InvalidTableException from kernel.
+    "start from corrupt checkpoint",
+
+    // === Data Loss Detection ===
+    // Tests failOnDataLoss with missing version files. FAILS: V2 connector doesn't support
+    // failOnDataLoss option, throws StreamingQueryException about unsupported option.
+    "fail on data loss - starting from missing files with option off",
+    "fail on data loss - gaps of files with option off",
+    // Tests data loss detection when files are missing. FAILS: error message format differs
+    // between V1 and V2 (kernel provides different error messages).
+    "fail on data loss - starting from missing files",
+    "fail on data loss - gaps of files",
+
+    // === Rate Limiting with Metadata Checkpoints ===
+    // Tests maxFilesPerTrigger with metadata checkpoint (20 files, expects 20 batches). FAILS:
+    // V2 only produces 9 batches instead of 20 - rate limiting doesn't work correctly with
+    // metadata checkpoints in V2 connector.
+    "maxFilesPerTrigger: metadata checkpoint",
+    // Tests maxBytesPerTrigger with metadata checkpoint (20 files, expects 20 batches). FAILS:
+    // V2 only produces 9 batches instead of 20 - same rate limiting issue as maxFilesPerTrigger.
+    "maxBytesPerTrigger: metadata checkpoint",
+
+    // === Source Offset / Version Handling (unit tests without streaming) ===
     "unknown sourceVersion value",
     "invalid sourceVersion value",
     "missing sourceVersion",
@@ -125,18 +175,11 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
     "DeltaSourceOffset serialization",
     "DeltaSourceOffset.validateOffsets",
 
-    // === Misc ===
-    "no schema should throw an exception",
-    "basic",
-    "initial snapshot ends at base index of next version",
-    "Delta sources don't write offsets with null json",
-    "Delta source advances with non-data inserts and generates empty dataframe for addl files",
-    "a fast writer should not starve a Delta source",
-    "start from corrupt checkpoint",
-    "SC-11561: can consume new data without update",
-    "make sure that the delta sources works fine",
-    "should not attempt to read a non exist version",
-    "self union a Delta table should pass the catalog table assert"
+    // === Misc (tests that don't use loadStreamWithOptions) ===
+    "can delete old files of a snapshot without update",
+    "Delta source advances with non-data inserts and generates empty dataframe for " +
+      "non-data operations",
+    "Delta source advances with non-data inserts and generates empty dataframe for addl files"
   )
 
   override protected def shouldFail(testName: String): Boolean = {
