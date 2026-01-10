@@ -35,7 +35,7 @@ import org.apache.spark.sql.internal.SQLConf
  */
 class DeltaConnectorMode(sqlConf: SQLConf) {
 
-  private lazy val mode: String = {
+  private def mode: String = {
     sqlConf.getConf(DeltaSQLConf.V2_ENABLE_MODE)
   }
 
@@ -60,25 +60,6 @@ class DeltaConnectorMode(sqlConf: SQLConf) {
   }
 
   /**
-   * Determines if the provided schema should be trusted without validation for streaming reads.
-   * This is used to bypass DeltaLog schema loading for Unity Catalog tables where the catalog
-   * already provides the correct schema.
-   *
-   * @param catalogTable Optional catalog table metadata
-   * @return true if provided schema should be used without validation
-   */
-  def shouldBypassSchemaValidation(catalogTable: Option[CatalogTable]): Boolean = {
-    mode match {
-      case "STRICT" | "AUTO" =>
-        // In sparkV2 modes, trust the schema for Unity Catalog managed tables
-        catalogTable.exists(CatalogTableUtils.isUnityCatalogManagedTable)
-      case _ =>
-        // NONE or unknown: always validate schema via DeltaLog
-        false
-    }
-  }
-
-  /**
    * Determines if catalog should return sparkV2 (SparkTable) or sparkV1 (DeltaTableV2) tables.
    *
    * @return true if catalog should return sparkV2 tables
@@ -97,6 +78,28 @@ class DeltaConnectorMode(sqlConf: SQLConf) {
   }
 
   /**
+   * Determines if the provided schema should be trusted without validation for streaming reads.
+   * This is used to bypass DeltaLog schema loading for Unity Catalog tables where the catalog
+   * already provides the correct schema.
+   *
+   * This checks the parameters map for UC markers to determine if the table is UC-managed.
+   *
+   * @param parameters DataSource parameters map containing table storage properties
+   * @return true if provided schema should be used without validation
+   */
+  def shouldBypassSchemaValidationForStreaming(
+      parameters: Map[String, String]): Boolean = {
+    mode match {
+      case "STRICT" | "AUTO" =>
+        // In sparkV2 modes, trust the schema for Unity Catalog managed tables
+        CatalogTableUtils.isUnityCatalogManagedTableFromProperties(parameters)
+      case _ =>
+        // NONE or unknown: always validate schema via DeltaLog
+        false
+    }
+  }
+
+  /**
    * Gets the current mode string (for logging/debugging).
    */
   def getMode: String = mode
@@ -108,4 +111,3 @@ object DeltaConnectorMode {
    */
   def apply(sqlConf: SQLConf): DeltaConnectorMode = new DeltaConnectorMode(sqlConf)
 }
-

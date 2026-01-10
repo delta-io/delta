@@ -35,9 +35,34 @@ object CatalogTableUtils {
 
   // Matches "delta.feature." + "catalogOwned-preview"
   private val FEATURE_CATALOG_OWNED_PREVIEW = "delta.feature.catalogOwned-preview"
-  private val TEST_SIMULATE_UC = "test.simulateUC"
 
-  private def isTesting: Boolean = System.getenv("DELTA_TESTING") != null
+  /**
+   * Checks whether any catalog manages this table via CCv2 semantics by inspecting
+   * the storage properties map.
+   *
+   * @param properties Storage properties map
+   * @return true when either catalog feature flag is set to supported
+   */
+  private def isCatalogManagedFromProperties(properties: Map[String, String]): Boolean = {
+    if (properties == null || properties.isEmpty) {
+      return false
+    }
+    properties.get(FEATURE_CATALOG_MANAGED).exists(_.equalsIgnoreCase("supported")) ||
+      properties.get(FEATURE_CATALOG_OWNED_PREVIEW).exists(_.equalsIgnoreCase("supported"))
+  }
+
+  /**
+   * Checks whether the table has Unity Catalog backing by inspecting the storage properties map.
+   *
+   * @param properties Storage properties map
+   * @return true when the UC table ID is present
+   */
+  private def isUCBackedFromProperties(properties: Map[String, String]): Boolean = {
+    if (properties == null || properties.isEmpty) {
+      return false
+    }
+    properties.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+  }
 
   /**
    * Checks whether any catalog manages this table via CCv2 semantics.
@@ -46,21 +71,10 @@ object CatalogTableUtils {
    * @return true when either catalog feature flag is set to supported
    */
   def isCatalogManaged(table: CatalogTable): Boolean = {
-    if (table == null || table.storage == null || table.storage.properties == null) {
+    if (table == null || table.storage == null) {
       return false
     }
-    val properties = table.storage.properties
-
-    val isFeatureEnabled =
-      properties.get(FEATURE_CATALOG_MANAGED).exists(_.equalsIgnoreCase("supported")) ||
-      properties.get(FEATURE_CATALOG_OWNED_PREVIEW).exists(_.equalsIgnoreCase("supported"))
-
-    // Test-only escape hatch used by delta-spark suites to simulate Unity Catalog semantics
-    if (isTesting && properties.contains(TEST_SIMULATE_UC)) {
-      true
-    } else {
-      isFeatureEnabled
-    }
+    isCatalogManagedFromProperties(table.storage.properties)
   }
 
   /**
@@ -73,8 +87,24 @@ object CatalogTableUtils {
     if (table == null || table.storage == null || table.storage.properties == null) {
       return false
     }
-    val properties = table.storage.properties
-    val isUCBacked = properties.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
-    isUCBacked && isCatalogManaged(table)
+    isUCBackedFromProperties(table.storage.properties) && isCatalogManaged(table)
+  }
+
+  /**
+   * Checks whether the table is Unity Catalog managed based on storage properties map.
+   *
+   * This method checks the properties map (typically from table.storage.properties) for
+   * UC markers, allowing UC table detection without requiring a full CatalogTable object.
+   * This is useful when only the properties map is available, such as in DataSource APIs.
+   *
+   * @param properties Storage properties map (e.g., from CatalogTable.storage.properties or
+   *                   DataSource parameters map)
+   * @return true when the table is catalog managed and contains the UC identifier
+   */
+  def isUnityCatalogManagedTableFromProperties(properties: Map[String, String]): Boolean = {
+    if (properties == null || properties.isEmpty) {
+      return false
+    }
+    isUCBackedFromProperties(properties) && isCatalogManagedFromProperties(properties)
   }
 }

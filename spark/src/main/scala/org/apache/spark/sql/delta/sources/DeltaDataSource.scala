@@ -110,12 +110,12 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
-    // Only bypass schema loading for catalog-managed tables in V2 streaming mode.
-    // When V2_ENABLE_MODE is AUTO or STRICT, the schema comes from SparkTable (Kernel)
-    // which has already validated the table. For NONE mode, we must go through the
-    // normal DeltaLog schema loading path to ensure proper validation.
+    // Check if we should bypass DeltaLog schema loading for UC-managed tables.
+    // DeltaConnectorMode checks the parameters map for UC markers and returns true for
+    // AUTO/STRICT modes with UC tables.
+    val connectorMode = DeltaConnectorMode(sqlContext.sparkSession.sessionState.conf)
     if (schema.isDefined &&
-        shouldUseProvidedSchemaForStreaming(sqlContext.sparkSession, parameters)) {
+        connectorMode.shouldBypassSchemaValidationForStreaming(parameters)) {
       return (shortName(), schema.get)
     }
     val path = parameters.getOrElse("path", {
@@ -164,30 +164,6 @@ class DeltaDataSource
     } else {
       (shortName(), schemaToUse)
     }
-  }
-
-  /**
-   * Determines whether to use the provided schema for streaming queries.
-   *
-   * NOTE: This method is only called from `sourceSchema`, which is part of the
-   * StreamSourceProvider interface, so we are guaranteed to be in a streaming context.
-   *
-   * The check determines which streaming path we're in:
-   * - STRICT mode: DeltaCatalog always returns SparkTable for catalog tables. If we have a schema
-   *   and catalogTableOpt is defined, it came from SparkTable/Kernel via DeltaCatalog, so trust it.
-   * - AUTO mode: Schema comes from SparkTable (Kernel) via ApplyV2Streaming rule for Unity Catalog
-   *   tables. Check marker (in parameters) to ensure it's not user-provided.
-   * - NONE mode: V1 streaming path, must load schema via DeltaLog for validation.
-   *
-   * @param parameters The streaming options, which may contain a marker set by ApplyV2Streaming
-   * @return true if we should use the provided schema (V2 path with SparkTable), false if we
-   *         should load it from DeltaLog (V1 path or user-provided schema)
-   */
-  private def shouldUseProvidedSchemaForStreaming(
-      spark: SparkSession,
-      parameters: Map[String, String]): Boolean = {
-    val connectorMode = DeltaConnectorMode(spark.sessionState.conf)
-    connectorMode.shouldBypassSchemaValidation(catalogTableOpt)
   }
 
   override def createSource(

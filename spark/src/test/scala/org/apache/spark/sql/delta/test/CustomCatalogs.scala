@@ -22,6 +22,7 @@ import scala.collection.{immutable, mutable}
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.sql.{Row, SparkSession}
@@ -134,80 +135,6 @@ class DummySessionCatalogInner extends DelegatingCatalogExtension {
         properties = t.v1Table.storage.properties ++ Map("fs.myKey" -> "val")
       )
     ))
-  }
-}
-
-/**
- * A session catalog implementation that delegates to DeltaCatalog but injects UC markers for
- * selected tables.
- */
-class UCTableInjectingSessionCatalog extends TableCatalog {
-  private var deltaCatalog: DeltaCatalog = null
-  private val UC_TABLE_NAME = "uc_table"
-
-  override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
-    deltaCatalog = new DeltaCatalog()
-    deltaCatalog.setDelegateCatalog(new V2SessionCatalog(
-      SparkSession.active.sessionState.catalogManager.v1SessionCatalog))
-  }
-
-  override def name(): String = deltaCatalog.name()
-
-  override def listTables(namespace: Array[String]): Array[Identifier] = {
-    deltaCatalog.listTables(namespace)
-  }
-
-  override def loadTable(ident: Identifier): Table = {
-    val table = deltaCatalog.loadTable(ident)
-    if (!ident.name().equalsIgnoreCase(UC_TABLE_NAME)) {
-      return table
-    }
-
-    table match {
-      case d: DeltaTableV2 if d.catalogTable.isDefined =>
-        val ct = d.catalogTable.get
-        val newCt = ct.copy(
-          storage = ct.storage.copy(
-            properties = ct.storage.properties ++ Map(
-              "test.simulateUC" -> "true",
-              "io.unitycatalog.tableId" -> "test-uc-table-id"
-            )
-          )
-        )
-        d.copy(catalogTable = Some(newCt))
-
-      case v1: V1Table =>
-        val ct = v1.v1Table
-        val newCt = ct.copy(
-          storage = ct.storage.copy(
-            properties = ct.storage.properties ++ Map(
-              "test.simulateUC" -> "true",
-              "io.unitycatalog.tableId" -> "test-uc-table-id"
-            )
-          )
-        )
-        V1Table(newCt)
-
-      case other => other
-    }
-  }
-
-  override def createTable(
-      ident: Identifier,
-      schema: StructType,
-      partitions: Array[Transform],
-      properties: java.util.Map[String, String]): Table = {
-    deltaCatalog.createTable(ident, schema, partitions, properties)
-  }
-
-  override def alterTable(ident: Identifier, changes: TableChange*): Table = {
-    deltaCatalog.alterTable(ident, changes: _*)
-  }
-
-  override def dropTable(ident: Identifier): Boolean = deltaCatalog.dropTable(ident)
-
-  override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
-    deltaCatalog.renameTable(oldIdent, newIdent)
   }
 }
 
