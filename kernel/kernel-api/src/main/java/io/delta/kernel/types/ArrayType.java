@@ -56,15 +56,19 @@ public class ArrayType extends DataType {
   }
 
   /**
-   * Is `dataType` compatible input type for this type? The collations could be different.
+   * Checks whether the given {@code dataType} is compatible with this type when writing data.
+   * Collation differences are ignored.
    *
-   * <p>Should be used for schema comparisons when checking input type compatibility.
+   * <p>This method is intended to be used during the write path to validate that an input type
+   * matches the expected schema before data is written.
    *
-   * @param dataType
-   * @return
+   * <p>It should not be used in other cases, such as the read path.
+   *
+   * @param dataType the input data type being written
+   * @return {@code true} if the input type is compatible with this type.
    */
   @Override
-  public boolean isInputCompatible(DataType dataType) {
+  public boolean isWriteCompatible(DataType dataType) {
     if (this == dataType) {
       return true;
     }
@@ -73,7 +77,7 @@ public class ArrayType extends DataType {
     }
     ArrayType arrayType = (ArrayType) dataType;
     return (elementField == null && arrayType.elementField == null)
-        || (elementField != null && elementField.isInputCompatible(arrayType.elementField));
+        || (elementField != null && elementField.isWriteCompatible(arrayType.elementField));
   }
 
   @Override
