@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.commands.DeleteCommand
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.delta.util.Utils.isAllowedSubqueryPattern
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -32,7 +33,7 @@ case class PreprocessTableDelete(sqlConf: SQLConf) extends Rule[LogicalPlan] {
     plan.resolveOperators {
       case d: DeltaDelete if d.resolved =>
         d.condition.foreach { cond =>
-          if (SubqueryExpression.hasSubquery(cond)) {
+          if (SubqueryExpression.hasSubquery(cond) && !isAllowedSubqueryPattern(cond)) {
             throw DeltaErrors.subqueryNotSupportedException("DELETE", cond)
           }
         }

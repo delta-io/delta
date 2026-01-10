@@ -131,19 +131,6 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
     }
   }
 
-  test("Preserving Row Tracking - Subqueries are not supported in DELETE") {
-    withRowIdTestTable(isPartitioned = false) {
-      withTable(subqueryTableName) {
-        createTestTable(subqueryTableName, isPartitioned = false, multipleFilesPerPartition = false)
-        val ex = intercept[AnalysisException] {
-          deleteAndValidateStableRowId(Some(
-            s"id in (SELECT id FROM $subqueryTableName WHERE id = 7 OR id = 11)"))
-        }.getMessage
-        assert(ex.contains("Subqueries are not supported in the DELETE"))
-      }
-    }
-  }
-
   for (isPartitioned <- BOOLEAN_DOMAIN)  {
     test(s"Multiple DELETEs preserve Row IDs, isPartitioned=$isPartitioned") {
       withRowIdTestTable(isPartitioned) {
