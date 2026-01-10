@@ -160,6 +160,34 @@ import Unidoc._
  *   Example:
  *     build/sbt showSparkVersions
  *
+ * exportSparkVersionsJson
+ *   Exports Spark version information to target/spark-versions.json.
+ *   This is the SINGLE SOURCE OF TRUTH for Spark versions used by:
+ *   - GitHub Actions workflows (for dynamic matrix generation)
+ *   - CI/CD scripts (for version-specific configuration)
+ *
+ *   The JSON is an array where each element contains:
+ *   - fullVersion: Full version string (e.g., "4.0.1", "4.1.0")
+ *   - shortVersion: Short version string (e.g., "4.0", "4.1")
+ *   - isMaster: Whether this is the master/snapshot version
+ *   - isDefault: Whether this is the default Spark version
+ *   - targetJvm: Target JVM version (e.g., "17")
+ *   - packageSuffix: Maven artifact suffix for this version (e.g., "", "_4.1")
+ *
+ *   Example:
+ *     build/sbt exportSparkVersionsJson
+ *     # Generates: target/spark-versions.json
+ *     # Output: [{"fullVersion": "4.0.1", "shortVersion": "4.0", "isMaster": false, "isDefault": true, "targetJvm": "17", "packageSuffix": ""}, ...]
+ *
+ *   Use with Python utilities to extract specific fields:
+ *     python3 project/scripts/get_spark_version_info.py --all-spark-versions
+ *     # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
+ *     python3 project/scripts/get_spark_version_info.py --get-field "4.0" targetJvm
+ *     python3 project/scripts/get_spark_version_info.py --get-field "master" targetJvm
+ *
+ *   This ensures GitHub Actions always uses the versions defined here,
+ *   eliminating manual synchronization across multiple files.
+ *
  * ========================================================
  */
 
@@ -483,6 +511,40 @@ object CrossSparkVersions extends AutoPlugin {
       SparkVersionSpec.ALL_SPECS.foreach { spec =>
         println(spec.fullVersion)
       }
+      state
+    },
+    commands += Command.command("exportSparkVersionsJson") { state =>
+      // Export Spark version information as JSON for use by CI/CD and other tools
+      import java.io.{File, PrintWriter}
+
+      val outputFile = new File("target/spark-versions.json")
+      outputFile.getParentFile.mkdirs()
+      
+      val writer = new PrintWriter(outputFile)
+      try {
+        writer.println("[")
+        SparkVersionSpec.ALL_SPECS.zipWithIndex.foreach { case (spec, idx) =>
+          val comma = if (idx < SparkVersionSpec.ALL_SPECS.size - 1) "," else ""
+          val isMaster = SparkVersionSpec.MASTER.contains(spec)
+          val isDefault = spec == SparkVersionSpec.DEFAULT
+          // Package suffix is empty for default version, "_<shortVersion>" for others
+          val packageSuffix = if (isDefault) "" else s"_${spec.shortVersion}"
+          writer.println(s"""  {""")
+          writer.println(s"""    "fullVersion": "${spec.fullVersion}",""")
+          writer.println(s"""    "shortVersion": "${spec.shortVersion}",""")
+          writer.println(s"""    "isMaster": $isMaster,""")
+          writer.println(s"""    "isDefault": $isDefault,""")
+          writer.println(s"""    "targetJvm": "${spec.targetJvm}",""")
+          writer.println(s"""    "packageSuffix": "$packageSuffix"""")
+          writer.println(s"""  }$comma""")
+        }
+        writer.println("]")
+        
+        println(s"[info] Spark version information exported to: ${outputFile.getAbsolutePath}")
+      } finally {
+        writer.close()
+      }
+      
       state
     }
   )
