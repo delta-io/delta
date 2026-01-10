@@ -19,6 +19,7 @@ package io.delta.flink.table;
 import dev.failsafe.Failsafe;
 import dev.failsafe.Fallback;
 import dev.failsafe.RetryPolicy;
+import dev.failsafe.function.CheckedRunnable;
 import dev.failsafe.function.CheckedSupplier;
 import io.delta.flink.Conf;
 import io.delta.kernel.*;
@@ -43,7 +44,6 @@ import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatus;
 import java.io.File;
-import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
@@ -101,6 +101,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
   protected transient ExecutorService refreshThreadPool = null;
   // Thread pool for all kinds of async works
   protected transient ExecutorService generalThreadPool = null;
+  // Metric Listeners
+  protected transient List<MetricListener> metricListeners;
 
   public AbstractKernelTable(
       DeltaCatalog catalog,
@@ -119,6 +121,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     this.refreshThreadPool = Executors.newSingleThreadExecutor();
     this.credentialManager = createCredentialManager();
+    this.metricListeners = new ArrayList<>();
     withRetry(
         () -> {
           initialize();
@@ -265,6 +268,18 @@ public abstract class AbstractKernelTable implements DeltaTable {
         () -> catalog.getCredentials(this.getTableUUID()), this::onCredentialsRefreshed);
   }
 
+  public void addMetricListener(MetricListener listener) {
+    this.metricListeners.add(listener);
+  }
+
+  public void removeMetricListener(MetricListener listener) {
+    this.metricListeners.remove(listener);
+  }
+
+  protected void onMetric(String event, long time) {
+    this.metricListeners.forEach(listener -> listener.onEvent(event, time));
+  }
+
   @Override
   public void open() {
     if (tableState == null) {
@@ -276,6 +291,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
       schema = TransactionStateRow.getLogicalSchema(tableState);
 
       credentialManager = createCredentialManager();
+
+      metricListeners = new ArrayList<>();
     }
   }
 
@@ -289,12 +306,14 @@ public abstract class AbstractKernelTable implements DeltaTable {
     Function<String, Optional<Snapshot>> body =
         (key) -> {
           try {
-            return Optional.of(refreshThreadPool.submit(this::loadLatestSnapshot).get());
+            return withTiming(
+                "loadLatestSnapshot",
+                () -> Optional.of(refreshThreadPool.submit(this::loadLatestSnapshot).get()));
           } catch (Exception e) {
             if (isTableNotFound.test(e)) {
               return Optional.empty();
             }
-            throw new RuntimeException(e);
+            throw ExceptionUtils.wrap(e);
           }
         };
     String path = tablePath.toString();
@@ -306,10 +325,14 @@ public abstract class AbstractKernelTable implements DeltaTable {
   public synchronized void close() throws InterruptedException {
     LOG.info("Closing table : {}", getId());
     if (refreshThreadPool != null) {
-      refreshThreadPool.shutdownNow();
-      // This should return quickly if all tasks are interruptible
-      refreshThreadPool.awaitTermination(10, TimeUnit.MINUTES);
-      refreshThreadPool = null;
+      withTiming(
+          "close",
+          () -> {
+            refreshThreadPool.shutdownNow();
+            // This should return quickly if all tasks are interruptible
+            refreshThreadPool.awaitTermination(10, TimeUnit.MINUTES);
+            refreshThreadPool = null;
+          });
     }
   }
 
@@ -344,89 +367,101 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   /** Refresh with the provided snapshot */
   protected void refresh(Snapshot snapshot) {
-    withRetry(
-        () -> {
-          Snapshot currentSnapshot = snapshot;
-          if (currentSnapshot == null) {
-            currentSnapshot = snapshot().orElse(null);
-          }
-          if (currentSnapshot == null) {
-            return null;
-          }
-          this.schema = currentSnapshot.getSchema();
-          this.partitionColumns = currentSnapshot.getPartitionColumnNames();
-          // Refresh table state
-          this.tableState =
-              currentSnapshot
-                  .buildUpdateTableTransaction("dummy", Operation.WRITE)
-                  .build(getEngine())
-                  .getTransactionState(getEngine());
-          this.serializedTableState = JsonUtils.rowToJson(this.tableState);
-          return null;
-        });
+    withTiming(
+        "refresh",
+        () ->
+            withRetry(
+                () -> {
+                  Snapshot currentSnapshot = snapshot;
+                  if (currentSnapshot == null) {
+                    currentSnapshot = snapshot().orElse(null);
+                  }
+                  if (currentSnapshot == null) {
+                    return null;
+                  }
+                  this.schema = currentSnapshot.getSchema();
+                  this.partitionColumns = currentSnapshot.getPartitionColumnNames();
+                  // Refresh table state
+                  this.tableState =
+                      currentSnapshot
+                          .buildUpdateTableTransaction("dummy", Operation.WRITE)
+                          .build(getEngine())
+                          .getTransactionState(getEngine());
+                  this.serializedTableState = JsonUtils.rowToJson(this.tableState);
+                  return null;
+                }));
   }
 
   @Override
   public Optional<Snapshot> commit(
       CloseableIterable<Row> actions, String appId, long txnId, Map<String, String> properties) {
-    return withRetry(
-        () -> {
-          Engine localEngine = getEngine();
-          Transaction txn;
-          Optional<Snapshot> snapshotOpt = snapshot();
-          if (snapshotOpt.isPresent()) {
-            Snapshot snapshot = snapshotOpt.get();
-            UpdateTableTransactionBuilder txnBuilder =
-                snapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
-            txnBuilder.withTransactionId(appId, txnId);
-            txnBuilder.withTablePropertiesAdded(properties);
-            txn = txnBuilder.build(engine);
-          } else {
-            CreateTableTransactionBuilder txnBuilder =
-                TableManager.buildCreateTableTransaction(
-                    getTablePath().toString(), getSchema(), ENGINE_INFO);
-            if (!getPartitionColumns().isEmpty()) {
-              txnBuilder.withDataLayoutSpec(
-                  DataLayoutSpec.partitioned(
-                      getPartitionColumns().stream()
-                          .map(Column::new)
-                          .collect(Collectors.toList())));
-            }
-            txnBuilder.withTableProperties(properties);
-            txn = txnBuilder.build(localEngine);
-          }
-          TransactionCommitResult result = txn.commit(localEngine, actions);
-          result.getPostCommitSnapshot().ifPresent(this::refresh);
+    return withTiming(
+        "commit",
+        () ->
+            withRetry(
+                () -> {
+                  Engine localEngine = getEngine();
+                  Transaction txn;
+                  Optional<Snapshot> snapshotOpt = snapshot();
+                  if (snapshotOpt.isPresent()) {
+                    Snapshot snapshot = snapshotOpt.get();
+                    UpdateTableTransactionBuilder txnBuilder =
+                        snapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
+                    txnBuilder.withTransactionId(appId, txnId);
+                    txnBuilder.withTablePropertiesAdded(properties);
+                    txn = txnBuilder.build(engine);
+                  } else {
+                    CreateTableTransactionBuilder txnBuilder =
+                        TableManager.buildCreateTableTransaction(
+                            getTablePath().toString(), getSchema(), ENGINE_INFO);
+                    if (!getPartitionColumns().isEmpty()) {
+                      txnBuilder.withDataLayoutSpec(
+                          DataLayoutSpec.partitioned(
+                              getPartitionColumns().stream()
+                                  .map(Column::new)
+                                  .collect(Collectors.toList())));
+                    }
+                    txnBuilder.withTableProperties(properties);
+                    txn = txnBuilder.build(localEngine);
+                  }
 
-          Optional<Snapshot> postCommitSnapshot = result.getPostCommitSnapshot();
-          postCommitSnapshot.ifPresent(
-              snapshot -> {
-                // Update cache
-                cacheManager.put(getTablePath().toString(), snapshot);
-                // Write checksum
-                generalThreadPool.submit(
-                    () -> {
-                      try {
-                        snapshot.writeChecksum(getEngine(), Snapshot.ChecksumWriteMode.SIMPLE);
-                      } catch (Exception e) {
-                        LOG.error("unable to write checksum", e);
-                        throw new RuntimeException(e);
-                      }
-                    });
-                // Occasionally write checkpoint
-                if (randgen.nextDouble() < Conf.getInstance().getDeltaCheckpointFrequency()) {
-                  generalThreadPool.submit(
-                      () -> {
-                        try {
-                          snapshot.writeCheckpoint(getEngine());
-                        } catch (IOException e) {
-                          throw new RuntimeException(e);
+                  TransactionCommitResult result =
+                      withTiming("commit.txn", () -> txn.commit(localEngine, actions));
+                  Optional<Snapshot> postCommitSnapshot = result.getPostCommitSnapshot();
+                  postCommitSnapshot.ifPresent(
+                      snapshot -> {
+                        this.refresh(snapshot);
+
+                        // Publish commits
+                        withTiming("commit.publish", () -> snapshot.publish(getEngine()));
+                        // Update cache
+                        cacheManager.put(getTablePath().toString(), snapshot);
+                        // Write checksum
+                        generalThreadPool.submit(
+                            () ->
+                                withTiming(
+                                    "commit.checksum",
+                                    () -> {
+                                      try {
+                                        snapshot.writeChecksum(
+                                            getEngine(), Snapshot.ChecksumWriteMode.SIMPLE);
+                                      } catch (Exception e) {
+                                        LOG.error("unable to write checksum", e);
+                                        throw ExceptionUtils.wrap(e);
+                                      }
+                                    }));
+                        // Occasionally write checkpoint
+                        if (randgen.nextDouble()
+                            < Conf.getInstance().getDeltaCheckpointFrequency()) {
+                          generalThreadPool.submit(
+                              () ->
+                                  withTiming(
+                                      "commit.checkpoint",
+                                      () -> snapshot.writeCheckpoint(getEngine())));
                         }
                       });
-                }
-              });
-          return postCommitSnapshot;
-        });
+                  return postCommitSnapshot;
+                }));
   }
 
   @Override
@@ -484,6 +519,30 @@ public abstract class AbstractKernelTable implements DeltaTable {
     Fallback<Object> fallback =
         Fallback.builder((Object) Optional.empty()).handleIf(isSwallowable).build();
     return Failsafe.with(retryPolicy, fallback).get(body);
+  }
+
+  protected <RET> RET withTiming(String name, Callable<RET> body) {
+    long start = System.nanoTime();
+    try {
+      return body.call();
+    } catch (Throwable t) {
+      throw ExceptionUtils.wrap(t);
+    } finally {
+      long elapse = System.nanoTime() - start;
+      onMetric(name, elapse);
+    }
+  }
+
+  protected void withTiming(String name, CheckedRunnable body) {
+    long start = System.nanoTime();
+    try {
+      body.run();
+    } catch (Throwable t) {
+      throw ExceptionUtils.wrap(t);
+    } finally {
+      long elapse = System.nanoTime() - start;
+      onMetric(name, elapse);
+    }
   }
 
   /** Callback invoked when retry need to refresh credentials (credential exception) */

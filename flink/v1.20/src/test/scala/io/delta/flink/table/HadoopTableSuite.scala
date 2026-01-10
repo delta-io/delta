@@ -22,6 +22,7 @@ import java.util.{Collections, Optional}
 import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 
 import io.delta.flink.TestHelper
+import io.delta.flink.table.MetricListener.StatsListener
 import io.delta.kernel.data.{ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
@@ -68,6 +69,40 @@ class HadoopTableSuite extends AnyFunSuite with TestHelper {
       }
       // There should be only one version
       assert(table.loadLatestSnapshot().getVersion == 1)
+    }
+  }
+
+  ignore("benchmark the local fs write") {
+    withTempDir { dir =>
+      val tablePath = dir.getAbsolutePath
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("part", StringType.STRING)
+
+      val table = new HadoopTable(
+        URI.create(tablePath),
+        Map.empty[String, String].asJava,
+        schema,
+        List("part").asJava)
+
+      val statsListener = new StatsListener
+      table.addMetricListener(statsListener)
+
+      for (i <- 0 until 1000) {
+        val actions = (0 until 5).map { i =>
+          dummyAddFileRow(schema, 10 + i, Map("part" -> Literal.ofString("p" + i)))
+        }.toList.asJava
+        val dataActions = new CloseableIterable[Row]() {
+          override def iterator: CloseableIterator[Row] =
+            Utils.toCloseableIterator(actions.iterator())
+          override def close(): Unit = {
+            // Nothing to close
+          }
+        }
+        table.commit(dataActions, "a", i, Map.empty[String, String].asJava)
+      }
+
+      statsListener.report()
     }
   }
 

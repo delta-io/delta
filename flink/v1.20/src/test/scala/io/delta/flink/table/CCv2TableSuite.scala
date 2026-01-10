@@ -60,24 +60,30 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
         CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
         CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
 
-    val values = (0 until 100)
-    val colVector = new ColumnVector() {
-      override def getDataType: DataType = IntegerType.INTEGER
-      override def getSize: Int = values.length
-      override def close(): Unit = {}
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
-      override def getInt(rowId: Int): Int = values(rowId)
+    for (i <- 0 until 100) {
+      val values = (0 until 10)
+      val colVector = new ColumnVector() {
+        override def getDataType: DataType = IntegerType.INTEGER
+
+        override def getSize: Int = values.length
+
+        override def close(): Unit = {}
+
+        override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+        override def getInt(rowId: Int): Int = values(rowId)
+      }
+
+      val columnarBatchData =
+        new DefaultColumnarBatch(values.size, table.getSchema, Array(colVector))
+      val filteredColumnarBatchData = new FilteredColumnarBatch(columnarBatchData, Optional.empty())
+      val partitionValues = Collections.emptyMap[String, Literal]()
+
+      val data = toCloseableIterator(Seq(filteredColumnarBatchData).asJava.iterator())
+      val rows = table.writeParquet("abc", data, partitionValues)
+
+      table.commit(CloseableIterable.inMemoryIterable(rows), "a", i, Map("a" -> "b").asJava)
     }
-
-    val columnarBatchData =
-      new DefaultColumnarBatch(values.size, table.getSchema, Array(colVector))
-    val filteredColumnarBatchData = new FilteredColumnarBatch(columnarBatchData, Optional.empty())
-    val partitionValues = Collections.emptyMap[String, Literal]()
-
-    val data = toCloseableIterator(Seq(filteredColumnarBatchData).asJava.iterator())
-    val rows = table.writeParquet("abc", data, partitionValues)
-
-    table.commit(CloseableIterable.inMemoryIterable(rows), "a", 1000L, Map("a" -> "b").asJava)
   }
 
   ignore("serializablity") {

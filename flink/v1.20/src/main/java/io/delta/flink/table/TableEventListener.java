@@ -16,7 +16,7 @@
 
 package io.delta.flink.table;
 
-public interface DeltaTableListener {
+public interface TableEventListener {
 
   void onCredentialsRefreshed(DeltaTable source);
 

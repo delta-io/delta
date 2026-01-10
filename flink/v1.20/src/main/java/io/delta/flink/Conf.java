@@ -94,7 +94,7 @@ public final class Conf {
   }
 
   public double getDeltaCheckpointFrequency() {
-    return Double.parseDouble(getOrDefault(DELTA_CHECKPOINT_FREQUENCY, "0"));
+    return Double.parseDouble(getOrDefault(DELTA_CHECKPOINT_FREQUENCY, "0.1"));
   }
 
   public int getCredentialsRefreshThreadPoolSize() {

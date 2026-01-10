@@ -35,6 +35,13 @@ public class ExceptionUtils {
     };
   }
 
+  public static RuntimeException wrap(Throwable t) {
+    if (t instanceof RuntimeException) {
+      return (RuntimeException) t;
+    }
+    return new RuntimeException(t);
+  }
+
   public static class ResourceNotFoundException extends RuntimeException {
     public ResourceNotFoundException(String message) {
       super(message);
