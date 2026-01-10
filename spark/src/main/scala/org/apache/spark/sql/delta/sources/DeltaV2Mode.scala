@@ -33,7 +33,7 @@ import org.apache.spark.sql.internal.SQLConf
  *
  * @param sqlConf Spark SQL configuration to read the v2.enableMode setting
  */
-class DeltaConnectorMode(sqlConf: SQLConf) {
+class DeltaV2Mode(sqlConf: SQLConf) {
 
   private def mode: String = {
     sqlConf.getConf(DeltaSQLConf.V2_ENABLE_MODE)
@@ -105,9 +105,9 @@ class DeltaConnectorMode(sqlConf: SQLConf) {
   def getMode: String = mode
 }
 
-object DeltaConnectorMode {
+object DeltaV2Mode {
   /**
-   * Creates a DeltaConnectorMode instance from SQLConf.
+   * Creates a DeltaV2Mode instance from SQLConf.
    */
-  def apply(sqlConf: SQLConf): DeltaConnectorMode = new DeltaConnectorMode(sqlConf)
+  def apply(sqlConf: SQLConf): DeltaV2Mode = new DeltaV2Mode(sqlConf)
 }

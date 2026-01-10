@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.catalog;
 
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.sources.DeltaConnectorMode;
+import org.apache.spark.sql.delta.sources.DeltaV2Mode;
 import java.util.HashMap;
 import java.util.function.Supplier;
 import org.apache.hadoop.fs.Path;
@@ -60,14 +60,14 @@ import org.apache.spark.sql.connector.catalog.Table;
  *   <li>V2 connector: {@link SparkTable} - sparkV2 connector, read-only support</li>
  * </ul>
  *
- * <p>See {@link DeltaConnectorMode} for V1 vs V2 connector definitions and enable mode configuration.</p>
+ * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
   /**
    * Loads a Delta table that is registered in the catalog.
    *
-   * <p>Routing logic based on {@link DeltaConnectorMode}:
+   * <p>Routing logic based on {@link DeltaV2Mode}:
    * <ul>
    *   <li>STRICT: Returns sparkV2 {@link SparkTable} (V2 connector)</li>
    *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
@@ -88,7 +88,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    * Loads a Delta table directly from a path.
    * This is used for path-based table access where the identifier name is the table path.
    *
-   * <p>Routing logic based on {@link DeltaConnectorMode}:
+   * <p>Routing logic based on {@link DeltaV2Mode}:
    * <ul>
    *   <li>STRICT: Returns sparkV2 {@link SparkTable} (V2 connector)</li>
    *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
@@ -106,7 +106,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   }
 
   /**
-   * Loads a table based on the {@link DeltaConnectorMode} SQL configuration.
+   * Loads a table based on the {@link DeltaV2Mode} SQL configuration.
    *
    * <p>This method checks the configuration and delegates to the appropriate supplier:
    * <ul>
@@ -114,7 +114,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    *   <li>NONE mode (default): Uses V1 connector (DeltaTableV2) - production default with full features</li>
    * </ul>
    *
-   * <p>See {@link DeltaConnectorMode} for detailed V1 vs V2 connector definitions.
+   * <p>See {@link DeltaV2Mode} for detailed V1 vs V2 connector definitions.
    *
    * @param v2ConnectorSupplier Supplier for V2 connector (sparkV2 SparkTable) - used in STRICT mode
    * @param v1ConnectorSupplier Supplier for V1 connector (DeltaTableV2) - used in NONE mode (default)
@@ -123,7 +123,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   private Table loadTableInternal(
       Supplier<Table> v2ConnectorSupplier,
       Supplier<Table> v1ConnectorSupplier) {
-    DeltaConnectorMode connectorMode = new DeltaConnectorMode(spark().sessionState().conf());
+    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
     if (connectorMode.shouldCatalogReturnV2Tables()) {
       return v2ConnectorSupplier.get();
     } else {

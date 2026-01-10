@@ -20,7 +20,7 @@ import scala.jdk.CollectionConverters._
 
 import io.delta.spark.internal.v2.catalog.SparkTable
 import io.delta.spark.internal.v2.utils.ScalaUtils
-import org.apache.spark.sql.delta.sources.{DeltaConnectorMode, DeltaSourceUtils}
+import org.apache.spark.sql.delta.sources.{DeltaV2Mode, DeltaSourceUtils}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -40,7 +40,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * DeltaTableV2 doesn't advertise STREAMING_READ capability. We convert it back to
  * StreamingRelationV2 with SparkTable (from sparkV2) which does support streaming.
  *
- * See [[DeltaConnectorMode]] for configuration behavior.
+ * See [[DeltaV2Mode]] for configuration behavior.
  *
  * @param session The Spark session for configuration access
  */
@@ -66,7 +66,7 @@ class ApplyV2Streaming(
       return false
     }
 
-    val connectorMode = DeltaConnectorMode(session.sessionState.conf)
+    val connectorMode = DeltaV2Mode(session.sessionState.conf)
     connectorMode.isStreamingReadsEnabled(s.dataSource.catalogTable)
   }
 

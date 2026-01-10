@@ -111,9 +111,9 @@ class DeltaDataSource
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
     // Check if we should bypass DeltaLog schema loading for UC-managed tables.
-    // DeltaConnectorMode checks the parameters map for UC markers and returns true for
+    // DeltaV2Mode checks the parameters map for UC markers and returns true for
     // AUTO/STRICT modes with UC tables.
-    val connectorMode = DeltaConnectorMode(sqlContext.sparkSession.sessionState.conf)
+    val connectorMode = DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
     if (schema.isDefined &&
         connectorMode.shouldBypassSchemaValidationForStreaming(parameters)) {
       return (shortName(), schema.get)
