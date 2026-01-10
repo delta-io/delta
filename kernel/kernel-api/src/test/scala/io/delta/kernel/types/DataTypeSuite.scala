@@ -21,7 +21,7 @@ class DataTypeSuite extends AnyFunSuite {
   val utf8LcaseString = new StringType("SPARK.UTF8_LCASE")
   val unicodeString = new StringType("ICU.UNICODE")
 
-  test("isInputCompatible") {
+  test("isWriteCompatible") {
     val testCases = Seq(
       (StringType.STRING, StringType.STRING, true),
       (StringType.STRING, utf8LcaseString, true),
@@ -144,7 +144,7 @@ class DataTypeSuite extends AnyFunSuite {
         false))
 
     testCases.foreach { case (dt1, dt2, expected) =>
-      assert(dt1.isInputCompatible(dt2) == expected)
+      assert(dt1.isWriteCompatible(dt2) == expected)
     }
   }
 }

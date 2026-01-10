@@ -176,15 +176,19 @@ public final class StructType extends DataType {
   }
 
   /**
-   * Is `dataType` compatible input type for this type? The collations could be different.
+   * Checks whether the given {@code dataType} is compatible with this type when writing data.
+   * Collation differences are ignored.
    *
-   * <p>Should be used for schema comparisons when checking input type compatibility.
+   * <p>This method is intended to be used during the write path to validate that an input type
+   * matches the expected schema before data is written.
    *
-   * @param dataType
-   * @return
+   * <p>It should not be used in other cases, such as the read path.
+   *
+   * @param dataType the input data type being written
+   * @return {@code true} if the input type is compatible with this type.
    */
   @Override
-  public boolean isInputCompatible(DataType dataType) {
+  public boolean isWriteCompatible(DataType dataType) {
     if (this == dataType) {
       return true;
     }
@@ -195,7 +199,13 @@ public final class StructType extends DataType {
     return this.length() == structType.length()
         && fieldNames.equals(structType.fieldNames)
         && IntStream.range(0, this.length())
-            .mapToObj(i -> this.at(i).isInputCompatible(structType.at(i)))
+            .mapToObj(
+                i -> {
+                  StructField thisField = this.at(i);
+                  StructField otherField = structType.at(i);
+                  return (thisField == null && otherField == null)
+                      || (thisField != null && thisField.isWriteCompatible(otherField));
+                })
             .allMatch(result -> result);
   }
 

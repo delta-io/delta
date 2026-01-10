@@ -216,10 +216,10 @@ public class StructField {
   }
 
   /**
-   * Checks whether the given {@code other} is compatible as an input for this {@code StructField}.
-   * The collations may be different.
+   * Checks whether the given {@code other} is compatible with this {@code StructField} when writing
+   * data. Collation differences are ignored.
    */
-  public boolean isInputCompatible(StructField other) {
+  public boolean isWriteCompatible(StructField other) {
     if (this == other) {
       return true;
     }
@@ -229,7 +229,7 @@ public class StructField {
 
     return nullable == other.nullable
         && name.equals(other.name)
-        && dataType.isInputCompatible(other.dataType)
+        && dataType.isWriteCompatible(other.dataType)
         // Compare metadata while ignoring collation metadata differences
         && metadata.equalsIgnoreKeys(other.metadata, Collections.singleton(COLLATIONS_METADATA_KEY))
         && Objects.equals(typeChanges, other.typeChanges);

@@ -381,7 +381,7 @@ public class DataFileStatistics {
     DataType expectedLiteralType =
         field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
     if (literal.getDataType() == null
-        || !expectedLiteralType.isInputCompatible(literal.getDataType())) {
+        || !expectedLiteralType.isWriteCompatible(literal.getDataType())) {
       throw DeltaErrors.statsTypeMismatch(
           field.getName(), expectedLiteralType, literal.getDataType());
     }
