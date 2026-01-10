@@ -21,6 +21,15 @@ import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.List;
 
+/**
+ * A wrapper to provide a ColumnVector view backed by a nested list. Usage example: <code>
+ *     val dataBuffer = java.util.List.of(
+ *         java.util.List.of(1, "Jack"),
+ *         java.util.List.of(2, "Amy"))
+ *     val cv1 = new DataColumnVectorView(dataBuffer, 0, IntegerType.INTEGER)
+ *     val cv2 = new DataColumnVectorView(dataBuffer, 1, StringType.STRING)
+ * </code>
+ */
 public class DataColumnVectorView implements ColumnVector {
 
   private final List<List<Object>> rows;

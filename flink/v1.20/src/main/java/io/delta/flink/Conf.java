@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
 /** Singleton configuration loader for delta-flink.properties. */
 public final class Conf {
 
-  Logger LOG = LoggerFactory.getLogger(Conf.class);
+  private static final Logger LOG = LoggerFactory.getLogger(Conf.class);
 
   public static String SINK_RETRY_MAX_ATTEMPT = "sink.retry.max-attempt";
   public static String SINK_RETRY_DELAY_MS = "sink.retry.delay-ms";
@@ -50,11 +50,18 @@ public final class Conf {
   public static String CREDENTIALS_REFRESH_AHEAD_MS = "credentials.refresh.ahead-ms";
 
   private static final String CONFIG_FILE = "delta-flink.properties";
+  private static final Conf INSTANCE = new Conf();
 
   private final Map<String, String> props;
+  // For debug purpose
+  private URL sourcePath;
 
   private Conf() {
     this.props = load();
+  }
+
+  public static Conf getInstance() {
+    return INSTANCE;
   }
 
   /*================
@@ -105,12 +112,6 @@ public final class Conf {
     return Long.parseLong(getOrDefault(CREDENTIALS_REFRESH_AHEAD_MS, "60000"));
   }
 
-  private static final Conf INSTANCE = new Conf();
-
-  public static Conf getInstance() {
-    return INSTANCE;
-  }
-
   /** Returns an immutable view of all configuration entries. */
   public Map<String, String> asMap() {
     return props;
@@ -127,10 +128,6 @@ public final class Conf {
   }
 
   // ----------------- internals -----------------
-
-  // For debug purpose
-  private URL sourcePath;
-
   private Map<String, String> load() {
     Properties p = new Properties();
     try (InputStream in = Conf.class.getClassLoader().getResourceAsStream(CONFIG_FILE)) {

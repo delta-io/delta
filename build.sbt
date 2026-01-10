@@ -1383,6 +1383,39 @@ lazy val hudi = (project in file("hudi"))
     TestParallelization.settings
   )
 
+lazy val flinkCommonSettings = Seq(
+  publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+  autoScalaLibrary := false, // exclude scala-library from dependencies
+  assembly / assemblyMergeStrategy := {
+    // Discard module-info.class files from Java 9+ modules and multi-release JARs
+    case "module-info.class" => MergeStrategy.discard
+    case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+    case x =>
+      val oldStrategy = (assembly / assemblyMergeStrategy).value
+      oldStrategy(x)
+  },
+  assembly / assemblyExcludedJars := {
+    val cp = (assembly / fullClasspath).value
+    cp.filter { entry =>
+      entry.data.getName.startsWith("bundle-") &&
+        entry.data.getName.endsWith(".jar")
+    }
+  },
+  Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+  Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+  // Make sure the shaded JAR is produced before we compile/run tests
+  Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+  Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+  Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
+  Test / publishArtifact := false,
+  Test / javaOptions ++= Seq(
+    "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
+  ),
+  crossPaths := false,
+)
+
 lazy val flinkV1 = (project in file("flink/v1.20"))
 //  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
@@ -1391,38 +1424,9 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
     name := "delta-flink-v1.20",
     commonSettings,
     releaseSettings,
-    javafmtCheckSettings,
-    scalafmtCheckSettings,
-    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
-    autoScalaLibrary := false, // exclude scala-library from dependencies
-    assembly / assemblyMergeStrategy := {
-      // Discard module-info.class files from Java 9+ modules and multi-release JARs
-      case "module-info.class" => MergeStrategy.discard
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
-    },
-    assembly / assemblyExcludedJars := {
-      val cp = (assembly / fullClasspath).value
-      cp.filter { entry =>
-        entry.data.getName.startsWith("bundle-") &&
-          entry.data.getName.endsWith(".jar")
-      }
-    },
-    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
-
-    // Make sure the shaded JAR is produced before we compile/run tests
-    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
-
-    Test / publishArtifact := false,
-    Test / javaOptions ++= Seq(
-      "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
-    ),
-    crossPaths := false,
+    javafmtCheckSettings(),
+    scalafmtCheckSettings(),
+    flinkCommonSettings,
     libraryDependencies ++= Seq(
       "org.apache.flink" % "flink-core" % flink120Version % "provided",
       "org.apache.flink" % "flink-table-common" % flink120Version % "provided",
@@ -1453,42 +1457,13 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
     name := "delta-flink-v2.0",
     commonSettings,
     releaseSettings,
-    javafmtCheckSettings,
-    scalafmtCheckSettings,
-    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
-    autoScalaLibrary := false, // exclude scala-library from dependencies
-    assembly / assemblyMergeStrategy := {
-      // Discard module-info.class files from Java 9+ modules and multi-release JARs
-      case "module-info.class" => MergeStrategy.discard
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
-    },
-    assembly / assemblyExcludedJars := {
-      val cp = (assembly / fullClasspath).value
-      cp.filter { entry =>
-        entry.data.getName.startsWith("bundle-") &&
-          entry.data.getName.endsWith(".jar")
-      }
-    },
+    javafmtCheckSettings(),
+    scalafmtCheckSettings(),
+    flinkCommonSettings,
     Compile / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "main" / "java",
     Compile / unmanagedResourceDirectories += file("flink/v1.20") / "src" / "main" / "resources",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "java",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "scala",
-    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
-
-    // Make sure the shaded JAR is produced before we compile/run tests
-    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
-
-    Test / publishArtifact := false,
-    Test / javaOptions ++= Seq(
-      "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
-    ),
-    crossPaths := false,
     libraryDependencies ++= Seq(
       "org.apache.flink" % "flink-core" % flink20Version % "provided",
       "org.apache.flink" % "flink-table-common" % flink20Version % "provided",

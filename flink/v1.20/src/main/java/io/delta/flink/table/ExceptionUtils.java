@@ -18,8 +18,19 @@ package io.delta.flink.table;
 
 import java.util.function.Predicate;
 
+/** Utility methods and common exception types for exception inspection and handling. */
 public class ExceptionUtils {
 
+  /**
+   * Creates a predicate that applies the given predicate recursively to an exception and its causal
+   * chain.
+   *
+   * <p>The returned predicate returns {@code true} if the supplied predicate matches the exception
+   * itself or any of its causes.
+   *
+   * @param pred the predicate to apply to each exception in the causal chain
+   * @return a predicate that recursively checks the exception and its causes
+   */
   public static Predicate<Throwable> recursiveCheck(Predicate<Throwable> pred) {
     return new Predicate<Throwable>() {
       @Override
@@ -35,12 +46,14 @@ public class ExceptionUtils {
     };
   }
 
+  /** Exception indicating that a requested resource does not exist. */
   public static class ResourceNotFoundException extends RuntimeException {
     public ResourceNotFoundException(String message) {
       super(message);
     }
   }
 
+  /** Exception indicating that a resource already exists and cannot be created again. */
   public static class ResourceAlreadyExistException extends RuntimeException {
     public ResourceAlreadyExistException(String message) {
       super(message);

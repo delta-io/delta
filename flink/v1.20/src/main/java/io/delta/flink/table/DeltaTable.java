@@ -30,9 +30,8 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * A {@code DeltaTable} represents a logical view of a Delta table and provides access to both
- * static table metadata (such as schema and partitioning) and operations for reading and writing
- * table data.
+ * A {@code DeltaTable} represents a logical view of a Delta table and provides access to both table
+ * metadata (such as schema and partitioning) and operations for reading and writing table data.
  *
  * <p>A {@code DeltaTable} instance abstracts the underlying Delta transaction log and storage
  * layout. Implementations are responsible for:
@@ -53,11 +52,11 @@ public interface DeltaTable extends Serializable, AutoCloseable {
    * Returns a stable identifier that uniquely represents this table within its catalog or storage
    * system.
    *
-   * <p>The identifier may be:
+   * <p>These are some examples that may be used as identifiers, depending on the subclass
+   * implementation and the catalog in use.
    *
    * <ul>
-   *   <li>a logical table name (e.g., {@code "database.table"})
-   *   <li>a fully-qualified catalog path
+   *   <li>a logical table name (e.g., {@code "catalog.database.table"})
    *   <li>a filesystem or object-store URI
    * </ul>
    *
@@ -91,6 +90,7 @@ public interface DeltaTable extends Serializable, AutoCloseable {
    * table can be safely used. Calling open on an already opened table has no effect.
    */
   void open();
+
   /**
    * Commits a new version to the table by applying the provided Delta actions.
    *
@@ -151,7 +151,8 @@ public interface DeltaTable extends Serializable, AutoCloseable {
    * <p>The returned iterator typically contains exactly one row (the AddFile action), but
    * implementations may return multiple actions depending on file-splitting behavior.
    *
-   * @param pathSuffix a suffix appended to the table path when generating file locations
+   * @param pathSuffix a suffix appended to the table path when generating file locations. The
+   *     result path will be `<table_root>/<path_suffix>/<paquet_file>`
    * @param data an iterator over row batches to be written as Parquet files; the caller must close
    *     it
    * @param partitionValues a mapping of partition column names to their literal values

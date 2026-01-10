@@ -46,7 +46,7 @@ trait TestHelper {
     val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
     try f(tempDir)
     finally {
-      FileUtils.deleteDirectory(tempDir)
+      FileUtils.forceDeleteOnExit(tempDir)
     }
   }
 
