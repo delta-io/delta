@@ -51,7 +51,13 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion latest",
     "startingVersion latest defined before started",
     "startingVersion latest works on defined but empty table",
-    "startingVersion specific version: new commits arrive after stream initialization"
+    "startingVersion specific version: new commits arrive after stream initialization",
+
+    // === Rate Limiting / Trigger Options ===
+    "maxFilesPerTrigger: Trigger.AvailableNow respects read limits",
+    "maxBytesPerTrigger: Trigger.AvailableNow respects read limits",
+    "Trigger.AvailableNow with an empty table",
+    "ES-445863: delta source should not hang or reprocess data when using AvailableNow"
   )
 
   private lazy val shouldFailTests = Set(
@@ -103,16 +109,12 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
     "maxFilesPerTrigger: metadata checkpoint",
     "maxFilesPerTrigger: change and restart",
     "maxFilesPerTrigger: ignored when using Trigger.Once",
-    "maxFilesPerTrigger: Trigger.AvailableNow respects read limits",
     "maxBytesPerTrigger: process at least one file",
     "maxBytesPerTrigger: metadata checkpoint",
     "maxBytesPerTrigger: change and restart",
-    "maxBytesPerTrigger: Trigger.AvailableNow respects read limits",
     "maxBytesPerTrigger: max bytes and max files together",
-    "Trigger.AvailableNow with an empty table",
     "startingVersion should work with rate time",
     "Rate limited Delta source advances with non-data inserts",
-    "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
 
     // === Source Offset / Version Handling ===
     "unknown sourceVersion value",
