@@ -161,6 +161,19 @@ class DeletionVectorsSuite extends QueryTest
     assert(deltaLog.createDataFrame(snapshot, selectFiles).count() == rowCount - deletedRowCount)
   }
 
+  test("read Delta table with DV, write to Data Source V2") {
+    withTempDir { dirName =>
+      val df = spark.read
+        .format("delta")
+        .load(table2Path)
+
+      df.write
+        .format("noop")
+        .mode("overwrite")
+        .save()
+    }
+  }
+
   for (optimizeMetadataQuery <- BOOLEAN_DOMAIN)
     test("read Delta tables with DVs in subqueries: " +
       s"metadataQueryOptimizationEnabled=$optimizeMetadataQuery") {

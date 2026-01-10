@@ -194,10 +194,8 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     val updatedPlan = if (shouldPrepareDeltaScan) {
       // Should not be applied to subqueries to avoid duplicate delta jobs.
       val isSubquery = isSubqueryRoot(plan)
-      // Should not be applied to DataSourceV2 write plans, because they'll be planned later
-      // through a V1 fallback and only that later planning takes place within the transaction.
-      val isDataSourceV2 = plan.isInstanceOf[V2WriteCommand]
-      if (isSubquery || isDataSourceV2) {
+
+      if (isSubquery) {
         return plan
       }
 
