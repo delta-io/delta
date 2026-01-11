@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.StructType
 
 /**
  * Simple data class representing a file to scan.
@@ -49,15 +48,15 @@ trait ServerSidePlanningClient {
    *
    * @param databaseName The database or schema name
    * @param table The table name
-   * @param filter Optional filter expression to push down to server (Spark Filter format)
-   * @param projection Optional projection (required columns) to push down to server
+   * @param filterOption Optional filter expression to push down to server (Spark Filter format)
+   * @param projectionOption Optional projection (column names) to push down to server
    * @return ScanPlan containing files to read
    */
   def planScan(
       databaseName: String,
       table: String,
-      filter: Option[Filter] = None,
-      projection: Option[StructType] = None): ScanPlan
+      filterOption: Option[Filter] = None,
+      projectionOption: Option[Seq[String]] = None): ScanPlan
 }
 
 /**

@@ -35,6 +35,7 @@ import shadedForDelta.org.apache.iceberg.rest.requests.PlanTableScanRequestParse
 import shadedForDelta.org.apache.iceberg.rest.responses.ErrorResponse;
 import shadedForDelta.org.apache.iceberg.rest.PlanStatus;
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse;
+import shadedForDelta.org.apache.iceberg.expressions.Expression;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,6 +53,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Example: prefix="iceberg" transforms /v1/namespaces/db/tables/t1/plan
   //          to /v1/iceberg/namespaces/db/tables/t1/plan
   private String catalogPrefix = null;  // null = no prefix (fallback case)
+
+  // Static fields for test verification - captures filter and projection from requests
+  // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
+  private static volatile Expression capturedFilter = null;
+  private static volatile List<String> capturedProjection = null;
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -77,6 +83,31 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
    */
   String getCatalogPrefix() {
     return this.catalogPrefix;
+  }
+
+  /**
+   * Get the filter captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Expression getCapturedFilter() {
+    return capturedFilter;
+  }
+
+  /**
+   * Get the projection (list of column names) captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static List<String> getCapturedProjection() {
+    return capturedProjection;
+  }
+
+  /**
+   * Clear captured filter and projection. Call between tests to avoid pollution.
+   * Package-private for test access.
+   */
+  static void clearCaptured() {
+    capturedFilter = null;
+    capturedProjection = null;
   }
 
   @Override
@@ -153,22 +184,22 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
 
     LOG.debug("Handling plan table scan request");
 
-    // 1. Extract table identifier
+    // Extract table identifier
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
 
-    // 2. Parse request
+    // Parse request
     PlanTableScanRequest planRequest = parsePlanRequest(request);
     LOG.debug("Plan request parsed: snapshotId={}", planRequest.snapshotId());
 
-    // 3. Load table from catalog
+    // Load table from catalog
     Table table = catalog.loadTable(tableIdent);
     LOG.debug("Table loaded: {}", table);
 
-    // 4. Create table scan
+    // Create table scan
     TableScan tableScan = table.newScan();
 
-    // 5. Apply snapshot if specified and valid
+    // Apply snapshot if specified and valid
     if (planRequest.snapshotId() != null && planRequest.snapshotId() != 0) {
       tableScan = tableScan.useSnapshot(planRequest.snapshotId());
       LOG.debug("Using snapshot: {}", planRequest.snapshotId());
@@ -176,15 +207,13 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
       LOG.debug("Using current snapshot (snapshotId was null or 0)");
     }
 
-    // 6. Validate that unsupported features are not requested
-    if (planRequest.filter() != null) {
-      throw new UnsupportedOperationException(
-          "Filter pushdown is not supported in this test implementation");
-    }
-    if (planRequest.select() != null && !planRequest.select().isEmpty()) {
-      throw new UnsupportedOperationException(
-          "Column selection/projection is not supported in this test implementation");
-    }
+    // Capture filter and projection for test verification
+    capturedFilter = planRequest.filter();
+    capturedProjection = planRequest.select();
+    LOG.debug("Captured filter: {}", capturedFilter);
+    LOG.debug("Captured projection: {}", capturedProjection);
+
+    // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {
       throw new UnsupportedOperationException(
           "Incremental scans are not supported in this test implementation");
@@ -198,18 +227,18 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
           "Column stats are not supported in this test implementation");
     }
 
-    // 7. Execute scan planning
+    // Execute scan planning
     List<FileScanTask> fileScanTasks = new ArrayList<>();
     try (CloseableIterable<FileScanTask> tasks = tableScan.planFiles()) {
       tasks.forEach(task -> fileScanTasks.add(task));
     }
     LOG.debug("Planned {} file scan tasks", fileScanTasks.size());
 
-    // 8. Get partition specs for serialization
+    // Get partition specs for serialization
     Map<Integer, shadedForDelta.org.apache.iceberg.PartitionSpec> specsById = table.specs();
     LOG.debug("Table has {} partition specs", specsById.size());
 
-    // 9. Build response (Pattern 1: COMPLETED with direct tasks)
+    // Build response (Pattern 1: COMPLETED with direct tasks)
     return PlanTableScanResponse.builder()
         .withPlanStatus(PlanStatus.COMPLETED)
         .withFileScanTasks(fileScanTasks)
