@@ -20,17 +20,14 @@ import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 import scala.Function1;
-import scala.collection.Iterator;
 
 public class SparkReaderFactory implements PartitionReaderFactory {
-  private Function1<PartitionedFile, Iterator<InternalRow>> readFunc;
+  private Function1 readFunc;
   private boolean supportsColumnar;
 
-  public SparkReaderFactory(
-      Function1<PartitionedFile, Iterator<InternalRow>> readFunc, boolean supportsColumnar) {
+  public SparkReaderFactory(Function1 readFunc, boolean supportsColumnar) {
     this.readFunc = readFunc;
     this.supportsColumnar = supportsColumnar;
   }

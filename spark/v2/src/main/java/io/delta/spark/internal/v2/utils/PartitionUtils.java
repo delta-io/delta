@@ -19,14 +19,19 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.spark.internal.v2.read.ColumnVectorWithFilter;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
@@ -34,6 +39,8 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.PartitioningUtils;
@@ -42,6 +49,8 @@ import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.vectorized.ColumnVector;
+import org.apache.spark.sql.vectorized.ColumnarBatch;
 import scala.Function1;
 import scala.Option;
 import scala.Tuple2;
@@ -140,9 +149,10 @@ public class PartitionUtils {
 
     // Preferred node locations are not used.
     String[] preferredLocations = new String[0];
-    // Constant metadata columns are not used.
+
+    // Build metadata map with DV info if present
     scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        scala.collection.immutable.Map$.MODULE$.empty();
+        buildDVMetadata(addFile.getDeletionVector());
 
     return new PartitionedFile(
         partitionRow,
@@ -156,10 +166,76 @@ public class PartitionUtils {
   }
 
   /**
+   * Build metadata map containing DV descriptor if present.
+   *
+   * @param dvOpt Optional DeletionVectorDescriptor from Kernel
+   * @return Immutable Scala map with DV metadata, or empty map if no DV
+   */
+  private static scala.collection.immutable.Map<String, Object> buildDVMetadata(
+      Optional<DeletionVectorDescriptor> dvOpt) {
+    if (!dvOpt.isPresent()) {
+      return scala.collection.immutable.Map$.MODULE$.empty();
+    }
+
+    DeletionVectorDescriptor kernelDv = dvOpt.get();
+
+    // Convert Kernel DV to Spark DV and serialize to base64
+    org.apache.spark.sql.delta.actions.DeletionVectorDescriptor sparkDv =
+        convertToSparkDV(kernelDv);
+    String dvBase64 = sparkDv.serializeToBase64();
+
+    // Build immutable map with DV metadata
+    List<Tuple2<String, Object>> entries = new ArrayList<>();
+    entries.add(new Tuple2<>(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(), dvBase64));
+    entries.add(
+        new Tuple2<>(
+            DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), RowIndexFilterType.IF_CONTAINED));
+
+    @SuppressWarnings("unchecked")
+    scala.collection.immutable.Map<String, Object> dvMetadata =
+        (scala.collection.immutable.Map<String, Object>)
+            scala.collection.immutable.Map$.MODULE$.apply(
+                scala.collection.immutable.Seq$.MODULE$.apply(
+                    CollectionConverters.asScala(entries).toSeq()));
+    return dvMetadata;
+  }
+
+  /**
+   * Convert Kernel's DeletionVectorDescriptor to Spark's DeletionVectorDescriptor.
+   *
+   * @param kernelDv The Kernel DeletionVectorDescriptor
+   * @return The equivalent Spark DeletionVectorDescriptor
+   */
+  private static org.apache.spark.sql.delta.actions.DeletionVectorDescriptor convertToSparkDV(
+      DeletionVectorDescriptor kernelDv) {
+    scala.Option<Object> offset =
+        kernelDv.getOffset().isPresent()
+            ? scala.Option.apply((Object) kernelDv.getOffset().get())
+            : scala.Option.empty();
+    scala.Option<Object> maxRowIndex = scala.Option.empty();
+
+    return new org.apache.spark.sql.delta.actions.DeletionVectorDescriptor(
+        kernelDv.getStorageType(),
+        kernelDv.getPathOrInlineDv(),
+        offset,
+        kernelDv.getSizeInBytes(),
+        kernelDv.getCardinality(),
+        maxRowIndex);
+  }
+
+  /**
    * Create a PartitionReaderFactory for reading Parquet files with Delta-specific features.
    *
    * <p>Uses DeltaParquetFileFormatV2 which supports column mapping, deletion vectors, and other
    * Delta features through the ProtocolMetadataAdapterV2.
+   *
+   * <p>For tables with deletion vectors enabled, this method:
+   *
+   * <ol>
+   *   <li>Augments the read schema to include __delta_internal_is_row_deleted column
+   *   <li>Creates a reader that generates the is_row_deleted column using DV bitmap
+   *   <li>Wraps the reader to filter out deleted rows and remove internal columns
+   * </ol>
    *
    * @param snapshot The Delta table snapshot containing protocol, metadata, and table path
    */
@@ -177,6 +253,16 @@ public class PartitionUtils {
     Metadata metadata = snapshotImpl.getMetadata();
     String tablePath = snapshotImpl.getDataPath().toUri().toString();
 
+    // Check if table supports deletion vectors
+    boolean tableSupportsDV = isDeletionVectorReadable(protocol, metadata);
+
+    // Augment schema with DV column if needed
+    StructType augmentedReadDataSchema = readDataSchema;
+    if (tableSupportsDV) {
+      augmentedReadDataSchema = addIsRowDeletedColumn(readDataSchema);
+    }
+
+    // Phase 2: Enable vectorized reader for DV tables - use ColumnVectorWithFilter for filtering
     boolean enableVectorizedReader =
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
@@ -185,27 +271,258 @@ public class PartitionUtils {
                 FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
                 String.valueOf(enableVectorizedReader)));
 
+    // Phase 1: Disable optimizations when DV is enabled (no file splitting)
+    // This means DeltaParquetFileFormat uses internal row index counter
+    // Phase 3 will set optimizationsEnabled = true for _metadata.row_index support
+    boolean optimizationsEnabled = !tableSupportsDV;
+
     // Use DeltaParquetFileFormatV2 to support column mapping and other Delta features
+    // For Phase 1: explicitly set useMetadataRowIndex = false (no _metadata.row_index support)
+    Option<Object> useMetadataRowIndex =
+        tableSupportsDV ? Option.apply((Object) Boolean.FALSE) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
         new DeltaParquetFileFormatV2(
             protocol,
             metadata,
             /* nullableRowTrackingConstantFields */ false,
             /* nullableRowTrackingGeneratedFields */ false,
-            /* optimizationsEnabled */ true,
+            optimizationsEnabled,
             Option.apply(tablePath),
-            /* isCDCRead */ false);
+            /* isCDCRead */ false,
+            useMetadataRowIndex);
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(
             SparkSession.active(),
             dataSchema,
             partitionSchema,
-            readDataSchema,
+            augmentedReadDataSchema,
             CollectionConverters.asScala(Arrays.asList(dataFilters)).toSeq(),
             optionsWithVectorizedReading,
             hadoopConf);
 
+    // Wrap reader to filter deleted rows and remove internal columns if DV is enabled
+    if (tableSupportsDV) {
+      int dvColumnIndex =
+          augmentedReadDataSchema.fieldIndex(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME());
+      int totalColumns = augmentedReadDataSchema.fields().length + partitionSchema.fields().length;
+      readFunc = wrapReaderForDVFiltering(readFunc, dvColumnIndex, totalColumns);
+    }
+
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
+  }
+
+  // DV column name constant
+  private static final String IS_ROW_DELETED_COLUMN_NAME = "__delta_internal_is_row_deleted";
+
+  /**
+   * Check if table supports reading deletion vectors.
+   *
+   * @param protocol The table protocol
+   * @param metadata The table metadata
+   * @return true if deletion vectors can be read
+   */
+  private static boolean isDeletionVectorReadable(Protocol protocol, Metadata metadata) {
+    return protocol.supportsFeature(
+            io.delta.kernel.internal.tablefeatures.TableFeatures.DELETION_VECTORS_RW_FEATURE)
+        && "parquet".equalsIgnoreCase(metadata.getFormat().getProvider());
+  }
+
+  /**
+   * Add the __delta_internal_is_row_deleted column to the schema.
+   *
+   * @param schema The original schema
+   * @return Schema with IS_ROW_DELETED column appended
+   */
+  private static StructType addIsRowDeletedColumn(StructType schema) {
+    List<StructField> fields = new ArrayList<>(Arrays.asList(schema.fields()));
+    fields.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
+    return new StructType(fields.toArray(new StructField[0]));
+  }
+
+  /**
+   * Wrap the base reader function to filter out deleted rows and remove the DV column.
+   *
+   * <p>Phase 2: Handles both ColumnarBatch (vectorized) and InternalRow output:
+   *
+   * <ul>
+   *   <li>ColumnarBatch: Uses ColumnVectorWithFilter with row ID mapping for efficient filtering
+   *   <li>InternalRow: Filters row-by-row and projects out the DV column
+   * </ul>
+   *
+   * @param baseReadFunc The original reader function
+   * @param dvColumnIndex Index of the __delta_internal_is_row_deleted column
+   * @param totalColumns Total columns including partition columns
+   * @return Wrapped reader function with DV filtering
+   */
+  private static Function1 wrapReaderForDVFiltering(
+      Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
+      int dvColumnIndex,
+      int totalColumns) {
+    return new DVFilteringReadFunc(baseReadFunc, dvColumnIndex, totalColumns);
+  }
+
+  /**
+   * Serializable wrapper function that applies DV filtering to the base reader.
+   *
+   * <p>Must be a static class that implements Serializable to allow Spark task serialization.
+   */
+  private static class DVFilteringReadFunc
+      extends scala.runtime.AbstractFunction1<PartitionedFile, Iterator>
+      implements java.io.Serializable {
+
+    private static final long serialVersionUID = 1L;
+    private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
+    private final int dvColumnIndex;
+    private final int totalColumns;
+
+    DVFilteringReadFunc(
+        Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
+        int dvColumnIndex,
+        int totalColumns) {
+      this.baseReadFunc = baseReadFunc;
+      this.dvColumnIndex = dvColumnIndex;
+      this.totalColumns = totalColumns;
+    }
+
+    @Override
+    public Iterator apply(PartitionedFile file) {
+      Iterator<InternalRow> baseIter = baseReadFunc.apply(file);
+      return new DVFilteringIterator(baseIter, dvColumnIndex, totalColumns);
+    }
+  }
+
+  /**
+   * Iterator that filters deleted rows and removes the DV column from output.
+   *
+   * <p>Phase 2: Handles both ColumnarBatch and InternalRow:
+   *
+   * <ul>
+   *   <li>ColumnarBatch: Builds row ID mapping, wraps with ColumnVectorWithFilter
+   *   <li>InternalRow: Filters row-by-row and projects out the DV column
+   * </ul>
+   */
+  private static class DVFilteringIterator implements Iterator<Object>, java.io.Closeable {
+    private final Iterator<InternalRow> baseIter;
+    private final int dvColumnIndex;
+    private final int outputNumColumns;
+    private Object nextItem = null;
+
+    DVFilteringIterator(Iterator<InternalRow> baseIter, int dvColumnIndex, int totalColumns) {
+      this.baseIter = baseIter;
+      this.dvColumnIndex = dvColumnIndex;
+      this.outputNumColumns = totalColumns - 1; // Exclude DV column
+    }
+
+    @Override
+    public void close() throws java.io.IOException {
+      // Close the underlying iterator if it implements Closeable
+      if (baseIter instanceof java.io.Closeable) {
+        ((java.io.Closeable) baseIter).close();
+      }
+    }
+
+    @Override
+    public boolean hasNext() {
+      while (nextItem == null && baseIter.hasNext()) {
+        Object item = baseIter.next();
+        if (item instanceof ColumnarBatch) {
+          ColumnarBatch filtered = filterColumnarBatch((ColumnarBatch) item);
+          if (filtered != null && filtered.numRows() > 0) {
+            nextItem = filtered;
+            return true;
+          }
+        } else if (item instanceof InternalRow) {
+          InternalRow row = (InternalRow) item;
+          byte isDeleted = row.getByte(dvColumnIndex);
+          if (isDeleted == 0) {
+            nextItem = projectRow(row);
+            return true;
+          }
+        } else {
+          throw new RuntimeException("Unexpected row type: " + item.getClass().getName());
+        }
+      }
+      return nextItem != null;
+    }
+
+    @Override
+    public Object next() {
+      if (nextItem == null && !hasNext()) {
+        throw new java.util.NoSuchElementException("No more rows");
+      }
+      Object result = nextItem;
+      nextItem = null;
+      // Cast is safe - ColumnarBatch is returned as Object but treated as InternalRow by Spark
+      return result;
+    }
+
+    /**
+     * Filter a ColumnarBatch by building a row ID mapping and wrapping with ColumnVectorWithFilter.
+     *
+     * @param batch The input batch with DV column
+     * @return Filtered batch without the DV column, or null if all rows deleted
+     */
+    private ColumnarBatch filterColumnarBatch(ColumnarBatch batch) {
+      int batchSize = batch.numRows();
+      ColumnVector dvColumn = batch.column(dvColumnIndex);
+
+      // Build row ID mapping (indices of non-deleted rows)
+      int[] rowIdMapping = new int[batchSize];
+      int liveRowCount = 0;
+      for (int i = 0; i < batchSize; i++) {
+        byte isDeleted = dvColumn.getByte(i);
+        if (isDeleted == 0) {
+          rowIdMapping[liveRowCount++] = i;
+        }
+      }
+
+      if (liveRowCount == 0) {
+        return null; // All rows deleted
+      }
+
+      // Trim mapping array if needed
+      if (liveRowCount < batchSize) {
+        int[] trimmedMapping = new int[liveRowCount];
+        System.arraycopy(rowIdMapping, 0, trimmedMapping, 0, liveRowCount);
+        rowIdMapping = trimmedMapping;
+      }
+
+      // Build output column vectors (excluding DV column)
+      ColumnVector[] outputVectors = new ColumnVector[outputNumColumns];
+      int outIdx = 0;
+      for (int i = 0; i < batch.numCols(); i++) {
+        if (i != dvColumnIndex) {
+          ColumnVector col = batch.column(i);
+          // If no rows were deleted, use original vector; otherwise wrap with filter
+          if (liveRowCount == batchSize) {
+            outputVectors[outIdx++] = col;
+          } else {
+            outputVectors[outIdx++] = new ColumnVectorWithFilter(col, rowIdMapping);
+          }
+        }
+      }
+
+      ColumnarBatch result = new ColumnarBatch(outputVectors);
+      result.setNumRows(liveRowCount);
+      return result;
+    }
+
+    /**
+     * Project out the DV column from the row.
+     *
+     * @param row The input row with DV column
+     * @return New row without the DV column
+     */
+    private InternalRow projectRow(InternalRow row) {
+      Object[] values = new Object[outputNumColumns];
+      int outIdx = 0;
+      for (int i = 0; i < outputNumColumns + 1; i++) {
+        if (i != dvColumnIndex) {
+          values[outIdx++] = row.get(i, null);
+        }
+      }
+      return new org.apache.spark.sql.catalyst.expressions.GenericInternalRow(values);
+    }
   }
 }
