@@ -141,7 +141,7 @@ public interface Snapshot {
    * @throws PublishFailedException if the publish operation fails
    */
   // TODO: Return a new Snapshot reflecting the published state
-  void publish(Engine engine) throws PublishFailedException;
+  Snapshot publish(Engine engine) throws PublishFailedException;
 
   /**
    * Writes a checksum file for this snapshot using the specified mode:

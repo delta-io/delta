@@ -116,6 +116,9 @@ public class Conversions {
 
     public static Map<String, Literal> partitionValues(
         StructType rowType, Collection<String> partitionColNames, RowData rowData) {
+      if (rowType == null) {
+        throw new RuntimeException();
+      }
       return partitionColNames.stream()
           .map(
               name -> {

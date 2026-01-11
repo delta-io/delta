@@ -16,6 +16,7 @@
 
 package io.delta.flink.table;
 
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -29,7 +30,7 @@ import java.util.stream.Collectors;
  * <p>Implementations of this interface are expected to be lightweight and non-blocking, as
  * callbacks may be invoked on performance-critical execution paths.
  */
-public interface MetricListener {
+public interface MetricListener extends Serializable {
 
   /**
    * Called when a performance-related event occurs.

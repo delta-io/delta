@@ -174,7 +174,6 @@ public class UnityCatalog implements DeltaCatalog {
   @Override
   public void open() {
     if (apiClient == null) {
-
       apiClient =
           new ApiClient()
               .setScheme(endpoint.getScheme())

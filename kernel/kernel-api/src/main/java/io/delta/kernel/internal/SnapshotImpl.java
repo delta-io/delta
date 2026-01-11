@@ -55,11 +55,13 @@ import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -208,7 +210,7 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
-  public void publish(Engine engine) throws PublishFailedException {
+  public Snapshot publish(Engine engine) throws PublishFailedException {
     final List<ParsedCatalogCommitData> allCatalogCommits = getLogSegment().getAllCatalogCommits();
     final boolean isFileSystemBasedTable = !TableFeatures.isCatalogManagedSupported(protocol);
     final boolean isCatalogCommitter = committer instanceof CatalogCommitter;
@@ -228,14 +230,14 @@ public class SnapshotImpl implements Snapshot {
     } else {
       if (isFileSystemBasedTable) {
         logger.info("Publishing not applicable: this is a filesystem-managed table");
-        return;
+        return this;
       }
 
       if (!isCatalogCommitter) {
         logger.info(
             "[{}] Publishing not applicable: committer does not support publishing",
             committer.getClass().getName());
-        return;
+        return this;
       }
     }
 
@@ -253,13 +255,38 @@ public class SnapshotImpl implements Snapshot {
 
     if (catalogCommitsToPublish.isEmpty()) {
       logger.info("No catalog commits need to be published");
-      return;
+      return this;
     }
 
     final PublishMetadata publishMetadata =
         new PublishMetadata(version, logPath.toString(), catalogCommitsToPublish);
 
     ((CatalogCommitter) committer).publish(engine, publishMetadata);
+
+    FileStatus lastDeltaFileStatus = FileStatus.of(FileNames.deltaFile(logPath, version));
+    LogSegment currentLogSegment = getLogSegment();
+    LogSegment updatedLogSegment =
+        new LogSegment(
+            logPath,
+            version,
+            LongStream.rangeClosed(0, version)
+                .mapToObj(v -> FileStatus.of(FileNames.deltaFile(logPath, v)))
+                .collect(Collectors.toList()),
+            currentLogSegment.getCompactions(),
+            currentLogSegment.getCheckpoints(),
+            lastDeltaFileStatus,
+            currentLogSegment.getLastSeenChecksum(),
+            Optional.of(version));
+    return new SnapshotImpl(
+        dataPath,
+        version,
+        new Lazy<>(() -> updatedLogSegment),
+        logReplay,
+        protocol,
+        metadata,
+        committer,
+        SnapshotQueryContext.forVersionSnapshot(dataPath.toString(), version),
+        this.inCommitTimestampOpt);
   }
 
   @Override

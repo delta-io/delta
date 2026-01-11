@@ -56,15 +56,16 @@ public class CCv2Table extends AbstractKernelTable {
 
   @Override
   public void open() {
+    if (ccv2Client == null) {
+      String endpointUri = configuration.get(CATALOG_ENDPOINT);
+      String token = configuration.get(CATALOG_TOKEN);
+
+      UCClient storageClient =
+          new UCTokenBasedRestClient(
+              endpointUri, TokenProvider.create(Map.of("type", "static", "token", token)));
+      ccv2Client = new UCCatalogManagedClient(storageClient);
+    }
     super.open();
-
-    String endpointUri = configuration.get(CATALOG_ENDPOINT);
-    String token = configuration.get(CATALOG_TOKEN);
-
-    UCClient storageClient =
-        new UCTokenBasedRestClient(
-            endpointUri, TokenProvider.create(Map.of("type", "static", "token", token)));
-    ccv2Client = new UCCatalogManagedClient(storageClient);
   }
 
   @Override

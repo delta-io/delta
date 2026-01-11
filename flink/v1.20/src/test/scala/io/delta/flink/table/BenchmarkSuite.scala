@@ -112,7 +112,7 @@ class BenchmarkSuite extends AnyFunSuite with TestHelper {
     }
   }
 
-  ignore("benchmark the ccv2 write") {
+  test("benchmark the ccv2 write") {
     val schema = new StructType()
       .add("id", IntegerType.INTEGER)
       .add("part", StringType.STRING)
@@ -129,7 +129,7 @@ class BenchmarkSuite extends AnyFunSuite with TestHelper {
     val statsListener = new StatsListener
     table.addMetricListener(statsListener)
 
-    for (i <- 0 until 50) {
+    for (i <- 0 until 100) {
       val actions = (0 until 5).map { i =>
         dummyAddFileRow(schema, 10 + i, Map("part" -> Literal.ofString("p" + i)))
       }.toList.asJava

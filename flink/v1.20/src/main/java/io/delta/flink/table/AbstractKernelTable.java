@@ -74,6 +74,7 @@ import org.slf4j.LoggerFactory;
  * them into physical locations or catalog entries. See also @link{io.delta.flink.table.Catalog}
  */
 public abstract class AbstractKernelTable implements DeltaTable {
+
   protected static String ENGINE_INFO = "DeltaSink";
   protected static Logger LOG = LoggerFactory.getLogger(AbstractKernelTable.class);
 
@@ -162,6 +163,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   private CacheManager cacheManager;
   private final Random randgen;
+  // Metric Listeners
+  protected List<MetricListener> metricListeners;
 
   protected transient volatile Engine engine;
 
@@ -173,8 +176,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
   protected transient ExecutorService refreshThreadPool = null;
   // Thread pool for all kinds of async works
   protected transient ExecutorService generalThreadPool = null;
-  // Metric Listeners
-  protected transient List<MetricListener> metricListeners;
 
   public AbstractKernelTable(
       DeltaCatalog catalog,
@@ -190,16 +191,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     this.cacheManager = CacheManager.getInstance();
     this.randgen = new Random(System.currentTimeMillis());
-
-    this.refreshThreadPool = Executors.newSingleThreadExecutor();
-    this.credentialManager = createCredentialManager();
     this.metricListeners = new ArrayList<>();
-    this.catalog.open();
-    withRetry(
-        () -> {
-          initialize();
-          return null;
-        });
+
     open();
   }
 
@@ -355,15 +348,29 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   @Override
   public void open() {
-    if (tableState == null) {
-      // init all transient variables
+    catalog.open();
+    // init all transient variables
+    if (refreshThreadPool == null) {
       refreshThreadPool = Executors.newSingleThreadExecutor();
+    }
+    if (generalThreadPool == null) {
       generalThreadPool = Executors.newFixedThreadPool(Conf.getInstance().getTableThreadPoolSize());
-      tableState = JsonUtils.rowFromJson(serializedTableState, TransactionStateRow.SCHEMA);
-      schema = TransactionStateRow.getLogicalSchema(tableState);
+    }
+    if (credentialManager == null) {
       credentialManager = createCredentialManager();
-      metricListeners = new ArrayList<>();
-      catalog.open();
+    }
+    if (serializedTableState == null) {
+      withRetry(
+          () -> {
+            initialize();
+            return null;
+          });
+    }
+    if (tableState == null) {
+      tableState = JsonUtils.rowFromJson(serializedTableState, TransactionStateRow.SCHEMA);
+    }
+    if (schema == null) {
+      schema = TransactionStateRow.getLogicalSchema(tableState);
     }
   }
 
@@ -501,40 +508,42 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
                   TransactionCommitResult result =
                       withTiming("commit.txn", () -> txn.commit(localEngine, actions));
-                  Optional<Snapshot> postCommitSnapshot = result.getPostCommitSnapshot();
-                  postCommitSnapshot.ifPresent(
-                      snapshot -> {
-                        this.refresh(snapshot);
+                  return result
+                      .getPostCommitSnapshot()
+                      .map(
+                          snapshot -> {
+                            this.refresh(snapshot);
 
-                        // Publish commits
-                        withTiming("commit.publish", () -> snapshot.publish(getEngine()));
-                        // Update cache
-                        cacheManager.put(getTablePath().toString(), snapshot);
-                        // Write checksum
-                        generalThreadPool.submit(
-                            () ->
-                                withTiming(
-                                    "commit.checksum",
-                                    () -> {
-                                      try {
-                                        snapshot.writeChecksum(
-                                            getEngine(), Snapshot.ChecksumWriteMode.SIMPLE);
-                                      } catch (Exception e) {
-                                        LOG.error("unable to write checksum", e);
-                                        throw ExceptionUtils.wrap(e);
-                                      }
-                                    }));
-                        // Occasionally write checkpoint
-                        if (randgen.nextDouble()
-                            < Conf.getInstance().getDeltaCheckpointFrequency()) {
-                          generalThreadPool.submit(
-                              () ->
-                                  withTiming(
-                                      "commit.checkpoint",
-                                      () -> snapshot.writeCheckpoint(getEngine())));
-                        }
-                      });
-                  return postCommitSnapshot;
+                            // Publish commits
+                            Snapshot published =
+                                withTiming("commit.publish", () -> snapshot.publish(getEngine()));
+                            // Update cache
+                            cacheManager.put(getTablePath().toString(), published);
+                            // Write checksum
+                            generalThreadPool.submit(
+                                () ->
+                                    withTiming(
+                                        "commit.checksum",
+                                        () -> {
+                                          try {
+                                            published.writeChecksum(
+                                                getEngine(), Snapshot.ChecksumWriteMode.SIMPLE);
+                                          } catch (Exception e) {
+                                            LOG.error("unable to write checksum", e);
+                                            throw ExceptionUtils.wrap(e);
+                                          }
+                                        }));
+                            // Occasionally write checkpoint
+                            if (randgen.nextDouble()
+                                < Conf.getInstance().getDeltaCheckpointFrequency()) {
+                              generalThreadPool.submit(
+                                  () ->
+                                      withTiming(
+                                          "commit.checkpoint",
+                                          () -> published.writeCheckpoint(getEngine())));
+                            }
+                            return published;
+                          });
                 }));
   }
 
