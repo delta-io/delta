@@ -43,6 +43,33 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
    * @param tablePath table path for deletion vector support
    * @param isCDCRead whether this is a CDC read
    */
+  /**
+   * Creates a DeltaParquetFileFormatV2 with explicit useMetadataRowIndex control.
+   *
+   * @param useMetadataRowIndex whether to use Parquet's _metadata.row_index for DV filtering. When
+   *     empty, reads from session config. V2 connector can set false for Phase 1 (no file
+   *     splitting) or true for Phase 3 (with file splitting).
+   */
+  public DeltaParquetFileFormatV2(
+      Protocol protocol,
+      Metadata metadata,
+      boolean nullableRowTrackingConstantFields,
+      boolean nullableRowTrackingGeneratedFields,
+      boolean optimizationsEnabled,
+      Option<String> tablePath,
+      boolean isCDCRead,
+      Option<Object> useMetadataRowIndex) {
+    super(
+        new ProtocolMetadataAdapterV2(protocol, metadata),
+        nullableRowTrackingConstantFields,
+        nullableRowTrackingGeneratedFields,
+        optimizationsEnabled,
+        tablePath,
+        isCDCRead,
+        useMetadataRowIndex.map(x -> (Boolean) x));
+  }
+
+  /** Convenience constructor using config-based useMetadataRowIndex (backward compatible). */
   public DeltaParquetFileFormatV2(
       Protocol protocol,
       Metadata metadata,
@@ -51,13 +78,15 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
       boolean optimizationsEnabled,
       Option<String> tablePath,
       boolean isCDCRead) {
-    super(
-        new ProtocolMetadataAdapterV2(protocol, metadata),
+    this(
+        protocol,
+        metadata,
         nullableRowTrackingConstantFields,
         nullableRowTrackingGeneratedFields,
         optimizationsEnabled,
         tablePath,
-        isCDCRead);
+        isCDCRead,
+        Option.empty());
   }
 
   @Override
