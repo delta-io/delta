@@ -598,10 +598,10 @@ public class SparkGoldenTableTest {
             "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
             // [DELTA_STATE_RECOVER_ERROR] The protocol of your Delta table could not be recovered
             // while Reconstructing
-            "deltalog-state-reconstruction-from-checkpoint-missing-protocol",
-            // Answer mismatch
-            "dv-partitioned-with-checkpoint",
-            "dv-with-columnmapping");
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol");
+    // DV tables now supported after implementing DV read support:
+    // - dv-partitioned-with-checkpoint
+    // - dv-with-columnmapping
 
     for (String tableName : tableNames) {
       if (unsupportedTables.contains(tableName)) {
