@@ -592,4 +592,25 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
     assertConvert(testCases)
   }
+
+  // ========================================================================
+  // BINARY TYPE
+  // ========================================================================
+
+  test("binary type with null check operators") {
+    val testCases = Seq(
+      ExprConvTestCase(
+        "IsNull with binary column",
+        IsNull("binaryCol"),
+        Some(Expressions.isNull("binaryCol"))
+      ),
+      ExprConvTestCase(
+        "IsNotNull with binary column",
+        IsNotNull("binaryCol"),
+        Some(Expressions.notNull("binaryCol"))
+      )
+    )
+
+    assertConvert(testCases)
+  }
 }
