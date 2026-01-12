@@ -21,6 +21,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * Utility helpers for inspecting Delta-related metadata persisted on Spark {@link CatalogTable}
@@ -111,7 +112,7 @@ public final class CatalogTableUtils {
     if (scalaProps == null || scalaProps.isEmpty()) {
       return Collections.emptyMap();
     }
-    return scala.jdk.javaapi.CollectionConverters.asJava(scalaProps);
+    return CollectionConverters.asJava(scalaProps);
   }
 }
 
