@@ -108,10 +108,7 @@ public final class CatalogTableUtils {
       return Collections.emptyMap();
     }
     scala.collection.immutable.Map<String, String> scalaProps = table.storage().properties();
-    if (scalaProps == null) {
-      return Collections.emptyMap();
-    }
-    if (scalaProps.isEmpty()) {
+    if (scalaProps == null || scalaProps.isEmpty()) {
       return Collections.emptyMap();
     }
     return scala.jdk.javaapi.CollectionConverters.asJava(scalaProps);
