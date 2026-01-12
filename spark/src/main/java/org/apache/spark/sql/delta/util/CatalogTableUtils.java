@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.utils;
+package org.apache.spark.sql.delta.util;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
 import java.util.Map;
@@ -28,7 +27,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  * instances by Unity Catalog.
  *
  * <p>Unity Catalog marks catalog-managed tables via feature flags stored in table storage
- * properties. This helper centralises the logic for interpreting those properties so the Kernel
+ * properties. This helper centralises the logic for interpreting those properties so the SparkV2
  * connector can decide when to use catalog-owned (CCv2) behaviour.
  *
  * <ul>
@@ -42,17 +41,14 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable;
  */
 public final class CatalogTableUtils {
   /**
-   * Property key for catalog-managed feature flag. Constructed from {@link
-   * TableFeatures#CATALOG_MANAGED_RW_FEATURE} (delta.feature.catalogManaged) and preview variant
-   * (delta.feature.catalogOwned-preview)
+   * Property key for catalog-managed feature flag. Corresponds to
+   * delta.feature.catalogManaged and preview variant
+   * delta.feature.catalogOwned-preview
    */
-  static final String FEATURE_CATALOG_MANAGED =
-      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
-          + TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName();
+  static final String FEATURE_CATALOG_MANAGED = "delta.feature.catalogManaged";
 
-  static final String FEATURE_CATALOG_OWNED_PREVIEW =
-      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + "catalogOwned-preview";
-  private static final String SUPPORTED = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE;
+  static final String FEATURE_CATALOG_OWNED_PREVIEW = "delta.feature.catalogOwned-preview";
+  private static final String SUPPORTED = "supported";
 
   private CatalogTableUtils() {}
 
@@ -111,7 +107,14 @@ public final class CatalogTableUtils {
     if (table.storage() == null) {
       return Collections.emptyMap();
     }
-    Map<String, String> javaStorageProperties = ScalaUtils.toJavaMap(table.storage().properties());
-    return javaStorageProperties == null ? Collections.emptyMap() : javaStorageProperties;
+    scala.collection.immutable.Map<String, String> scalaProps = table.storage().properties();
+    if (scalaProps == null) {
+      return Collections.emptyMap();
+    }
+    if (scalaProps.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    return scala.jdk.javaapi.CollectionConverters.asJava(scalaProps);
   }
 }
+
