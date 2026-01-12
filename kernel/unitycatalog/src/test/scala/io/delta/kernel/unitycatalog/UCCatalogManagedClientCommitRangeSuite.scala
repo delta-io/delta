@@ -156,11 +156,12 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       "Cannot provide a start timestamp greater than the end timestamp"))
   }
 
-  test("loadCommitRange throws if startVersion is greater than max ratified version") {
+  test(
+    "loadCommitRange throws if startVersion is greater than max ratified version") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
-    val ex = intercept[IllegalArgumentException] {
+    val ex = intercept[io.delta.kernel.exceptions.CommitRangeNotFoundException] {
       testLoadCommitRange(
         expectedStartVersion = 0,
         expectedEndVersion = 2,
