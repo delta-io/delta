@@ -1416,6 +1416,27 @@ lazy val flinkCommonSettings = Seq(
   crossPaths := false,
 )
 
+def flinkDependencies(flinkVersion: String): Seq[ModuleID] =
+  Seq( "org.apache.flink" % "flink-core" % flinkVersion % "provided",
+    "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
+    "org.apache.flink" % "flink-streaming-java" % flinkVersion % "provided",
+    "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % "provided",
+    "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
+    "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
+    "dev.failsafe" % "failsafe" % "3.2.0",
+    "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
+    "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
+
+    "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
+    "org.scalatest" %% "scalatest" % "3.2.19" % "test",
+    "org.apache.flink" % "flink-clients" % flinkVersion % "test",
+    "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % Test,
+    "org.apache.flink" % "flink-table-planner-loader" % flinkVersion % Test,
+    "org.apache.flink" % "flink-table-runtime" % flinkVersion % Test,
+    "org.apache.flink" % "flink-test-utils-junit" % flinkVersion % Test,
+    "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test")
+
+
 lazy val flinkV1 = (project in file("flink/v1.20"))
 //  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
@@ -1427,26 +1448,7 @@ lazy val flinkV1 = (project in file("flink/v1.20"))
     javafmtCheckSettings(),
     scalafmtCheckSettings(),
     flinkCommonSettings,
-    libraryDependencies ++= Seq(
-      "org.apache.flink" % "flink-core" % flink120Version % "provided",
-      "org.apache.flink" % "flink-table-common" % flink120Version % "provided",
-      "org.apache.flink" % "flink-streaming-java" % flink120Version % "provided",
-      "org.apache.flink" % "flink-table-api-java-bridge" % flink120Version % "provided",
-      "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
-      "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
-      "dev.failsafe" % "failsafe" % "3.2.0",
-      "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
-
-      "org.apache.flink" % "flink-test-utils" % flink120Version % "test",
-      "org.scalatest" %% "scalatest" % "3.2.19" % "test",
-      "org.apache.flink" % "flink-clients" % flink120Version % "test",
-      "org.apache.flink" % "flink-table-api-java-bridge" % flink120Version % Test,
-      "org.apache.flink" % "flink-table-planner-loader" % flink120Version % Test,
-      "org.apache.flink" % "flink-table-runtime" % flink120Version % Test,
-      "org.apache.flink" % "flink-test-utils-junit" % flink120Version % Test,
-      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
-    )
+    libraryDependencies ++= flinkDependencies(flink120Version)
   )
 
 lazy val flinkV2 = (project in file("flink/v2.0"))
@@ -1464,26 +1466,7 @@ lazy val flinkV2 = (project in file("flink/v2.0"))
     Compile / unmanagedResourceDirectories += file("flink/v1.20") / "src" / "main" / "resources",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "java",
     Test    / unmanagedSourceDirectories += file("flink/v1.20") / "src" / "test" / "scala",
-    libraryDependencies ++= Seq(
-      "org.apache.flink" % "flink-core" % flink20Version % "provided",
-      "org.apache.flink" % "flink-table-common" % flink20Version % "provided",
-      "org.apache.flink" % "flink-streaming-java" % flink20Version % "provided",
-      "org.apache.flink" % "flink-table-api-java-bridge" % flink20Version % "provided",
-      "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
-      "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
-      "dev.failsafe" % "failsafe" % "3.2.0",
-      "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
-      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
-
-      "org.apache.flink" % "flink-test-utils" % flink20Version % "test",
-      "org.scalatest" %% "scalatest" % "3.2.19" % "test",
-      "org.apache.flink" % "flink-clients" % flink20Version % "test",
-      "org.apache.flink" % "flink-table-api-java-bridge" % flink20Version % Test,
-      "org.apache.flink" % "flink-table-planner-loader" % flink20Version % Test,
-      "org.apache.flink" % "flink-table-runtime" % flink20Version % Test,
-      "org.apache.flink" % "flink-test-utils-junit" % flink20Version % Test,
-      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
-    )
+    libraryDependencies ++= flinkDependencies(flink20Version)
   )
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))

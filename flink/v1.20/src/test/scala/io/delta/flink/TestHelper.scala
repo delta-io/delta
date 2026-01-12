@@ -24,7 +24,7 @@ import java.util.{Collections, Optional, UUID}
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, MapHasAsJava, SeqHasAsJava}
 import scala.util.Random
 
-import io.delta.kernel.{Operation, Snapshot, Table, TableManager}
+import io.delta.kernel.{Operation, Snapshot, TableManager}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
@@ -34,6 +34,7 @@ import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.statistics.DataFileStatistics
+import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterable, DataFileStatus, FileStatus}
 
@@ -90,13 +91,11 @@ trait TestHelper {
       tablePath: String,
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty): Row = {
-    val table = Table.forPath(engine, tablePath)
-    val txn = table.createTransactionBuilder(engine, "dummyEngine", Operation.CREATE_TABLE)
-      .withSchema(engine, schema)
-      .withPartitionColumns(engine, partitionCols.toList.asJava)
+    val txn = TableManager.buildCreateTableTransaction(tablePath, schema, "dummy")
+      .withDataLayoutSpec(DataLayoutSpec.partitioned(
+        partitionCols.map(new Column(_)).toList.asJava))
       .build(engine)
     txn.getTransactionState(engine)
-
   }
 
   protected def createNonEmptyTable(
@@ -104,11 +103,10 @@ trait TestHelper {
       tablePath: String,
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty,
-      numRows: Long = 0): Table = {
-    val table = Table.forPath(engine, tablePath)
-    val txn = table.createTransactionBuilder(engine, "dummyEngine", Operation.CREATE_TABLE)
-      .withSchema(engine, schema)
-      .withPartitionColumns(engine, partitionCols.toList.asJava)
+      numRows: Long = 0): Optional[Snapshot] = {
+    val txn = TableManager.buildCreateTableTransaction(tablePath, schema, "dummy")
+      .withDataLayoutSpec(DataLayoutSpec.partitioned(
+        partitionCols.map(new Column(_)).toList.asJava))
       .build(engine)
 
     val partitionMap = partitionCols.map { colName =>
@@ -118,7 +116,7 @@ trait TestHelper {
     // Prepare some dummy AddFile
     val dummyAddFile = AddFile.convertDataFileStatus(
       schema,
-      URI.create(table.getPath(engine)),
+      URI.create(tablePath),
       new DataFileStatus(
         UUID.randomUUID().toString,
         1000L,
@@ -134,8 +132,7 @@ trait TestHelper {
       engine,
       CloseableIterable
         .inMemoryIterable(Utils.singletonCloseableIterator(
-          SingleAction.createAddFileSingleAction(dummyAddFile.toRow))))
-    table
+          SingleAction.createAddFileSingleAction(dummyAddFile.toRow)))).getPostCommitSnapshot
   }
 
   // Make a random write to an existing table
@@ -158,8 +155,9 @@ trait TestHelper {
       Optional.empty(),
       Optional.empty(),
       Optional.empty())
-    val table = Table.forPath(engine, tablePath)
-    val txn = table.createTransactionBuilder(engine, "dummyEngine", Operation.WRITE)
+    val txn = TableManager.loadSnapshot(tablePath)
+      .build(engine)
+      .buildUpdateTableTransaction("dummy", Operation.WRITE)
       .build(engine)
     txn.commit(
       engine,

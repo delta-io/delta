@@ -55,11 +55,11 @@ public interface DeltaCatalog extends Serializable {
    * fully-qualified path, or another catalog-specific reference.
    *
    * @param tableId the logical identifier of the table to load; must not be {@code null}
-   * @return a {@link TableBrief} object describing the resolved table
+   * @return a {@link TableDescriptor} object describing the resolved table
    * @throws IllegalArgumentException if the identifier is invalid
    * @throws ExceptionUtils.ResourceNotFoundException if the table cannot be resolved or loaded
    */
-  TableBrief getTable(String tableId);
+  TableDescriptor getTable(String tableId);
 
   /**
    * Creates a new table in the catalog with the given schema, partitioning, and properties.
@@ -101,7 +101,7 @@ public interface DeltaCatalog extends Serializable {
    * <p>{@code TableInfo} describes the essential properties needed to locate and access a table,
    * independent of the underlying catalog implementation.
    */
-  class TableBrief {
+  class TableDescriptor {
 
     /** The logical identifier used to resolve the table. */
     String tableId;

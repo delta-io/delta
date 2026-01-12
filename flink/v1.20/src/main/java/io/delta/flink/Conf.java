@@ -32,7 +32,9 @@ public final class Conf {
   private static final Logger LOG = LoggerFactory.getLogger(Conf.class);
 
   public static String SINK_RETRY_MAX_ATTEMPT = "sink.retry.max-attempt";
+  // The i-th retry will have a delay of `delay-ms * (2 ^ i)`
   public static String SINK_RETRY_DELAY_MS = "sink.retry.delay-ms";
+  // Retry will stop if the delay exceeds max-delay
   public static String SINK_RETRY_MAX_DELAY_MS = "sink.retry.max-delay-ms";
 
   public static String SINK_WRITER_NUM_CONCURRENT_FILE = "sink.writer.num-concurrent-file";

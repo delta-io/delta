@@ -153,8 +153,8 @@ public interface DeltaTable extends Serializable, AutoCloseable {
    *
    * @param pathSuffix a suffix appended to the table path when generating file locations. The
    *     result path will be `<table_root>/<path_suffix>/<paquet_file>`
-   * @param data an iterator over row batches to be written as Parquet files; the caller must close
-   *     it
+   * @param data an iterator over row batches to be written as Parquet files; this method will close
+   *     it on consumption.
    * @param partitionValues a mapping of partition column names to their literal values
    * @return an iterator over {@code Row} objects representing the AddFile actions generated during
    *     the write

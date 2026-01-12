@@ -27,8 +27,8 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * A {@code CacheManager} provides a pluggable abstraction for caching {@link Snapshot} instances
- * keyed by a string identifier (for example, a table path).
+ * A {@code SnapshotCacheManager} provides a pluggable abstraction for caching {@link Snapshot}
+ * instances keyed by a string identifier (for example, a table path).
  *
  * <p>The cache is primarily used to avoid repeatedly loading and reconstructing Delta table
  * snapshots from remote storage, which can be expensive for tables with long histories or high
@@ -40,7 +40,7 @@ import java.util.function.Predicate;
  * <p>This interface is {@link Serializable} so that it can be safely used in distributed Flink jobs
  * and reconstructed across task restarts.
  */
-public interface CacheManager extends Serializable {
+public interface SnapshotCacheManager extends Serializable {
 
   /**
    * Inserts or updates a cached snapshot for the given key.
@@ -68,7 +68,7 @@ public interface CacheManager extends Serializable {
    *
    * @param key the cache key
    * @param versionProbe checks if a version exists. Expected to be faster than body. Used to
-   *     quickly verify if the cached snapshot is updated
+   *     quickly verify if the cached snapshot is updated. It takes a version number and return true if the version already exists.
    * @param body a callable used to compute the snapshot on cache miss
    * @return the cached or newly loaded snapshot, empty means no snapshot exists ( empty table )
    */
@@ -81,31 +81,32 @@ public interface CacheManager extends Serializable {
     }
   }
 
-  static CacheManager getInstance() {
+  static SnapshotCacheManager getInstance() {
     return Conf.getInstance().getTableCacheEnable()
         ? new LocalCacheManager()
         : new NoCacheManager();
   }
 
   /**
-   * A no-op {@link CacheManager} implementation that performs no caching.
+   * A no-op {@link SnapshotCacheManager} implementation that performs no caching.
    *
    * <p>This implementation always bypasses caching logic and is useful in scenarios where caching
    * is undesirable or needs to be disabled explicitly.
    */
-  class NoCacheManager implements CacheManager {
+  class NoCacheManager implements SnapshotCacheManager {
     // Intentionally empty
   }
 
   /**
-   * The default {@link CacheManager} implementation backed by an in-memory, path-based cache.
+   * The default {@link SnapshotCacheManager} implementation backed by an in-memory, path-based
+   * cache.
    *
    * <p>This implementation uses a bounded cache with time-based eviction to store {@link Snapshot}
    * instances, providing faster snapshot access while preventing unbounded memory growth.
    *
    * <p>Cache size and expiration are controlled via {@link Conf}.
    */
-  class LocalCacheManager implements CacheManager {
+  class LocalCacheManager implements SnapshotCacheManager {
 
     /**
      * A path-based snapshot cache used to speed up snapshot loading.
@@ -133,8 +134,9 @@ public interface CacheManager extends Serializable {
     public Optional<Snapshot> get(
         String key, Predicate<Long> versionProbe, Function<String, Optional<Snapshot>> body) {
       Optional<Snapshot> cached = SNAPSHOT_CACHE.get(key, body);
+      // Probe if `version + 1` already exists.
       long versionToProbe = cached.map(Snapshot::getVersion).orElse(-1L) + 1;
-
+      // `version + 1` exists. It means current cache at `version` is outdated.
       if (versionProbe.test(versionToProbe)) {
         // Cache is outdated and needs reload
         SNAPSHOT_CACHE.invalidate(key);
