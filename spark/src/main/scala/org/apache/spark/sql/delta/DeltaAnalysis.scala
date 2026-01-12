@@ -908,6 +908,34 @@ class DeltaAnalysis(session: SparkSession)
   }
 
   /**
+   * Conditionally wraps a struct expression with an IF expression to preserve NULL source values
+   * when `DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS` is enabled:
+   *   IF(sourceExpr IS NULL, NULL, createStructExpr)
+   *
+   * This prevents null expansion where a null struct would be incorrectly expanded to a struct
+   * with all fields set to NULL during INSERT operations.
+   *
+   * @param sourceExpr The source struct expression
+   * @param createStructExpr The generated CreateStruct expression
+   * @return The potentially wrapped expression with null preservation logic
+   */
+  private def maybeWrapWithNullPreservationForInsert(
+      sourceExpr: Expression,
+      createStructExpr: Expression): Expression = {
+    if (conf.getConf(DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS)) {
+      val sourceNullCondition = IsNull(sourceExpr)
+      val targetType = createStructExpr.dataType
+      If(
+        sourceNullCondition,
+        Literal.create(null, targetType),
+        createStructExpr
+      )
+    } else {
+      createStructExpr
+    }
+  }
+
+  /**
    * Performs the schema adjustment by adding UpCasts (which are safe) and Aliases so that we
    * can check if the by-ordinal schema of the insert query matches our Delta table.
    * The schema adjustment also include string length check if it's written into a char/varchar
@@ -1173,7 +1201,26 @@ class DeltaAnalysis(session: SparkSession)
           GetStructField(parent, i, Option(sourceField.name)),
           sourceField.name)(explicitMetadata = Option(sourceField.metadata))
     }
-    Alias(CreateStruct(fields), parent.name)(
+
+    // Fix for null expansion caused by struct type cast by preserving NULL source structs.
+    //
+    // Problem: When inserting a struct column, if the source struct is NULL, the casting logic
+    // will expand the NULL into a non-null struct with all fields set to NULL:
+    //   NULL -> struct(field1: null, field2: null, ..., newField: null)
+    //
+    // Expected: The target struct should remain NULL when the source struct is NULL:
+    //   NULL -> NULL
+    //
+    // Solution: Wrap the CreateStruct expression in an IF expression that preserves NULL:
+    //   IF(source_struct IS NULL, NULL, CreateStruct(...))
+    //
+    // This is controlled by the DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS config.
+    val createStructExpr = CreateStruct(fields)
+    val wrappedWithNullPreservation =
+      maybeWrapWithNullPreservationForInsert(
+        sourceExpr = parent,
+        createStructExpr = createStructExpr)
+    Alias(wrappedWithNullPreservation, parent.name)(
       parent.exprId, parent.qualifier, Option(parent.metadata))
   }
 

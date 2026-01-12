@@ -272,8 +272,8 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
       spark: SparkSession,
       snapshot: Snapshot): Unit = {
     if (!shouldRun(spark, snapshot)) return
+    UpdateCatalog.activeAsyncRequests.incrementAndGet()
     Future[Unit] {
-      UpdateCatalog.activeAsyncRequests.incrementAndGet()
       execute(spark, snapshot)
     }(UpdateCatalog.getOrCreateExecutionContext(spark.sessionState.conf)).onComplete { _ =>
       UpdateCatalog.activeAsyncRequests.decrementAndGet()

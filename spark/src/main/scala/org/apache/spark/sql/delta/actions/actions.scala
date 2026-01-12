@@ -39,7 +39,16 @@ import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
-import io.delta.storage.commit.actions.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{
+  AbstractCommitInfo => StorageAbstractCommitInfo,
+  AbstractMetadata => StorageAbstractMetadata,
+  AbstractProtocol => StorageAbstractProtocol
+}
+import org.apache.spark.sql.delta.v2.interop.{
+  AbstractCommitInfo => SparkAbstractCommitInfo,
+  AbstractMetadata => SparkAbstractMetadata,
+  AbstractProtocol => SparkAbstractProtocol
+}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
@@ -138,7 +147,8 @@ case class Protocol private (
     @JsonInclude(Include.NON_ABSENT)
     writerFeatures: Option[Set[String]])
   extends Action
-  with AbstractProtocol
+  with SparkAbstractProtocol
+  with StorageAbstractProtocol
   with TableFeatureSupport {
   // Correctness check
   // Reader and writer versions must match the status of reader and writer features
@@ -1027,7 +1037,8 @@ case class Metadata(
     partitionColumns: Seq[String] = Nil,
     configuration: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    createdTime: Option[Long] = None) extends Action with AbstractMetadata {
+    createdTime: Option[Long] = None)
+  extends Action with SparkAbstractMetadata with StorageAbstractMetadata {
 
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has
@@ -1193,7 +1204,8 @@ case class CommitInfo(
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
     engineInfo: Option[String],
-    txnId: Option[String]) extends Action with CommitMarker with AbstractCommitInfo {
+    txnId: Option[String])
+  extends Action with CommitMarker with SparkAbstractCommitInfo with StorageAbstractCommitInfo {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {

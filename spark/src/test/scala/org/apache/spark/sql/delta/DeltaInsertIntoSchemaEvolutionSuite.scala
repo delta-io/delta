@@ -181,7 +181,38 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
       },
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
+  }
 
+  for {
+    preserveNullSourceStructs <- BOOLEAN_DOMAIN
+    (inserts: Set[Insert], expectedAnswer) <- Seq(
+      insertsAppend ->
+        TestData("a int, s struct <x: int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 2, "y": null } }""", """{ "a": 1, "s": null }""")),
+      insertsOverwrite ->
+        TestData("a int, s struct <x: int, y: int>",
+          Seq("""{ "a": 1, "s": null }"""))
+    )
+  } {
+    testInserts(s"insert with extra nested field, null struct, " +
+        s"preserveNullSourceStructs=$preserveNullSourceStructs")(
+      initialData = TestData("a int, s struct <x: int>",
+        Seq("""{ "a": 1, "s": { "x": 2 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, s struct <x: int, y: int>",
+        Seq("""{ "a": 1, "s": null }""")),
+      expectedResult = ExpectedResult.Success(expected = expectedAnswer),
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
+        DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
+          -> preserveNullSourceStructs.toString
+      )
+    )
+  }
+
+  for (schemaEvolution <- BOOLEAN_DOMAIN) {
     // Adding new nested struct fields with schema evolution is allowed for all inserts, but
     // dataframe inserts by name don't support implicit casting and will fail due to the type
     // mismatch.
