@@ -54,9 +54,10 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   //          to /v1/iceberg/namespaces/db/tables/t1/plan
   private String catalogPrefix = null;  // null = no prefix (fallback case)
 
-  // Static fields for test verification - captures filter from requests
+  // Static fields for test verification - captures filter and projection from requests
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Expression capturedFilter = null;
+  private static volatile List<String> capturedProjection = null;
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -93,11 +94,20 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
-   * Clear captured filter. Call between tests to avoid pollution.
+   * Get the projection (list of column names) captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static List<String> getCapturedProjection() {
+    return capturedProjection;
+  }
+
+  /**
+   * Clear captured filter and projection. Call between tests to avoid pollution.
    * Package-private for test access.
    */
   static void clearCaptured() {
     capturedFilter = null;
+    capturedProjection = null;
   }
 
   @Override
@@ -197,9 +207,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
       LOG.debug("Using current snapshot (snapshotId was null or 0)");
     }
 
-    // Capture filter for test verification
+    // Capture filter and projection for test verification
     capturedFilter = planRequest.filter();
+    capturedProjection = planRequest.select();
     LOG.debug("Captured filter: {}", capturedFilter);
+    LOG.debug("Captured projection: {}", capturedProjection);
 
     // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {

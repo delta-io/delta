@@ -142,6 +142,17 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException invalidResolvedVersionRange(
+      String tablePath, long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "%s: Invalid resolved version range: after timestamp resolution, "
+                + "startVersion=%d > endVersion=%d. "
+                + "Please adjust the provided timestamp boundaries.",
+            tablePath, startVersion, endVersion);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
