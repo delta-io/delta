@@ -142,6 +142,14 @@ class IcebergRESTCatalogPlanningClient(
     .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
     .build()
 
+  override def canConvertFilters(filters: Array[Filter]): Boolean = {
+    // Check if all filters can be converted to Iceberg expressions
+    // Returns true only if ALL filters successfully convert
+    filters.forall { filter =>
+      SparkToIcebergExpressionConverter.convert(filter).isDefined
+    }
+  }
+
   override def planScan(
       database: String,
       table: String,

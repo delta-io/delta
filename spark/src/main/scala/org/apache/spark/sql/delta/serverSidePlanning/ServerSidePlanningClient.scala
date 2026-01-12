@@ -59,6 +59,15 @@ trait ServerSidePlanningClient {
       filterOption: Option[Filter] = None,
       projectionOption: Option[Seq[String]] = None,
       limitOption: Option[Int] = None): ScanPlan
+
+  /**
+   * Check if all given filters can be converted to the server's native filter format.
+   * This is used during filter pushdown to determine whether to return residuals to Spark.
+   *
+   * @param filters Array of Spark filters to check
+   * @return true if ALL filters can be converted, false if ANY filter cannot be converted
+   */
+  def canConvertFilters(filters: Array[Filter]): Boolean
 }
 
 /**
