@@ -455,6 +455,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         s"Delta version should not be 'unknown' in test environment, got: $userAgent")
       assert(!userAgent.contains("Java/unknown"),
         s"Java version should not be 'unknown' in test environment, got: $userAgent")
+      assert(!userAgent.contains("Scala/unknown"),
+        s"Scala version should not be 'unknown' in test environment, got: $userAgent")
     } finally {
       client.close()
     }
