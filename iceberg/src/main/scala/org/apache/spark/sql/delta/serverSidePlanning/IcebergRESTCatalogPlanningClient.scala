@@ -28,7 +28,6 @@ import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
-import org.apache.spark.sql.delta.iceberg.BuildInfo
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils

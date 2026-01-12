@@ -1115,7 +1115,6 @@ val deltaIcebergSparkIncludePrefixes = Seq(
 // It will fail the first time, just re-run it.
 // scalastyle:off println
 lazy val iceberg = (project in file("iceberg"))
-  .enablePlugins(BuildInfoPlugin)
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
@@ -1215,10 +1214,7 @@ lazy val iceberg = (project in file("iceberg"))
       case x =>
         (assembly / assemblyMergeStrategy).value(x)
     },
-    assemblyPackageScala / assembleArtifact := false,
-    // BuildInfo configuration for User-Agent header
-    buildInfoKeys := Seq[BuildInfoKey](version),
-    buildInfoPackage := "org.apache.spark.sql.delta.iceberg"
+    assemblyPackageScala / assembleArtifact := false
   )
 // scalastyle:on println
 

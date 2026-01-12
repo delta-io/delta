@@ -422,40 +422,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
-  test("User-Agent header contains Delta, Spark, Java and Scala versions") {
-    val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", null)
-    try {
-      val userAgent = client.getUserAgent()
-
-      // Verify the user agent starts with Delta
-      assert(userAgent.startsWith("Delta/"),
-        s"User-Agent should start with 'Delta/', got: $userAgent")
-
-      // Verify it contains Spark version (format: Spark/<version>)
-      assert(userAgent.contains("Spark/"),
-        s"User-Agent should contain 'Spark/', got: $userAgent")
-
-      // Verify it contains Java version (format: Java/<version>)
-      assert(userAgent.contains("Java/"),
-        s"User-Agent should contain 'Java/', got: $userAgent")
-
-      // Verify it contains Scala version (format: Scala/<version>)
-      assert(userAgent.contains("Scala/"),
-        s"User-Agent should contain 'Scala/', got: $userAgent")
-
-      // Verify versions are not "unknown" in test environment where all dependencies are available
-      assert(!userAgent.contains("Spark/unknown"),
-        s"Spark version should not be 'unknown' in test environment, got: $userAgent")
-      assert(!userAgent.contains("Delta/unknown"),
-        s"Delta version should not be 'unknown' in test environment, got: $userAgent")
-      assert(!userAgent.contains("Java/unknown"),
-        s"Java version should not be 'unknown' in test environment, got: $userAgent")
-    } finally {
-      client.close()
-    }
-  }
-
-  test("User-Agent header format follows RFC 7231") {
+  test("User-Agent header format") {
     val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", null)
     try {
       val userAgent = client.getUserAgent()
@@ -480,6 +447,14 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       // Fourth part should be Scala/version
       assert(parts(3).matches("Scala/.*"),
         s"Fourth component should match 'Scala/<version>', got: ${parts(3)}")
+
+      // Verify versions are not "unknown" in test environment where all dependencies are available
+      assert(!userAgent.contains("Spark/unknown"),
+        s"Spark version should not be 'unknown' in test environment, got: $userAgent")
+      assert(!userAgent.contains("Delta/unknown"),
+        s"Delta version should not be 'unknown' in test environment, got: $userAgent")
+      assert(!userAgent.contains("Java/unknown"),
+        s"Java version should not be 'unknown' in test environment, got: $userAgent")
     } finally {
       client.close()
     }
