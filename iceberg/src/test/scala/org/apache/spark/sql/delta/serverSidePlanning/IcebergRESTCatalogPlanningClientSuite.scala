@@ -422,28 +422,34 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
-  test("User-Agent header contains Delta-ServerSidePlanning, Spark and Delta versions") {
+  test("User-Agent header contains Delta, Spark, Java and Scala versions") {
     val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", null)
     try {
       val userAgent = client.getUserAgent()
 
-      // Verify the user agent starts with Delta-ServerSidePlanning
-      assert(userAgent.startsWith("Delta-ServerSidePlanning/"),
-        s"User-Agent should start with 'Delta-ServerSidePlanning/', got: $userAgent")
+      // Verify the user agent starts with Delta
+      assert(userAgent.startsWith("Delta/"),
+        s"User-Agent should start with 'Delta/', got: $userAgent")
 
       // Verify it contains Spark version (format: Spark/<version>)
       assert(userAgent.contains("Spark/"),
         s"User-Agent should contain 'Spark/', got: $userAgent")
 
-      // Verify it contains Delta version (format: Delta/<version>)
-      assert(userAgent.contains("Delta/"),
-        s"User-Agent should contain 'Delta/', got: $userAgent")
+      // Verify it contains Java version (format: Java/<version>)
+      assert(userAgent.contains("Java/"),
+        s"User-Agent should contain 'Java/', got: $userAgent")
+
+      // Verify it contains Scala version (format: Scala/<version>)
+      assert(userAgent.contains("Scala/"),
+        s"User-Agent should contain 'Scala/', got: $userAgent")
 
       // Verify versions are not "unknown" in test environment where all dependencies are available
       assert(!userAgent.contains("Spark/unknown"),
         s"Spark version should not be 'unknown' in test environment, got: $userAgent")
       assert(!userAgent.contains("Delta/unknown"),
         s"Delta version should not be 'unknown' in test environment, got: $userAgent")
+      assert(!userAgent.contains("Java/unknown"),
+        s"Java version should not be 'unknown' in test environment, got: $userAgent")
     } finally {
       client.close()
     }
@@ -456,20 +462,24 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       // Verify the format follows RFC 7231: product/version [product/version ...]
       val parts = userAgent.split(" ")
-      assert(parts.length == 3,
-        s"User-Agent should have 3 space-separated components, got ${parts.length}: $userAgent")
+      assert(parts.length == 4,
+        s"User-Agent should have 4 space-separated components, got ${parts.length}: $userAgent")
 
-      // First part should be Delta-ServerSidePlanning/version
-      assert(parts(0).matches("Delta-ServerSidePlanning/.*"),
-        s"First component should match 'Delta-ServerSidePlanning/<version>', got: ${parts(0)}")
+      // First part should be Delta/version
+      assert(parts(0).matches("Delta/.*"),
+        s"First component should match 'Delta/<version>', got: ${parts(0)}")
 
       // Second part should be Spark/version
       assert(parts(1).matches("Spark/.*"),
         s"Second component should match 'Spark/<version>', got: ${parts(1)}")
 
-      // Third part should be Delta/version
-      assert(parts(2).matches("Delta/.*"),
-        s"Third component should match 'Delta/<version>', got: ${parts(2)}")
+      // Third part should be Java/version
+      assert(parts(2).matches("Java/.*"),
+        s"Third component should match 'Java/<version>', got: ${parts(2)}")
+
+      // Fourth part should be Scala/version
+      assert(parts(3).matches("Scala/.*"),
+        s"Fourth component should match 'Scala/<version>', got: ${parts(3)}")
     } finally {
       client.close()
     }

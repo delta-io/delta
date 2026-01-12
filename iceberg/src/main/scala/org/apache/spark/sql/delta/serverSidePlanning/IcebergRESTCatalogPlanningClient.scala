@@ -77,20 +77,21 @@ class IcebergRESTCatalogPlanningClient(
   }
 
   /**
-   * Build User-Agent header with Delta and Spark version information.
-   * Format: "Delta-ServerSidePlanning/<version> Spark/<version> Delta/<version>"
-   * Following Unity Catalog's User-Agent format pattern.
+   * Build User-Agent header with Delta, Spark, Java and Scala version information.
+   * Format: "Delta/<version> Spark/<version> Java/<version> Scala/<version>"
+   * Example: "Delta/4.0.0 Spark/3.5.0 Java/17.0.10 Scala/2.12.18"
    */
   private def buildUserAgent(): String = {
-    val baseClient = s"Delta-ServerSidePlanning/${BuildInfo.version}"
-    val sparkVersion = getSparkVersion().getOrElse("unknown")
     val deltaVersion = getDeltaVersion().getOrElse("unknown")
-    s"$baseClient Spark/$sparkVersion Delta/$deltaVersion"
+    val sparkVersion = getSparkVersion().getOrElse("unknown")
+    val javaVersion = getJavaVersion()
+    val scalaVersion = getScalaVersion()
+    s"Delta/$deltaVersion Spark/$sparkVersion Java/$javaVersion Scala/$scalaVersion"
   }
 
   /**
    * Get the User-Agent header value used by this client.
-   * Format: "Delta-ServerSidePlanning/<version> Spark/<version> Delta/<version>"
+   * Format: "Delta/<version> Spark/<version> Java/<version> Scala/<version>"
    *
    * @return The User-Agent string used in HTTP requests
    */
@@ -146,6 +147,20 @@ class IcebergRESTCatalogPlanningClient(
     }
 
     None
+  }
+
+  /**
+   * Get Java version from system properties.
+   */
+  private def getJavaVersion(): String = {
+    System.getProperty("java.version", "unknown")
+  }
+
+  /**
+   * Get Scala version from the scala.util.Properties.versionNumberString property.
+   */
+  private def getScalaVersion(): String = {
+    scala.util.Properties.versionNumberString
   }
 
   private lazy val httpClient = HttpClientBuilder.create()
