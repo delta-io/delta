@@ -47,7 +47,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Types that only support equality operators (EqualTo, NotEqualTo, IsNull, IsNotNull)
   private val equalityOnlyTypesTestCases = Seq(
-    ("boolCol", true, "Boolean")
+    ("boolCol", true, "Boolean"),
+    ("binaryCol", Array[Byte](0xDE.toByte, 0xAD.toByte, 0xBE.toByte, 0xEF.toByte), "Binary")
   )
 
   private val allTypesTestCases = orderableTypeTestCases ++ equalityOnlyTypesTestCases
@@ -587,27 +588,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "Not(StringStartsWith) - arbitrary NOT unsupported",
         Not(StringStartsWith("stringCol", "prefix")),
         None
-      )
-    )
-
-    assertConvert(testCases)
-  }
-
-  // ========================================================================
-  // BINARY TYPE
-  // ========================================================================
-
-  test("binary type with null check operators") {
-    val testCases = Seq(
-      ExprConvTestCase(
-        "IsNull with binary column",
-        IsNull("binaryCol"),
-        Some(Expressions.isNull("binaryCol"))
-      ),
-      ExprConvTestCase(
-        "IsNotNull with binary column",
-        IsNotNull("binaryCol"),
-        Some(Expressions.notNull("binaryCol"))
       )
     )
 
