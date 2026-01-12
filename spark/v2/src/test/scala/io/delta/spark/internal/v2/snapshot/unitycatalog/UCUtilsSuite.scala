@@ -19,8 +19,9 @@ import java.net.URI
 import java.util.{HashMap => JHashMap}
 
 import io.delta.kernel.internal.tablefeatures.TableFeatures
-import io.delta.spark.internal.v2.utils.CatalogTableTestUtils
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+
+import org.apache.spark.sql.delta.util.CatalogTableTestUtils
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
