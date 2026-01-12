@@ -54,7 +54,7 @@ object CatalogTableTestUtils {
 
     val identifier = catalogName match {
       case Some(catalog) =>
-        TableIdentifier(tableName, Some("default") /* database */, Some(catalog) /* catalog */ )
+        TableIdentifier(tableName, Some("default") /* database */, Some(catalog) /* catalog */)
       case None => TableIdentifier(tableName)
     }
 
