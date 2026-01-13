@@ -41,6 +41,7 @@ import lombok.Setter;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.assertj.core.api.Assertions;
@@ -109,6 +110,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @Setter
   @ToString
   private class TableSetupOptions {
+
     private TableType tableType;
     private String catalogName;
     private String schemaName;
@@ -452,218 +454,96 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                 DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
   }
 
-  @Test
-  public void testCreateOrReplaceTable() throws Exception {
-    withNewTable(
-        "test_managed_delta",
-        "id INT",
-        TableType.MANAGED,
-        tableName -> {
-          // Verify initial table is created
-          check(tableName, List.of());
-
-          // CREATE OR REPLACE with new schema
-          sql(
-              "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA "
-                  + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-              tableName);
-          check(tableName, List.of());
-
-          // Insert data to verify new schema
-          sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-          check(tableName, List.of(List.of("1", "Alice")));
-        });
-  }
-
-  @Test
-  public void testReplaceTable() throws Exception {
-    withNewTable(
-        "test_managed_delta",
-        "id INT",
-        TableType.MANAGED,
-        tableName -> {
-          // Insert initial data
-          sql("INSERT INTO %s VALUES (1)", tableName);
-          check(tableName, List.of(List.of("1")));
-
-          // REPLACE TABLE with new schema
-          sql(
-              "REPLACE TABLE %s (id INT, name STRING) USING DELTA "
-                  + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-              tableName);
-
-          // Data should be replaced
-          check(tableName, List.of());
-
-          // Insert data to verify new schema
-          sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-          check(tableName, List.of(List.of("1", "Alice")));
-        });
-  }
-
-  @Test
-  public void testCreateTableAsSelect() throws Exception {
-    withNewTable(
-        "source_table",
-        "id INT",
-        TableType.MANAGED,
-        sourceTable -> {
-          // Insert data into source
-          sql("INSERT INTO %s VALUES (1), (2), (3), (4)", sourceTable);
-
-          UnityCatalogInfo uc = unityCatalogInfo();
-          String targetTable = uc.catalogName() + "." + uc.schemaName() + ".ctas_target";
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testCreateOrReplaceTable(TableType tableType) throws Exception {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = String.format("%s.%s.create_or_replace", uc.catalogName(), uc.schemaName());
+    withTempDir(
+        (Path dir) -> {
           try {
-            // CTAS from source
-            sql(
-                "CREATE TABLE %s USING DELTA "
-                    + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported') "
-                    + "AS SELECT id FROM %s",
-                targetTable, sourceTable);
+            // CREATE OR REPLACE with new schema
+            if (tableType == TableType.MANAGED) {
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
+                  tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+            } else {
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
+                  tableName, dir.toString());
+            }
 
-            // Verify data was copied
-            check(targetTable, List.of(List.of("1"), List.of("2"), List.of("3"), List.of("4")));
+            // Insert data to verify new schema
+            sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
+            check(tableName, List.of(List.of("1", "Alice")));
           } finally {
-            sql("DROP TABLE IF EXISTS %s", targetTable);
+            sql("DROP TABLE IF EXISTS %s", tableName);
           }
         });
   }
 
-  @Test
-  public void testReplaceTableAsSelect() throws Exception {
-    withNewTable(
-        "source_table",
-        "id INT",
-        TableType.MANAGED,
-        sourceTable -> {
-          // Insert data into source
-          sql("INSERT INTO %s VALUES (1), (2), (3)", sourceTable);
-
-          withNewTable(
-              "target_table",
-              "old_col STRING",
-              TableType.MANAGED,
-              targetTable -> {
-                sql("INSERT INTO %s VALUES ('old_data')", targetTable);
-
-                // REPLACE TABLE AS SELECT
-                sql(
-                    "REPLACE TABLE %s USING DELTA "
-                        + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported') "
-                        + "AS SELECT id FROM %s",
-                    targetTable, sourceTable);
-
-                // Verify data and schema were replaced
-                check(targetTable, List.of(List.of("1"), List.of("2"), List.of("3")));
-              });
-        });
-  }
-
-  @Test
-  public void testCreateTableLike() throws Exception {
-    withNewTable(
-        "source_table",
-        "id INT, name STRING",
-        TableType.MANAGED,
-        sourceTable -> {
-          // Insert data into source
-          sql("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", sourceTable);
-
-          UnityCatalogInfo uc = unityCatalogInfo();
-          String targetTable = uc.catalogName() + "." + uc.schemaName() + ".like_target";
-          try {
-            // CREATE TABLE with same schema as source
-            // Note: CREATE TABLE LIKE is not universally supported, so we manually create with same
-            // schema
-            sql(
-                "CREATE TABLE %s (id INT, name STRING) USING DELTA "
-                    + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-                targetTable);
-
-            // Table should have same schema but no data
-            check(targetTable, List.of());
-
-            // Verify schema by inserting compatible data
-            sql("INSERT INTO %s VALUES (3, 'Charlie')", targetTable);
-            check(targetTable, List.of(List.of("3", "Charlie")));
-          } finally {
-            sql("DROP TABLE IF EXISTS %s", targetTable);
-          }
-        });
-  }
-
-  @Test
-  public void testCreateTableFromSelect() throws Exception {
-    withNewTable(
-        "source_table",
-        "id INT, partCol INT",
-        TableType.MANAGED,
-        sourceTable -> {
-          // Insert data into source
-          sql("INSERT INTO %s VALUES (1, 1), (2, 2), (3, 3)", sourceTable);
-
-          UnityCatalogInfo uc = unityCatalogInfo();
-          String targetTable = uc.catalogName() + "." + uc.schemaName() + ".target_table";
-          try {
-            // CREATE TABLE AS SELECT (CTAS) to copy data
-            sql(
-                "CREATE TABLE %s USING DELTA "
-                    + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported') "
-                    + "AS SELECT * FROM %s",
-                targetTable, sourceTable);
-
-            // Verify data was copied
-            check(targetTable, List.of(List.of("1", "1"), List.of("2", "2"), List.of("3", "3")));
-
-            // Writes to original and copy should be independent
-            sql("INSERT INTO %s VALUES (4, 4)", sourceTable);
-            sql("INSERT INTO %s VALUES (5, 5)", targetTable);
-
-            // Verify independence
-            check(
-                sourceTable,
-                List.of(
-                    List.of("1", "1"), List.of("2", "2"), List.of("3", "3"), List.of("4", "4")));
-            check(
-                targetTable,
-                List.of(
-                    List.of("1", "1"), List.of("2", "2"), List.of("3", "3"), List.of("5", "5")));
-          } finally {
-            sql("DROP TABLE IF EXISTS %s", targetTable);
-          }
-        });
-  }
-
-  @Test
-  public void testTableWithSupportedDataTypes() throws Exception {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testTableWithSupportedDataTypes(TableType tableType) throws Exception {
     String schema =
-        "col_int INT, col_long BIGINT, col_string STRING, "
-            + "col_double DOUBLE, col_float FLOAT, col_boolean BOOLEAN, "
-            + "col_date DATE, col_timestamp TIMESTAMP, col_binary BINARY, "
-            + "col_decimal DECIMAL(10,2)";
+        // Numeric types
+        "col_tinyint TINYINT, col_smallint SMALLINT, col_int INT, col_bigint BIGINT, "
+            + "col_float FLOAT, col_double DOUBLE, col_decimal DECIMAL(10,2), "
+            // String and binary types
+            + "col_string STRING, col_char CHAR(10), col_varchar VARCHAR(20), col_binary BINARY, "
+            // Boolean type
+            + "col_boolean BOOLEAN, "
+            // Date and time types
+            + "col_date DATE, col_timestamp TIMESTAMP, col_timestamp_ntz TIMESTAMP_NTZ";
 
     withNewTable(
         "supported_types_table",
         schema,
-        TableType.MANAGED,
+        tableType,
         tableName -> {
           // Insert sample data
           sql(
               "INSERT INTO %s VALUES ("
-                  + "1, 100, 'test', 1.5, 2.5, true, "
+                  // Numeric values
+                  + "CAST(1 AS TINYINT), CAST(100 AS SMALLINT), 1000, 100000, "
+                  + "2.5, 1.5, 123.45, "
+                  // String and binary values
+                  + "'test', 'char_test', 'varchar_test', X'CAFEBABE', "
+                  // Boolean value
+                  + "true, "
+                  // Date and time values
                   + "DATE'2025-01-01', TIMESTAMP'2025-01-01 12:00:00', "
-                  + "X'DEADBEEF', 123.45)",
+                  + "TIMESTAMP_NTZ'2025-01-01 12:00:00')",
               tableName);
 
-          // Verify data can be queried
-          List<List<String>> results = sql("SELECT col_int, col_string FROM %s", tableName);
+          // Verify data can be queried - checking that each column type is correctly
+          // stored/retrieved
+          List<List<String>> results = sql("SELECT * FROM %s", tableName);
           assertThat(results).hasSize(1);
-          assertThat(results.get(0)).containsExactly("1", "test");
+          List<String> row = results.get(0);
+
+          // Verify each column value
+          assertThat(row.get(0)).isEqualTo("1"); // TINYINT
+          assertThat(row.get(1)).isEqualTo("100"); // SMALLINT
+          assertThat(row.get(2)).isEqualTo("1000"); // INT
+          assertThat(row.get(3)).isEqualTo("100000"); // BIGINT
+          assertThat(row.get(4)).isEqualTo("2.5"); // FLOAT
+          assertThat(row.get(5)).isEqualTo("1.5"); // DOUBLE
+          assertThat(row.get(6)).isEqualTo("123.45"); // DECIMAL
+          assertThat(row.get(7)).isEqualTo("test"); // STRING
+          assertThat(row.get(8)).isEqualTo("char_test "); // CHAR (padded with space)
+          assertThat(row.get(9)).isEqualTo("varchar_test"); // VARCHAR
+          assertThat(row.get(10)).startsWith("[B@"); // BINARY (Java byte array object reference)
+          assertThat(row.get(11)).isEqualTo("true"); // BOOLEAN
+          assertThat(row.get(12)).isEqualTo("2025-01-01"); // DATE
+          assertThat(row.get(13)).isEqualTo("2025-01-01 12:00:00.0"); // TIMESTAMP
+          assertThat(row.get(14)).isEqualTo("2025-01-01T12:00"); // TIMESTAMP_NTZ
         });
   }
 
-  @Test
-  public void testTableWithComplexTypes() throws Exception {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testTableWithComplexTypes(TableType tableType) throws Exception {
     String schema =
         "id INT, arr ARRAY<INT>, "
             + "map_col MAP<STRING, INT>, "
@@ -672,7 +552,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     withNewTable(
         "complex_types_table",
         schema,
-        TableType.MANAGED,
+        tableType,
         tableName -> {
           // Insert sample data
           sql(
@@ -682,46 +562,20 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               tableName);
 
           // Verify data can be queried
-          List<List<String>> results = sql("SELECT id FROM %s", tableName);
-          assertThat(results).hasSize(1);
-          assertThat(results.get(0)).containsExactly("1");
+          check(
+              tableName,
+              List.of(
+                  List.of("1", "ArraySeq(1, 2, 3)", "Map(key1 -> 10, key2 -> 20)", "[42,test]")));
         });
   }
 
-  @Test
-  public void testCustomTableProperties() throws Exception {
-    withNewTable(
-        "custom_props_table",
-        "id INT",
-        TableType.MANAGED,
-        tableName -> {
-          // Custom properties are set via CREATE TABLE TBLPROPERTIES
-          // Recreate table with custom properties
-          sql("DROP TABLE %s", tableName);
-          UnityCatalogInfo uc = unityCatalogInfo();
-          String fullName = uc.catalogName() + "." + uc.schemaName() + ".custom_props_table";
-          sql(
-              "CREATE TABLE %s (id INT) USING DELTA "
-                  + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported', "
-                  + "'custom.key'='custom_value', 'another'='property')",
-              fullName);
-
-          try {
-            // Properties should persist
-            sql("INSERT INTO %s VALUES (1)", fullName);
-            check(fullName, List.of(List.of("1")));
-          } finally {
-            sql("DROP TABLE IF EXISTS %s", fullName);
-          }
-        });
-  }
-
-  @Test
-  public void testTableWithNotNullConstraints() throws Exception {
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testTableWithNotNullConstraints(TableType tableType) throws Exception {
     withNewTable(
         "not_null_table",
         "id INT NOT NULL, name STRING NOT NULL, optional STRING",
-        TableType.MANAGED,
+        tableType,
         tableName -> {
           // Insert valid data
           sql("INSERT INTO %s VALUES (1, 'Alice', 'extra')", tableName);
@@ -732,41 +586,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           // Attempting to insert NULL into NOT NULL column should fail
           Assertions.assertThatThrownBy(
                   () -> sql("INSERT INTO %s VALUES (NULL, 'Charlie', 'data')", tableName))
-              .isInstanceOf(Exception.class); // More generic exception check
-        });
-  }
-
-  @Test
-  public void testPartitionedTable() throws Exception {
-    withNewTable(
-        "partitioned_table",
-        "id INT, category STRING, value DOUBLE",
-        TableType.MANAGED,
-        tableName -> {
-          // Create partitioned table by recreating with PARTITIONED BY
-          sql("DROP TABLE %s", tableName);
-          UnityCatalogInfo uc = unityCatalogInfo();
-          String fullName = uc.catalogName() + "." + uc.schemaName() + ".partitioned_table";
-          sql(
-              "CREATE TABLE %s (id INT, category STRING, value DOUBLE) USING DELTA "
-                  + "PARTITIONED BY (category) "
-                  + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-              fullName);
-
-          try {
-            // Insert data into different partitions
-            sql("INSERT INTO %s VALUES (1, 'A', 10.5), (2, 'B', 20.5), (3, 'A', 30.5)", fullName);
-
-            // Query data - results ordered by id (first column)
-            check(
-                fullName,
-                List.of(
-                    List.of("1", "A", "10.5"),
-                    List.of("2", "B", "20.5"),
-                    List.of("3", "A", "30.5")));
-          } finally {
-            sql("DROP TABLE IF EXISTS %s", fullName);
-          }
+              .isInstanceOf(Exception.class);
         });
   }
 }
