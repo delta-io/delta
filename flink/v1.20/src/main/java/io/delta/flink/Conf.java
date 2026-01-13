@@ -26,7 +26,23 @@ import java.util.Properties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Singleton configuration loader for delta-flink.properties. */
+/**
+ * Global configuration for Delta Flink sinks.
+ *
+ * <p>This class loads process-wide configuration from the {@code delta-flink.properties}
+ * file and exposes shared settings that apply to <em>all</em> {@code DeltaSink} instances
+ * within the JVM. These configurations are intended for operational tuning and common
+ * defaults, such as retry behavior, thread pool sizing, caching, and credential refresh.
+ *
+ * <p>The configuration is loaded once and managed as a singleton. All sinks created in
+ * the same process observe the same global configuration values.
+ *
+ * <p>Per-sink or per-table behavior should be configured explicitly when constructing
+ * the {@code DeltaSink} instance. Sink-level configuration takes precedence over global
+ * defaults defined here.
+ *
+ * <p>This class is not intended to be instantiated or mutated directly by users.
+ */
 public final class Conf {
 
   private static final Logger LOG = LoggerFactory.getLogger(Conf.class);
