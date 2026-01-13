@@ -2960,6 +2960,30 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |instead of normal table loading.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  /**
+   * Controls which connector implementation to use for Delta table operations.
+   *
+   * Valid values:
+   * - NONE: V2 connector is disabled, always use V1 connector (DeltaTableV2) - default
+   * - STRICT: V2 connector is strictly enforced, always use V2 connector (Kernel SparkTable).
+   *           Intended for testing V2 connector capabilities
+   *
+   * V1 vs V2 Connectors:
+   * - V1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
+   *   uses DeltaLog for metadata management
+   * - V2 Connector (SparkTable): New Kernel-based connector with read-only support,
+   *   uses Kernel's Table API for metadata management
+   */
+  val V2_ENABLE_MODE =
+    buildConf("v2.enableMode")
+      .internal()
+      .doc(
+        "Controls the Delta V2 connector enable mode. " +
+        "Valid values: NONE (disabled, default), STRICT (should ONLY be enabled for testing).")
+      .stringConf
+      .checkValues(Set("NONE", "STRICT"))
+      .createWithDefault("NONE")
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
