@@ -293,15 +293,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * than once).
    */
   private CloseableIterator<ColumnarBatch> getActionsIterFromSinglePartOrV2Checkpoint(
-      FileStatus file, String fileName) throws IOException {
+      FileStatus file, String fileName, long checkpointVersion) throws IOException {
     // If the sidecars may contain the current action, read sidecars from the top-level v2
     // checkpoint file(to be read later).
     StructType modifiedReadSchema = checkpointReadSchema;
     if (schemaContainsAddOrRemoveFiles) {
       modifiedReadSchema = LogReplay.withSidecarFileSchema(checkpointReadSchema);
     }
-
-    long checkpointVersion = checkpointVersion(file.getPath());
 
     // If the read schema contains Add/Remove files, we should always read the sidecar file
     // actions from the checkpoint manifest regardless of the checkpoint predicate.
@@ -437,18 +435,17 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     final FileStatus nextFile = nextLogFile.getFile();
     final Path nextFilePath = new Path(nextFile.getPath());
     final String fileName = nextFilePath.getName();
+    final long logFileVersion = nextLogFile.getVersion();
     try {
       switch (nextLogFile.getLogType()) {
         case COMMIT:
           {
-            final long fileVersion = FileNames.deltaVersion(nextFilePath);
-            return readCommitOrCompactionFile(fileVersion, nextFile);
+            return readCommitOrCompactionFile(logFileVersion, nextFile);
           }
         case LOG_COMPACTION:
           {
             // use end version as this is like a mini checkpoint, and that's what checkpoints do
-            final long fileVersion = FileNames.logCompactionVersions(nextFilePath)._2;
-            return readCommitOrCompactionFile(fileVersion, nextFile);
+            return readCommitOrCompactionFile(logFileVersion, nextFile);
           }
         case CHECKPOINT_CLASSIC:
         case V2_CHECKPOINT_MANIFEST:
@@ -457,10 +454,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             // checkpoint file and any potential sidecars. Otherwise, look for any other
             // parts of the current multipart checkpoint.
             CloseableIterator<FileReadResult> dataIter =
-                getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName)
+                getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName, logFileVersion)
                     .map(batch -> new FileReadResult(batch, nextFile.getPath()));
-            long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
+            return combine(dataIter, true /* isFromCheckpoint */, logFileVersion, Optional.empty());
           }
         case MULTIPART_CHECKPOINT:
         case SIDECAR:
@@ -482,8 +478,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     deltaReadSchema,
                     checkpointPredicate);
 
-            long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
+            return combine(dataIter, true /* isFromCheckpoint */, logFileVersion, Optional.empty());
           }
         default:
           throw new IOException("Unrecognized log type: " + nextLogFile.getLogType());
