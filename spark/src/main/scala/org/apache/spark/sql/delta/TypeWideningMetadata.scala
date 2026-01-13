@@ -253,8 +253,8 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
   /** Returns whether the given type change is Char/Varchar/String or collation type change. */
   private def isStringTypeChange(from: AtomicType, to: AtomicType): Boolean = (from, to) match {
     case (
-      _: StringType | CharType(_) | VarcharType(_),
-      _: StringType | CharType(_) | VarcharType(_)) => true
+      _: StringType | _: CharType | _: VarcharType,
+      _: StringType | _: CharType | _: VarcharType) => true
     case _ => false
   }
 
