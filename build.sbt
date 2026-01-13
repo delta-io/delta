@@ -18,7 +18,6 @@
 
 import java.nio.file.Files
 
-import sbt.internal.inc.Analysis
 import sbtprotoc.ProtocPlugin.autoImport._
 
 import xsbti.compile.CompileAnalysis
@@ -137,30 +136,6 @@ def scalafmtCheckSettings(): Seq[Def.Setting[Task[CompileAnalysis]]] = Seq(
 //////////////////////////
 // END: Code Formatting //
 //////////////////////////
-
-/**
- * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
- *       setting macro.
- */
-def runTaskOnlyOnSpark[T](
-  task: sbt.TaskKey[T],
-  taskName: String,
-  projectName: String,
-  emptyValue: => T,
-  additionalPredicate: SparkVersionSpec => Boolean = _ => true): Def.Initialize[Task[T]] = {
-  val spec = CrossSparkVersions.getSparkVersionSpec()
-  if (additionalPredicate(spec)) {
-    Def.task(task.value)
-  } else {
-    Def.task {
-      // scalastyle:off println
-      println(s"Project $projectName: Skipping `$taskName` as additional predicate not satisfied " +
-        s"for Spark version ${CrossSparkVersions.getSparkVersion()}.")
-      // scalastyle:on println
-      emptyValue
-    }
-  }
-}
 
 lazy val connectCommon = (project in file("spark-connect/common"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -1096,35 +1071,6 @@ lazy val iceberg = (project in file("iceberg"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentModuleName(sparkVersion),
-    // TODO: Remove the next 4 tasks after Iceberg Spark 4.1 integration is released.
-    Compile / compile := runTaskOnlyOnSpark(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-iceberg",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis],
-      additionalPredicate = _.supportIceberg
-    ).value,
-    Test / test := runTaskOnlyOnSpark(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-iceberg",
-      emptyValue = (),
-      additionalPredicate = _.supportIceberg
-    ).value,
-    publish := runTaskOnlyOnSpark(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-iceberg",
-      emptyValue = (),
-      additionalPredicate = _.supportIceberg
-    ).value,
-    publishM2 := runTaskOnlyOnSpark(
-      task = publishM2,
-      taskName = "publishM2",
-      projectName = "delta-iceberg",
-      emptyValue = (),
-      additionalPredicate = _.supportIceberg
-    ).value,
     libraryDependencies ++= {
       if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
         Seq(
@@ -1293,35 +1239,6 @@ lazy val hudi = (project in file("hudi"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    // TODO: Remove the next 4 tasks after Hudi Spark 4.1 integration is released.
-    Compile / compile := runTaskOnlyOnSpark(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-hudi",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis],
-      additionalPredicate = _.supportHudi
-    ).value,
-    Test / test := runTaskOnlyOnSpark(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-hudi",
-      emptyValue = (),
-      additionalPredicate = _.supportHudi
-    ).value,
-    publish := runTaskOnlyOnSpark(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-hudi",
-      emptyValue = (),
-      additionalPredicate = _.supportHudi
-    ).value,
-    publishM2 := runTaskOnlyOnSpark(
-      task = publishM2,
-      taskName = "publishM2",
-      projectName = "delta-hudi",
-      emptyValue = (),
-      additionalPredicate = _.supportHudi
-    ).value,
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
         ExclusionRule(organization = "org.apache.hadoop"),
