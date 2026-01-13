@@ -68,7 +68,8 @@ public interface SnapshotCacheManager extends Serializable {
    *
    * @param key the cache key
    * @param versionProbe checks if a version exists. Expected to be faster than body. Used to
-   *     quickly verify if the cached snapshot is updated. It takes a version number and return true if the version already exists.
+   *     quickly verify if the cached snapshot is updated. It takes a version number and return true
+   *     if the version already exists.
    * @param body a callable used to compute the snapshot on cache miss
    * @return the cached or newly loaded snapshot, empty means no snapshot exists ( empty table )
    */

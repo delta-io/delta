@@ -1546,6 +1546,15 @@ lazy val kernelGroup = project
     }
   ).configureUnidoc(docTitle = "Delta Kernel")
 
+lazy val flinkGroup = project
+  .aggregate(flinkV1, flinkV2)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
+
 /*
  ********************
  * Release settings *

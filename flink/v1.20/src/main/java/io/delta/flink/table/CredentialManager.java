@@ -127,7 +127,7 @@ public class CredentialManager {
     if (expiration >= 0) {
       long refreshDelay =
           Math.max(
-              1000, // A minimal wait of one sec if the refresh delay is too small
+              100, // A minimal wait of 100ms if the refresh delay is too small
               expiration
                   - Conf.getInstance().getCredentialsRefreshAheadInMs()
                   - System.currentTimeMillis());
