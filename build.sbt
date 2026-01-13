@@ -1039,6 +1039,9 @@ lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
     name := "test-delta-iceberg-jar",
     commonSettings,
     skipReleaseSettings,
+    // Skip compilation when supportIceberg is false
+    Compile / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    Test / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
     exportJars := true,
     Compile / unmanagedJars += (iceberg / assembly).value,
     libraryDependencies ++= Seq(
@@ -1071,19 +1074,31 @@ lazy val iceberg = (project in file("iceberg"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentModuleName(sparkVersion),
-    libraryDependencies ++= Seq(
-      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
-      // due to legacy scala.
-      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
-      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
-      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
-      "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
-      "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
-      "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
-      "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
-      "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
-    ),
+    libraryDependencies ++= {
+      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+        Seq(
+          // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+          // due to legacy scala.
+          "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+          "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
+          "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
+          "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
+          "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
+          "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
+          "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
+          "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided"
+        )
+      } else {
+        Seq.empty
+      }
+    },
+    // Skip compilation and publishing when supportIceberg is false
+    Compile / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    Test / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    publish / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    publishLocal / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    publishM2 / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
@@ -1149,26 +1164,35 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     name := "iceberg-shaded",
     commonSettings,
     skipReleaseSettings,
+    // Skip compilation when supportIceberg is false
+    Compile / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    Test / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
     // must exclude all dependencies from Iceberg that delta-spark includes
-    libraryDependencies ++= Seq(
-      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
-      // due to legacy scala.
-      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
-      "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion excludeAll (
-        icebergExclusionRules: _*
-      ),
-      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergShadedVersion excludeAll (
-        icebergExclusionRules: _*
-      ),
-      // the hadoop client and hive metastore versions come from this file in the
-      // iceberg repo of icebergShadedVersion: iceberg/gradle/libs.versions.toml
-      "org.apache.hadoop" % "hadoop-client" % "2.7.3" % "provided" excludeAll (
-        hadoopClientExclusionRules: _*
-      ),
-      "org.apache.hive" % "hive-metastore" % "2.3.8" % "provided" excludeAll (
-        hiveMetastoreExclusionRules: _*
-      )
-    ),
+    libraryDependencies ++= {
+      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+        Seq(
+          // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+          // due to legacy scala.
+          "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
+          "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion excludeAll (
+            icebergExclusionRules: _*
+          ),
+          "org.apache.iceberg" % "iceberg-hive-metastore" % icebergShadedVersion excludeAll (
+            icebergExclusionRules: _*
+          ),
+          // the hadoop client and hive metastore versions come from this file in the
+          // iceberg repo of icebergShadedVersion: iceberg/gradle/libs.versions.toml
+          "org.apache.hadoop" % "hadoop-client" % "2.7.3" % "provided" excludeAll (
+            hadoopClientExclusionRules: _*
+          ),
+          "org.apache.hive" % "hive-metastore" % "2.3.8" % "provided" excludeAll (
+            hiveMetastoreExclusionRules: _*
+          )
+        )
+      } else {
+        Seq.empty
+      }
+    },
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
@@ -1197,12 +1221,21 @@ lazy val icebergTestsShaded = (project in file("icebergTestsShaded"))
     name := "iceberg-tests-shaded",
     commonSettings,
     skipReleaseSettings,
+    // Skip compilation when supportIceberg is false
+    Compile / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    Test / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
     // must exclude all dependencies from Iceberg that delta-spark includes
-    libraryDependencies ++= Seq(
-      "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion classifier "tests" excludeAll (
-        icebergExclusionRules: _*
-      ),
-    ),
+    libraryDependencies ++= {
+      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+        Seq(
+          "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion classifier "tests" excludeAll (
+            icebergExclusionRules: _*
+          )
+        )
+      } else {
+        Seq.empty
+      }
+    },
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
