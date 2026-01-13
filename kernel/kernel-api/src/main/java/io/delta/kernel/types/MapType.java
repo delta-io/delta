@@ -70,6 +70,33 @@ public class MapType extends DataType {
         && ((MapType) dataType).isValueContainsNull() == isValueContainsNull();
   }
 
+  /**
+   * Checks whether the given {@code dataType} is compatible with this type when writing data.
+   * Collation differences are ignored.
+   *
+   * <p>This method is intended to be used during the write path to validate that an input type
+   * matches the expected schema before data is written.
+   *
+   * <p>It should not be used in other cases, such as the read path.
+   *
+   * @param dataType the input data type being written
+   * @return {@code true} if the input type is compatible with this type.
+   */
+  @Override
+  public boolean isWriteCompatible(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    MapType mapType = (MapType) dataType;
+    return ((keyField == null && mapType.keyField == null)
+            || (keyField != null && keyField.isWriteCompatible(mapType.keyField)))
+        && ((valueField == null && mapType.valueField == null)
+            || (valueField != null && valueField.isWriteCompatible(mapType.valueField)));
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) {
