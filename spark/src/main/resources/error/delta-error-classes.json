@@ -1535,7 +1535,7 @@
   },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
-      "Commit succeeded at version <committedVersion>, but post-commit snapshot reconstruction returned version <currentVersion>."
+      "The commit succeeded at version <committedVersion>, but post-commit validation detected version <currentVersion>."
     ],
     "sqlState" : "XXKDS"
   },
